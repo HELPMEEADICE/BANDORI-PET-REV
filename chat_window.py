@@ -1,9 +1,10 @@
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRectF
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRectF, QVariantAnimation
 from PySide6.QtGui import QFont, QColor, QPalette, QKeyEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
     QApplication, QGraphicsOpacityEffect, QWidgetAction,
+    QGraphicsColorizeEffect,
 )
 
 from qfluentwidgets import BodyLabel, StrongBodyLabel, FluentIcon, isDarkTheme
@@ -88,6 +89,32 @@ class IconButton(QToolButton):
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.setAutoRaise(True)
 
+    def enterEvent(self, event):
+        self._hover_glow(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_glow(False)
+        super().leaveEvent(event)
+
+    def _hover_glow(self, entering: bool):
+        if hasattr(self, '_hover_anim'):
+            self._hover_anim.stop()
+        eff = self.graphicsEffect()
+        if not isinstance(eff, QGraphicsColorizeEffect):
+            eff = QGraphicsColorizeEffect(self)
+            eff.setColor(QColor(255, 255, 255))
+            eff.setStrength(0.0)
+            self.setGraphicsEffect(eff)
+        self._hover_anim = QPropertyAnimation(eff, b"strength")
+        self._hover_anim.setDuration(180)
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim.setStartValue(eff.strength())
+        self._hover_anim.setEndValue(0.3 if entering else 0.0)
+        if not entering:
+            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        self._hover_anim.start()
+
     def apply_theme(self):
         dark = isDarkTheme()
         if self._primary:
@@ -160,6 +187,8 @@ class ConversationHistoryRow(QWidget):
         marker = _TELEGRAM_ACCENT if self._current else "transparent"
         danger = "#ff6b6b" if dark else "#c42b1c"
         hover = "#3a2630" if dark else "#fde7e9"
+        self._hover_bg = hover
+        self._normal_bg = bg
         self.setStyleSheet(f"""
             ConversationHistoryRow {{
                 background: {bg};
@@ -183,6 +212,32 @@ class ConversationHistoryRow(QWidget):
             }}
         """)
         self._marker.setStyleSheet(f"color: {marker}; background: transparent; font-weight: 700;")
+
+    def enterEvent(self, event):
+        self._hover_glow(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_glow(False)
+        super().leaveEvent(event)
+
+    def _hover_glow(self, entering: bool):
+        if hasattr(self, '_hover_anim'):
+            self._hover_anim.stop()
+        eff = self.graphicsEffect()
+        if not isinstance(eff, QGraphicsColorizeEffect):
+            eff = QGraphicsColorizeEffect(self)
+            eff.setColor(QColor(96, 205, 255))
+            eff.setStrength(0.0)
+            self.setGraphicsEffect(eff)
+        self._hover_anim = QPropertyAnimation(eff, b"strength")
+        self._hover_anim.setDuration(160)
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim.setStartValue(eff.strength())
+        self._hover_anim.setEndValue(0.25 if entering else 0.0)
+        if not entering:
+            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        self._hover_anim.start()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and not self._delete_btn.geometry().contains(event.position().toPoint()):
@@ -390,6 +445,24 @@ class ChatWindow(QWidget):
         qconfig.themeChanged.connect(self._apply_theme)
 
         self._load_or_create_conversation()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not hasattr(self, '_entrance_done'):
+            self._entrance_done = True
+            QTimer.singleShot(30, self._play_entrance)
+
+    def _play_entrance(self):
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.0)
+        self.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(250)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        anim.start()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -812,8 +885,28 @@ class ChatWindow(QWidget):
             return
         focused = self._input.hasFocus()
         border = self._composer_colors["focus_border"] if focused else self._composer_colors["border"]
-        width = 2 if focused else 1
-        self._composer.set_panel_style(self._composer_colors["bg"], border, 18, width)
+        target_width = 2.0 if focused else 1.0
+        current_width = getattr(self, '_composer_border_width', 1.0)
+        if abs(current_width - target_width) < 0.01:
+            self._composer_border_width = target_width
+            self._composer.set_panel_style(self._composer_colors["bg"], border, 18, int(target_width))
+            return
+        self._composer_border_width = target_width
+        if hasattr(self, '_composer_focus_anim'):
+            self._composer_focus_anim.stop()
+        anim = QVariantAnimation(self)
+        anim.setDuration(200)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(float(current_width))
+        anim.setEndValue(float(target_width))
+        anim.valueChanged.connect(lambda v: self._composer.set_panel_style(
+            self._composer_colors["bg"],
+            self._composer_colors["focus_border"] if focused else self._composer_colors["border"],
+            18,
+            int(round(v))
+        ))
+        self._composer_focus_anim = anim
+        anim.start()
 
     def _sync_input_height(self):
         doc_height = int(self._input.document().size().height()) + 10

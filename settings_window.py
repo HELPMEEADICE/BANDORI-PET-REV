@@ -1,9 +1,9 @@
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation
 from PySide6.QtGui import QFont, QColor, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
-    QLineEdit,
+    QLineEdit, QGraphicsOpacityEffect, QGraphicsColorizeEffect,
 )
 
 from qfluentwidgets import (
@@ -54,6 +54,21 @@ class CharacterCard(CardWidget):
         self.clicked.connect(self._on_card_clicked)
         qconfig.themeChanged.connect(self._update_count_label_style)
 
+    def animate_in(self, delay_ms: int = 0):
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.0)
+        self.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(300)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, anim.start)
+        else:
+            anim.start()
+
     @staticmethod
     def _count_label_style():
         return f"color: {'#999999' if isDarkTheme() else '#888888'};"
@@ -75,6 +90,21 @@ class CostumeItem(QPushButton):
         self.setCheckable(True)
         self._update_stylesheet()
         qconfig.themeChanged.connect(self._update_stylesheet)
+
+    def animate_in(self, delay_ms: int = 0):
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.0)
+        self.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(250)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, anim.start)
+        else:
+            anim.start()
 
     def _update_stylesheet(self):
         dark = isDarkTheme()
@@ -128,6 +158,37 @@ class NavButton(QPushButton):
         self._update_stylesheet()
         qconfig.themeChanged.connect(self._update_stylesheet)
         self.clicked.connect(lambda: self.nav_activated.emit(self._nav_key))
+
+    def enterEvent(self, event):
+        if not self._checking_hover_effect():
+            self._apply_hover_effect(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._apply_hover_effect(False)
+        super().leaveEvent(event)
+
+    def _checking_hover_effect(self):
+        eff = self.graphicsEffect()
+        return isinstance(eff, QGraphicsColorizeEffect) and eff.strength() > 0.0
+
+    def _apply_hover_effect(self, entering: bool):
+        eff = self.graphicsEffect()
+        if not isinstance(eff, QGraphicsColorizeEffect):
+            eff = QGraphicsColorizeEffect(self)
+            eff.setColor(QColor(96, 205, 255))
+            eff.setStrength(0.0)
+            self.setGraphicsEffect(eff)
+        if hasattr(self, '_hover_anim'):
+            self._hover_anim.stop()
+        self._hover_anim = QPropertyAnimation(eff, b"strength")
+        self._hover_anim.setDuration(180)
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim.setStartValue(eff.strength())
+        self._hover_anim.setEndValue(0.35 if entering else 0.0)
+        if not entering:
+            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        self._hover_anim.start()
 
     def _update_stylesheet(self):
         dark = isDarkTheme()
@@ -213,6 +274,37 @@ class SettingsWindow(QWidget):
         self._save_llm_config()
         self._cleanup_workers()
         super().closeEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not hasattr(self, '_entrance_done'):
+            self._entrance_done = True
+            QTimer.singleShot(50, self._play_entrance)
+
+    def _play_entrance(self):
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.0)
+        self.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(280)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        anim.start()
+
+    @staticmethod
+    def _animate_button_in(btn):
+        effect = QGraphicsOpacityEffect(btn)
+        effect.setOpacity(0.0)
+        btn.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", btn)
+        anim.setDuration(200)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: btn.setGraphicsEffect(None))
+        anim.start()
 
     def _cleanup_workers(self):
         for attr in ('_test_worker', '_fetch_worker'):
@@ -352,6 +444,7 @@ class SettingsWindow(QWidget):
         col = 0
         row = 0
         cols_per_row = 3
+        card_idx = 0
 
         for char_key in chars:
             costumes = self._model_manager.get_costumes(char_key)
@@ -360,8 +453,10 @@ class SettingsWindow(QWidget):
             display = self._model_manager.get_display_name(char_key)
             card = CharacterCard(char_key, display, len(costumes), grid_widget)
             card.char_selected.connect(self._on_char_selected)
+            card.animate_in(delay_ms=card_idx * 80)
             self._char_grid.addWidget(card, row, col)
             col += 1
+            card_idx += 1
             if col >= cols_per_row:
                 col = 0
                 row += 1
@@ -581,6 +676,21 @@ class SettingsWindow(QWidget):
             b.setChecked(False)
         btn.setChecked(True)
         self._style_avatar_buttons()
+        self._pulse_button(btn)
+
+    @staticmethod
+    def _pulse_button(btn):
+        effect = QGraphicsColorizeEffect(btn)
+        effect.setColor(QColor(255, 255, 255))
+        effect.setStrength(0.0)
+        btn.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"strength", btn)
+        anim.setDuration(120)
+        anim.setStartValue(0.7)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: btn.setGraphicsEffect(None))
+        anim.start()
 
     def _load_llm_config(self):
         if self._cfg:
@@ -692,7 +802,7 @@ class SettingsWindow(QWidget):
                 item.widget().deleteLater()
 
         dark = isDarkTheme()
-        for model_name in models:
+        for idx, model_name in enumerate(models):
             btn = QPushButton(model_name, self._llm_model_list)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(34)
@@ -712,6 +822,7 @@ class SettingsWindow(QWidget):
             """)
             btn.clicked.connect(lambda checked, mn=model_name: self._llm_model_id.setText(mn))
             self._llm_model_list_layout.addWidget(btn)
+            QTimer.singleShot(idx * 30, lambda b=btn: self._animate_button_in(b))
         self._llm_model_list_layout.addStretch()
 
         self._llm_model_combo_label.show()
@@ -794,11 +905,12 @@ class SettingsWindow(QWidget):
         self._costume_buttons.clear()
 
         costumes = self._model_manager.get_costumes(char_key)
-        for costume in costumes:
+        for idx, costume in enumerate(costumes):
             cid = costume["id"]
             cname = self._model_manager.get_costume_display_name(char_key, cid)
             btn = CostumeItem(cid, cname, self._costume_list_widget)
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
+            btn.animate_in(delay_ms=idx * 40)
             self._costume_buttons.append(btn)
             self._costume_list.insertWidget(self._costume_list.count() - 1, btn)
 

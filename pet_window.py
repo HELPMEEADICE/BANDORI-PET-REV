@@ -4,10 +4,11 @@ import os
 import random
 import re
 
-from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QIcon, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QApplication, QSystemTrayIcon, QMenu,
+    QGraphicsOpacityEffect,
 )
 
 from qfluentwidgets import (
@@ -605,6 +606,17 @@ class PetWindow(QWidget):
         if screen:
             geo = screen.availableGeometry()
             self.move(geo.right() - self.width() - 20, geo.bottom() - self.height() - 40)
+        self._show_pos_set = True
+        self._play_entrance()
+
+    def _play_entrance(self):
+        self.setWindowOpacity(0.0)
+        anim = QPropertyAnimation(self, b"windowOpacity")
+        anim.setDuration(400)
+        anim.setStartValue(0.0)
+        anim.setEndValue(float(self._opacity))
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.start()
 
 
 def isDarkTheme():
