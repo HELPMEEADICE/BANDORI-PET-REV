@@ -23,10 +23,18 @@ class Live2DWidget(QOpenGLWidget):
         self._window_drag_callback = None
         self._click_callback = None
         self._initialized_gl = False
+        self._fps = 120
+        self._timer_id = None
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
+
+    def set_fps(self, fps: int):
+        self._fps = max(10, min(fps, 240))
+        if self._timer_id is not None:
+            self.killTimer(self._timer_id)
+            self._timer_id = self.startTimer(int(1000 / self._fps))
 
     def set_live2d_module(self, module):
         self._live2d = module
@@ -71,7 +79,7 @@ class Live2DWidget(QOpenGLWidget):
         self._initialized_gl = True
         if self._pending_model:
             self._load_model_internal(self._pending_model)
-        self.startTimer(int(1000 / 120))
+        self._timer_id = self.startTimer(int(1000 / self._fps))
 
     def resizeGL(self, w: int, h: int):
         gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))

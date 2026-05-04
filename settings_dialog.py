@@ -1,9 +1,9 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QWidget
 
 from qfluentwidgets import (
     Dialog, ComboBox, PushButton, PrimaryPushButton,
-    BodyLabel, StrongBodyLabel, FluentIcon,
+    StrongBodyLabel, FluentIcon,
 )
 
 
@@ -25,12 +25,15 @@ class ModelSelectDialog(Dialog):
         self._populate_characters()
 
         if current_char and current_char in model_manager.characters:
-            display_name = current_char.title()
+            display_name = self._model_manager.get_display_name(current_char)
             idx = self.char_combo.findText(display_name)
             if idx >= 0:
                 self.char_combo.setCurrentIndex(idx)
                 if current_costume:
-                    cidx = self.costume_combo.findText(current_costume)
+                    cname = self._model_manager.get_costume_display_name(
+                        current_char, current_costume
+                    )
+                    cidx = self.costume_combo.findText(cname)
                     if cidx >= 0:
                         self.costume_combo.setCurrentIndex(cidx)
 
@@ -71,18 +74,19 @@ class ModelSelectDialog(Dialog):
         self.char_combo.blockSignals(True)
         self.char_combo.clear()
         self._char_map.clear()
-        for name in self._model_manager.characters:
-            display = name.title()
-            self._char_map[display] = name
+        for key in self._model_manager.characters:
+            display = self._model_manager.get_display_name(key)
+            self._char_map[display] = key
             self.char_combo.addItem(display)
         self.char_combo.blockSignals(False)
 
     def _populate_costumes(self, display_name: str):
         self.costume_combo.clear()
         key = self._char_map.get(display_name, display_name.lower())
-        if key in self._model_manager.characters:
-            for costume in self._model_manager.get_costumes(key):
-                self.costume_combo.addItem(costume["name"])
+        costumes = self._model_manager.get_costumes(key)
+        for costume in costumes:
+            cname = self._model_manager.get_costume_display_name(key, costume["id"])
+            self.costume_combo.addItem(cname, costume["id"])
 
     def _on_char_changed(self, name: str):
         if name:
@@ -91,7 +95,9 @@ class ModelSelectDialog(Dialog):
     def _on_apply(self):
         display = self.char_combo.currentText()
         char = self._char_map.get(display, display.lower())
-        costume = self.costume_combo.currentText()
-        if char and costume:
-            self.model_changed.emit(char, costume)
-            self.accept()
+        idx = self.costume_combo.currentIndex()
+        if idx >= 0:
+            costume = self.costume_combo.itemData(idx)
+            if char and costume:
+                self.model_changed.emit(char, costume)
+                self.accept()
