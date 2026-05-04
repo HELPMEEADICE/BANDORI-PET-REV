@@ -1,16 +1,30 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
 )
 
 from qfluentwidgets import (
-    CardWidget, PushButton, PrimaryPushButton, ComboBox,
+    CardWidget, PushButton, PrimaryPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
-    FluentIcon, Slider, SwitchButton,
+    FluentIcon, Slider, SwitchButton, ScrollArea,
     setTheme, Theme, isDarkTheme,
 )
+from qfluentwidgets.common.config import qconfig
+
+
+_BG_LIGHT = "#ffffff"
+_BG_DARK = "#1e1e1e"
+
+
+def _theme_color(key: str) -> QColor:
+    colors = {
+        "bg": QColor(_BG_DARK if isDarkTheme() else _BG_LIGHT),
+        "text": QColor("#ffffff" if isDarkTheme() else "#000000"),
+        "dim": QColor("#999999" if isDarkTheme() else "#888888"),
+    }
+    return colors.get(key, QColor(_BG_LIGHT))
 
 
 class CharacterCard(CardWidget):
@@ -30,13 +44,20 @@ class CharacterCard(CardWidget):
         name_label.setWordWrap(True)
         layout.addWidget(name_label)
 
-        count_label = BodyLabel(f"{costume_count} costumes", self)
-        count_label.setStyleSheet("color: #888888;")
-        layout.addWidget(count_label)
+        self._count_label = BodyLabel(f"{costume_count} costumes", self)
+        self._count_label.setStyleSheet(self._count_label_style())
+        layout.addWidget(self._count_label)
 
         layout.addStretch()
-
         self.clicked.connect(self._on_card_clicked)
+        qconfig.themeChanged.connect(self._update_count_label_style)
+
+    @staticmethod
+    def _count_label_style():
+        return f"color: {'#999999' if isDarkTheme() else '#888888'};"
+
+    def _update_count_label_style(self):
+        self._count_label.setStyleSheet(self._count_label_style())
 
     def _on_card_clicked(self):
         self.char_selected.emit(self._char_key)
@@ -50,24 +71,37 @@ class CostumeItem(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(40)
         self.setCheckable(True)
-        self.setStyleSheet("""
-            QPushButton {
+        self._update_stylesheet()
+        qconfig.themeChanged.connect(self._update_stylesheet)
+
+    def _update_stylesheet(self):
+        dark = isDarkTheme()
+        bg = "#2d2d2d" if dark else "#fafafa"
+        border = "#555555" if dark else "#e0e0e0"
+        hover_bg = "#3a3a3a" if dark else "#e8f0fe"
+        hover_border = "#60cdff" if dark else "#1a73e8"
+        checked_bg = "#60cdff" if dark else "#1a73e8"
+        checked_fg = "#1a1a1a" if dark else "white"
+        text_color = "#e0e0e0" if dark else "#333333"
+        self.setStyleSheet(f"""
+            QPushButton {{
                 text-align: left;
                 padding: 8px 16px;
-                border: 1px solid #e0e0e0;
+                border: 1px solid {border};
                 border-radius: 6px;
-                background: #fafafa;
+                background: {bg};
                 font-size: 14px;
-            }
-            QPushButton:hover {
-                background: #e8f0fe;
-                border-color: #1a73e8;
-            }
-            QPushButton:checked {
-                background: #1a73e8;
-                color: white;
-                border-color: #1a73e8;
-            }
+                color: {text_color};
+            }}
+            QPushButton:hover {{
+                background: {hover_bg};
+                border-color: {hover_border};
+            }}
+            QPushButton:checked {{
+                background: {checked_bg};
+                color: {checked_fg};
+                border-color: {hover_border};
+            }}
         """)
 
     @property
@@ -91,13 +125,13 @@ class SettingsWindow(QWidget):
         self._costume_buttons: list[CostumeItem] = []
         self._selected_costume = ""
         self._show_launch = show_launch
+        self._theme_widgets: list[QWidget] = []
 
         self.setWindowTitle("Bandori Desktop Pet - Settings")
-        self.setMinimumSize(890, 560)
+        self.setMinimumSize(700, 560)
         self.resize(890, 600)
 
         self._launched = False
-
         self._init_ui()
 
         if self._current_costume:
@@ -112,12 +146,31 @@ class SettingsWindow(QWidget):
             self._on_apply()
         super().closeEvent(event)
 
+    def _make_theme_widget(self, w: QWidget) -> QWidget:
+        w.setAutoFillBackground(True)
+        self._theme_widgets.append(w)
+        self._apply_theme_bg(w)
+        return w
+
+    def _apply_theme_bg(self, w: QWidget):
+        bg = _BG_DARK if isDarkTheme() else _BG_LIGHT
+        pal = w.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(bg))
+        w.setPalette(pal)
+
+    def _update_all_theme_bgs(self):
+        for w in self._theme_widgets:
+            self._apply_theme_bg(w)
+
     def _init_ui(self):
+        self._make_theme_widget(self)
+        qconfig.themeChanged.connect(self._update_all_theme_bgs)
+
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(24, 20, 24, 20)
         main_layout.setSpacing(24)
 
-        self._stack = QWidget(self)
+        self._stack = self._make_theme_widget(QWidget(self))
         self._stack_layout = QVBoxLayout(self._stack)
         self._stack_layout.setContentsMargins(0, 0, 0, 0)
         self._stack_layout.setSpacing(0)
@@ -135,7 +188,7 @@ class SettingsWindow(QWidget):
         main_layout.addWidget(side_panel, 0)
 
     def _build_char_page(self):
-        page = QWidget()
+        page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -145,12 +198,13 @@ class SettingsWindow(QWidget):
         subtitle = SubtitleLabel("Choose a character to configure", page)
         layout.addWidget(subtitle)
 
-        scroll = QScrollArea()
+        scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        grid_widget = QWidget()
+        grid_widget = self._make_theme_widget(QWidget())
         self._char_grid = QGridLayout(grid_widget)
         self._char_grid.setSpacing(12)
         self._char_grid.setContentsMargins(0, 8, 0, 0)
@@ -182,7 +236,7 @@ class SettingsWindow(QWidget):
         return page
 
     def _build_costume_page(self):
-        page = QWidget()
+        page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -201,12 +255,13 @@ class SettingsWindow(QWidget):
         self._costume_subtitle = SubtitleLabel("", page)
         layout.addWidget(self._costume_subtitle)
 
-        scroll = QScrollArea()
+        scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        self._costume_list_widget = QWidget()
+        self._costume_list_widget = self._make_theme_widget(QWidget())
         self._costume_list = QVBoxLayout(self._costume_list_widget)
         self._costume_list.setSpacing(6)
         self._costume_list.setContentsMargins(0, 4, 0, 0)
@@ -217,7 +272,7 @@ class SettingsWindow(QWidget):
         return page
 
     def _build_side_panel(self):
-        panel = QWidget()
+        panel = self._make_theme_widget(QWidget())
         panel.setFixedWidth(220)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
