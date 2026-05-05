@@ -49,10 +49,6 @@ def main():
 
     char = cfg.get("character", "")
     costume = cfg.get("costume", "")
-    if not char or not costume:
-        if mgr.characters:
-            char = mgr.characters[0]
-            costume = mgr.get_default_costume(char)
 
     from i18n_manager import current_language
 
@@ -106,34 +102,51 @@ def main():
             pet._live2d_widget.set_drag_locked(True)
         pet_window_ref["window"] = pet
 
-    from settings_window import SettingsWindow
-    settings = SettingsWindow(
-        mgr,
-        current_char=char,
-        current_costume=costume,
-        current_fps=cfg.get("fps", 120),
-        current_opacity=cfg.get("opacity", 1.0),
-        show_launch=True,
-        config_manager=cfg,
+    model_valid = bool(
+        char and costume
+        and char in mgr.characters
+        and ModelManager.get_model_json_path(char, costume)
     )
-    if cfg.get("dark_theme", False):
-        settings._theme_switch.setChecked(True)
 
-    settings.model_selected.connect(on_model_selected)
-    settings.settings_changed.connect(on_settings_changed)
-    settings.launch_requested.connect(launch_pet)
-
-    screen = app.primaryScreen()
-    if screen:
-        geo = screen.availableGeometry()
-        settings.move(
-            (geo.width() - settings.width()) // 2,
-            (geo.height() - settings.height()) // 2
-        )
-
-    settings.show()
+    if not model_valid:
+        if mgr.characters:
+            char = mgr.characters[0]
+            costume = mgr.get_default_costume(char)
+    else:
+        pet_window_ref["char"] = char
+        pet_window_ref["costume"] = costume
 
     app.aboutToQuit.connect(save_config)
+
+    if model_valid:
+        launch_pet()
+    else:
+        from settings_window import SettingsWindow
+        settings = SettingsWindow(
+            mgr,
+            current_char=char,
+            current_costume=costume,
+            current_fps=cfg.get("fps", 120),
+            current_opacity=cfg.get("opacity", 1.0),
+            show_launch=True,
+            config_manager=cfg,
+        )
+        if cfg.get("dark_theme", False):
+            settings._theme_switch.setChecked(True)
+
+        settings.model_selected.connect(on_model_selected)
+        settings.settings_changed.connect(on_settings_changed)
+        settings.launch_requested.connect(launch_pet)
+
+        screen = app.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            settings.move(
+                (geo.width() - settings.width()) // 2,
+                (geo.height() - settings.height()) // 2
+            )
+
+        settings.show()
 
     ret = app.exec()
     live2d.dispose()
