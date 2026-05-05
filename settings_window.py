@@ -375,9 +375,15 @@ class SettingsWindow(QWidget):
         self._pages["costumes"] = self._costume_page
         self._pages["llm"] = self._llm_page
 
+        page_scroll = ScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setWidget(self._page_stack)
+        page_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         side_panel = self._build_side_panel()
 
-        right_layout.addWidget(self._page_stack, 1)
+        right_layout.addWidget(page_scroll, 1)
         right_layout.addWidget(side_panel, 0)
 
         main_layout.addWidget(right_area, 1)
@@ -645,6 +651,18 @@ class SettingsWindow(QWidget):
         model_row.addWidget(fetch_btn)
         layout.addLayout(model_row)
 
+        thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
+        layout.addWidget(thinking_label)
+        self._llm_enable_thinking = ComboBox(page)
+        self._llm_enable_thinking.addItems([
+            _tr("SettingsWindow.llm_enable_thinking_default"),
+            _tr("SettingsWindow.llm_enable_thinking_on"),
+            _tr("SettingsWindow.llm_enable_thinking_off"),
+        ])
+        self._llm_enable_thinking.setFixedHeight(36)
+        self._llm_enable_thinking.setCurrentIndex(0)
+        layout.addWidget(self._llm_enable_thinking)
+
         self._llm_model_combo_label = BodyLabel(_tr("SettingsWindow.llm_available_models"), page)
         self._llm_model_combo_label.hide()
         layout.addWidget(self._llm_model_combo_label)
@@ -761,6 +779,13 @@ class SettingsWindow(QWidget):
             saved_color = self._cfg.get("user_avatar_color", "#2aabee")
             for btn in self._avatar_color_btns:
                 btn.setChecked(btn.property("avatar_color") == saved_color)
+            thinking_val = self._cfg.get("llm_enable_thinking", None)
+            if thinking_val is True:
+                self._llm_enable_thinking.setCurrentIndex(1)
+            elif thinking_val is False:
+                self._llm_enable_thinking.setCurrentIndex(2)
+            else:
+                self._llm_enable_thinking.setCurrentIndex(0)
 
     def _save_llm_config(self):
         if self._cfg:
@@ -772,6 +797,13 @@ class SettingsWindow(QWidget):
                 if btn.isChecked():
                     self._cfg.set("user_avatar_color", btn.property("avatar_color"))
                     break
+            thinking_idx = self._llm_enable_thinking.currentIndex()
+            if thinking_idx == 1:
+                self._cfg.set("llm_enable_thinking", True)
+            elif thinking_idx == 2:
+                self._cfg.set("llm_enable_thinking", False)
+            else:
+                self._cfg.set("llm_enable_thinking", None)
             try:
                 self._cfg.save()
                 InfoBar.success(

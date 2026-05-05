@@ -1004,13 +1004,14 @@ class ChatWindow(QWidget):
                 break
 
         use_stream = True
+        enable_thinking = self._cfg.get("llm_enable_thinking", None)
         if use_stream:
-            self._worker = LLMStreamWorker(api_url, api_key, model_id, messages)
+            self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
             self._worker.chunk_received.connect(self._on_chunk_received)
             self._worker.finished.connect(self._on_response_finished)
             self._worker.error.connect(self._on_response_error)
         else:
-            self._worker = NonStreamWorker(api_url, api_key, model_id, messages)
+            self._worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
             self._worker.finished.connect(self._on_response_finished_nonstream)
             self._worker.error.connect(self._on_response_error)
 

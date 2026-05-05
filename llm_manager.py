@@ -171,12 +171,13 @@ class LLMStreamWorker(QThread):
     error = Signal(str)
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
-                 messages: list[dict], parent=None):
+                 messages: list[dict], enable_thinking=None, parent=None):
         super().__init__(parent)
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
+        self._enable_thinking = enable_thinking
         self._cancelled = False
         self._full_text = ""
 
@@ -190,6 +191,8 @@ class LLMStreamWorker(QThread):
                 "messages": self._messages,
                 "stream": True,
             }
+            if self._enable_thinking is not None:
+                body["enable_thinking"] = self._enable_thinking
             data = json.dumps(body).encode("utf-8")
 
             headers = {
@@ -246,12 +249,13 @@ class NonStreamWorker(QThread):
     error = Signal(str)
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
-                 messages: list[dict], parent=None):
+                 messages: list[dict], enable_thinking=None, parent=None):
         super().__init__(parent)
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
+        self._enable_thinking = enable_thinking
 
     def run(self):
         try:
@@ -260,6 +264,8 @@ class NonStreamWorker(QThread):
                 "messages": self._messages,
                 "stream": False,
             }
+            if self._enable_thinking is not None:
+                body["enable_thinking"] = self._enable_thinking
             data = json.dumps(body).encode("utf-8")
 
             headers = {

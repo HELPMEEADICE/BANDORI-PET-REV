@@ -22,6 +22,7 @@ DEFAULTS = {
     "llm_model_id": "",
     "user_name": "",
     "user_avatar_color": "#2aabee",
+    "llm_enable_thinking": None,
 }
 
 
