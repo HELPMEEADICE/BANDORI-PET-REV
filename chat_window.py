@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRectF, QVariantAnimation
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QVariantAnimation
 from PySide6.QtGui import QFont, QColor, QPalette, QKeyEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -1109,12 +1109,15 @@ class ChatWindow(QWidget):
             self.action_triggered.emit(action)
         self._pending_actions.clear()
 
+    def emit_action_for_ipc(self, action: str):
+        print(f"ACTION\t{action}", flush=True)
+
     def _scroll_to_bottom(self):
         sb = self._scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     def position_next_to_pet(self, pet_window: QWidget):
-        pet_geo = pet_window.geometry()
+        pet_geo = pet_window if isinstance(pet_window, QRect) else pet_window.geometry()
         screen = QApplication.primaryScreen()
         if screen:
             screen_geo = screen.availableGeometry()

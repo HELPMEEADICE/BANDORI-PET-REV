@@ -1081,6 +1081,11 @@ class SettingsWindow(QWidget):
             self.launch_requested.emit()
         self.close()
 
+    def connect_ipc_output(self):
+        self.model_selected.connect(lambda char, costume: print(f"MODEL\t{char}\t{costume}", flush=True))
+        self.settings_changed.connect(lambda data: print(f"SETTINGS\t{json.dumps(data, ensure_ascii=False)}", flush=True))
+        self.launch_requested.connect(lambda: print("LAUNCH", flush=True))
+
 
 class TestConnectionWorker(QThread):
     finished = Signal()

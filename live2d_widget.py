@@ -203,32 +203,12 @@ class Live2DWidget(QOpenGLWidget):
         gl.glClearColor(0.0, 0.0, 0.0, 0.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
 
-        # =======================================================================
-        # 终极拼接缝杀手 (Ultimate Seam Killer)
-        # =======================================================================
-        # Live2D 的 SDK 在底层每一帧每一块网格都会强制重写 glBlendFunc(混合系数)。
-        # 但是！它*不会*重写 glBlendEquationSeparate(混合方程式)！
-        # 我们在这里将 Alpha 通道的混合方程劫持为 GL_MAX (取最大值)。
-        # 这样即使内部网格疯狂重叠，Alpha 通道也只会累加到 1.0 而绝对不会被侵蚀减少，
-        # 从而完美保留外部边缘的半透明抗锯齿，同时彻底消灭内部关节拼接缝！
         gl.glEnable(gl.GL_BLEND)
-        try:
-            # RGB 保持标准的加法混合 (GL_FUNC_ADD)
-            # Alpha 强制使用取最大值混合 (GL_MAX)
-            gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_MAX)
-        except Exception:
-            pass
-        # =======================================================================
+        gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
         self._live2d.clearBuffer()
         model.Update()
         model.Draw()
-
-        # 绘制完毕后，将混合方程恢复默认，以免影响 Qt 后续其他 UI 元素的正常绘制
-        try:
-            gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
-        except Exception:
-            pass
 
     def timerEvent(self, event: QTimerEvent):
         if not self.isVisible():

@@ -4,7 +4,7 @@ import os
 import random
 import re
 
-from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess
 from PySide6.QtGui import QColor, QIcon, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QApplication, QSystemTrayIcon, QMenu,
@@ -19,7 +19,6 @@ from qfluentwidgets.components.widgets.menu import DWMMenu
 from i18n_manager import tr as _tr
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
-from settings_window import SettingsWindow
 from radial_menu import RadialMenu
 
 
@@ -71,10 +70,10 @@ class PetWindow(QWidget):
         self._opacity = opacity
         self._vsync = True
         self._tray_icon = None
-        self._settings_window = None
         self._cfg = config_manager
         self._radial_menu = None
-        self._chat_window = None
+        self._chat_process = None
+        self._settings_process = None
         self._show_pos_set = False
         self._motion_guard_token = 0
         self._mouse_passthrough = False
@@ -309,25 +308,44 @@ class PetWindow(QWidget):
         self._open_chat()
 
     def _open_chat(self):
-        from chat_window import ChatWindow
-
-        if self._chat_window is not None and self._chat_window.isVisible():
-            self._chat_window.raise_()
-            self._chat_window.activateWindow()
+        if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
             return
 
-        self._chat_window = ChatWindow(
-            self._current_char,
-            self._model_manager,
-            self._live2d,
-            self._cfg,
-            parent_pet=self,
-        )
-        self._chat_window.action_triggered.connect(self._on_chat_action)
-        self._chat_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._chat_window.destroyed.connect(lambda: setattr(self, '_chat_window', None))
-        self._chat_window.show()
-        self._chat_window.position_next_to_pet(self)
+        import sys
+
+        script = os.path.join(os.path.dirname(__file__), "chat_process.py")
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process.setArguments([
+            script,
+            "--character", self._current_char,
+            "--pet-x", str(self.x()),
+            "--pet-y", str(self.y()),
+            "--pet-w", str(self.width()),
+            "--pet-h", str(self.height()),
+        ])
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(lambda p=process: self._read_chat_process_output(p))
+        process.readyReadStandardError.connect(lambda p=process: self._read_chat_process_error(p))
+        process.finished.connect(lambda *args, p=process: self._on_chat_process_finished(p))
+        self._chat_process = process
+        process.start()
+
+    def _read_chat_process_output(self, process: QProcess):
+        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        for line in data.splitlines():
+            if line.startswith("ACTION\t"):
+                self._on_chat_action(line.split("\t", 1)[1])
+
+    def _read_chat_process_error(self, process: QProcess):
+        data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
+        if data:
+            print(data)
+
+    def _on_chat_process_finished(self, process: QProcess):
+        if self._chat_process is process:
+            self._chat_process = None
+        process.deleteLater()
 
     def _on_chat_action(self, action_name: str):
         model = self._live2d_widget.model
@@ -538,27 +556,55 @@ class PetWindow(QWidget):
             self.show()
 
     def _open_settings(self, start_on_costumes=False):
-        if self._settings_window is not None and self._settings_window.isVisible():
-            self._settings_window.raise_()
-            self._settings_window.activateWindow()
+        if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
             return
 
-        self._settings_window = SettingsWindow(
-            self._model_manager,
-            current_char=self._current_char,
-            current_costume=self._current_costume,
-            current_fps=self._fps,
-            current_opacity=self._opacity,
-            show_launch=False,
-            start_on_costumes=start_on_costumes,
-            config_manager=self._cfg,
-            vsync=self._vsync,
-        )
-        self._settings_window.model_selected.connect(self._switch_model)
-        self._settings_window.settings_changed.connect(self._apply_settings)
-        self._settings_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._settings_window.destroyed.connect(lambda: setattr(self, '_settings_window', None))
-        self._settings_window.show()
+        import sys
+
+        script = os.path.join(os.path.dirname(__file__), "settings_process.py")
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process.setArguments([
+            script,
+            "--character", self._current_char,
+            "--costume", self._current_costume,
+            "--fps", str(self._fps),
+            "--opacity", str(self._opacity),
+            "--vsync", "1" if self._vsync else "0",
+            "--show-launch", "0",
+            "--start-on-costumes", "1" if start_on_costumes else "0",
+        ])
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(lambda p=process: self._read_settings_process_output(p))
+        process.readyReadStandardError.connect(lambda p=process: self._read_settings_process_error(p))
+        process.finished.connect(lambda *args, p=process: self._on_settings_process_finished(p))
+        self._settings_process = process
+        process.start()
+
+    def _read_settings_process_output(self, process: QProcess):
+        import json
+
+        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        for line in data.splitlines():
+            if line.startswith("MODEL\t"):
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    self._switch_model(parts[1], parts[2])
+            elif line.startswith("SETTINGS\t"):
+                try:
+                    self._apply_settings(json.loads(line.split("\t", 1)[1]))
+                except json.JSONDecodeError:
+                    pass
+
+    def _read_settings_process_error(self, process: QProcess):
+        data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
+        if data:
+            print(data)
+
+    def _on_settings_process_finished(self, process: QProcess):
+        if self._settings_process is process:
+            self._settings_process = None
+        process.deleteLater()
 
     def set_opacity(self, value: float):
         self._opacity = value
@@ -583,6 +629,14 @@ class PetWindow(QWidget):
             self._cfg.save()
 
     def _quit(self):
+        if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
+            self._chat_process.terminate()
+            if not self._chat_process.waitForFinished(1000):
+                self._chat_process.kill()
+        if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
+            self._settings_process.terminate()
+            if not self._settings_process.waitForFinished(1000):
+                self._settings_process.kill()
         self._tray_icon.hide()
         QApplication.quit()
 

@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -7,7 +8,7 @@ LIVE2D_PACKAGE = os.path.join(BASE_DIR, "third_party", "live2d-py", "package")
 if LIVE2D_PACKAGE not in sys.path:
     sys.path.insert(0, LIVE2D_PACKAGE)
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QProcess
 from PySide6.QtWidgets import QApplication
 
 from qfluentwidgets import setTheme, Theme
@@ -104,6 +105,54 @@ def main():
             pet._live2d_widget.set_drag_locked(True)
         pet_window_ref["window"] = pet
 
+    settings_process_ref = {}
+
+    def read_settings_output(process):
+        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        for line in data.splitlines():
+            if line.startswith("MODEL\t"):
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    on_model_selected(parts[1], parts[2])
+            elif line.startswith("SETTINGS\t"):
+                try:
+                    on_settings_changed(json.loads(line.split("\t", 1)[1]))
+                except json.JSONDecodeError:
+                    pass
+            elif line == "LAUNCH":
+                launch_pet()
+
+    def read_settings_error(process):
+        data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
+        if data:
+            print(data)
+
+    def clear_settings_process(process):
+        if settings_process_ref.get("process") is process:
+            settings_process_ref.pop("process", None)
+        process.deleteLater()
+
+    def launch_settings_process(show_launch=True):
+        script = os.path.join(BASE_DIR, "settings_process.py")
+        process = QProcess(app)
+        process.setProgram(sys.executable)
+        process.setArguments([
+            script,
+            "--character", char,
+            "--costume", costume,
+            "--fps", str(cfg.get("fps", 120)),
+            "--opacity", str(cfg.get("opacity", 1.0)),
+            "--vsync", "1" if cfg.get("vsync", True) else "0",
+            "--show-launch", "1" if show_launch else "0",
+            "--start-on-costumes", "0",
+        ])
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(lambda p=process: read_settings_output(p))
+        process.readyReadStandardError.connect(lambda p=process: read_settings_error(p))
+        process.finished.connect(lambda *args, p=process: clear_settings_process(p))
+        settings_process_ref["process"] = process
+        process.start()
+
     model_valid = bool(
         char and costume
         and char in mgr.characters
@@ -123,33 +172,7 @@ def main():
         pet_window_ref["vsync"] = cfg.get("vsync", True)
         launch_pet()
     else:
-        from settings_window import SettingsWindow
-        settings = SettingsWindow(
-            mgr,
-            current_char=char,
-            current_costume=costume,
-            current_fps=cfg.get("fps", 120),
-            current_opacity=cfg.get("opacity", 1.0),
-            show_launch=True,
-            config_manager=cfg,
-            vsync=cfg.get("vsync", True),
-        )
-        if cfg.get("dark_theme", False):
-            settings._theme_switch.setChecked(True)
-
-        settings.model_selected.connect(on_model_selected)
-        settings.settings_changed.connect(on_settings_changed)
-        settings.launch_requested.connect(launch_pet)
-
-        screen = app.primaryScreen()
-        if screen:
-            geo = screen.availableGeometry()
-            settings.move(
-                (geo.width() - settings.width()) // 2,
-                (geo.height() - settings.height()) // 2
-            )
-
-        settings.show()
+        launch_settings_process(show_launch=True)
 
     ret = app.exec()
     live2d.dispose()
