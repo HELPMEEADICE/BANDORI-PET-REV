@@ -2,6 +2,11 @@ import argparse
 import os
 import sys
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LIVE2D_PACKAGE = os.path.join(BASE_DIR, "third_party", "live2d-py", "package")
+if LIVE2D_PACKAGE not in sys.path:
+    sys.path.insert(0, LIVE2D_PACKAGE)
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
@@ -11,6 +16,8 @@ from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
+import live2d.v2 as live2d
+from platform_patch import PatchedPlatformManager
 
 
 def _parse_args():
@@ -26,11 +33,14 @@ def _parse_args():
 
 
 def main():
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(BASE_DIR)
     args = _parse_args()
 
     cfg = ConfigManager()
     set_language(cfg.get("language", "") or detect_system_language())
+
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
 
     app = QApplication(sys.argv)
     app.setApplicationName("BandoriPetSettings")
@@ -38,6 +48,11 @@ def main():
     app.setQuitOnLastWindowClosed(True)
 
     setTheme(Theme.DARK if cfg.get("dark_theme", False) else Theme.LIGHT)
+
+    live2d.init()
+    live2d.Live2DFramework.setPlatformManager(
+        PatchedPlatformManager(live2d.Live2DFramework.getPlatformManager())
+    )
 
     mgr = ModelManager()
     window = SettingsWindow(
@@ -50,6 +65,7 @@ def main():
         start_on_costumes=args.start_on_costumes == "1",
         config_manager=cfg,
         vsync=args.vsync == "1",
+        live2d_module=live2d,
     )
     window.connect_ipc_output()
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -61,6 +77,7 @@ def main():
 
     window.show()
     ret = app.exec()
+    live2d.dispose()
     cfg.save()
     return ret
 

@@ -1,9 +1,9 @@
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation
-from PySide6.QtGui import QFont, QColor, QPalette, QPixmap
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent
+from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QCursor, QPainter, QPainterPath, QPen, QBrush
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
-    QLineEdit, QGraphicsOpacityEffect, QGraphicsColorizeEffect,
+    QLineEdit, QGraphicsOpacityEffect, QGraphicsColorizeEffect, QApplication,
 )
 
 from qfluentwidgets import (
@@ -17,6 +17,8 @@ from qfluentwidgets.common.config import qconfig
 from i18n_manager import tr as _tr, set_language, available_languages, current_language
 
 import json
+
+from live2d_widget import Live2DWidget
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
@@ -162,6 +164,9 @@ class BandCard(CardWidget):
 
 
 class CostumeItem(QPushButton):
+    preview_requested = Signal(object, str)
+    preview_cancelled = Signal()
+
     def __init__(self, costume_id: str, display_name: str, parent=None):
         super().__init__(parent)
         self._costume_id = costume_id
@@ -220,6 +225,106 @@ class CostumeItem(QPushButton):
     @property
     def costume_id(self):
         return self._costume_id
+
+    def enterEvent(self, event):
+        self._maybe_request_preview()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.preview_cancelled.emit()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event):
+        self._maybe_request_preview()
+        super().keyPressEvent(event)
+
+    def _maybe_request_preview(self):
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.preview_requested.emit(self, self._costume_id)
+
+
+class Live2DPreviewBubble(QWidget):
+    def __init__(self, live2d_module, parent=None):
+        super().__init__(None)
+        self._current_model_path = ""
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.resize(300, 360)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(26, 10, 10, 10)
+        self._live2d_widget = Live2DWidget(self)
+        self._live2d_widget.set_live2d_module(live2d_module)
+        self._live2d_widget.set_static_render(True)
+        self._apply_live2d_background()
+        layout.addWidget(self._live2d_widget)
+        qconfig.themeChanged.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self):
+        self._apply_live2d_background()
+        self.update()
+
+    def _apply_live2d_background(self):
+        if isDarkTheme():
+            self._live2d_widget.set_clear_color(32 / 255, 32 / 255, 32 / 255, 1.0)
+        else:
+            self._live2d_widget.set_clear_color(1.0, 1.0, 1.0, 1.0)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        dark = isDarkTheme()
+        bg = QColor(32, 32, 32, 255) if dark else QColor(255, 255, 255, 255)
+        border = QColor(96, 205, 255, 190) if dark else QColor(26, 115, 232, 165)
+        shadow = QColor(0, 0, 0, 65) if dark else QColor(0, 0, 0, 38)
+
+        rect = self.rect().adjusted(18, 2, -2, -2)
+        tail_y = max(70, min(self.height() - 70, 150))
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, 18, 18)
+        tail = QPainterPath()
+        tail.moveTo(19, tail_y - 18)
+        tail.lineTo(2, tail_y)
+        tail.lineTo(19, tail_y + 18)
+        tail.closeSubpath()
+        path = path.united(tail)
+
+        shadow_path = QPainterPath(path)
+        shadow_path.translate(0, 3)
+        painter.fillPath(shadow_path, QBrush(shadow))
+        painter.fillPath(path, QBrush(bg))
+        painter.setPen(QPen(border, 1))
+        painter.drawPath(path)
+
+    def show_preview(self, model_path: str, anchor: QWidget):
+        if not model_path:
+            self.hide()
+            return
+        if model_path != self._current_model_path:
+            self._current_model_path = model_path
+            self._live2d_widget.set_model_path(model_path)
+
+        top_right = anchor.mapToGlobal(anchor.rect().topRight())
+        pos = top_right + QPoint(14, -120)
+        screen = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            x = min(max(pos.x(), geo.left()), geo.right() - self.width())
+            y = min(max(pos.y(), geo.top()), geo.bottom() - self.height())
+            pos = QPoint(x, y)
+        self.move(pos)
+        if not self.isVisible():
+            self.show()
+        self.raise_()
 
 
 class NavButton(QPushButton):
@@ -307,9 +412,11 @@ class SettingsWindow(QWidget):
 
     def __init__(self, model_manager, current_char="", current_costume="",
                  current_fps=120, current_opacity=1.0, show_launch=True,
-                 start_on_costumes=False, config_manager=None, vsync=True):
+                 start_on_costumes=False, config_manager=None, vsync=True,
+                 live2d_module=None):
         super().__init__()
         self._model_manager = model_manager
+        self._live2d = live2d_module
         self._current_char = current_char or model_manager.characters[0]
         self._current_costume = current_costume
         self._fps = current_fps
@@ -318,6 +425,7 @@ class SettingsWindow(QWidget):
         self._selection_cards: list[CardWidget] = []
         self._selected_costume = ""
         self._selected_band = model_manager.get_character_band(self._current_char)
+        self._preview_bubble = None
         self._show_launch = show_launch
         self._start_on_costumes = start_on_costumes
         self._theme_widgets: list[QWidget] = []
@@ -333,6 +441,7 @@ class SettingsWindow(QWidget):
 
         self._launched = False
         self._init_ui()
+        QApplication.instance().installEventFilter(self)
 
         if self._current_costume:
             self._selected_costume = self._current_costume
@@ -362,11 +471,24 @@ class SettingsWindow(QWidget):
                 self._cfg.save()
 
     def closeEvent(self, event):
+        self._hide_costume_preview()
         if not self._launched:
             self._on_apply()
         self._save_llm_config()
         self._cleanup_workers()
         super().closeEvent(event)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift:
+            self._hide_costume_preview()
+        elif event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Shift:
+            widget = QApplication.widgetAt(QCursor.pos())
+            while widget is not None:
+                if isinstance(widget, CostumeItem):
+                    self._show_costume_preview(widget, widget.costume_id)
+                    break
+                widget = widget.parentWidget()
+        return super().eventFilter(watched, event)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1173,6 +1295,8 @@ class SettingsWindow(QWidget):
             cname = self._model_manager.get_costume_display_name(char_key, cid)
             btn = CostumeItem(cid, cname, self._costume_list_widget)
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
+            btn.preview_requested.connect(self._show_costume_preview)
+            btn.preview_cancelled.connect(self._hide_costume_preview)
             btn.animate_in(delay_ms=idx * 40)
             self._costume_buttons.append(btn)
             self._costume_list.insertWidget(self._costume_list.count() - 1, btn)
@@ -1190,6 +1314,20 @@ class SettingsWindow(QWidget):
             b.setChecked(False)
         btn.setChecked(True)
         self._selected_costume = costume_id
+
+    def _show_costume_preview(self, anchor: QWidget, costume_id: str):
+        if not self._live2d:
+            return
+        model_path = self._model_manager.get_model_json_path(self._current_char, costume_id)
+        if not model_path:
+            return
+        if self._preview_bubble is None:
+            self._preview_bubble = Live2DPreviewBubble(self._live2d, self)
+        self._preview_bubble.show_preview(model_path, anchor)
+
+    def _hide_costume_preview(self):
+        if self._preview_bubble is not None:
+            self._preview_bubble.hide()
 
     def _go_back_to_chars(self):
         self._costume_page.hide()

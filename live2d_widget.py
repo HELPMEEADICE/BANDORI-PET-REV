@@ -47,6 +47,9 @@ class Live2DWidget(QOpenGLWidget):
         self._fps = 120
         self._vsync = True
         self._timer_id = None
+        self._static_render = False
+        self._static_render_done = False
+        self._clear_color = (0.0, 0.0, 0.0, 0.0)
 
         # 性能优化：缓存属性
         self._cache_w = 1
@@ -108,6 +111,18 @@ class Live2DWidget(QOpenGLWidget):
             pass
         self._restart_timer()
 
+    def set_static_render(self, enabled: bool):
+        self._static_render = enabled
+        self._static_render_done = False
+        if enabled and self._timer_id is not None:
+            self.killTimer(self._timer_id)
+            self._timer_id = None
+
+    def set_clear_color(self, r: float, g: float, b: float, a: float):
+        self._clear_color = (r, g, b, a)
+        self._static_render_done = False
+        self.update()
+
     def set_live2d_module(self, module):
         self._live2d = module
 
@@ -125,8 +140,11 @@ class Live2DWidget(QOpenGLWidget):
 
     def set_model_path(self, model_json_path: str):
         self._pending_model = model_json_path
+        self._static_render_done = False
         if self._initialized_gl:
             self._load_model_internal(model_json_path)
+            if self._static_render:
+                self.update()
 
     def _load_model_internal(self, model_json_path: str):
         if not model_json_path or not self._live2d:
@@ -180,7 +198,10 @@ class Live2DWidget(QOpenGLWidget):
 
         if self._pending_model:
             self._load_model_internal(self._pending_model)
-        self._restart_timer()
+        if not self._static_render:
+            self._restart_timer()
+        else:
+            self.update()
 
     def resizeGL(self, w: int, h: int):
         gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
@@ -188,6 +209,9 @@ class Live2DWidget(QOpenGLWidget):
             self._model.Resize(w, h)
 
     def paintGL(self):
+        if self._static_render and self._static_render_done:
+            return
+
         model = self._model
         if not self._live2d or not model:
             return
@@ -200,17 +224,23 @@ class Live2DWidget(QOpenGLWidget):
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glDisable(gl.GL_DITHER)
 
-        gl.glClearColor(0.0, 0.0, 0.0, 0.0)
+        gl.glClearColor(*self._clear_color)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
 
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
         self._live2d.clearBuffer()
+        gl.glClearColor(*self._clear_color)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
         model.Update()
         model.Draw()
+        if self._static_render:
+            self._static_render_done = True
 
     def timerEvent(self, event: QTimerEvent):
+        if self._static_render:
+            return
         if not self.isVisible():
             return
 
