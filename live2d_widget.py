@@ -22,7 +22,7 @@ class Live2DWidget(QOpenGLWidget):
     def __init__(self, parent=None):
         fmt = QSurfaceFormat()
         fmt.setAlphaBufferSize(8)
-        fmt.setSamples(0)          # 禁用抗锯齿，防止边缘多边形生成半透明像素
+        fmt.setSamples(4)
         fmt.setDepthBufferSize(0)  # 彻底关闭深度缓冲，杜绝 Z-fighting 撕裂
         fmt.setStencilBufferSize(8)
         fmt.setSwapInterval(0)
@@ -193,7 +193,7 @@ class Live2DWidget(QOpenGLWidget):
             return
 
         try:
-            gl.glDisable(0x809D)  # 强制关闭 MSAA
+            gl.glEnable(gl.GL_MULTISAMPLE)
         except Exception:
             pass
         
