@@ -4,7 +4,7 @@ import os
 import random
 import re
 
-from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess
+from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent
 from PySide6.QtGui import QColor, QIcon, QCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QApplication, QSystemTrayIcon, QMenu,
@@ -84,6 +84,7 @@ class PetWindow(QWidget):
         self._init_tray()
         self._load_initial_model()
         self._passthrough_timer.start()
+        QApplication.instance().installEventFilter(self)
 
         self.setWindowOpacity(self._opacity)
 
@@ -126,6 +127,15 @@ class PetWindow(QWidget):
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
+
+    def eventFilter(self, obj, event):
+        if self._radial_menu is not None and self._radial_menu.isVisible():
+            event_type = event.type()
+            if event_type == QEvent.Type.ApplicationDeactivate:
+                self._radial_menu.dismiss()
+            elif obj is self and event_type == QEvent.Type.WindowDeactivate:
+                self._radial_menu.dismiss()
+        return super().eventFilter(obj, event)
 
     def _set_mouse_passthrough(self, enabled: bool):
         if os.name != "nt" or enabled == self._mouse_passthrough:
@@ -629,6 +639,7 @@ class PetWindow(QWidget):
             self._cfg.save()
 
     def _quit(self):
+        QApplication.instance().removeEventFilter(self)
         if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
             self._chat_process.terminate()
             if not self._chat_process.waitForFinished(1000):
