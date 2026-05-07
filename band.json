@@ -1,0 +1,33 @@
+{
+  "bands": [
+    {
+      "id": "poppin_party",
+      "display": "Poppin'Party",
+      "logo": "band_logo/poppinparty.png",
+      "characters": ["kasumi", "tae", "rimi", "saaya", "arisa"]
+    },
+    {
+      "id": "roselia",
+      "display": "Roselia",
+      "logo": "band_logo/roselia.png",
+      "characters": ["yukina"]
+    },
+    {
+      "id": "mygo",
+      "display": "MyGO!!!!!",
+      "logo": "band_logo/mygo.png",
+      "characters": ["tomorin", "anon", "rana", "soyo", "taki"]
+    },
+    {
+      "id": "ave_mujica",
+      "display": "Ave Mujica",
+      "logo": "band_logo/avemujica.png",
+      "characters": ["sakiko", "mutsumi", "uika", "umiri", "nyamu"]
+    },
+    {
+      "id": "others",
+      "display": "其他角色",
+      "characters": ["mana", "mahoro", "natsume", "hotaru", "houka", "nagi"]
+    }
+  ]
+}

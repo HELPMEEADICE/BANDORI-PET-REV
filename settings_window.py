@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation
-from PySide6.QtGui import QFont, QColor, QPalette
+from PySide6.QtGui import QFont, QColor, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
@@ -34,15 +34,29 @@ def _theme_color(key: str) -> QColor:
 class CharacterCard(CardWidget):
     char_selected = Signal(str)
 
-    def __init__(self, char_key: str, display_name: str, costume_count: int, parent=None):
+    def __init__(self, char_key: str, display_name: str, costume_count: int,
+                 image_path: str = "", parent=None):
         super().__init__(parent)
         self._char_key = char_key
-        self.setFixedSize(180, 120)
+        self.setFixedSize(220, 360)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
+
+        image = QPixmap(image_path) if image_path else QPixmap()
+        if not image.isNull():
+            image_label = QLabel(self)
+            image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            image_label.setPixmap(
+                image.scaled(
+                    188, 260,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            layout.addWidget(image_label, 1)
 
         name_label = StrongBodyLabel(display_name, self)
         name_label.setWordWrap(True)
@@ -80,6 +94,71 @@ class CharacterCard(CardWidget):
 
     def _on_card_clicked(self):
         self.char_selected.emit(self._char_key)
+
+
+class BandCard(CardWidget):
+    band_selected = Signal(str)
+
+    def __init__(self, band_id: str, display_name: str, character_count: int,
+                 logo_path: str = "", parent=None):
+        super().__init__(parent)
+        self._band_id = band_id
+        self.setFixedSize(180, 120)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(4)
+
+        name_label = StrongBodyLabel(display_name, self)
+        name_label.setWordWrap(True)
+        layout.addWidget(name_label)
+
+        self._count_label = BodyLabel(_tr("character_count", count=character_count), self)
+        self._count_label.setStyleSheet(self._count_label_style())
+        layout.addWidget(self._count_label)
+
+        logo = QPixmap(logo_path) if logo_path else QPixmap()
+        if not logo.isNull():
+            logo_label = QLabel(self)
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            logo_label.setPixmap(
+                logo.scaled(
+                    142, 36,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            layout.addWidget(logo_label)
+
+        layout.addStretch()
+        self.clicked.connect(self._on_card_clicked)
+        qconfig.themeChanged.connect(self._update_count_label_style)
+
+    def animate_in(self, delay_ms: int = 0):
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.0)
+        self.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(300)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.setGraphicsEffect(None))
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, anim.start)
+        else:
+            anim.start()
+
+    @staticmethod
+    def _count_label_style():
+        return f"color: {'#999999' if isDarkTheme() else '#888888'};"
+
+    def _update_count_label_style(self):
+        self._count_label.setStyleSheet(self._count_label_style())
+
+    def _on_card_clicked(self):
+        self.band_selected.emit(self._band_id)
 
 
 class CostumeItem(QPushButton):
@@ -236,7 +315,9 @@ class SettingsWindow(QWidget):
         self._fps = current_fps
         self._opacity = current_opacity
         self._costume_buttons: list[CostumeItem] = []
+        self._selection_cards: list[CardWidget] = []
         self._selected_costume = ""
+        self._selected_band = model_manager.get_character_band(self._current_char)
         self._show_launch = show_launch
         self._start_on_costumes = start_on_costumes
         self._theme_widgets: list[QWidget] = []
@@ -269,6 +350,8 @@ class SettingsWindow(QWidget):
             self._costume_subtitle.setText(_tr("SettingsWindow.costume_subtitle", display=display))
             self._char_page.hide()
             self._costume_page.show()
+        else:
+            self._populate_bands()
 
     def _on_language_changed(self, index: int):
         lang = self._lang_combo.itemData(index)
@@ -447,6 +530,8 @@ class SettingsWindow(QWidget):
                 continue
             page.setVisible(key == nav_key)
         self._costume_page.hide()
+        if nav_key == "characters":
+            self._populate_bands()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -490,50 +575,101 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        title = TitleLabel(_tr("SettingsWindow.char_title"), page)
-        layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr("SettingsWindow.char_subtitle"), page)
-        layout.addWidget(subtitle)
+        top_row = QHBoxLayout()
+        self._selection_back_btn = PushButton(FluentIcon.LEFT_ARROW, _tr("SettingsWindow.band_back"), page)
+        self._selection_back_btn.clicked.connect(self._go_back_to_bands)
+        top_row.addWidget(self._selection_back_btn)
+        top_row.addStretch()
+        self._selection_title = TitleLabel(_tr("SettingsWindow.band_title"), page)
+        top_row.addWidget(self._selection_title)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        self._selection_subtitle = SubtitleLabel(_tr("SettingsWindow.band_subtitle"), page)
+        layout.addWidget(self._selection_subtitle)
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         grid_widget = self._make_theme_widget(QWidget())
         self._char_grid = QGridLayout(grid_widget)
         self._char_grid.setSpacing(12)
         self._char_grid.setContentsMargins(0, 8, 0, 0)
+        cols_per_row = 3
+        for c in range(cols_per_row):
+            self._char_grid.setColumnStretch(c, 0)
+        self._selection_grid_widget = grid_widget
+        self._selection_back_btn.hide()
 
-        chars = self._model_manager.characters
+        scroll.setWidget(grid_widget)
+        layout.addWidget(scroll, 1)
+        return page
+
+    def _clear_selection_cards(self):
+        for card in self._selection_cards:
+            self._char_grid.removeWidget(card)
+            card.deleteLater()
+        self._selection_cards.clear()
+
+    def _populate_bands(self):
+        self._clear_selection_cards()
+        self._selected_band = ""
+        self._selection_back_btn.hide()
+        self._selection_title.setText(_tr("SettingsWindow.band_title"))
+        self._selection_subtitle.setText(_tr("SettingsWindow.band_subtitle"))
+
         col = 0
         row = 0
         cols_per_row = 3
         card_idx = 0
-
-        for char_key in chars:
-            costumes = self._model_manager.get_costumes(char_key)
-            if not costumes:
+        for band in self._model_manager.bands:
+            characters = band.get("characters", [])
+            if not characters:
                 continue
-            display = self._model_manager.get_display_name(char_key)
-            card = CharacterCard(char_key, display, len(costumes), grid_widget)
-            card.char_selected.connect(self._on_char_selected)
+            card = BandCard(
+                band.get("id", ""), band.get("display", ""),
+                len(characters), band.get("logo", ""), self._selection_grid_widget
+            )
+            card.band_selected.connect(self._on_band_selected)
             card.animate_in(delay_ms=card_idx * 80)
             self._char_grid.addWidget(card, row, col)
+            self._selection_cards.append(card)
             col += 1
             card_idx += 1
             if col >= cols_per_row:
                 col = 0
                 row += 1
 
-        self._char_grid.setColumnStretch(cols_per_row - 1, 0)
-        for c in range(cols_per_row):
-            self._char_grid.setColumnStretch(c, 0)
+    def _populate_characters(self, band_id: str):
+        self._clear_selection_cards()
+        self._selected_band = band_id
+        self._selection_back_btn.show()
+        band_display = self._model_manager.get_band_display_name(band_id)
+        self._selection_title.setText(_tr("SettingsWindow.char_title"))
+        self._selection_subtitle.setText(_tr("SettingsWindow.char_subtitle_with_band", band=band_display))
 
-        scroll.setWidget(grid_widget)
-        layout.addWidget(scroll, 1)
-        return page
+        col = 0
+        row = 0
+        card_idx = 0
+        for char_key in self._model_manager.get_band_characters(band_id):
+            costumes = self._model_manager.get_costumes(char_key)
+            if not costumes:
+                continue
+            display = self._model_manager.get_display_name(char_key)
+            image_path = self._model_manager.get_character_image_path(char_key)
+            card = CharacterCard(
+                char_key, display, len(costumes), image_path,
+                self._selection_grid_widget
+            )
+            card.char_selected.connect(self._on_char_selected)
+            card.animate_in(delay_ms=card_idx * 80)
+            self._char_grid.addWidget(card, row, col)
+            self._selection_cards.append(card)
+            col += 1
+            card_idx += 1
 
     def _build_costume_page(self):
         page = self._make_theme_widget(QWidget())
@@ -1011,6 +1147,7 @@ class SettingsWindow(QWidget):
 
     def _on_char_selected(self, char_key: str):
         self._current_char = char_key
+        self._selected_band = self._model_manager.get_character_band(char_key)
         self._populate_costumes(char_key)
         display = self._model_manager.get_display_name(char_key)
         self._costume_title.setText(_tr("SettingsWindow.costumes_title", display=display))
@@ -1020,6 +1157,9 @@ class SettingsWindow(QWidget):
         self._char_page.hide()
         self._costume_page.show()
         self._current_page = "costumes"
+
+    def _on_band_selected(self, band_id: str):
+        self._populate_characters(band_id)
 
     def _populate_costumes(self, char_key: str):
         for btn in self._costume_buttons:
@@ -1055,9 +1195,17 @@ class SettingsWindow(QWidget):
         self._costume_page.hide()
         self._char_page.show()
         self._current_page = "characters"
+        band_id = self._selected_band or self._model_manager.get_character_band(self._current_char)
+        if band_id:
+            self._populate_characters(band_id)
+        else:
+            self._populate_bands()
         for key, btn in self._nav_buttons.items():
             btn.setChecked(key == "characters")
         self._animate_indicator("characters")
+
+    def _go_back_to_bands(self):
+        self._populate_bands()
 
     def _on_vsync_changed(self, checked: bool):
         self._vsync = checked
