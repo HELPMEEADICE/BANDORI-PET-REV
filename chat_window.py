@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QVariantAnimation
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QKeyEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -423,6 +423,9 @@ class ChatWindow(QWidget):
         self._stream_flush_timer.setInterval(28)
         self._stream_flush_timer.timeout.connect(self._flush_stream_text)
         self._composer_colors = {}
+        self._closing = False
+        self._close_animating = False
+        self._window_anim = None
 
         self._display_name = model_manager.get_display_name(character)
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
@@ -454,19 +457,73 @@ class ChatWindow(QWidget):
         super().showEvent(event)
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
-            QTimer.singleShot(30, self._play_entrance)
+            QTimer.singleShot(0, self._play_entrance)
 
     def _play_entrance(self):
-        effect = QGraphicsOpacityEffect(self)
-        effect.setOpacity(0.0)
-        self.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"opacity", self)
-        anim.setDuration(250)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: self.setGraphicsEffect(None))
-        anim.start()
+        target = self.geometry()
+        start = self._scaled_geometry(target, 0.94)
+        self.setWindowOpacity(0.0)
+        self.setGeometry(start)
+
+        group = QParallelAnimationGroup(self)
+        opacity = QPropertyAnimation(self, b"windowOpacity")
+        opacity.setDuration(180)
+        opacity.setStartValue(0.0)
+        opacity.setEndValue(1.0)
+        opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(opacity)
+
+        geometry = QPropertyAnimation(self, b"geometry")
+        geometry.setDuration(220)
+        geometry.setStartValue(start)
+        geometry.setEndValue(target)
+        geometry.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(geometry)
+
+        self._window_anim = group
+        group.start()
+
+    def _play_close_animation(self):
+        if self._close_animating:
+            return
+        self._close_animating = True
+        start = self.geometry()
+        end = self._scaled_geometry(start, 0.96)
+
+        group = QParallelAnimationGroup(self)
+        opacity = QPropertyAnimation(self, b"windowOpacity")
+        opacity.setDuration(140)
+        opacity.setStartValue(self.windowOpacity())
+        opacity.setEndValue(0.0)
+        opacity.setEasingCurve(QEasingCurve.Type.InCubic)
+        group.addAnimation(opacity)
+
+        geometry = QPropertyAnimation(self, b"geometry")
+        geometry.setDuration(160)
+        geometry.setStartValue(start)
+        geometry.setEndValue(end)
+        geometry.setEasingCurve(QEasingCurve.Type.InCubic)
+        group.addAnimation(geometry)
+
+        group.finished.connect(self._finish_animated_close)
+        self._window_anim = group
+        group.start()
+
+    @staticmethod
+    def _scaled_geometry(rect: QRect, scale: float) -> QRect:
+        width = max(1, int(rect.width() * scale))
+        height = max(1, int(rect.height() * scale))
+        return QRect(
+            rect.center().x() - width // 2,
+            rect.center().y() - height // 2,
+            width,
+            height,
+        )
+
+    def _finish_animated_close(self):
+        self._closing = True
+        self._close_animating = False
+        self.close()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -1140,6 +1197,10 @@ class ChatWindow(QWidget):
         self.move(x, y)
 
     def closeEvent(self, event):
+        if not self._closing:
+            event.ignore()
+            self._play_close_animation()
+            return
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(2000)
