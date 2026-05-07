@@ -489,6 +489,7 @@ class PetWindow(QWidget):
                     onFinishMotionHandler=self._on_motion_finished,
                 )
                 QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
+                QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
             except Exception:
                 try:
                     self._motion_guard_token += 1
@@ -498,6 +499,7 @@ class PetWindow(QWidget):
                         onFinishMotionHandler=self._on_motion_finished,
                     )
                     QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
+                    QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
                 except Exception:
                     pass
 
@@ -523,37 +525,89 @@ class PetWindow(QWidget):
                 onFinishMotionHandler=self._on_motion_finished,
             )
             QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
+            QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
         except Exception:
             pass
 
     def _on_motion_finished(self, *_args):
         self._motion_guard_token += 1
-        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t))
+        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
 
     def _clear_motion_if_current(self, token: int):
         if token != self._motion_guard_token:
             return
         self._motion_guard_token += 1
-        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t))
+        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True))
 
-    def _restore_default_motion(self, token: int):
+    def _restore_default_motion(self, token: int, force_clear: bool = False):
+        if token != self._motion_guard_token:
+            return
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        if force_clear:
+            try:
+                model.ClearMotions()
+            except Exception:
+                pass
+            QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=False))
+        else:
+            self._start_idle_motion_if_current(token, smooth=True)
+
+    def _start_idle_motion_if_current(self, token: int, smooth: bool):
+        if token != self._motion_guard_token:
+            return
+        self._start_idle_motion(smooth=smooth)
+
+    def _restore_default_if_finished(self, token: int):
         if token != self._motion_guard_token:
             return
         model = self._live2d_widget.model
         if model is None:
             return
         try:
-            model.ClearMotions()
+            if not model.IsMotionFinished():
+                QTimer.singleShot(500, lambda t=token: self._restore_default_if_finished(t))
+                return
         except Exception:
             pass
-        self._start_idle_motion()
+        self._motion_guard_token += 1
+        self._restore_default_motion(self._motion_guard_token, force_clear=False)
 
-    def _start_idle_motion(self):
+    def _start_idle_motion(self, smooth: bool):
         model = self._live2d_widget.model
         if model is None:
             return
         try:
-            model.StartIdleMotion()
+            motion_names = list(model.modelSetting.getMotionNames())
+        except Exception:
+            motion_names = []
+        idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
+        if idle_names:
+            idle_name = random.choice(idle_names)
+            priority = self._live2d.MotionPriority.NORMAL if smooth else self._live2d.MotionPriority.FORCE
+            try:
+                model.StartRandomMotion(
+                    idle_name,
+                    priority=priority,
+                )
+            except Exception:
+                try:
+                    model.StartMotion(
+                        idle_name,
+                        0,
+                        self._live2d.MotionPriority.FORCE,
+                    )
+                except Exception:
+                    pass
+        else:
+            try:
+                model.ClearMotions()
+            except Exception:
+                pass
+        try:
+            if hasattr(model, "ResetExpression"):
+                model.ResetExpression()
         except Exception:
             pass
         try:
