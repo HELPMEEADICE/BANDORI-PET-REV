@@ -394,10 +394,19 @@ class Live2DWidget(QOpenGLWidget):
         if self._alpha_near(x, y) > self._hit_alpha_threshold:
             return True
         if self._alpha_readback_broken:
-            margin_x = self._cache_w * 0.12
-            margin_top = self._cache_h * 0.08
-            return (margin_x <= x < self._cache_w - margin_x
-                    and margin_top <= y < self._cache_h)
+            # Drivers with broken alpha readback (AMD on Qt6 + DWM): use an
+            # ellipse approximating the typical Live2D character silhouette.
+            # Less precise than per-pixel alpha, but lets the widget corners
+            # remain click-through to whatever's behind the pet.
+            cx = self._cache_w * 0.5
+            cy = self._cache_h * 0.55
+            rx = self._cache_w * 0.30
+            ry = self._cache_h * 0.45
+            if rx <= 0 or ry <= 0:
+                return False
+            nx = (x - cx) / rx
+            ny = (y - cy) / ry
+            return nx * nx + ny * ny <= 1.0
         return False
 
     def _alpha_near(self, x: float, y: float) -> int:
