@@ -19,7 +19,15 @@ def _get_display_refresh():
 
 
 class Live2DWidget(QOpenGLWidget):
-    def __init__(self, parent=None):
+    @staticmethod
+    def configure_default_surface_format():
+        """Apply the OpenGL surface format Live2D requires.
+
+        Must be called before QApplication is constructed so the global shared
+        GL context (created when AA_ShareOpenGLContexts is set) gets the
+        correct alpha/stencil buffers. Otherwise shader linking can fail with
+        GL_INVALID_OPERATION on glGetAttribLocation.
+        """
         fmt = QSurfaceFormat()
         fmt.setAlphaBufferSize(8)
         fmt.setSamples(4)
@@ -28,6 +36,7 @@ class Live2DWidget(QOpenGLWidget):
         fmt.setSwapInterval(0)
         QSurfaceFormat.setDefaultFormat(fmt)
 
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._model = None
         self._live2d = None

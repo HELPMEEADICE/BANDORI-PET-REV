@@ -17,6 +17,7 @@ from qfluentwidgets import Theme, setTheme
 import live2d.v2 as live2d
 from config_manager import ConfigManager
 from i18n_manager import current_language, detect_system_language, set_language
+from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from pet_window import PetWindow
 from platform_patch import PatchedPlatformManager
@@ -52,6 +53,7 @@ def main():
 
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+    Live2DWidget.configure_default_surface_format()
     app = QApplication(sys.argv)
     app.setApplicationName(f"BandoriPet-{args.character}")
     app.setOrganizationName("BandoriPet")
