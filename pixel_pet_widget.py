@@ -124,7 +124,7 @@ class PixelPetWidget(QWidget):
     def _restart_anim_timer(self):
         anim = self._frames.get(self._animation, {})
         fps = max(1, int(anim.get("fps", 8) or 8))
-        self._anim_timer.start(max(1, int(1000 / fps) * 3))
+        self._anim_timer.start(max(1, int(1000 / fps)))
 
     def _advance_frame(self):
         anim = self._frames.get(self._animation, {})

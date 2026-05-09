@@ -217,13 +217,13 @@ class RadialMenu(QWidget):
         if self._is_showing:
             return
 
-        self._center = center
-        self._is_showing = True
-        self._set_center_reveal_value(0.0)
-
         n = len(self._items)
         if n == 0:
             return
+
+        self._center = center
+        self._is_showing = True
+        self._set_center_reveal_value(0.0)
 
         total_w = self._radius * 2 + 80 * 2
         total_h = self._radius * 2 + 80 * 2

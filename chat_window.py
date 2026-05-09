@@ -1180,6 +1180,13 @@ class ChatWindow(QWidget):
         self._load_messages()
 
     def _new_conversation(self):
+        if self._worker and self._worker.isRunning():
+            return
+        self._stream_flush_timer.stop()
+        self._stream_buffer = ""
+        self._visible_stream_text = ""
+        self._reasoning_stream_text = ""
+        self._current_bubble = None
         self._clear_message_widgets()
         self._conv_id = None
 

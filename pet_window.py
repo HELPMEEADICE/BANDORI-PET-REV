@@ -230,6 +230,9 @@ class PetWindow(QWidget):
 
     def closeEvent(self, event):
         self._save_config()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def _schedule_position_save(self):

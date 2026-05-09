@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 from pathlib import Path
 from process_utils import app_base_dir
 
@@ -54,8 +56,27 @@ class ConfigManager:
                 pass
 
     def save(self):
-        with open(self._path, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2, ensure_ascii=False)
+        # Atomic write: write to a temp file in the same directory, fsync,
+        # then os.replace into place. Avoids losing all settings (including
+        # llm_api_key) if the process is killed mid-write.
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=self._path.name + ".",
+            suffix=".tmp",
+            dir=str(self._path.parent),
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self._path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def get(self, key, default=None):
         return self._data.get(key, default)

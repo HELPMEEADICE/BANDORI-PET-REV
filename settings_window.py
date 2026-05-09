@@ -731,6 +731,9 @@ class SettingsWindow(QWidget):
         else:
             self._save_llm_config()
         self._cleanup_workers()
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def eventFilter(self, watched, event):
