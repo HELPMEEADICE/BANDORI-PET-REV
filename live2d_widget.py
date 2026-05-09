@@ -383,7 +383,7 @@ class Live2DWidget(QOpenGLWidget):
                     return True
             except Exception:
                 pass
-        if self._get_alpha_fast(x, y) > 8:
+        if self._alpha_near(x, y) > self._hit_alpha_threshold:
             return True
         if self._alpha_readback_broken:
             margin_x = self._cache_w * 0.12
@@ -391,6 +391,14 @@ class Live2DWidget(QOpenGLWidget):
             return (margin_x <= x < self._cache_w - margin_x
                     and margin_top <= y < self._cache_h)
         return False
+
+    def _alpha_near(self, x: float, y: float) -> int:
+        alpha = 0
+        for dx, dy in self._hit_probe_offsets:
+            alpha = max(alpha, self._get_alpha_fast(x + dx, y + dy))
+            if alpha > self._hit_alpha_threshold:
+                break
+        return alpha
 
     def _get_alpha_fast(self, x: float, y: float) -> int:
         if not self._initialized_gl or not self._model:
