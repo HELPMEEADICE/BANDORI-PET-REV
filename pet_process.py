@@ -20,7 +20,7 @@ from i18n_manager import current_language, detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from pet_window import PetWindow
-from platform_patch import PatchedPlatformManager
+from platform_patch import PatchedPlatformManager, patch_live2d_shader_compat
 
 
 def _parse_args():
@@ -46,6 +46,7 @@ def main():
     cfg = ConfigManager()
     set_language(cfg.get("language", "") or detect_system_language())
 
+    patch_live2d_shader_compat()
     live2d.init()
     live2d.Live2DFramework.setPlatformManager(
         PatchedPlatformManager(live2d.Live2DFramework.getPlatformManager())

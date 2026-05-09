@@ -8,6 +8,43 @@ BASE_DIR = str(app_base_dir())
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 
 
+def patch_live2d_shader_compat():
+    """Patch live2d-py V2 fragment shaders to compile on strict GLSL drivers.
+
+    Live2D V2's bundled fragment shader source uses ``#version 120`` together
+    with ``precision mediump float;``. The latter is GLSL ES syntax and is not
+    valid in desktop GLSL 1.20. NVIDIA drivers silently accept it as an
+    extension; AMD drivers (and likely Intel on Mesa) reject it strictly,
+    causing the fragment shader to fail compilation, the program to fail
+    linking, and the next ``glGetAttribLocation`` to raise GL_INVALID_OPERATION
+    on startup.
+
+    Bumping the directive to ``#version 130`` keeps ``varying`` /
+    ``gl_FragColor`` / ``texture2D`` (compatibility profile keeps these) while
+    making ``precision`` qualifiers valid, so all three vendors compile.
+    Idempotent — safe to call multiple times. Must be called before
+    ``live2d.init()``.
+    """
+    try:
+        from live2d.v2.core.graphics import draw_param_opengl as _dpgl
+    except Exception:
+        return  # live2d-py not on path yet; caller should retry post-init
+
+    cls = getattr(_dpgl, "DrawParamOpenGL", None)
+    if cls is None or getattr(cls, "_bandori_shader_compat_patched", False):
+        return
+
+    original = cls.compileShader
+
+    def _compileShader_compat(self, shader_type, source):
+        if isinstance(source, str) and "#version 120" in source and "precision mediump" in source:
+            source = source.replace("#version 120", "#version 130", 1)
+        return original(self, shader_type, source)
+
+    cls.compileShader = _compileShader_compat
+    cls._bandori_shader_compat_patched = True
+
+
 def _bleed_transparent_edges(image: Image.Image, passes: int = 2) -> Image.Image:
     pixels = image.load()
     width, height = image.size

@@ -76,6 +76,16 @@ class Live2DWidget(QOpenGLWidget):
         # 极限优化：预分配底层 C 内存
         self._pixel_buf = (ctypes.c_ubyte * 4)()
 
+        # alpha 缓存（在 paintGL 内填充）。某些驱动（已知 AMD on Qt6）的 QOpenGLWidget
+        # FBO 在 paintGL 之外读到的 alpha 通道全是 0，无法可靠 hit-test。我们在 paintGL
+        # 里把整张 RGBA 拷到内存，hit-test 直接 CPU 查表，规避驱动差异。
+        self._alpha_cache = None
+        self._alpha_cache_w = 0
+        self._alpha_cache_h = 0
+        # 启动时由 initializeGL 检测：alpha buffer 完全坏掉时，跳过 alpha 路径，
+        # 用矩形 fallback 维持基本可交互性。
+        self._alpha_readback_broken = False
+
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -196,6 +206,13 @@ class Live2DWidget(QOpenGLWidget):
             self._live2d.glInit()
         self._system_scale = QGuiApplication.primaryScreen().devicePixelRatio()
         self._initialized_gl = True
+
+        try:
+            vendor_raw = gl.glGetString(gl.GL_VENDOR) or b""
+            vendor = vendor_raw.decode("utf-8", errors="ignore").upper()
+            self._alpha_readback_broken = "AMD" in vendor or "ATI" in vendor
+        except Exception:
+            self._alpha_readback_broken = False
         
         self._cache_w = self.width()
         self._cache_h = self.height()
@@ -244,6 +261,22 @@ class Live2DWidget(QOpenGLWidget):
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
         model.Update()
         model.Draw()
+
+        if not self._alpha_readback_broken:
+            pw = max(1, int(self._cache_w * self._system_scale))
+            ph = max(1, int(self._cache_h * self._system_scale))
+            if (self._alpha_cache is None
+                    or self._alpha_cache_w != pw
+                    or self._alpha_cache_h != ph):
+                self._alpha_cache = (ctypes.c_ubyte * (pw * ph * 4))()
+                self._alpha_cache_w = pw
+                self._alpha_cache_h = ph
+            try:
+                gl.glReadPixels(0, 0, pw, ph, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
+                                self._alpha_cache)
+            except Exception:
+                pass
+
         if self._static_render:
             self._static_render_done = True
 
@@ -341,28 +374,35 @@ class Live2DWidget(QOpenGLWidget):
         return self._is_model_hit_at(local.x(), local.y())
 
     def _is_model_hit_at(self, x: float, y: float) -> bool:
-        model = self._model
-        if not model:
+        if x < 0 or y < 0 or x >= self._cache_w or y >= self._cache_h:
             return False
-        try:
-            if hasattr(model, "HitPart"):
-                return bool(model.HitPart(x, y, topOnly=True))
-        except Exception:
-            pass
-        return self._get_alpha_fast(x, y) > 8
+        model = self._model
+        if model and hasattr(model, "HitPart"):
+            try:
+                if bool(model.HitPart(x, y, topOnly=True)):
+                    return True
+            except Exception:
+                pass
+        if self._get_alpha_fast(x, y) > 8:
+            return True
+        if self._alpha_readback_broken:
+            margin_x = self._cache_w * 0.12
+            margin_top = self._cache_h * 0.08
+            return (margin_x <= x < self._cache_w - margin_x
+                    and margin_top <= y < self._cache_h)
+        return False
 
     def _get_alpha_fast(self, x: float, y: float) -> int:
         if not self._initialized_gl or not self._model:
             return 0
         if x < 0 or y < 0 or x >= self._cache_w or y >= self._cache_h:
             return 0
-            
-        try:
-            self._safe_make_current()
-            sx = int(x * self._system_scale)
-            sy = int((self._cache_h - y) * self._system_scale)
-            
-            gl.glReadPixels(sx, sy, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, self._pixel_buf)
-            return self._pixel_buf[3]
-        except Exception:
+        cache = self._alpha_cache
+        if cache is None or self._alpha_cache_w == 0:
             return 0
+        sx = int(x * self._system_scale)
+        sy = int((self._cache_h - y) * self._system_scale)
+        if sx < 0 or sx >= self._alpha_cache_w or sy < 0 or sy >= self._alpha_cache_h:
+            return 0
+        idx = (sy * self._alpha_cache_w + sx) * 4 + 3
+        return cache[idx]

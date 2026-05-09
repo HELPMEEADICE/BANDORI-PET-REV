@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from qfluentwidgets import setTheme, Theme
 
 import live2d.v2 as live2d
-from platform_patch import PatchedPlatformManager
+from platform_patch import PatchedPlatformManager, patch_live2d_shader_compat
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from config_manager import ConfigManager
@@ -32,6 +32,7 @@ def main():
         lang = detect_system_language()
     set_language(lang)
 
+    patch_live2d_shader_compat()
     live2d.init()
 
     live2d.Live2DFramework.setPlatformManager(

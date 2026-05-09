@@ -145,7 +145,7 @@ class PetWindow(QWidget):
         self._stack.addWidget(self._pixel_widget)
 
     def nativeEvent(self, event_type, message):
-        if os.name == "nt":
+        if os.name == "nt" and not getattr(self._live2d_widget, "_alpha_readback_broken", False):
             try:
                 msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == WM_NCHITTEST:
@@ -199,6 +199,9 @@ class PetWindow(QWidget):
 
     def _update_mouse_passthrough(self):
         if os.name != "nt" or not self.isVisible():
+            return
+        if getattr(self._live2d_widget, "_alpha_readback_broken", False):
+            self._set_mouse_passthrough(False)
             return
         if self._live2d_widget._dragging or self._pixel_widget._dragging:
             return
