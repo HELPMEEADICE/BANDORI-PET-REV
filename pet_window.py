@@ -966,7 +966,10 @@ class PetWindow(QWidget):
         screen = QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
-            self.move(geo.right() - self.width() - 20, geo.bottom() - self.height() - 40)
+            self.move(
+                geo.left() + (geo.width() - self.width()) // 2,
+                geo.top() + (geo.height() - self.height()) // 2,
+            )
         self._show_pos_set = True
         self._play_entrance()
 

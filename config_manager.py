@@ -37,6 +37,16 @@ DEFAULTS = {
     "llm_show_reasoning": True,
 }
 
+MODEL_DEFAULTS = {
+    "window_x": -1,
+    "window_y": -1,
+    "window_width": 400,
+    "window_height": 500,
+    "pixel_window_x": -1,
+    "pixel_window_y": -1,
+    "pet_mode": "live2d",
+}
+
 
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
@@ -54,6 +64,31 @@ class ConfigManager:
                         self._data[k] = loaded[k]
             except (json.JSONDecodeError, OSError):
                 pass
+        self._normalize_models()
+
+    def _normalize_models(self):
+        models = self._data.get("models", [])
+        if not isinstance(models, list):
+            self._data["models"] = []
+            return
+
+        normalized = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            character = item.get("character", "")
+            costume = item.get("costume", "")
+            if not character or not costume:
+                continue
+            entry = dict(MODEL_DEFAULTS)
+            entry.update(item)
+            normalized.append(entry)
+
+        self._data["models"] = normalized
+        if normalized and not (self._data.get("character") and self._data.get("costume")):
+            first = normalized[0]
+            self._data["character"] = first["character"]
+            self._data["costume"] = first["costume"]
 
     def save(self):
         # Atomic write: write to a temp file in the same directory, fsync,

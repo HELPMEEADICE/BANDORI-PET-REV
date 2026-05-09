@@ -625,7 +625,7 @@ class SettingsWindow(QWidget):
         self._model_manager = model_manager
         self._live2d = live2d_module
         characters = model_manager.characters
-        self._current_char = current_char or (characters[0] if characters else "")
+        self._current_char = current_char or (characters[0] if start_on_costumes and characters else "")
         self._current_costume = current_costume
         self._fps = current_fps
         self._opacity = current_opacity
@@ -1848,6 +1848,16 @@ class SettingsWindow(QWidget):
     def _save_configured_models(self):
         if not self._cfg:
             return
+        selected = self._selected_model_item()
+        if selected:
+            self._cfg.set("character", selected["character"])
+            self._cfg.set("costume", selected["costume"])
+        elif self._configured_models:
+            self._cfg.set("character", self._configured_models[0]["character"])
+            self._cfg.set("costume", self._configured_models[0]["costume"])
+        else:
+            self._cfg.set("character", "")
+            self._cfg.set("costume", "")
         self._cfg.set("models", [dict(item) for item in self._configured_models])
         self._cfg.save()
 
@@ -1909,7 +1919,27 @@ class SettingsWindow(QWidget):
         path = self._model_manager.get_model_json_path(character, costume)
         if not path:
             return
-        entry = {"character": character, "costume": costume, "path": path}
+        window_width = 400
+        window_height = 500
+        window_x = -1
+        window_y = -1
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            window_x = geo.left() + (geo.width() - window_width) // 2
+            window_y = geo.top() + (geo.height() - window_height) // 2
+        entry = {
+            "character": character,
+            "costume": costume,
+            "path": path,
+            "window_x": window_x,
+            "window_y": window_y,
+            "window_width": window_width,
+            "window_height": window_height,
+            "pixel_window_x": -1,
+            "pixel_window_y": -1,
+            "pet_mode": "live2d",
+        }
         for idx, item in enumerate(self._configured_models):
             if item["character"] == character:
                 preserved = dict(item)
@@ -2029,6 +2059,16 @@ class SettingsWindow(QWidget):
         if selected:
             self._current_char = selected["character"]
             self._selected_costume = selected["costume"]
+        if self._show_launch and not (self._current_char and self._selected_costume):
+            self._launched = False
+            InfoBar.warning(
+                "请选择 Live2D 模型",
+                "首次启动前需要先选择角色和服装。",
+                duration=2500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)
         self.settings_changed.emit({

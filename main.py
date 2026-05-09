@@ -253,18 +253,14 @@ def main():
         and char in mgr.characters
         and ModelManager.get_model_json_path(char, costume)
     )
-
-    if not model_valid:
-        if mgr.characters:
-            char = mgr.characters[0]
-            costume = mgr.get_default_costume(char)
+    has_configured_models = bool(configured_models())
 
     init_tray()
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(close_pet_processes)
 
-    if configured_models() or model_valid:
+    if has_configured_models or model_valid:
         pet_window_ref["char"] = char
         pet_window_ref["costume"] = costume
         pet_window_ref["vsync"] = cfg.get("vsync", True)
