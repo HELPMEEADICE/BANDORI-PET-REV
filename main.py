@@ -2,7 +2,7 @@ import sys
 import os
 import json
 
-from process_utils import app_base_dir, process_program_and_args
+from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 
 BASE_DIR = str(app_base_dir())
 
@@ -11,11 +11,18 @@ if LIVE2D_PACKAGE not in sys.path:
     sys.path.insert(0, LIVE2D_PACKAGE)
 
 from PySide6.QtCore import Qt, QProcess
+from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from qfluentwidgets import setTheme, Theme
+from fluent_silencer import import_qfluentwidgets
+
+_qfluentwidgets = import_qfluentwidgets(lambda: __import__(
+    "qfluentwidgets", fromlist=["setTheme", "Theme"]
+))
+setTheme = _qfluentwidgets.setTheme
+Theme = _qfluentwidgets.Theme
 
 import live2d.v2 as live2d
 from platform_patch import PatchedPlatformManager
@@ -54,6 +61,7 @@ def main():
 
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
+    ipc_ref = {"clients": []}
 
     char = cfg.get("character", "")
     costume = cfg.get("costume", "")
@@ -79,10 +87,41 @@ def main():
         tray_icon.show()
 
     def quit_all():
-        close_pet_processes()
+        notify_chat_processes_shutdown()
+        close_pet_processes(force=True)
+        close_settings_process(force=True)
         if tray_icon is not None:
             tray_icon.hide()
         app.quit()
+
+    def init_ipc_server():
+        name = ipc_server_name()
+        QLocalServer.removeServer(name)
+        server = QLocalServer(app)
+
+        def accept_clients():
+            while server.hasPendingConnections():
+                socket = server.nextPendingConnection()
+                ipc_ref["clients"].append(socket)
+                socket.disconnected.connect(lambda s=socket: remove_ipc_client(s))
+
+        server.newConnection.connect(accept_clients)
+        if server.listen(name):
+            ipc_ref["server"] = server
+
+    def remove_ipc_client(socket):
+        clients = ipc_ref.get("clients", [])
+        if socket in clients:
+            clients.remove(socket)
+        socket.deleteLater()
+
+    def notify_chat_processes_shutdown():
+        for socket in list(ipc_ref.get("clients", [])):
+            if not isValid(socket) or not socket.isOpen():
+                continue
+            socket.write(b"SHUTDOWN\n")
+            socket.flush()
+            socket.waitForBytesWritten(100)
 
     def configured_models():
         models = cfg.get("models", [])
@@ -114,7 +153,7 @@ def main():
         cfg.set("language", current_language())
         cfg.save()
 
-    def close_pet_processes():
+    def close_pet_processes(force=False):
         for process in list(pet_window_ref.get("processes", [])):
             if not isValid(process):
                 continue
@@ -123,14 +162,44 @@ def main():
             except RuntimeError:
                 pass
             if process.state() != QProcess.ProcessState.NotRunning:
-                process.terminate()
-                if not process.waitForFinished(1500):
+                if force:
                     process.kill()
+                    process.waitForFinished(0)
+                else:
+                    process.terminate()
+                    if not process.waitForFinished(100):
+                        process.kill()
         pet_window_ref["processes"] = []
 
-    def on_model_selected(char, costume):
-        pet_window_ref["char"] = char
-        pet_window_ref["costume"] = costume
+    def close_settings_process(force=False):
+        process = settings_process_ref.get("process")
+        if process is None or not isValid(process):
+            settings_process_ref.pop("process", None)
+            settings_process_ref.pop("stdout_buffer", None)
+            return
+        try:
+            process.finished.disconnect()
+        except RuntimeError:
+            pass
+        if process.state() != QProcess.ProcessState.NotRunning:
+            if force:
+                process.kill()
+                process.waitForFinished(0)
+            else:
+                process.terminate()
+                if not process.waitForFinished(1000):
+                    process.kill()
+        settings_process_ref.pop("process", None)
+        settings_process_ref.pop("stdout_buffer", None)
+
+    def on_model_selected(selected_char, selected_costume, relaunch=False):
+        nonlocal char, costume
+        char = selected_char
+        costume = selected_costume
+        pet_window_ref["char"] = selected_char
+        pet_window_ref["costume"] = selected_costume
+        if relaunch:
+            launch_pet()
 
     def on_settings_changed(data):
         pet_window_ref["fps"] = data.get("fps", 120)
@@ -138,12 +207,14 @@ def main():
         pet_window_ref["dark"] = data.get("dark_theme", False)
         pet_window_ref["vsync"] = data.get("vsync", True)
         pet_window_ref["live2d_quality"] = data.get("live2d_quality", "balanced")
+        pet_window_ref["live2d_scale"] = data.get("live2d_scale", cfg.get("live2d_scale", 100))
         cfg.load()
         cfg.set("fps", pet_window_ref["fps"])
         cfg.set("opacity", pet_window_ref["opacity"])
         cfg.set("dark_theme", pet_window_ref["dark"])
         cfg.set("vsync", pet_window_ref["vsync"])
         cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
+        cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
         cfg.save()
         publish_settings(data)
 
@@ -160,6 +231,8 @@ def main():
             cfg.set("vsync", pet_window_ref["vsync"])
         if "live2d_quality" in pet_window_ref:
             cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
+        if "live2d_scale" in pet_window_ref:
+            cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")
@@ -213,7 +286,10 @@ def main():
             if line.startswith("MODEL\t"):
                 parts = line.split("\t", 2)
                 if len(parts) == 3:
-                    on_model_selected(parts[1], parts[2])
+                    on_model_selected(
+                        parts[1], parts[2],
+                        relaunch=not settings_process_ref.get("show_launch", True),
+                    )
             elif line.startswith("SETTINGS\t"):
                 try:
                     cfg.load()
@@ -238,7 +314,10 @@ def main():
                     if line.startswith("MODEL\t"):
                         parts = line.split("\t", 2)
                         if len(parts) == 3:
-                            on_model_selected(parts[1], parts[2])
+                            on_model_selected(
+                                parts[1], parts[2],
+                                relaunch=not settings_process_ref.get("show_launch", True),
+                            )
                     elif line.startswith("SETTINGS\t"):
                         try:
                             cfg.load()
@@ -255,10 +334,11 @@ def main():
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             return
+        cfg.load()
         process = QProcess(app)
         program, arguments = process_program_and_args(BASE_DIR, "settings_process.py", [
-            "--character", char,
-            "--costume", costume,
+            "--character", cfg.get("character", char),
+            "--costume", cfg.get("costume", costume),
             "--fps", str(cfg.get("fps", 120)),
             "--opacity", str(cfg.get("opacity", 1.0)),
             "--vsync", "1" if cfg.get("vsync", True) else "0",
@@ -272,6 +352,7 @@ def main():
         process.readyReadStandardError.connect(lambda p=process: read_settings_error(p))
         process.finished.connect(lambda *args, p=process: clear_settings_process(p))
         settings_process_ref["process"] = process
+        settings_process_ref["show_launch"] = show_launch
         process.start()
 
     model_valid = bool(
@@ -282,6 +363,7 @@ def main():
     has_configured_models = bool(configured_models())
 
     init_tray()
+    init_ipc_server()
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(close_pet_processes)

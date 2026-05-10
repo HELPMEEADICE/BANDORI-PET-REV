@@ -1,5 +1,6 @@
 import os
 import sys
+import hashlib
 from pathlib import Path
 
 
@@ -18,3 +19,8 @@ def process_program_and_args(base_dir: str, script_name: str, args: list[str]) -
     if getattr(sys, "frozen", False):
         return os.path.join(base_dir, frozen_executable_name(script_name)), args
     return sys.executable, [os.path.join(base_dir, script_name), *args]
+
+
+def ipc_server_name() -> str:
+    digest = hashlib.sha1(str(app_base_dir()).encode("utf-8")).hexdigest()[:12]
+    return f"BandoriPet-{digest}"

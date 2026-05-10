@@ -1,8 +1,8 @@
 import os
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent
-from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
+from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (
 )
 
 from qfluentwidgets import (
-    CardWidget, PushButton, PrimaryPushButton,
+    CardWidget, PushButton, PrimaryPushButton, TransparentPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
-    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox,
+    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
     setTheme, Theme, isDarkTheme, InfoBar, InfoBarPosition,
 )
 from qfluentwidgets.components.widgets.menu import LineEditMenu, TextEditMenu
@@ -29,6 +29,9 @@ from live2d_widget import Live2DWidget, normalize_live2d_quality
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
 
+LIVE2D_SCALE_MIN = 25
+LIVE2D_SCALE_MAX = 500
+
 _ROLEPLAY_STATUS_COLORS = {
     "green": "#2ecc71",
     "yellow": "#f1c40f",
@@ -41,6 +44,9 @@ _ROLEPLAY_STATUS_TIPS = {
     "red": "尚未支持高级角色扮演",
 }
 
+PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
+PROJECT_LICENSE_URL = f"{PROJECT_REPO_URL}/blob/main/LICENSE"
+
 
 class FluentContextLineEdit(QLineEdit):
     def contextMenuEvent(self, event):
@@ -52,6 +58,18 @@ class FluentContextTextEdit(QTextEdit):
     def contextMenuEvent(self, event):
         menu = TextEditMenu(self)
         menu.exec(event.globalPos(), ani=True)
+
+
+def _clamp_live2d_scale(value) -> int:
+    try:
+        pct = int(round(float(value)))
+    except (TypeError, ValueError):
+        pct = 0
+    if pct <= 0:
+        screen = QApplication.primaryScreen()
+        ratio = screen.devicePixelRatio() if screen else 1.0
+        pct = int(round(ratio * 100))
+    return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))
 
 
 class ModelListItem(QWidget):
@@ -662,6 +680,9 @@ class SettingsWindow(QWidget):
         self._live2d_quality = normalize_live2d_quality(
             self._cfg.get("live2d_quality", "balanced") if self._cfg else "balanced"
         )
+        self._live2d_scale = _clamp_live2d_scale(
+            self._cfg.get("live2d_scale", 0) if self._cfg else 0
+        )
         self._saved_user_name = ""
 
         icon_path = os.path.join(app_base_dir(), "logo.ico")
@@ -836,22 +857,26 @@ class SettingsWindow(QWidget):
         self._pov_page = self._build_pov_page()
         self._llm_page = self._build_llm_page()
         self._quality_page = self._build_quality_page()
+        self._about_page = self._build_about_page()
         self._costume_page.hide()
         self._llm_page.hide()
         self._pov_page.hide()
         self._quality_page.hide()
+        self._about_page.hide()
 
         self._page_stack_layout.addWidget(self._char_page)
         self._page_stack_layout.addWidget(self._costume_page)
         self._page_stack_layout.addWidget(self._llm_page)
         self._page_stack_layout.addWidget(self._pov_page)
         self._page_stack_layout.addWidget(self._quality_page)
+        self._page_stack_layout.addWidget(self._about_page)
 
         self._pages["characters"] = self._char_page
         self._pages["costumes"] = self._costume_page
         self._pages["llm"] = self._llm_page
         self._pages["pov"] = self._pov_page
         self._pages["quality"] = self._quality_page
+        self._pages["about"] = self._about_page
 
         page_scroll = ScrollArea()
         page_scroll.setWidgetResizable(True)
@@ -912,6 +937,11 @@ class SettingsWindow(QWidget):
         layout.addWidget(btn_quality)
 
         layout.addStretch()
+
+        btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar)
+        btn_about.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["about"] = btn_about
+        layout.addWidget(btn_about)
 
         self._update_sidebar_style()
         self._theme_widgets.append(sidebar)
@@ -1566,13 +1596,114 @@ class SettingsWindow(QWidget):
         self._quality_detail.setWordWrap(True)
         layout.addWidget(self._quality_detail)
 
+        scale_label = BodyLabel(_tr("SettingsWindow.live2d_scale"), page)
+        layout.addWidget(scale_label)
+
+        scale_row = QHBoxLayout()
+        scale_row.setContentsMargins(0, 0, 0, 0)
+        scale_row.setSpacing(10)
+        self._live2d_scale_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._live2d_scale_slider.setRange(LIVE2D_SCALE_MIN, LIVE2D_SCALE_MAX)
+        self._live2d_scale_slider.setValue(self._live2d_scale)
+        self._live2d_scale_slider.setSingleStep(5)
+        self._live2d_scale_input = LineEdit(page)
+        self._live2d_scale_input.setFixedWidth(76)
+        self._live2d_scale_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._live2d_scale_input.setValidator(QIntValidator(LIVE2D_SCALE_MIN, LIVE2D_SCALE_MAX, self))
+        self._live2d_scale_input.setText(str(self._live2d_scale))
+        self._live2d_scale_slider.valueChanged.connect(self._on_live2d_scale_slider_changed)
+        self._live2d_scale_input.editingFinished.connect(self._on_live2d_scale_input_finished)
+        scale_row.addWidget(self._live2d_scale_slider, 1)
+        scale_row.addWidget(self._live2d_scale_input)
+        layout.addLayout(scale_row)
+
         layout.addStretch()
         return page
+
+    def _build_about_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        title = TitleLabel(_tr("SettingsWindow.about_title"), page)
+        layout.addWidget(title)
+
+        subtitle = SubtitleLabel(_tr("SettingsWindow.about_subtitle"), page)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        desc = BodyLabel(_tr("SettingsWindow.about_desc"), page)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        license_label = BodyLabel(_tr("SettingsWindow.about_license"), page)
+        license_label.setWordWrap(True)
+        layout.addWidget(license_label)
+
+        disclaimer = BodyLabel(_tr("SettingsWindow.about_disclaimer"), page)
+        disclaimer.setWordWrap(True)
+        layout.addWidget(disclaimer)
+
+        link_label = QLabel(
+            _tr(
+                "SettingsWindow.about_links",
+                repo=PROJECT_REPO_URL,
+                license=PROJECT_LICENSE_URL,
+            ),
+            page,
+        )
+        link_label.setWordWrap(True)
+        link_label.setTextFormat(Qt.TextFormat.RichText)
+        link_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        link_label.setOpenExternalLinks(True)
+        self._style_about_link(link_label)
+        qconfig.themeChanged.connect(lambda: self._style_about_link(link_label))
+        layout.addWidget(link_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 2, 0, 0)
+        btn_row.setSpacing(10)
+        repo_btn = TransparentPushButton(FluentIcon.GITHUB, _tr("SettingsWindow.about_open_repo"), page)
+        repo_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_REPO_URL)))
+        license_btn = TransparentPushButton(FluentIcon.HELP, _tr("SettingsWindow.about_open_license"), page)
+        license_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_LICENSE_URL)))
+        btn_row.addWidget(repo_btn)
+        btn_row.addWidget(license_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        tech = BodyLabel(_tr("SettingsWindow.about_tech"), page)
+        tech.setWordWrap(True)
+        layout.addWidget(tech)
+
+        layout.addStretch()
+        return page
+
+    @staticmethod
+    def _style_about_link(label: QLabel):
+        color = "#9cdcfe" if isDarkTheme() else "#0067c0"
+        text = "#dcdcdc" if isDarkTheme() else "#303030"
+        label.setStyleSheet(f"QLabel {{ color: {text}; font-size: 13px; }} QLabel a {{ color: {color}; }}")
 
     def _on_quality_changed(self, index: int):
         profile = self._quality_combo.itemData(index)
         self._live2d_quality = normalize_live2d_quality(profile)
         self._quality_detail.setText(self._quality_detail_text(self._live2d_quality))
+
+    def _set_live2d_scale_controls(self, value: int):
+        value = _clamp_live2d_scale(value)
+        self._live2d_scale = value
+        self._live2d_scale_input.blockSignals(True)
+        self._live2d_scale_slider.setValue(value)
+        self._live2d_scale_input.setText(str(value))
+        self._live2d_scale_input.blockSignals(False)
+
+    def _on_live2d_scale_slider_changed(self, value: int):
+        self._set_live2d_scale_controls(value)
+
+    def _on_live2d_scale_input_finished(self):
+        self._set_live2d_scale_controls(self._live2d_scale_input.text())
 
     def _style_llm_inputs(self):
         dark = isDarkTheme()
@@ -2300,6 +2431,7 @@ class SettingsWindow(QWidget):
             "dark_theme": self._theme_switch.isChecked(),
             "vsync": self._vsync_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
+            "live2d_scale": self._live2d_scale,
         }
         if self._cfg:
             self._cfg.set("fps", settings["fps"])
@@ -2307,6 +2439,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
+            self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)

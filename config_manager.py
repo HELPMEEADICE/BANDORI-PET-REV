@@ -17,6 +17,7 @@ DEFAULTS = {
     "dark_theme": False,
     "vsync": True,
     "live2d_quality": "balanced",
+    "live2d_scale": 0,
     "drag_locked": False,
     "pet_mode": "live2d",
     "window_x": -1,

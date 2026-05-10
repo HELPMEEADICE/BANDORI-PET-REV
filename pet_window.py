@@ -103,6 +103,20 @@ def _is_windows_11_or_later() -> bool:
     return version.dwMajorVersion >= 10 and version.dwBuildNumber >= 22000
 
 
+LIVE2D_BASE_WIDTH = 400
+LIVE2D_BASE_HEIGHT = 500
+LIVE2D_SCALE_MIN = 25
+LIVE2D_SCALE_MAX = 500
+
+
+def _clamp_live2d_scale(value) -> int:
+    try:
+        pct = int(round(float(value)))
+    except (TypeError, ValueError):
+        pct = 100
+    return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))
+
+
 class PetWindow(QWidget):
     def __init__(self, live2d_module, model_manager=None,
                  character="", costume="", fps=120, opacity=1.0,
@@ -119,6 +133,7 @@ class PetWindow(QWidget):
         self._opacity = opacity
         self._vsync = True
         self._live2d_quality = "balanced"
+        self._live2d_scale = 100
         self._tray_icon = None
         self._enable_tray = enable_tray
         self._cfg = config_manager
@@ -126,6 +141,7 @@ class PetWindow(QWidget):
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
             )
+            self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100) or 100)
         self._radial_menu = None
         self._chat_process = None
         self._settings_process = None
@@ -177,7 +193,7 @@ class PetWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAutoFillBackground(False)
 
-        self.resize(400, 500)
+        self.resize(*self._live2d_size())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -435,7 +451,18 @@ class PetWindow(QWidget):
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
+        if "live2d_scale" in data:
+            self.set_live2d_scale(data["live2d_scale"])
         self._save_config()
+
+    def _live2d_size(self):
+        scale = self._live2d_scale / 100.0
+        return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(LIVE2D_BASE_HEIGHT * scale))
+
+    def set_live2d_scale(self, value):
+        self._live2d_scale = _clamp_live2d_scale(value)
+        if not self._pixel_mode:
+            self.resize(*self._live2d_size())
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -854,11 +881,10 @@ class PetWindow(QWidget):
 
     def _restore_live2d_position(self):
         if not self._cfg:
-            self.resize(400, 500)
+            self.resize(*self._live2d_size())
             return
         entry = self._current_model_entry()
-        w = entry.get("window_width", self._cfg.get("window_width", 400))
-        h = entry.get("window_height", self._cfg.get("window_height", 500))
+        w, h = self._live2d_size()
         x = entry.get("window_x", self._cfg.get("window_x", -1))
         y = entry.get("window_y", self._cfg.get("window_y", -1))
         self.resize(w, h)
@@ -1005,6 +1031,7 @@ class PetWindow(QWidget):
             self._cfg.set("dark_theme", isDarkTheme())
             self._cfg.set("vsync", self._vsync)
             self._cfg.set("live2d_quality", self._live2d_quality)
+            self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
             if model_exists:
                 self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")

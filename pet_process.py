@@ -12,7 +12,13 @@ if LIVE2D_PACKAGE not in sys.path:
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from qfluentwidgets import Theme, setTheme
+from fluent_silencer import import_qfluentwidgets
+
+_qfluentwidgets = import_qfluentwidgets(lambda: __import__(
+    "qfluentwidgets", fromlist=["Theme", "setTheme"]
+))
+Theme = _qfluentwidgets.Theme
+setTheme = _qfluentwidgets.setTheme
 
 import live2d.v2 as live2d
 from config_manager import ConfigManager
