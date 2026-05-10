@@ -70,6 +70,7 @@
     "SettingsWindow.quality_detail_balanced": "使用线性纹理过滤，兼顾清晰度与流畅度。",
     "SettingsWindow.quality_detail_quality": "启用 mipmap，模型缩放时更平滑。",
     "SettingsWindow.quality_detail_ultra": "启用 mipmap 和更高纹理过滤质量，适合性能充足的硬件。",
+    "SettingsWindow.live2d_scale": "模型缩放（%）",
     "SettingsWindow.side_settings": "设置",
     "SettingsWindow.side_fps": "刷新率（FPS）",
     "SettingsWindow.fps_value": "{v}帧",

@@ -138,12 +138,14 @@ def main():
         pet_window_ref["dark"] = data.get("dark_theme", False)
         pet_window_ref["vsync"] = data.get("vsync", True)
         pet_window_ref["live2d_quality"] = data.get("live2d_quality", "balanced")
+        pet_window_ref["live2d_scale"] = data.get("live2d_scale", cfg.get("live2d_scale", 100))
         cfg.load()
         cfg.set("fps", pet_window_ref["fps"])
         cfg.set("opacity", pet_window_ref["opacity"])
         cfg.set("dark_theme", pet_window_ref["dark"])
         cfg.set("vsync", pet_window_ref["vsync"])
         cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
+        cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
         cfg.save()
         publish_settings(data)
 
@@ -160,6 +162,8 @@ def main():
             cfg.set("vsync", pet_window_ref["vsync"])
         if "live2d_quality" in pet_window_ref:
             cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
+        if "live2d_scale" in pet_window_ref:
+            cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")

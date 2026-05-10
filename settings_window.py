@@ -1,7 +1,7 @@
 import os
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent
-from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush
+from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CardWidget, PushButton, PrimaryPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
-    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox,
+    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
     setTheme, Theme, isDarkTheme, InfoBar, InfoBarPosition,
 )
 from qfluentwidgets.components.widgets.menu import LineEditMenu, TextEditMenu
@@ -27,6 +27,9 @@ from live2d_widget import Live2DWidget, normalize_live2d_quality
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
+
+LIVE2D_SCALE_MIN = 25
+LIVE2D_SCALE_MAX = 500
 
 _ROLEPLAY_STATUS_COLORS = {
     "green": "#2ecc71",
@@ -51,6 +54,18 @@ class FluentContextTextEdit(QTextEdit):
     def contextMenuEvent(self, event):
         menu = TextEditMenu(self)
         menu.exec(event.globalPos(), ani=True)
+
+
+def _clamp_live2d_scale(value) -> int:
+    try:
+        pct = int(round(float(value)))
+    except (TypeError, ValueError):
+        pct = 0
+    if pct <= 0:
+        screen = QApplication.primaryScreen()
+        ratio = screen.devicePixelRatio() if screen else 1.0
+        pct = int(round(ratio * 100))
+    return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))
 
 
 class ModelListItem(QWidget):
@@ -660,6 +675,9 @@ class SettingsWindow(QWidget):
         self._vsync = vsync
         self._live2d_quality = normalize_live2d_quality(
             self._cfg.get("live2d_quality", "balanced") if self._cfg else "balanced"
+        )
+        self._live2d_scale = _clamp_live2d_scale(
+            self._cfg.get("live2d_scale", 0) if self._cfg else 0
         )
         self._saved_user_name = ""
 
@@ -1542,6 +1560,27 @@ class SettingsWindow(QWidget):
         self._quality_detail.setWordWrap(True)
         layout.addWidget(self._quality_detail)
 
+        scale_label = BodyLabel(_tr("SettingsWindow.live2d_scale"), page)
+        layout.addWidget(scale_label)
+
+        scale_row = QHBoxLayout()
+        scale_row.setContentsMargins(0, 0, 0, 0)
+        scale_row.setSpacing(10)
+        self._live2d_scale_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._live2d_scale_slider.setRange(LIVE2D_SCALE_MIN, LIVE2D_SCALE_MAX)
+        self._live2d_scale_slider.setValue(self._live2d_scale)
+        self._live2d_scale_slider.setSingleStep(5)
+        self._live2d_scale_input = LineEdit(page)
+        self._live2d_scale_input.setFixedWidth(76)
+        self._live2d_scale_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._live2d_scale_input.setValidator(QIntValidator(LIVE2D_SCALE_MIN, LIVE2D_SCALE_MAX, self))
+        self._live2d_scale_input.setText(str(self._live2d_scale))
+        self._live2d_scale_slider.valueChanged.connect(self._on_live2d_scale_slider_changed)
+        self._live2d_scale_input.editingFinished.connect(self._on_live2d_scale_input_finished)
+        scale_row.addWidget(self._live2d_scale_slider, 1)
+        scale_row.addWidget(self._live2d_scale_input)
+        layout.addLayout(scale_row)
+
         layout.addStretch()
         return page
 
@@ -1549,6 +1588,20 @@ class SettingsWindow(QWidget):
         profile = self._quality_combo.itemData(index)
         self._live2d_quality = normalize_live2d_quality(profile)
         self._quality_detail.setText(self._quality_detail_text(self._live2d_quality))
+
+    def _set_live2d_scale_controls(self, value: int):
+        value = _clamp_live2d_scale(value)
+        self._live2d_scale = value
+        self._live2d_scale_input.blockSignals(True)
+        self._live2d_scale_slider.setValue(value)
+        self._live2d_scale_input.setText(str(value))
+        self._live2d_scale_input.blockSignals(False)
+
+    def _on_live2d_scale_slider_changed(self, value: int):
+        self._set_live2d_scale_controls(value)
+
+    def _on_live2d_scale_input_finished(self):
+        self._set_live2d_scale_controls(self._live2d_scale_input.text())
 
     def _style_llm_inputs(self):
         dark = isDarkTheme()
@@ -2195,6 +2248,7 @@ class SettingsWindow(QWidget):
             "dark_theme": self._theme_switch.isChecked(),
             "vsync": self._vsync_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
+            "live2d_scale": self._live2d_scale,
         }
         if self._cfg:
             self._cfg.set("fps", settings["fps"])
@@ -2202,6 +2256,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
+            self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)

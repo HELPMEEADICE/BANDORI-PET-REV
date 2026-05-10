@@ -70,6 +70,7 @@
     "SettingsWindow.quality_detail_balanced": "Uses linear texture filtering for a good mix of clarity and smoothness.",
     "SettingsWindow.quality_detail_quality": "Enables mipmaps for smoother scaling.",
     "SettingsWindow.quality_detail_ultra": "Enables mipmaps and stronger texture filtering for capable hardware.",
+    "SettingsWindow.live2d_scale": "Model Scale (%)",
     "SettingsWindow.side_settings": "Settings",
     "SettingsWindow.side_fps": "Refresh Rate (FPS)",
     "SettingsWindow.fps_value": "{v} FPS",
