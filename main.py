@@ -113,7 +113,8 @@ def main():
         clients = ipc_ref.get("clients", [])
         if socket in clients:
             clients.remove(socket)
-        socket.deleteLater()
+        if isValid(socket):
+            socket.deleteLater()
 
     def notify_chat_processes_shutdown():
         for socket in list(ipc_ref.get("clients", [])):
