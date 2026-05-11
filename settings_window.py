@@ -121,6 +121,7 @@ class ModelListItem(QWidget):
         self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._character))
         layout.addWidget(self._remove_btn)
         self._apply_theme()
+        qconfig.themeChanged.connect(self._apply_theme)
         if self._current:
             QTimer.singleShot(0, self._play_selected_animation)
 
@@ -193,12 +194,13 @@ class AddModelListItem(QPushButton):
         self.setFixedHeight(38)
         self.clicked.connect(self.add_requested.emit)
         self._apply_theme()
+        qconfig.themeChanged.connect(self._apply_theme)
 
     def _apply_theme(self):
         dark = isDarkTheme()
         border = accent_color(dark)
-        bg = BANDORI_PRIMARY_SOFT_DARK if dark else BANDORI_PRIMARY_SOFT
-        hover = BANDORI_PRIMARY_SOFT_DARK_HOVER if dark else BANDORI_PRIMARY_SOFT_HOVER
+        bg = "#242226" if dark else BANDORI_PRIMARY_SOFT
+        hover = "#30262b" if dark else BANDORI_PRIMARY_SOFT_HOVER
         text = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
         self.setStyleSheet(f"""
             QPushButton {{
@@ -2381,12 +2383,25 @@ class SettingsWindow(QWidget):
         list_title = StrongBodyLabel("Live2D 模型列表", panel)
         layout.addWidget(list_title)
         self._model_list_widget = QWidget(panel)
+        self._model_list_widget.setObjectName("modelListWidget")
         self._model_list_layout = QVBoxLayout(self._model_list_widget)
         self._model_list_layout.setContentsMargins(0, 0, 0, 0)
         self._model_list_layout.setSpacing(6)
         layout.addWidget(self._model_list_widget)
+        self._update_model_list_style()
+        qconfig.themeChanged.connect(self._update_model_list_style)
 
         return panel
+
+    def _update_model_list_style(self):
+        if not hasattr(self, "_model_list_widget"):
+            return
+        self._model_list_widget.setStyleSheet("""
+            #modelListWidget {
+                background: transparent;
+                border: none;
+            }
+        """)
 
     def _save_configured_models(self):
         if not self._cfg:
