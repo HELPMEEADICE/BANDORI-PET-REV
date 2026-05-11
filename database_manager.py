@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import shutil
 import tempfile
 from contextlib import closing
 from datetime import datetime
@@ -59,6 +60,27 @@ def chat_database_summary(db_path=DB_PATH) -> dict:
     return {"conversations": conversations, "messages": messages}
 
 
+def _read_only_database_uri(path: Path, immutable: bool = False) -> str:
+    params = "mode=ro"
+    if immutable:
+        params += "&immutable=1"
+    return path.resolve().as_uri() + "?" + params
+
+
+def _database_sidecar_paths(path: Path) -> list[Path]:
+    return [Path(str(path) + suffix) for suffix in ("-wal", "-shm")]
+
+
+def _copy_database_for_import(source: Path, temp_dir: Path) -> Path:
+    local_source = temp_dir / source.name
+    shutil.copy2(source, local_source)
+    for source_sidecar in _database_sidecar_paths(source):
+        if source_sidecar.exists():
+            local_sidecar = Path(str(local_source) + source_sidecar.name[len(source.name):])
+            shutil.copy2(source_sidecar, local_sidecar)
+    return local_source
+
+
 def export_chat_database(destination_path: str, source_path=DB_PATH) -> dict:
     source = Path(source_path)
     destination = Path(destination_path)
@@ -78,6 +100,7 @@ def export_chat_database(destination_path: str, source_path=DB_PATH) -> dict:
             _validate_chat_database(src)
             with closing(sqlite3.connect(tmp_path, timeout=10)) as dst:
                 src.backup(dst)
+                dst.execute("PRAGMA journal_mode=DELETE")
                 dst.commit()
         os.replace(tmp_path, destination)
     except Exception:
@@ -98,12 +121,14 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
         raise ValueError("source and target are the same file")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    source_uri = source.resolve().as_uri() + "?mode=ro"
-    with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
-        _validate_chat_database(src)
-        with closing(sqlite3.connect(str(target), timeout=10)) as dst:
-            src.backup(dst)
-            dst.commit()
+    with tempfile.TemporaryDirectory(prefix="bandori-chat-import-") as temp_dir:
+        local_source = _copy_database_for_import(source, Path(temp_dir))
+        source_uri = _read_only_database_uri(local_source)
+        with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
+            _validate_chat_database(src)
+            with closing(sqlite3.connect(str(target), timeout=10)) as dst:
+                src.backup(dst)
+                dst.commit()
 
     _ensure_database(str(target))
     return chat_database_summary(str(target))

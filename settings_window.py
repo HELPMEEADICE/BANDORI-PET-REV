@@ -689,6 +689,12 @@ class SettingsWindow(QWidget):
         self._theme_widgets: list[QWidget] = []
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
+        self._char_page = None
+        self._costume_page = None
+        self._llm_page = None
+        self._pov_page = None
+        self._quality_page = None
+        self._about_page = None
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
@@ -869,29 +875,13 @@ class SettingsWindow(QWidget):
 
         self._char_page = self._build_char_page()
         self._costume_page = self._build_costume_page()
-        self._pov_page = self._build_pov_page()
-        self._llm_page = self._build_llm_page()
-        self._quality_page = self._build_quality_page()
-        self._about_page = self._build_about_page()
         self._costume_page.hide()
-        self._llm_page.hide()
-        self._pov_page.hide()
-        self._quality_page.hide()
-        self._about_page.hide()
 
         self._page_stack_layout.addWidget(self._char_page)
         self._page_stack_layout.addWidget(self._costume_page)
-        self._page_stack_layout.addWidget(self._llm_page)
-        self._page_stack_layout.addWidget(self._pov_page)
-        self._page_stack_layout.addWidget(self._quality_page)
-        self._page_stack_layout.addWidget(self._about_page)
 
         self._pages["characters"] = self._char_page
         self._pages["costumes"] = self._costume_page
-        self._pages["llm"] = self._llm_page
-        self._pages["pov"] = self._pov_page
-        self._pages["quality"] = self._quality_page
-        self._pages["about"] = self._about_page
 
         page_scroll = ScrollArea()
         page_scroll.setWidgetResizable(True)
@@ -905,6 +895,32 @@ class SettingsWindow(QWidget):
         right_layout.addWidget(side_panel, 0)
 
         main_layout.addWidget(right_area, 1)
+
+    def _add_lazy_page(self, key: str, page: QWidget):
+        page.hide()
+        self._page_stack_layout.addWidget(page)
+        self._pages[key] = page
+        return page
+
+    def _ensure_page(self, key: str) -> QWidget | None:
+        if key in self._pages:
+            return self._pages[key]
+        if key in {"llm", "pov"}:
+            self._ensure_llm_and_pov_pages()
+            return self._pages.get(key)
+        if key == "quality":
+            self._quality_page = self._add_lazy_page("quality", self._build_quality_page())
+            return self._quality_page
+        if key == "about":
+            self._about_page = self._add_lazy_page("about", self._build_about_page())
+            return self._about_page
+        return None
+
+    def _ensure_llm_and_pov_pages(self):
+        if self._pov_page is None:
+            self._pov_page = self._add_lazy_page("pov", self._build_pov_page())
+        if self._llm_page is None:
+            self._llm_page = self._add_lazy_page("llm", self._build_llm_page())
 
     def _update_sidebar_style(self):
         if not hasattr(self, '_sidebar'):
@@ -973,19 +989,26 @@ class SettingsWindow(QWidget):
         return sidebar
 
     def _on_nav_selected(self, nav_key: str):
+        page = self._ensure_page(nav_key)
+        if page is None:
+            return
+
         for key, btn in self._nav_buttons.items():
             btn.setChecked(key == nav_key)
-        for key, page in self._pages.items():
-            if key.endswith("costumes"):
-                continue
-            page.setVisible(key == nav_key)
-        self._costume_page.hide()
+        for stacked_page in self._pages.values():
+            stacked_page.hide()
+
         if nav_key == "characters":
             self._selecting_model = False
+            self._char_page.show()
+            self._costume_page.hide()
             if self._selected_list_character:
                 self._show_model_detail()
             else:
                 self._enter_model_selection()
+        else:
+            self._costume_page.hide()
+            page.show()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -1315,6 +1338,9 @@ class SettingsWindow(QWidget):
 
         self._costume_subtitle = SubtitleLabel("", page)
         layout.addWidget(self._costume_subtitle)
+        self._costume_preview_hint = BodyLabel(_tr("SettingsWindow.costume_preview_hint"), page)
+        self._costume_preview_hint.setWordWrap(True)
+        layout.addWidget(self._costume_preview_hint)
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)

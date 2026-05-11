@@ -20,6 +20,7 @@
     "SettingsWindow.costume_title": "选择服装",
     "SettingsWindow.costumes_title": "{display} - 服装列表",
     "SettingsWindow.costume_subtitle": "请为 {display} 选择一套服装",
+    "SettingsWindow.costume_preview_hint": "提示：按住 Shift 并将鼠标悬停在服装上可以预览 Live2D 效果。",
     "SettingsWindow.llm_title": "LLM 配置",
     "SettingsWindow.llm_subtitle": "配置 AI 聊天后端（兼容 OpenAI API）",
     "SettingsWindow.llm_profile": "我的资料",
