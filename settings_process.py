@@ -14,8 +14,6 @@ from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
 from app_theme import apply_app_theme
-import live2d.v2 as live2d
-from platform_patch import PatchedPlatformManager
 
 
 def _parse_args():

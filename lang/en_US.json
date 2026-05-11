@@ -20,6 +20,7 @@
     "SettingsWindow.costume_title": "Select Costume",
     "SettingsWindow.costumes_title": "Costumes - {display}",
     "SettingsWindow.costume_subtitle": "Select a costume for {display}",
+    "SettingsWindow.costume_preview_hint": "Tip: hold Shift and hover a costume to preview the Live2D model.",
     "SettingsWindow.llm_title": "LLM Configuration",
     "SettingsWindow.llm_subtitle": "Configure the AI chat backend (OpenAI-compatible API)",
     "SettingsWindow.llm_profile": "My Profile",

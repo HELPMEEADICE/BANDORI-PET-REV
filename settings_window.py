@@ -701,6 +701,7 @@ class SettingsWindow(QWidget):
         self._llm_page = None
         self._pov_page = None
         self._quality_page = None
+        self._about_page = None
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
@@ -937,29 +938,6 @@ class SettingsWindow(QWidget):
 
         self._pages["characters"] = self._char_page
         self._pages["costumes"] = self._costume_page
-        self._pov_page = self._build_pov_page()
-        self._llm_page = self._build_llm_page()
-        self._quality_page = self._build_quality_page()
-        self._about_page = self._build_about_page()
-        self._costume_page.hide()
-        self._llm_page.hide()
-        self._pov_page.hide()
-        self._quality_page.hide()
-        self._about_page.hide()
-
-        self._page_stack_layout.addWidget(self._char_page)
-        self._page_stack_layout.addWidget(self._costume_page)
-        self._page_stack_layout.addWidget(self._llm_page)
-        self._page_stack_layout.addWidget(self._pov_page)
-        self._page_stack_layout.addWidget(self._quality_page)
-        self._page_stack_layout.addWidget(self._about_page)
-
-        self._pages["characters"] = self._char_page
-        self._pages["costumes"] = self._costume_page
-        self._pages["llm"] = self._llm_page
-        self._pages["pov"] = self._pov_page
-        self._pages["quality"] = self._quality_page
-        self._pages["about"] = self._about_page
 
         page_scroll = ScrollArea()
         page_scroll.setWidgetResizable(True)
@@ -989,6 +967,9 @@ class SettingsWindow(QWidget):
         if key == "quality":
             self._quality_page = self._add_lazy_page("quality", self._build_quality_page())
             return self._quality_page
+        if key == "about":
+            self._about_page = self._add_lazy_page("about", self._build_about_page())
+            return self._about_page
         return None
 
     def _ensure_llm_and_pov_pages(self):
@@ -1515,6 +1496,9 @@ class SettingsWindow(QWidget):
 
         self._costume_subtitle = SubtitleLabel("", page)
         layout.addWidget(self._costume_subtitle)
+        self._costume_preview_hint = BodyLabel(_tr("SettingsWindow.costume_preview_hint"), page)
+        self._costume_preview_hint.setWordWrap(True)
+        layout.addWidget(self._costume_preview_hint)
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
