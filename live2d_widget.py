@@ -4,19 +4,8 @@ import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QTimerEvent, QPoint, QElapsedTimer
 from PySide6.QtGui import QMouseEvent, QCursor, QGuiApplication, QSurfaceFormat, QOpenGLContext, QMoveEvent, QResizeEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import set_live2d_texture_quality
-
-
-LIVE2D_QUALITY_PROFILES = {
-    "performance": {"disable_precision": True},
-    "balanced": {"disable_precision": True},
-    "quality": {"disable_precision": True},
-    "ultra": {"disable_precision": True},
-}
-
-
-def normalize_live2d_quality(profile: str) -> str:
-    return profile if profile in LIVE2D_QUALITY_PROFILES else "balanced"
 
 
 def _get_display_refresh():

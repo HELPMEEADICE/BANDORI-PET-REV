@@ -85,6 +85,8 @@
     "SettingsWindow.quality_detail_balanced": "Uses linear texture filtering for a good mix of clarity and smoothness.",
     "SettingsWindow.quality_detail_quality": "Enables mipmaps for smoother scaling.",
     "SettingsWindow.quality_detail_ultra": "Enables mipmaps and stronger texture filtering for capable hardware.",
+    "SettingsWindow.preview_failed_title": "Preview Failed",
+    "SettingsWindow.preview_failed_content": "Live2D costume preview failed to initialize: {error}",
     "SettingsWindow.live2d_scale": "Model Scale (%)",
     "SettingsWindow.about_title": "About BandoriPet",
     "SettingsWindow.about_subtitle": "A Live2D desktop pet for keeping BanG Dream! characters on your desktop.",

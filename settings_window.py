@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
@@ -38,7 +39,7 @@ from app_theme import (
 
 import json
 
-from live2d_widget import Live2DWidget, normalize_live2d_quality
+from live2d_quality import normalize_live2d_quality
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
@@ -486,6 +487,8 @@ class CostumeItem(QPushButton):
 class Live2DPreviewBubble(QWidget):
     def __init__(self, live2d_module, quality_profile="balanced", parent=None):
         super().__init__(None)
+        from live2d_widget import Live2DWidget
+
         self._current_model_path = ""
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -684,11 +687,18 @@ class SettingsWindow(QWidget):
             self._current_costume = self._configured_models[0]["costume"]
         self._selected_band = model_manager.get_character_band(self._current_char)
         self._preview_bubble = None
+        self._owns_live2d = False
+        self._live2d_error_shown = False
         self._show_launch = show_launch
         self._start_on_costumes = start_on_costumes
         self._theme_widgets: list[QWidget] = []
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
+        self._char_page = None
+        self._costume_page = None
+        self._llm_page = None
+        self._pov_page = None
+        self._quality_page = None
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
@@ -772,12 +782,61 @@ class SettingsWindow(QWidget):
                 self._cfg.save()
 
     def closeEvent(self, event):
-        self._hide_costume_preview()
+        self._dispose_live2d_preview()
         self._cleanup_workers()
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
         super().closeEvent(event)
+
+    def _ensure_live2d_preview_module(self):
+        if self._live2d:
+            return self._live2d
+        try:
+            live2d_package = os.path.join(
+                str(app_base_dir()),
+                "third_party",
+                "live2d-py",
+                "package",
+            )
+            if live2d_package not in sys.path:
+                sys.path.insert(0, live2d_package)
+
+            import live2d.v2 as live2d
+            from platform_patch import PatchedPlatformManager
+
+            live2d.init()
+            live2d.Live2DFramework.setPlatformManager(
+                PatchedPlatformManager(live2d.Live2DFramework.getPlatformManager())
+            )
+            self._live2d = live2d
+            self._owns_live2d = True
+            return self._live2d
+        except Exception as exc:
+            if not self._live2d_error_shown:
+                self._live2d_error_shown = True
+                InfoBar.error(
+                    _tr("SettingsWindow.preview_failed_title"),
+                    _tr("SettingsWindow.preview_failed_content", error=str(exc)),
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            return None
+
+    def _dispose_live2d_preview(self):
+        self._hide_costume_preview()
+        if self._preview_bubble is not None:
+            self._preview_bubble.close()
+            self._preview_bubble.deleteLater()
+            self._preview_bubble = None
+        if self._owns_live2d and self._live2d is not None:
+            try:
+                self._live2d.dispose()
+            except Exception:
+                pass
+            self._live2d = None
+            self._owns_live2d = False
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift:
@@ -869,6 +928,13 @@ class SettingsWindow(QWidget):
 
         self._char_page = self._build_char_page()
         self._costume_page = self._build_costume_page()
+        self._costume_page.hide()
+
+        self._page_stack_layout.addWidget(self._char_page)
+        self._page_stack_layout.addWidget(self._costume_page)
+
+        self._pages["characters"] = self._char_page
+        self._pages["costumes"] = self._costume_page
         self._pov_page = self._build_pov_page()
         self._llm_page = self._build_llm_page()
         self._quality_page = self._build_quality_page()
@@ -905,6 +971,29 @@ class SettingsWindow(QWidget):
         right_layout.addWidget(side_panel, 0)
 
         main_layout.addWidget(right_area, 1)
+
+    def _add_lazy_page(self, key: str, page: QWidget):
+        page.hide()
+        self._page_stack_layout.addWidget(page)
+        self._pages[key] = page
+        return page
+
+    def _ensure_page(self, key: str) -> QWidget | None:
+        if key in self._pages:
+            return self._pages[key]
+        if key in {"llm", "pov"}:
+            self._ensure_llm_and_pov_pages()
+            return self._pages.get(key)
+        if key == "quality":
+            self._quality_page = self._add_lazy_page("quality", self._build_quality_page())
+            return self._quality_page
+        return None
+
+    def _ensure_llm_and_pov_pages(self):
+        if self._pov_page is None:
+            self._pov_page = self._add_lazy_page("pov", self._build_pov_page())
+        if self._llm_page is None:
+            self._llm_page = self._add_lazy_page("llm", self._build_llm_page())
 
     def _update_sidebar_style(self):
         if not hasattr(self, '_sidebar'):
@@ -973,19 +1062,26 @@ class SettingsWindow(QWidget):
         return sidebar
 
     def _on_nav_selected(self, nav_key: str):
+        page = self._ensure_page(nav_key)
+        if page is None:
+            return
+
         for key, btn in self._nav_buttons.items():
             btn.setChecked(key == nav_key)
-        for key, page in self._pages.items():
-            if key.endswith("costumes"):
-                continue
-            page.setVisible(key == nav_key)
-        self._costume_page.hide()
+        for stacked_page in self._pages.values():
+            stacked_page.hide()
+
         if nav_key == "characters":
             self._selecting_model = False
+            self._char_page.show()
+            self._costume_page.hide()
             if self._selected_list_character:
                 self._show_model_detail()
             else:
                 self._enter_model_selection()
+        else:
+            self._costume_page.hide()
+            page.show()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -1706,6 +1802,23 @@ class SettingsWindow(QWidget):
         self._live2d_quality = normalize_live2d_quality(profile)
         self._quality_detail.setText(self._quality_detail_text(self._live2d_quality))
 
+    def _llm_config_widgets_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_llm_api_url",
+                "_llm_api_key",
+                "_llm_model_id",
+                "_llm_aux_model_id",
+                "_llm_enable_thinking",
+                "_llm_show_reasoning",
+                "_user_name",
+                "_pov_mode",
+                "_pov_custom_prompt",
+                "_pov_role_character",
+                "_avatar_color_btns",
+            )
+        )
     def _set_live2d_scale_controls(self, value: int):
         value = _clamp_live2d_scale(value)
         self._live2d_scale = value
@@ -1721,6 +1834,8 @@ class SettingsWindow(QWidget):
         self._set_live2d_scale_controls(self._live2d_scale_input.text())
 
     def _style_llm_inputs(self):
+        if not self._llm_config_widgets_ready():
+            return
         dark = isDarkTheme()
         input_bg = "#282828" if dark else "#ffffff"
         input_border = "#505050" if dark else "#d0d0d0"
@@ -1798,7 +1913,7 @@ class SettingsWindow(QWidget):
         anim.start()
 
     def _load_llm_config(self):
-        if self._cfg:
+        if self._cfg and self._llm_config_widgets_ready():
             self._llm_api_url.setText(self._cfg.get("llm_api_url", ""))
             self._llm_api_key.setText(self._cfg.get("llm_api_key", ""))
             self._llm_model_id.setText(self._cfg.get("llm_model_id", ""))
@@ -1845,7 +1960,7 @@ class SettingsWindow(QWidget):
         self._user_name.setText(self._pov_role_character.currentText())
 
     def _save_llm_config(self):
-        if self._cfg:
+        if self._cfg and self._llm_config_widgets_ready():
             self._cfg.set("llm_api_url", self._llm_api_url.text().strip())
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
@@ -2383,13 +2498,14 @@ class SettingsWindow(QWidget):
         self._show_model_detail()
 
     def _show_costume_preview(self, anchor: QWidget, costume_id: str):
-        if not self._live2d:
+        live2d_module = self._ensure_live2d_preview_module()
+        if not live2d_module:
             return
         model_path = self._model_manager.get_model_json_path(self._current_char, costume_id)
         if not model_path:
             return
         if self._preview_bubble is None:
-            self._preview_bubble = Live2DPreviewBubble(self._live2d, self._live2d_quality, self)
+            self._preview_bubble = Live2DPreviewBubble(live2d_module, self._live2d_quality, self)
         self._preview_bubble.set_render_quality(self._live2d_quality)
         self._preview_bubble.show_preview(model_path, anchor)
 
