@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from app_theme import BANDORI_PRIMARY
 from process_utils import app_base_dir
 
 BASE_DIR = app_base_dir()
@@ -31,7 +32,7 @@ DEFAULTS = {
     "llm_model_id": "",
     "llm_aux_model_id": "",
     "user_name": "",
-    "user_avatar_color": "#2aabee",
+    "user_avatar_color": BANDORI_PRIMARY,
     "pov_mode": "off",
     "pov_custom_prompt": "",
     "pov_role_character": "",
@@ -67,6 +68,8 @@ class ConfigManager:
             except (json.JSONDecodeError, OSError):
                 pass
         self._normalize_models()
+        if self._data.get("user_avatar_color") == "#2aabee":
+            self._data["user_avatar_color"] = BANDORI_PRIMARY
 
     def _normalize_models(self):
         models = self._data.get("models", [])

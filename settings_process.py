@@ -12,18 +12,11 @@ if LIVE2D_PACKAGE not in sys.path:
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from fluent_silencer import import_qfluentwidgets
-
-_qfluentwidgets = import_qfluentwidgets(lambda: __import__(
-    "qfluentwidgets", fromlist=["Theme", "setTheme"]
-))
-Theme = _qfluentwidgets.Theme
-setTheme = _qfluentwidgets.setTheme
-
 from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
+from app_theme import apply_app_theme
 import live2d.v2 as live2d
 from platform_patch import PatchedPlatformManager
 
@@ -55,7 +48,7 @@ def main():
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(True)
 
-    setTheme(Theme.DARK if cfg.get("dark_theme", False) else Theme.LIGHT)
+    apply_app_theme(cfg.get("dark_theme", False))
 
     live2d.init()
     live2d.Live2DFramework.setPlatformManager(

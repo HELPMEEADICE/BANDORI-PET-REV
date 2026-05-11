@@ -11,10 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
 )
 
-from qfluentwidgets import (
-    setTheme, Theme,
-)
-
+from app_theme import apply_app_theme
 from i18n_manager import tr as _tr
 from action_bus import consume_actions
 from settings_bus import consume_settings
@@ -444,7 +441,7 @@ class PetWindow(QWidget):
         if "opacity" in data:
             self.set_opacity(data["opacity"])
         if "dark_theme" in data:
-            setTheme(Theme.DARK if data["dark_theme"] else Theme.LIGHT)
+            apply_app_theme(data["dark_theme"])
         if "vsync" in data:
             self._vsync = data["vsync"]
             self._live2d_widget.set_vsync(data["vsync"])
@@ -1096,7 +1093,7 @@ class PetWindow(QWidget):
 
     @staticmethod
     def _toggle_theme():
-        setTheme(Theme.LIGHT if isDarkTheme() else Theme.DARK)
+        apply_app_theme(not isDarkTheme())
 
     def showEvent(self, event):
         super().showEvent(event)

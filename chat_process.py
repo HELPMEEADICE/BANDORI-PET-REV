@@ -8,14 +8,7 @@ from PySide6.QtCore import QRect, Qt
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
-from fluent_silencer import import_qfluentwidgets
-
-_qfluentwidgets = import_qfluentwidgets(lambda: __import__(
-    "qfluentwidgets", fromlist=["Theme", "setTheme"]
-))
-Theme = _qfluentwidgets.Theme
-setTheme = _qfluentwidgets.setTheme
-
+from app_theme import apply_app_theme
 from chat_window import ChatWindow
 from config_manager import ConfigManager
 from i18n_manager import current_language, detect_system_language, set_language
@@ -45,7 +38,7 @@ def main():
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(True)
 
-    setTheme(Theme.DARK if cfg.get("dark_theme", False) else Theme.LIGHT)
+    apply_app_theme(cfg.get("dark_theme", False))
 
     mgr = ModelManager()
     models = cfg.get("models", [])

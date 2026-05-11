@@ -16,14 +16,6 @@ from shiboken6 import isValid
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from fluent_silencer import import_qfluentwidgets
-
-_qfluentwidgets = import_qfluentwidgets(lambda: __import__(
-    "qfluentwidgets", fromlist=["setTheme", "Theme"]
-))
-setTheme = _qfluentwidgets.setTheme
-Theme = _qfluentwidgets.Theme
-
 import live2d.v2 as live2d
 from platform_patch import PatchedPlatformManager
 from live2d_widget import Live2DWidget
@@ -31,6 +23,7 @@ from model_manager import ModelManager
 from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language
 from settings_bus import publish_settings
+from app_theme import apply_app_theme
 
 
 def main():
@@ -56,8 +49,7 @@ def main():
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(False)
 
-    theme = Theme.DARK if cfg.get("dark_theme", False) else Theme.LIGHT
-    setTheme(theme)
+    apply_app_theme(cfg.get("dark_theme", False))
 
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
@@ -113,7 +105,8 @@ def main():
         clients = ipc_ref.get("clients", [])
         if socket in clients:
             clients.remove(socket)
-        socket.deleteLater()
+        if isValid(socket):
+            socket.deleteLater()
 
     def notify_chat_processes_shutdown():
         for socket in list(ipc_ref.get("clients", [])):
@@ -221,7 +214,7 @@ def main():
     def launch_pet():
         cfg.load()
         if pet_window_ref.get("dark", False):
-            setTheme(Theme.DARK)
+            apply_app_theme(True)
             cfg.set("dark_theme", True)
         if "fps" in pet_window_ref:
             cfg.set("fps", pet_window_ref["fps"])

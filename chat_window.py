@@ -12,6 +12,18 @@ from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, Round
 from qfluentwidgets.components.widgets.menu import TextEditMenu
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
+from app_theme import (
+    BANDORI_PRIMARY,
+    BANDORI_PRIMARY_HOVER,
+    BANDORI_PRIMARY_PRESSED,
+    BANDORI_PRIMARY_DARK,
+    BANDORI_PRIMARY_DARK_HOVER,
+    BANDORI_PRIMARY_DARK_PRESSED,
+    BANDORI_PRIMARY_SOFT,
+    BANDORI_PRIMARY_SOFT_DARK,
+    BANDORI_PRIMARY_SOFT_DARK_HOVER,
+    accent_color,
+)
 
 import ctypes
 import ctypes.wintypes
@@ -30,12 +42,12 @@ from action_bus import publish_action
 _BG_LIGHT = "#f5f7fb"
 _BG_DARK = "#0f1117"
 
-_USER_BUBBLE_LIGHT = "#e6f0ff"
-_USER_BUBBLE_DARK = "#1f355c"
+_USER_BUBBLE_LIGHT = BANDORI_PRIMARY_SOFT
+_USER_BUBBLE_DARK = BANDORI_PRIMARY_SOFT_DARK
 _ASSIST_BUBBLE_LIGHT = "#ffffff"
 _ASSIST_BUBBLE_DARK = "#1b1f29"
 _TEAMS_ACCENT = "#6264a7"
-_TELEGRAM_ACCENT = "#2aabee"
+_TELEGRAM_ACCENT = BANDORI_PRIMARY
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -174,9 +186,9 @@ class IconButton(QToolButton):
     def apply_theme(self):
         dark = isDarkTheme()
         if self._primary:
-            bg = _TELEGRAM_ACCENT
-            hover = "#45bdf2"
-            pressed = "#168fca"
+            bg = accent_color(dark)
+            hover = BANDORI_PRIMARY_DARK_HOVER if dark else BANDORI_PRIMARY_HOVER
+            pressed = BANDORI_PRIMARY_DARK_PRESSED if dark else BANDORI_PRIMARY_PRESSED
             fg = "#ffffff"
         else:
             bg = "#2a2f3b" if dark else "#edf2fb"
@@ -238,7 +250,7 @@ class ConversationHistoryRow(QWidget):
 
     def apply_theme(self):
         dark = isDarkTheme()
-        bg = "#263044" if self._current and dark else "#eef4ff" if self._current else "transparent"
+        bg = BANDORI_PRIMARY_SOFT_DARK if self._current and dark else BANDORI_PRIMARY_SOFT if self._current else "transparent"
         text = "#f7f7fb" if dark else "#1f2328"
         marker = _TELEGRAM_ACCENT if self._current else "transparent"
         danger = "#ff6b6b" if dark else "#c42b1c"
@@ -283,7 +295,7 @@ class ConversationHistoryRow(QWidget):
         eff = self.graphicsEffect()
         if not isinstance(eff, QGraphicsColorizeEffect):
             eff = QGraphicsColorizeEffect(self)
-            eff.setColor(QColor(96, 205, 255))
+            eff.setColor(QColor(BANDORI_PRIMARY_DARK))
             eff.setStrength(0.0)
             self.setGraphicsEffect(eff)
         self._hover_anim = QPropertyAnimation(eff, b"strength")
@@ -493,7 +505,7 @@ class MessageBubble(QWidget):
         border = "#39415a" if dark else "#e4e7ef"
         text = "#f7f7fb" if dark else "#1f2328"
         meta = "#a9b0c3" if dark else "#657089"
-        stream = "#82cfff" if dark else "#5470c6"
+        stream = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
         reasoning_bg = "#22283a" if dark else "#f1f5ff"
         reasoning_border = "#31394e" if dark else "#d9e3f6"
         reasoning_text = "#cbd3e8" if dark else "#4e5b75"
@@ -866,7 +878,7 @@ class ChatWindow(QWidget):
         hint_row.setSpacing(6)
         self._status_dot = QLabel("", area)
         self._status_dot.setFixedSize(7, 7)
-        self._composer_hint = QLabel(_tr("ChatWindow.ready"), area)
+        self._composer_hint = QLabel(self._idle_status_text(), area)
         hint_font = QFont()
         hint_font.setPointSize(8)
         self._composer_hint.setFont(hint_font)
@@ -934,7 +946,7 @@ class ChatWindow(QWidget):
         self._composer_colors = {
             "bg": input_bg,
             "border": input_border,
-            "focus_border": _TELEGRAM_ACCENT if not dark else "#7dd7ff",
+            "focus_border": accent_color(dark),
         }
 
         self.setStyleSheet(f"""
@@ -1061,7 +1073,7 @@ class ChatWindow(QWidget):
         menu.setObjectName("ConversationHistoryMenu")
         dark = isDarkTheme()
         bg = "#1b1f29" if dark else "#ffffff"
-        hover = "#263044" if dark else "#eef4ff"
+        hover = BANDORI_PRIMARY_SOFT_DARK_HOVER if dark else BANDORI_PRIMARY_SOFT
         border = "#303849" if dark else "#d8deea"
         text = "#f7f7fb" if dark else "#1f2328"
         muted = "#9aa5bd" if dark else "#657089"
@@ -1166,12 +1178,28 @@ class ChatWindow(QWidget):
             self._conv_id = None
         self._input.setFocus()
 
-    def _set_busy(self, busy: bool):
+    def _has_llm_config(self) -> bool:
+        return bool(
+            self._cfg
+            and self._cfg.get("llm_api_url", "").strip()
+            and self._cfg.get("llm_api_key", "").strip()
+            and self._cfg.get("llm_model_id", "").strip()
+        )
+
+    def _idle_status_text(self) -> str:
+        return _tr("ChatWindow.ready") if self._has_llm_config() else _tr("ChatWindow.not_configured")
+
+    def _set_busy(self, busy: bool, planning: bool = False):
         self._input.setEnabled(not busy)
         self._send_btn.setEnabled(not busy)
         self._new_btn.setEnabled(not busy)
-        planning = busy and self._is_group_chat and self._worker is None
-        self._composer_hint.setText("正在规划群聊发言..." if planning else _tr("ChatWindow.streaming_response") if busy else _tr("ChatWindow.ready"))
+        if planning:
+            status = _tr("ChatWindow.planning_group_response")
+        elif busy:
+            status = _tr("ChatWindow.streaming_response")
+        else:
+            status = self._idle_status_text()
+        self._composer_hint.setText(status)
         dot = _TEAMS_ACCENT if busy else _TELEGRAM_ACCENT
         self._status_dot.setStyleSheet(f"background: {dot}; border-radius: 3px;")
 
@@ -1320,6 +1348,7 @@ class ChatWindow(QWidget):
         model_id = self._cfg.get("llm_model_id", "")
 
         if not api_url or not api_key or not model_id:
+            self._composer_hint.setText(_tr("ChatWindow.not_configured"))
             bubble = MessageBubble(
                 _tr("ChatWindow.no_llm_config"),
                 "assistant",
@@ -1330,7 +1359,7 @@ class ChatWindow(QWidget):
             return
 
         self._input.clear()
-        self._set_busy(True)
+        self._set_busy(True, planning=self._is_group_chat)
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
@@ -1392,7 +1421,7 @@ class ChatWindow(QWidget):
 
     def _show_plan_divider(self):
         self._hide_plan_divider()
-        divider = PlanDivider("AI 调度中", self._msg_area)
+        divider = PlanDivider(_tr("ChatWindow.ai_scheduling"), self._msg_area)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, divider)
         self._plan_divider = divider
         self._scroll_to_bottom()
@@ -1444,6 +1473,7 @@ class ChatWindow(QWidget):
         self._start_next_group_response()
 
     def _start_response_for_character(self, character: str, spoken_names: list[str]):
+        self._set_busy(True, planning=False)
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         model_id = self._cfg.get("llm_model_id", "")
