@@ -90,9 +90,9 @@ icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
 
 executables = [
     Executable("main.py", base=base, target_name="BandoriPet.exe", icon=icon),
-    Executable("pet_process.py", base=base, target_name="pet_process.exe"),
-    Executable("settings_process.py", base=base, target_name="settings_process.exe"),
-    Executable("chat_process.py", base=base, target_name="chat_process.exe"),
+    Executable("pet_process.py", base=base, target_name="pet_process.exe", icon=icon),
+    Executable("settings_process.py", base=base, target_name="settings_process.exe", icon=icon),
+    Executable("chat_process.py", base=base, target_name="chat_process.exe", icon=icon),
 ]
 
 setup(

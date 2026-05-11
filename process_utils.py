@@ -21,6 +21,17 @@ def process_program_and_args(base_dir: str, script_name: str, args: list[str]) -
     return sys.executable, [os.path.join(base_dir, script_name), *args]
 
 
+def set_windows_app_user_model_id(app_id: str) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
 def ipc_server_name() -> str:
     digest = hashlib.sha1(str(app_base_dir()).encode("utf-8")).hexdigest()[:12]
     return f"BandoriPet-{digest}"

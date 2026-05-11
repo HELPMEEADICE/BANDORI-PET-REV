@@ -2,11 +2,12 @@ import argparse
 import os
 import sys
 
-from process_utils import app_base_dir, ipc_server_name
+from process_utils import app_base_dir, ipc_server_name, set_windows_app_user_model_id
 
 BASE_DIR = str(app_base_dir())
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
@@ -29,6 +30,12 @@ def _parse_args():
     return parser.parse_args()
 
 
+def _apply_app_icon(app: QApplication) -> None:
+    icon_path = os.path.join(BASE_DIR, "logo.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
+
 def main():
     os.chdir(BASE_DIR)
     args = _parse_args()
@@ -39,10 +46,12 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
 
+    set_windows_app_user_model_id("BandoriPet.Settings")
     app = QApplication(sys.argv)
     app.setApplicationName("BandoriPetSettings")
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(True)
+    _apply_app_icon(app)
 
     apply_app_theme(cfg.get("dark_theme", False))
 
@@ -83,8 +92,7 @@ def main():
         window.move((geo.width() - window.width()) // 2, (geo.height() - window.height()) // 2)
 
     window.show()
-    ret = app.exec()
-    return ret
+    return app.exec()
 
 
 if __name__ == "__main__":
