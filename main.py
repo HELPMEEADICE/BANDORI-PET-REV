@@ -275,22 +275,24 @@ def main():
         else:
             settings_process_ref["stdout_buffer"] = ""
         for raw_line in lines:
-            line = raw_line.rstrip("\r\n")
-            if line.startswith("MODEL\t"):
-                parts = line.split("\t", 2)
-                if len(parts) == 3:
-                    on_model_selected(
-                        parts[1], parts[2],
-                        relaunch=not settings_process_ref.get("show_launch", True),
-                    )
-            elif line.startswith("SETTINGS\t"):
-                try:
-                    cfg.load()
-                    on_settings_changed(json.loads(line.split("\t", 1)[1]))
-                except json.JSONDecodeError:
-                    pass
-            elif line == "LAUNCH":
-                launch_pet()
+            handle_settings_line(raw_line.rstrip("\r\n"))
+
+    def handle_settings_line(line):
+        if line.startswith("MODEL\t"):
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                on_model_selected(
+                    parts[1], parts[2],
+                    relaunch=not settings_process_ref.get("show_launch", True),
+                )
+        elif line.startswith("SETTINGS\t"):
+            try:
+                cfg.load()
+                on_settings_changed(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+        elif line == "LAUNCH":
+            launch_pet()
 
     def read_settings_error(process):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
@@ -304,21 +306,7 @@ def main():
             buffered = settings_process_ref.get("stdout_buffer", "")
             if buffered:
                 for line in buffered.splitlines():
-                    if line.startswith("MODEL\t"):
-                        parts = line.split("\t", 2)
-                        if len(parts) == 3:
-                            on_model_selected(
-                                parts[1], parts[2],
-                                relaunch=not settings_process_ref.get("show_launch", True),
-                            )
-                    elif line.startswith("SETTINGS\t"):
-                        try:
-                            cfg.load()
-                            on_settings_changed(json.loads(line.split("\t", 1)[1]))
-                        except json.JSONDecodeError:
-                            pass
-                    elif line == "LAUNCH":
-                        launch_pet()
+                    handle_settings_line(line)
             settings_process_ref.pop("process", None)
             settings_process_ref.pop("stdout_buffer", None)
         process.deleteLater()
@@ -371,12 +359,6 @@ def main():
 
     ret = app.exec()
     return ret
-
-
-def isDarkTheme():
-    from qfluentwidgets import isDarkTheme as _is_dark
-    return _is_dark()
-
 
 if __name__ == "__main__":
     sys.exit(main())

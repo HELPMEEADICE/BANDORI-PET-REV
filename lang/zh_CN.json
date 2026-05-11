@@ -155,12 +155,5 @@
     "ChatWindow.reasoning_title": "思考链",
     "ChatWindow.you": "你",
     "ChatWindow.no_llm_config": "请先在设置中配置 LLM API。",
-    "ChatWindow.delete_conv": "删除对话",
-    "ModelSelectDialog.title": "选择角色模型",
-    "ModelSelectDialog.char_placeholder": "选择角色...",
-    "ModelSelectDialog.costume_placeholder": "选择服装...",
-    "ModelSelectDialog.cancel": "取消",
-    "ModelSelectDialog.apply": "应用",
-    "ModelSelectDialog.char_label": "角色：",
-    "ModelSelectDialog.costume_label": "服装："
+    "ChatWindow.delete_conv": "删除对话"
 }

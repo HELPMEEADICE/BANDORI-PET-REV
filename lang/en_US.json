@@ -155,12 +155,5 @@
     "ChatWindow.reasoning_title": "Thought Process",
     "ChatWindow.you": "You",
     "ChatWindow.no_llm_config": "Please configure LLM API settings first.",
-    "ChatWindow.delete_conv": "Delete conversation",
-    "ModelSelectDialog.title": "Select Character Model",
-    "ModelSelectDialog.char_placeholder": "Choose character...",
-    "ModelSelectDialog.costume_placeholder": "Choose costume...",
-    "ModelSelectDialog.cancel": "Cancel",
-    "ModelSelectDialog.apply": "Apply",
-    "ModelSelectDialog.char_label": "Character:",
-    "ModelSelectDialog.costume_label": "Costume:"
+    "ChatWindow.delete_conv": "Delete conversation"
 }

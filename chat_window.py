@@ -814,7 +814,7 @@ class ChatWindow(QWidget):
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setCursor(Qt.CursorShape.PointingHandCursor)
         avatar.setToolTip(_tr("ChatWindow.history_tooltip"))
-        avatar.mousePressEvent = self._on_title_avatar_pressed
+        avatar.mouseReleaseEvent = self._on_title_avatar_released
         layout.addWidget(avatar)
 
         title_stack = QVBoxLayout()
@@ -1061,9 +1061,10 @@ class ChatWindow(QWidget):
         time_text = created_at[5:16] if len(created_at) >= 16 else created_at
         return f"{time_text}  {preview}".strip()
 
-    def _on_title_avatar_pressed(self, event):
+    def _on_title_avatar_released(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        event.accept()
         self._show_conversation_history()
 
     def _show_conversation_history(self):

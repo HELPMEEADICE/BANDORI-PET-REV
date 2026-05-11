@@ -1,5 +1,6 @@
 import ctypes
 import ctypes.wintypes
+import json
 import os
 import random
 import re
@@ -8,7 +9,6 @@ from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve,
 from PySide6.QtGui import QColor, QIcon, QCursor, QMoveEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QApplication, QSystemTrayIcon, QMenu, QStackedLayout,
-    QGraphicsOpacityEffect,
 )
 
 from app_theme import apply_app_theme
@@ -142,6 +142,8 @@ class PetWindow(QWidget):
         self._radial_menu = None
         self._chat_process = None
         self._settings_process = None
+        self._settings_stdout_buffer = ""
+        self._entrance_anim = None
         self._pixel_frames = load_pixel_frames()
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_ready = False
@@ -635,7 +637,6 @@ class PetWindow(QWidget):
 
         def _find_motion(tag: str) -> str | None:
             tag_low = tag.lower()
-            prefix = f"{char_lower}_{tag_low}"
             candidates = []
             if tag_low == "thinking":
                 candidates.extend(["thinking", "nf", "nnf", "eeto", "odoodo"])
@@ -997,28 +998,28 @@ class PetWindow(QWidget):
         process.start()
 
     def _read_settings_process_output(self, process: QProcess):
-        import json
-
         data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        buffer = getattr(self, "_settings_stdout_buffer", "") + data
+        buffer = self._settings_stdout_buffer + data
         lines = buffer.splitlines(keepends=True)
         if lines and not lines[-1].endswith(("\n", "\r")):
             self._settings_stdout_buffer = lines.pop()
         else:
             self._settings_stdout_buffer = ""
         for raw_line in lines:
-            line = raw_line.rstrip("\r\n")
-            if line.startswith("MODEL\t"):
-                parts = line.split("\t", 2)
-                if len(parts) == 3:
-                    self._switch_model(parts[1], parts[2])
-            elif line.startswith("SETTINGS\t"):
-                try:
-                    if self._cfg:
-                        self._cfg.load()
-                    self._apply_settings(json.loads(line.split("\t", 1)[1]))
-                except json.JSONDecodeError:
-                    pass
+            self._handle_settings_process_line(raw_line.rstrip("\r\n"))
+
+    def _handle_settings_process_line(self, line: str):
+        if line.startswith("MODEL\t"):
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                self._switch_model(parts[1], parts[2])
+        elif line.startswith("SETTINGS\t"):
+            try:
+                if self._cfg:
+                    self._cfg.load()
+                self._apply_settings(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
 
     def _read_settings_process_error(self, process: QProcess):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
@@ -1027,21 +1028,10 @@ class PetWindow(QWidget):
 
     def _on_settings_process_finished(self, process: QProcess):
         if self._settings_process is process:
-            buffered = getattr(self, "_settings_stdout_buffer", "")
+            buffered = self._settings_stdout_buffer
             if buffered:
-                import json
                 for line in buffered.splitlines():
-                    if line.startswith("MODEL\t"):
-                        parts = line.split("\t", 2)
-                        if len(parts) == 3:
-                            self._switch_model(parts[1], parts[2])
-                    elif line.startswith("SETTINGS\t"):
-                        try:
-                            if self._cfg:
-                                self._cfg.load()
-                            self._apply_settings(json.loads(line.split("\t", 1)[1]))
-                        except json.JSONDecodeError:
-                            pass
+                    self._handle_settings_process_line(line)
             self._settings_process = None
             self._settings_stdout_buffer = ""
         process.deleteLater()
@@ -1165,12 +1155,12 @@ class PetWindow(QWidget):
 
     def _play_entrance(self):
         self.setWindowOpacity(0.0)
-        anim = QPropertyAnimation(self, b"windowOpacity")
-        anim.setDuration(400)
-        anim.setStartValue(0.0)
-        anim.setEndValue(float(self._opacity))
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.start()
+        self._entrance_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._entrance_anim.setDuration(400)
+        self._entrance_anim.setStartValue(0.0)
+        self._entrance_anim.setEndValue(float(self._opacity))
+        self._entrance_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._entrance_anim.start()
 
 
 def isDarkTheme():
