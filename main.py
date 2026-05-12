@@ -233,6 +233,7 @@ def main():
         pet_window_ref["opacity"] = data.get("opacity", 1.0)
         pet_window_ref["dark"] = data.get("dark_theme", False)
         pet_window_ref["vsync"] = data.get("vsync", True)
+        pet_window_ref["game_topmost"] = data.get("game_topmost", cfg.get("game_topmost", False))
         pet_window_ref["live2d_quality"] = data.get("live2d_quality", "balanced")
         pet_window_ref["live2d_scale"] = data.get("live2d_scale", cfg.get("live2d_scale", 100))
         cfg.load()
@@ -240,6 +241,7 @@ def main():
         cfg.set("opacity", pet_window_ref["opacity"])
         cfg.set("dark_theme", pet_window_ref["dark"])
         cfg.set("vsync", pet_window_ref["vsync"])
+        cfg.set("game_topmost", pet_window_ref["game_topmost"])
         cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
         cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
         cfg.save()
@@ -255,6 +257,8 @@ def main():
             cfg.set("opacity", pet_window_ref["opacity"])
         if "vsync" in pet_window_ref:
             cfg.set("vsync", pet_window_ref["vsync"])
+        if "game_topmost" in pet_window_ref:
+            cfg.set("game_topmost", pet_window_ref["game_topmost"])
         if "live2d_quality" in pet_window_ref:
             cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
         if "live2d_scale" in pet_window_ref:

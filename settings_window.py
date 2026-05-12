@@ -708,6 +708,7 @@ class SettingsWindow(QWidget):
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
+        self._game_topmost = bool(self._cfg.get("game_topmost", False)) if self._cfg else False
         self._live2d_quality = normalize_live2d_quality(
             self._cfg.get("live2d_quality", "balanced") if self._cfg else "balanced"
         )
@@ -2323,6 +2324,15 @@ class SettingsWindow(QWidget):
             self._fps_slider.setEnabled(False)
             self._fps_value.setEnabled(False)
 
+        game_topmost_label = BodyLabel(_tr("SettingsWindow.side_game_topmost"), panel)
+        self._game_topmost_switch = SwitchButton(panel)
+        self._game_topmost_switch.setChecked(self._game_topmost)
+        game_topmost_row = QHBoxLayout()
+        game_topmost_row.addWidget(game_topmost_label)
+        game_topmost_row.addStretch()
+        game_topmost_row.addWidget(self._game_topmost_switch)
+        layout.addLayout(game_topmost_row)
+
         opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), panel)
         layout.addWidget(opacity_label)
         self._opacity_slider = Slider(Qt.Orientation.Horizontal, panel)
@@ -2677,6 +2687,7 @@ class SettingsWindow(QWidget):
             "opacity": self._opacity_slider.value() / 100.0,
             "dark_theme": self._theme_switch.isChecked(),
             "vsync": self._vsync_switch.isChecked(),
+            "game_topmost": self._game_topmost_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
         }
@@ -2685,6 +2696,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("opacity", settings["opacity"])
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])
+            self._cfg.set("game_topmost", settings["game_topmost"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()

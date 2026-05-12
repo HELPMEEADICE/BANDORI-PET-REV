@@ -26,6 +26,7 @@ WM_NCCALCSIZE = 0x0083
 HTTRANSPARENT = -1
 HTCLIENT = 1
 GWL_EXSTYLE = -20
+HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_DONOTROUND = 1
@@ -128,6 +129,7 @@ class PetWindow(QWidget):
         self._fps = fps
         self._opacity = opacity
         self._vsync = True
+        self._game_topmost = bool(config_manager.get("game_topmost", False)) if config_manager else False
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
         self._tray_icon = None
@@ -155,6 +157,9 @@ class PetWindow(QWidget):
         self._passthrough_timer = QTimer(self)
         self._passthrough_timer.setInterval(50)
         self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.setInterval(1000)
+        self._topmost_timer.timeout.connect(self._enforce_game_topmost)
         self._ipc_socket = QLocalSocket(self)
         self._ipc_buffer = ""
         self._ipc_reconnect_timer = QTimer(self)
@@ -174,6 +179,7 @@ class PetWindow(QWidget):
             self._init_tray()
         self._load_initial_model()
         self._passthrough_timer.start()
+        self._update_game_topmost_timer()
         self._connect_ipc_socket()
         QApplication.instance().installEventFilter(self)
 
@@ -262,6 +268,32 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+        self._enforce_game_topmost()
+
+    def _update_game_topmost_timer(self):
+        if os.name != "nt":
+            return
+        if self._game_topmost:
+            self._topmost_timer.start()
+            self._enforce_game_topmost()
+        else:
+            self._topmost_timer.stop()
+
+    def _enforce_game_topmost(self):
+        if os.name != "nt" or not self._game_topmost or not self.isVisible():
+            return
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+        _set_window_pos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
 
     def eventFilter(self, obj, event):
         if self._radial_menu is not None and self._radial_menu.isVisible():
@@ -325,6 +357,10 @@ class PetWindow(QWidget):
     def set_vsync(self, enabled: bool):
         self._vsync = enabled
         self._live2d_widget.set_vsync(enabled)
+
+    def set_game_topmost(self, enabled: bool):
+        self._game_topmost = bool(enabled)
+        self._update_game_topmost_timer()
 
     def moveEvent(self, event: QMoveEvent):
         super().moveEvent(event)
@@ -451,6 +487,8 @@ class PetWindow(QWidget):
         if "vsync" in data:
             self._vsync = data["vsync"]
             self._live2d_widget.set_vsync(data["vsync"])
+        if "game_topmost" in data:
+            self.set_game_topmost(data["game_topmost"])
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -1069,6 +1107,7 @@ class PetWindow(QWidget):
             self._cfg.set("opacity", self._opacity)
             self._cfg.set("dark_theme", isDarkTheme())
             self._cfg.set("vsync", self._vsync)
+            self._cfg.set("game_topmost", self._game_topmost)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
@@ -1146,6 +1185,7 @@ class PetWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
+        self._update_game_topmost_timer()
         if self._show_pos_set:
             return
         screen = QApplication.primaryScreen()

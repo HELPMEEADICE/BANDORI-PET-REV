@@ -104,6 +104,7 @@
     "SettingsWindow.side_opacity": "不透明度",
     "SettingsWindow.opacity_value": "{v}%",
     "SettingsWindow.side_vsync": "垂直同步",
+    "SettingsWindow.side_game_topmost": "游戏置顶兼容",
     "SettingsWindow.side_dark_theme": "深色主题",
     "SettingsWindow.language": "语言",
     "SettingsWindow.apply_launch": "应用并启动",
