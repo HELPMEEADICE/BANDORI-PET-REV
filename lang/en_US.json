@@ -97,7 +97,7 @@
     "SettingsWindow.about_links": "Project GitHub: <a href=\"{repo}\">{repo}</a><br>License: <a href=\"{license}\">GPLv3 / LICENSE</a>",
     "SettingsWindow.about_open_repo": "Open GitHub",
     "SettingsWindow.about_open_license": "View License",
-    "SettingsWindow.about_tech": "Tech stack: PySide6, PyQt-Fluent-Widgets, Live2D Cubism, live2d-py, and PyOpenGL.",
+    "SettingsWindow.about_tech": "Tech stack: PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Live2D-v2-Lua, and PyOpenGL.",
     "SettingsWindow.side_settings": "Settings",
     "SettingsWindow.side_fps": "Refresh Rate (FPS)",
     "SettingsWindow.fps_value": "{v} FPS",

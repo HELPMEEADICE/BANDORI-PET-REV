@@ -6,18 +6,13 @@ from process_utils import app_base_dir, ipc_server_name, process_program_and_arg
 
 BASE_DIR = str(app_base_dir())
 
-LIVE2D_PACKAGE = os.path.join(BASE_DIR, "third_party", "live2d-py", "package")
-if LIVE2D_PACKAGE not in sys.path:
-    sys.path.insert(0, LIVE2D_PACKAGE)
-
 from PySide6.QtCore import Qt, QProcess
 from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-import live2d.v2 as live2d
-from platform_patch import PatchedPlatformManager
+from live2d_lua_adapter import live2d
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from config_manager import ConfigManager
@@ -34,10 +29,6 @@ def main():
     set_language(lang)
 
     live2d.init()
-
-    live2d.Live2DFramework.setPlatformManager(
-        PatchedPlatformManager(live2d.Live2DFramework.getPlatformManager())
-    )
 
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)

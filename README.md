@@ -6,6 +6,7 @@
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/HELPMEEADICE/BANDORI-PET-REV?color=yellow"></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/HELPMEEADICE/BANDORI-PET-REV?color=orange"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://luajit.org/"><img alt="LuaJIT" src="https://img.shields.io/badge/LuaJIT-2.1+-000080?logo=lua&logoColor=white"></a>
   <a href="https://www.live2d.com/"><img alt="Live2D" src="https://img.shields.io/badge/Live2D-Cubism%20v2-EE82EE?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNy45M2MtMy45NS0uNDktNy0zLjg1LTctNy45M3MzLjA1LTcuNDQgNy03LjkzdjE1Ljg2em0yLTE1Ljg2YzMuOTUuNDkgNyAzLjg1IDcgNy45M3MtMy4wNSA3LjQ0LTcgNy45M1Y0LjA3eiIvPjwvc3ZnPg=="></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/HELPMEEADICE/BANDORI-PET-REV?color=green"></a>
 </p>
@@ -24,7 +25,7 @@ BandoriPet 是一个基于 Live2D Cubism SDK 和 PySide6 的开源桌面宠物�
 
 ## ✨ 特性
 
-- 🎭 **Live2D 实时渲染** — 支持头部追踪、拖拽移动、点击互动，老婆会跟着你的鼠标转头！
+- ⚡ **自研 LuaJIT 渲染核心** — 基于 [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua)（作者 [@HELPMEEADICE](https://github.com/HELPMEEADICE)），纯 LuaJIT 实现，性能相较原 live2d-py 提升 **6 倍+**（30fps → 180fps+），支持头部追踪、拖拽移动、点击互动，老婆会跟着你的鼠标转头！
 - 💬 **LLM 角色扮演聊天** — 接入大语言模型，每个角色都有专属 System Prompt，支持中日英多语言 + 动作标签。
 - 🎨 **像素风桌面宠物** — 也可以切成像素小人的形态，CPU 友好，可爱不减！
 - 🌓 **Fluent Design 设置面板** — 暗色/亮色主题切换，图形化选角选装界面。
@@ -38,8 +39,8 @@ BandoriPet 是一个基于 Live2D Cubism SDK 和 PySide6 的开源桌面宠物�
 
 ### 1. 环境要求
 
-- **Python 3.10+**
-- Windows / macOS / Linux
+- **Python 3.10+** & **LuaJIT 2.1+**
+- Windows（会在后续陆续支持多平台）
 - 支持 OpenGL 3.3+ 的显卡（核显也能跑）
 
 ### 2. 克隆仓库
@@ -96,13 +97,9 @@ mkdir third_party
 git clone -b PySide6 --single-branch https://github.com/zhiyiYo/PyQt-Fluent-Widgets.git third_party/PyQt-Fluent-Widgets
 pip install -e third_party/PyQt-Fluent-Widgets
 
-# live2d-py（Live2D Python 绑定，无需 pip install，main.py 会注入 sys.path）
-git clone https://github.com/EasyLive2D/live2d-py.git third_party/live2d-py
+# Live2D-v2-Lua（自研 LuaJIT Live2D 渲染核心，无需 pip install）
+git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-Lua
 ```
-
-**Live2D Cubism 核心库：**
-
-> ⚠️ 必须自行前往 [Live2D 官网](https://www.live2d.com/en/sdk/download/native/) 下载 Cubism SDK for Native。下载后解压到 `third_party/CubismSdkForNative-5-r.5` 目录下。
 
 ### 5. 启动！
 
@@ -167,8 +164,8 @@ python setup.py build
 | 技术 | 用途 |
 |------|------|
 | **PySide6** | Qt for Python 主框架 |
-| **Live2D Cubism SDK for Native** | 角色模型渲染引擎 (v2) |
-| **live2d-py** | Live2D 的 Python 绑定封装 |
+| **Live2D-v2-Lua** | 自研 LuaJIT Live2D v2 渲染核心（替代 live2d-py，性能提升 6x+） |
+| **lupa** | Python ↔ LuaJIT FFI 桥接 |
 | **PyQt-Fluent-Widgets** | Win11 风格 Fluent Design 组件库 |
 | **PyOpenGL** | OpenGL 渲染后端 |
 | **cx_Freeze** | 打包为独立 exe |
@@ -187,7 +184,7 @@ python setup.py build
 
 - [Live2D Cubism SDK](https://www.live2d.com/)
 - [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets)
-- [live2d-py](https://github.com/EasyLive2D/live2d-py)
+- [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua) — 自研 LuaJIT 渲染核心
 - 所有为 BanG Dream! 角色模型做出贡献的同人作者们 💙
 
 ## ⭐ Star History

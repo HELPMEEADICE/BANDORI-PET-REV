@@ -1,5 +1,7 @@
-import sys
 import platform
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from cx_Freeze import Executable, setup
@@ -7,10 +9,7 @@ from cx_Freeze.command.build_exe import build_exe
 
 
 BASE_DIR = Path(__file__).resolve().parent
-LIVE2D_PACKAGE = BASE_DIR / "third_party" / "live2d-py" / "package"
-
-if LIVE2D_PACKAGE.exists():
-    sys.path.insert(0, str(LIVE2D_PACKAGE))
+BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
 
 import PySide6.QtCore  # noqa: E402,F401
 import PySide6.QtGui  # noqa: E402,F401
@@ -30,6 +29,62 @@ def include_if_exists(path: str) -> tuple[str, str] | None:
     if not src.exists():
         return None
     return str(src), path
+
+
+def _luajit_executable() -> str:
+    luajit = shutil.which("luajit")
+    if luajit:
+        return luajit
+    raise RuntimeError("luajit executable was not found in PATH")
+
+
+def _compiled_lua_include(path: str, dest_path: str | None = None) -> tuple[str, str] | None:
+    src = BASE_DIR / path
+    if not src.exists():
+        return None
+
+    relative = Path(dest_path or path)
+    compiled_dest = relative.with_suffix(".ljbc")
+    compiled_src = BYTECODE_BUILD_DIR / compiled_dest
+    compiled_src.parent.mkdir(parents=True, exist_ok=True)
+
+    if not compiled_src.exists() or src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns:
+        subprocess.run(
+            [_luajit_executable(), "-b", str(src), str(compiled_src)],
+            check=True,
+            cwd=BASE_DIR,
+        )
+
+    return str(compiled_src), compiled_dest.as_posix()
+
+
+def _live2d_lua_include_files() -> list[tuple[str, str]]:
+    root = BASE_DIR / "third_party" / "Live2D-v2-Lua"
+    if not root.is_dir():
+        return []
+    exclude_dirs = {".git", "examples", "resources", "test-data"}
+    exclude_files = {
+        "render_frames.lua",
+        "simple.lua",
+        "main.lua",
+    }
+    result = []
+    for entry in sorted(root.rglob("*")):
+        if any(p.name in exclude_dirs for p in entry.parents):
+            continue
+        if not entry.is_file():
+            continue
+        rel = entry.relative_to(root)
+        if rel.name in exclude_files and rel.parent == Path("."):
+            continue
+        dest = "third_party/Live2D-v2-Lua/" + rel.as_posix()
+        if entry.suffix == ".lua":
+            compiled = _compiled_lua_include(str(entry.relative_to(BASE_DIR)), dest)
+            if compiled is not None:
+                result.append(compiled)
+            continue
+        result.append((str(entry), dest))
+    return result
 
 
 def release_platform_name() -> str:
@@ -57,13 +112,14 @@ include_files = [
     include_if_exists("logo.ico"),
     include_if_exists("band.json"),
     include_if_exists("outfit.json"),
-    include_if_exists("custom_hit_area_state.lua"),
+    _compiled_lua_include("custom_hit_area_state.lua"),
     include_if_exists("lang"),
     include_if_exists("band_logo"),
     include_if_exists("characters"),
     include_if_exists("pixels"),
-    include_if_exists("third_party/live2d-py/package"),
 ]
+
+include_files.extend(_live2d_lua_include_files())
 include_files = [item for item in include_files if item is not None]
 
 build_exe_options = {
@@ -77,9 +133,7 @@ build_exe_options = {
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
         "darkdetect",
-        "live2d.v2",
         "lupa.luajit21",
-        "numpy",
         "qfluentwidgets",
         "sqlite3",
     ],

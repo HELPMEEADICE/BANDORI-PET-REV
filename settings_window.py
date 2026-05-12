@@ -1,5 +1,4 @@
 import os
-import sys
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
@@ -799,22 +798,9 @@ class SettingsWindow(QWidget):
         if self._live2d:
             return self._live2d
         try:
-            live2d_package = os.path.join(
-                str(app_base_dir()),
-                "third_party",
-                "live2d-py",
-                "package",
-            )
-            if live2d_package not in sys.path:
-                sys.path.insert(0, live2d_package)
-
-            import live2d.v2 as live2d
-            from platform_patch import PatchedPlatformManager
+            from live2d_lua_adapter import live2d
 
             live2d.init()
-            live2d.Live2DFramework.setPlatformManager(
-                PatchedPlatformManager(live2d.Live2DFramework.getPlatformManager())
-            )
             self._live2d = live2d
             self._owns_live2d = True
             return self._live2d

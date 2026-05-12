@@ -6,7 +6,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from lua_hit_area_projection import LuaCustomHitAreaState
 from platform_patch import set_live2d_texture_quality
-from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
+from zst_model_archive import clear_virtual_byte_cache, is_virtual_path
 
 class Live2DWidget(QOpenGLWidget):
     model_loaded = Signal()
@@ -170,7 +170,6 @@ class Live2DWidget(QOpenGLWidget):
         try:
             if is_virtual_path(model_json_path):
                 clear_virtual_byte_cache()
-                prefetch_virtual_model_resources(model_json_path)
             set_live2d_texture_quality(self._quality_profile)
             disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             self._model = self._live2d.LAppModel()

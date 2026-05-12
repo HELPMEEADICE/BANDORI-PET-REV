@@ -97,7 +97,7 @@
     "SettingsWindow.about_links": "项目 GitHub：<a href=\"{repo}\">{repo}</a><br>许可证：<a href=\"{license}\">GPLv3 / LICENSE</a>",
     "SettingsWindow.about_open_repo": "打开 GitHub",
     "SettingsWindow.about_open_license": "查看许可证",
-    "SettingsWindow.about_tech": "技术栈：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、live2d-py、PyOpenGL。",
+    "SettingsWindow.about_tech": "技术栈：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Live2D-v2-Lua、PyOpenGL。",
     "SettingsWindow.side_settings": "设置",
     "SettingsWindow.side_fps": "刷新率（FPS）",
     "SettingsWindow.fps_value": "{v}帧",

@@ -1,6 +1,7 @@
-from lupa.luajit21 import LuaRuntime
 from pathlib import Path
 import sys
+
+from lupa.luajit21 import LuaRuntime
 
 
 _LUA = LuaRuntime(unpack_returned_tuples=True)
@@ -8,16 +9,21 @@ _LUA = LuaRuntime(unpack_returned_tuples=True)
 if _LUA.eval("jit == nil"):
     raise RuntimeError("LuaJIT is required for custom hit area handling")
 
-_LUA_FILE = "custom_hit_area_state.lua"
+_LUA_BASENAME = "custom_hit_area_state"
 
 
 def _lua_source_path() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / _LUA_FILE
-    return Path(__file__).resolve().with_name(_LUA_FILE)
+        frozen_dir = Path(sys.executable).resolve().parent
+        bytecode_path = frozen_dir / f"{_LUA_BASENAME}.ljbc"
+        if bytecode_path.exists():
+            return bytecode_path
+        return frozen_dir / f"{_LUA_BASENAME}.lua"
+    return Path(__file__).resolve().with_name(f"{_LUA_BASENAME}.lua")
 
 
-_NEW_CUSTOM_HIT_AREA_STATE = _LUA.execute(_lua_source_path().read_text(encoding="utf-8"))
+_LOAD_CHUNK = _LUA.eval("function(path) local chunk, err = loadfile(path); assert(chunk, err); return chunk() end")
+_NEW_CUSTOM_HIT_AREA_STATE = _LOAD_CHUNK(str(_lua_source_path()))
 
 
 class LuaCustomHitAreaState:
