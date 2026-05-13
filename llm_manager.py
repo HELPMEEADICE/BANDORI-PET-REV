@@ -387,13 +387,15 @@ def _scan_character_md_files() -> dict[str, str]:
         return result
 
     key_to_name = _build_key_to_name_mapping()
-    name_to_key = {v: k for k, v in key_to_name.items()}
+    name_to_keys: dict[str, list[str]] = {}
+    for key, name in key_to_name.items():
+        name_to_keys.setdefault(name, []).append(key)
 
     for entry in sorted(_CHARACTERS_DIR.iterdir()):
         if not entry.is_dir():
             continue
-        key = name_to_key.get(entry.name)
-        if not key:
+        keys = name_to_keys.get(entry.name, [])
+        if not keys:
             continue
 
         md_files = sorted([f for f in entry.iterdir() if f.suffix == ".md"])
@@ -403,7 +405,9 @@ def _scan_character_md_files() -> dict[str, str]:
         parts = []
         for md_file in md_files:
             parts.append(md_file.read_text(encoding="utf-8"))
-        result[key] = "\n\n".join(parts)
+        content = "\n\n".join(parts)
+        for key in keys:
+            result[key] = content
 
     return result
 
