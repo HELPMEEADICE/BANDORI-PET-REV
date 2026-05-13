@@ -1949,8 +1949,6 @@ class SettingsWindow(QWidget):
         return [
             ("performance", _tr("SettingsWindow.quality_performance")),
             ("balanced", _tr("SettingsWindow.quality_balanced")),
-            ("quality", _tr("SettingsWindow.quality_quality")),
-            ("ultra", _tr("SettingsWindow.quality_ultra")),
         ]
 
     def _quality_detail_text(self, profile: str) -> str:

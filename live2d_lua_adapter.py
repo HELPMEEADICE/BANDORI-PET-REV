@@ -97,10 +97,6 @@ def _load_model_json(path: str) -> dict:
 def _texture_options(profile: str) -> tuple[float, bool, int]:
     if profile == "performance":
         return 0.5, False, 0
-    if profile == "quality":
-        return 1.0, True, 2
-    if profile == "ultra":
-        return 1.0, True, 3
     return 1.0, False, 0
 
 
@@ -330,13 +326,8 @@ class LuaLive2DModule:
         self._hit_test = lua.eval(b"function(renderer, x, y) return renderer:hit_test(x, y) end")
         self._apply_texture_quality = lua.eval(
             b"(function() "
-            b"local ffi = require('ffi'); "
             b"local gl = require('live2d.core.live2d_gl_wrapper'); "
-            b"local raw_gl = require('live2d.gl_loader'); "
-            b"pcall(ffi.cdef, [[void glGetFloatv(GLenum pname, GLfloat *data); void glTexParameterf(GLenum target, GLenum pname, GLfloat param);]]); "
             b"local GL_NEAREST = 0x2600; "
-            b"local GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE; "
-            b"local GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF; "
             b"return function(renderer, profile) "
             b"local model = renderer:get_model(); "
             b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
@@ -344,13 +335,8 @@ class LuaLive2DModule:
             b"local min_filter = gl.LINEAR; "
             b"local mag_filter = gl.LINEAR; "
             b"local use_mipmap = false; "
-            b"local anisotropy = 1.0; "
             b"if profile == 'performance' then "
             b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; "
-            b"elseif profile == 'quality' then "
-            b"min_filter = gl.LINEAR_MIPMAP_LINEAR; use_mipmap = true; "
-            b"elseif profile == 'ultra' then "
-            b"min_filter = gl.LINEAR_MIPMAP_LINEAR; use_mipmap = true; anisotropy = 4.0; "
             b"end; "
             b"for i = 1, #textures do "
             b"local texture = textures[i]; "
@@ -361,13 +347,6 @@ class LuaLive2DModule:
             b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mag_filter); "
             b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); "
             b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); "
-            b"if anisotropy > 1.0 and raw_gl.glGetFloatv ~= nil and raw_gl.glTexParameterf ~= nil then "
-            b"local max_value = ffi.new('GLfloat[1]', 1.0); "
-            b"if pcall(raw_gl.glGetFloatv, GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, max_value) then "
-            b"local level = math.min(anisotropy, tonumber(max_value[0]) or anisotropy); "
-            b"pcall(raw_gl.glTexParameterf, gl.TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, level); "
-            b"end; "
-            b"end; "
             b"end; "
             b"end; "
             b"gl.bindTexture(gl.TEXTURE_2D, 0); "

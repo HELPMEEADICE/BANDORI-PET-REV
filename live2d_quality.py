@@ -1,8 +1,6 @@
 LIVE2D_QUALITY_PROFILES = {
     "performance": {"disable_precision": True},
     "balanced": {"disable_precision": True},
-    "quality": {"disable_precision": True},
-    "ultra": {"disable_precision": True},
 }
 
 
