@@ -7,6 +7,7 @@ from pathlib import Path
 from lupa.luajit21 import LuaRuntime
 from PIL import Image
 
+from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
 from zst_model_archive import is_virtual_path, load_virtual_bytes
 
@@ -14,6 +15,8 @@ from zst_model_archive import is_virtual_path, load_virtual_bytes
 BASE_DIR = Path(app_base_dir())
 LIVE2D_LUA_DIR = BASE_DIR / "third_party" / "Live2D-v2-Lua"
 MODELS_DIR = BASE_DIR / "models"
+_TEXTURE_DATA_CACHE = {}
+_TEXTURE_DATA_CACHE_LIMIT = 64
 
 
 def _normalize_lua_path(path) -> str:
@@ -45,14 +48,100 @@ def _load_model_json(path: str) -> dict:
     return json.loads(_load_model_bytes(path).decode("utf-8"))
 
 
-def _texture_rgba(path: str) -> tuple[int, int, bytes]:
+def _texture_options(profile: str) -> tuple[float, bool, int]:
+    if profile == "performance":
+        return 0.5, False, 0
+    if profile == "quality":
+        return 1.0, True, 2
+    if profile == "ultra":
+        return 1.0, True, 3
+    return 1.0, False, 0
+
+
+def _texture_cache_key(path: str, profile: str):
+    if is_virtual_path(path):
+        return profile, path
+    fs_path = Path(path)
+    try:
+        stat = fs_path.stat()
+        return profile, str(fs_path.resolve()), stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return profile, str(fs_path)
+
+
+def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
+    if passes <= 0:
+        return image
+
+    pixels = image.load()
+    width, height = image.size
+    for _ in range(passes):
+        updates = []
+        for y in range(height):
+            for x in range(width):
+                alpha = pixels[x, y][3]
+                if alpha >= 255:
+                    continue
+
+                red = green = blue = count = 0
+                for nx, ny in (
+                    (x - 1, y),
+                    (x + 1, y),
+                    (x, y - 1),
+                    (x, y + 1),
+                ):
+                    if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                        continue
+                    nr, ng, nb, na = pixels[nx, ny]
+                    if na <= alpha:
+                        continue
+                    red += nr
+                    green += ng
+                    blue += nb
+                    count += 1
+
+                if count:
+                    updates.append((x, y, red // count, green // count, blue // count, alpha))
+
+        if not updates:
+            break
+        for x, y, red, green, blue, alpha in updates:
+            pixels[x, y] = (red, green, blue, alpha)
+    return image
+
+
+def _resize_for_quality(image: Image.Image, scale: float) -> Image.Image:
+    if scale >= 1.0:
+        return image
+    width = max(1, int(image.width * scale))
+    height = max(1, int(image.height * scale))
+    resampling = getattr(Image, "Resampling", Image).BILINEAR
+    return image.resize((width, height), resampling)
+
+
+def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
+    cache_key = _texture_cache_key(path, profile)
+    cached = _TEXTURE_DATA_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    scale, use_mipmap, bleed_passes = _texture_options(profile)
     source = io.BytesIO(load_virtual_bytes(path)) if is_virtual_path(path) else Path(path)
     with Image.open(source) as image:
         if image.mode != "RGBA":
             image = image.convert("RGBA")
         else:
             image = image.copy()
-        return image.width, image.height, image.tobytes()
+        try:
+            image = _resize_for_quality(image, scale)
+            image = _bleed_transparent_edges(image, bleed_passes)
+            result = image.width, image.height, image.tobytes(), use_mipmap
+            _TEXTURE_DATA_CACHE[cache_key] = result
+            if len(_TEXTURE_DATA_CACHE) > _TEXTURE_DATA_CACHE_LIMIT:
+                _TEXTURE_DATA_CACHE.pop(next(iter(_TEXTURE_DATA_CACHE)))
+            return result
+        finally:
+            image.close()
 
 
 def _fix_mtn_path(path: str) -> str:
@@ -147,6 +236,7 @@ class LuaLive2DModule:
         self._draw = None
         self._drag = None
         self._hit_test = None
+        self._apply_texture_quality = None
         self.MotionPriority = MotionPriority
 
     def init(self):
@@ -191,6 +281,52 @@ class LuaLive2DModule:
         self._draw = lua.eval(b"function(renderer, opts) return renderer:draw(opts) end")
         self._drag = lua.eval(b"function(renderer, x, y) return renderer:drag(x, y) end")
         self._hit_test = lua.eval(b"function(renderer, x, y) return renderer:hit_test(x, y) end")
+        self._apply_texture_quality = lua.eval(
+            b"(function() "
+            b"local ffi = require('ffi'); "
+            b"local gl = require('live2d.core.live2d_gl_wrapper'); "
+            b"local raw_gl = require('live2d.gl_loader'); "
+            b"pcall(ffi.cdef, [[void glGetFloatv(GLenum pname, GLfloat *data); void glTexParameterf(GLenum target, GLenum pname, GLfloat param);]]); "
+            b"local GL_NEAREST = 0x2600; "
+            b"local GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE; "
+            b"local GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF; "
+            b"return function(renderer, profile) "
+            b"local model = renderer:get_model(); "
+            b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
+            b"local textures = model.live2DModel.drawParamGL.textures or {}; "
+            b"local min_filter = gl.LINEAR; "
+            b"local mag_filter = gl.LINEAR; "
+            b"local use_mipmap = false; "
+            b"local anisotropy = 1.0; "
+            b"if profile == 'performance' then "
+            b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; "
+            b"elseif profile == 'quality' then "
+            b"min_filter = gl.LINEAR_MIPMAP_LINEAR; use_mipmap = true; "
+            b"elseif profile == 'ultra' then "
+            b"min_filter = gl.LINEAR_MIPMAP_LINEAR; use_mipmap = true; anisotropy = 4.0; "
+            b"end; "
+            b"for i = 1, #textures do "
+            b"local texture = textures[i]; "
+            b"if texture ~= nil and texture ~= 0 then "
+            b"gl.bindTexture(gl.TEXTURE_2D, texture); "
+            b"if use_mipmap then pcall(gl.generateMipmap, gl.TEXTURE_2D); end; "
+            b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, min_filter); "
+            b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mag_filter); "
+            b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); "
+            b"gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); "
+            b"if anisotropy > 1.0 and raw_gl.glGetFloatv ~= nil and raw_gl.glTexParameterf ~= nil then "
+            b"local max_value = ffi.new('GLfloat[1]', 1.0); "
+            b"if pcall(raw_gl.glGetFloatv, GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, max_value) then "
+            b"local level = math.min(anisotropy, tonumber(max_value[0]) or anisotropy); "
+            b"pcall(raw_gl.glTexParameterf, gl.TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, level); "
+            b"end; "
+            b"end; "
+            b"end; "
+            b"end; "
+            b"gl.bindTexture(gl.TEXTURE_2D, 0); "
+            b"end "
+            b"end)()"
+        )
         self._start_motion = lua.eval(
             b"function(renderer, name, no, priority) return renderer:start_motion(name, no, priority) end"
         )
@@ -220,12 +356,13 @@ class LuaLive2DModule:
             return _load_model_bytes(_normalize_lua_path(path))
 
         def texture_loader(no, path):
-            w, h, rgba = _texture_rgba(_normalize_lua_path(path))
+            profile = get_live2d_texture_quality()
+            w, h, rgba, use_mipmap = _texture_rgba(_normalize_lua_path(path), profile)
             entry = lua.table()
             entry[b"width"] = w
             entry[b"height"] = h
             entry[b"data"] = rgba
-            entry[b"mipmap"] = False
+            entry[b"mipmap"] = use_mipmap
             return entry
 
         resources = lua.table()
@@ -267,6 +404,7 @@ class LuaLAppModel:
             self._height,
             opts,
         )
+        self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
 
     def Resize(self, width: int, height: int):
         self._width = max(int(width), 1)

@@ -7,3 +7,7 @@ def set_live2d_texture_quality(profile: str):
         _LIVE2D_TEXTURE_QUALITY = profile
     else:
         _LIVE2D_TEXTURE_QUALITY = "balanced"
+
+
+def get_live2d_texture_quality() -> str:
+    return _LIVE2D_TEXTURE_QUALITY
