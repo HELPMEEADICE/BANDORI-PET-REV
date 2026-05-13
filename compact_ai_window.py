@@ -3,7 +3,7 @@ import ctypes.wintypes
 import os
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, Signal, QRect
+from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect
 from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -94,6 +94,10 @@ class CompactAIWindow(QWidget):
         self._history = []
         self._stream_text = ""
         self._thinking_text = ""
+        self._external_stream_text = ""
+        self._clear_timer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.timeout.connect(self._clear_external_output)
         self._pet_geo = QRect()
         self._manual_offset = None
         self._dragging = False
@@ -391,7 +395,82 @@ class CompactAIWindow(QWidget):
             return
         self._character = character
         self._history.clear()
+        self._external_stream_text = ""
         self._set_output_text("", animated=False)
+
+    def apply_ai_event(self, event: dict):
+        if not isinstance(event, dict):
+            return
+        self._clear_timer.stop()
+        state = str(event.get("state", "stream") or "stream").strip().lower()
+        if state in {"idle", "clear"}:
+            self._external_stream_text = ""
+            self._set_output_text("")
+            return
+
+        text = str(event.get("text", "") or "")
+        title = str(event.get("title", "") or "")
+        source = str(event.get("source", "") or "")
+        mode = str(event.get("mode", "") or "").strip().lower()
+        if not mode:
+            mode = "append" if state == "stream" else "replace"
+
+        line = self._format_ai_event_text(state, title, text, source, event.get("progress"))
+        if mode == "append":
+            if line:
+                self._external_stream_text = (self._external_stream_text + line)[-4000:]
+            output = self._external_stream_text
+        else:
+            self._external_stream_text = line
+            output = line
+
+        self._set_output_text(output or self._state_label(state))
+        self._scroll_output_to_bottom()
+
+        ttl_ms = event.get("ttl_ms")
+        if ttl_ms is None and state == "done":
+            ttl_ms = 4500
+        try:
+            ttl_ms = int(ttl_ms)
+        except (TypeError, ValueError):
+            ttl_ms = 0
+        if ttl_ms > 0:
+            self._clear_timer.start(ttl_ms)
+
+    def _clear_external_output(self):
+        self._external_stream_text = ""
+        self._set_output_text("")
+
+    def _format_ai_event_text(self, state: str, title: str, text: str, source: str, progress) -> str:
+        prefix = title or self._state_label(state)
+        if source:
+            prefix = f"{source}: {prefix}" if prefix else source
+        progress_text = self._format_progress(progress)
+        if progress_text:
+            prefix = f"{prefix} {progress_text}" if prefix else progress_text
+        if text and prefix:
+            return f"{prefix}\n{text}"
+        return text or prefix
+
+    def _format_progress(self, progress) -> str:
+        try:
+            value = float(progress)
+        except (TypeError, ValueError):
+            return ""
+        if value <= 1:
+            value *= 100
+        value = max(0, min(100, int(round(value))))
+        return f"{value}%"
+
+    def _state_label(self, state: str) -> str:
+        labels = {
+            "thinking": "正在思考...",
+            "tool": "正在执行...",
+            "stream": "正在输出...",
+            "error": "出错了",
+            "done": "完成",
+        }
+        return labels.get(state, state or "...")
 
     def send_message(self):
         text = self._input.toPlainText().strip()

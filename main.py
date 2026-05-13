@@ -6,7 +6,7 @@ from process_utils import app_base_dir, ipc_server_name, process_program_and_arg
 
 BASE_DIR = str(app_base_dir())
 
-from PySide6.QtCore import Qt, QProcess
+from PySide6.QtCore import Qt, QObject, QProcess, Signal
 from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtGui import QIcon
@@ -18,6 +18,19 @@ from model_manager import ModelManager
 from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language
 from app_theme import apply_app_theme
+from ai_status_server import AiStatusHttpServer
+
+
+class AiEventBridge(QObject):
+    line_received = Signal(str)
+
+
+def _clamp_ai_status_port(value) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        port = 38472
+    return max(1024, min(65535, port))
 
 
 def main():
@@ -44,6 +57,8 @@ def main():
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
     ipc_ref = {"clients": [], "buffers": {}}
+    ai_status_ref = {"server": None}
+    ai_event_bridge = AiEventBridge()
 
     char = cfg.get("character", "")
     costume = cfg.get("costume", "")
@@ -70,6 +85,7 @@ def main():
 
     def quit_all():
         notify_chat_processes_shutdown()
+        stop_ai_status_server()
         close_pet_processes(force=True)
         close_settings_process(force=True)
         if tray_icon is not None:
@@ -111,6 +127,33 @@ def main():
         for socket in list(ipc_ref.get("clients", [])):
             write_ipc_line(socket, line)
 
+    ai_event_bridge.line_received.connect(broadcast_ipc_line)
+
+    def stop_ai_status_server():
+        server = ai_status_ref.get("server")
+        if server is not None:
+            server.stop()
+        ai_status_ref["server"] = None
+
+    def init_ai_status_server():
+        stop_ai_status_server()
+        if not cfg.get("ai_status_port_enabled", False):
+            return
+        port = _clamp_ai_status_port(cfg.get("ai_status_port", 38472))
+        token = str(cfg.get("ai_status_token", "") or "")
+
+        def on_ai_event(event: dict):
+            payload = json.dumps(event, ensure_ascii=False)
+            ai_event_bridge.line_received.emit(f"AI_EVENT\t{payload}")
+
+        try:
+            server = AiStatusHttpServer(port, token, on_ai_event)
+            server.start()
+        except OSError as exc:
+            print(f"AI status port failed to start on 127.0.0.1:{port}: {exc}")
+            return
+        ai_status_ref["server"] = server
+
     def read_ipc_client(socket):
         if not isValid(socket):
             return
@@ -127,6 +170,8 @@ def main():
 
     def handle_ipc_line(line: str):
         if line.startswith("ACTION\t"):
+            broadcast_ipc_line(line)
+        elif line.startswith("AI_EVENT\t"):
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
@@ -256,6 +301,21 @@ def main():
             "compact_ai_window_text_color",
             pet_window_ref.get("compact_ai_window_text_color", cfg.get("compact_ai_window_text_color", "#24242a")),
         )
+        pet_window_ref["ai_event_overlay_enabled"] = data.get(
+            "ai_event_overlay_enabled",
+            pet_window_ref.get("ai_event_overlay_enabled", cfg.get("ai_event_overlay_enabled", False)),
+        )
+        pet_window_ref["ai_status_port_enabled"] = data.get(
+            "ai_status_port_enabled",
+            pet_window_ref.get("ai_status_port_enabled", cfg.get("ai_status_port_enabled", False)),
+        )
+        pet_window_ref["ai_status_port"] = _clamp_ai_status_port(
+            data.get("ai_status_port", pet_window_ref.get("ai_status_port", cfg.get("ai_status_port", 38472)))
+        )
+        pet_window_ref["ai_status_token"] = data.get(
+            "ai_status_token",
+            pet_window_ref.get("ai_status_token", cfg.get("ai_status_token", "")),
+        )
         cfg.load()
         cfg.set("fps", pet_window_ref["fps"])
         cfg.set("opacity", pet_window_ref["opacity"])
@@ -269,6 +329,10 @@ def main():
         cfg.set("compact_ai_window_font_size", pet_window_ref["compact_ai_window_font_size"])
         cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
         cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
+        cfg.set("ai_event_overlay_enabled", pet_window_ref["ai_event_overlay_enabled"])
+        cfg.set("ai_status_port_enabled", pet_window_ref["ai_status_port_enabled"])
+        cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
+        cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
         if "user_avatar_color" in data:
             cfg.set("user_avatar_color", data["user_avatar_color"])
         if "model_action_settings" in data:
@@ -276,6 +340,7 @@ def main():
         if "models" in data:
             cfg.set("models", data["models"])
         cfg.save()
+        init_ai_status_server()
 
     def launch_pet():
         cfg.load()
@@ -304,6 +369,14 @@ def main():
             cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
         if "compact_ai_window_text_color" in pet_window_ref:
             cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
+        if "ai_event_overlay_enabled" in pet_window_ref:
+            cfg.set("ai_event_overlay_enabled", pet_window_ref["ai_event_overlay_enabled"])
+        if "ai_status_port_enabled" in pet_window_ref:
+            cfg.set("ai_status_port_enabled", pet_window_ref["ai_status_port_enabled"])
+        if "ai_status_port" in pet_window_ref:
+            cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
+        if "ai_status_token" in pet_window_ref:
+            cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")
@@ -413,8 +486,10 @@ def main():
 
     init_tray()
     init_ipc_server()
+    init_ai_status_server()
 
     app.aboutToQuit.connect(save_config)
+    app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(close_pet_processes)
 
     if has_configured_models or model_valid:

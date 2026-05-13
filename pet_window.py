@@ -152,6 +152,7 @@ class PetWindow(QWidget):
         self._radial_menu = None
         self._compact_ai_window = None
         self._compact_ai_window_enabled = bool(self._cfg.get("compact_ai_window_enabled", False)) if self._cfg else False
+        self._ai_event_overlay_enabled = bool(self._cfg.get("ai_event_overlay_enabled", False)) if self._cfg else False
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
@@ -525,6 +526,7 @@ class PetWindow(QWidget):
             "compact_ai_window_font_size",
             "compact_ai_window_background_color",
             "compact_ai_window_text_color",
+            "ai_event_overlay_enabled",
             "user_avatar_color",
         }
         if self._cfg and any(key in data for key in compact_keys):
@@ -539,11 +541,15 @@ class PetWindow(QWidget):
                 self._cfg.set("compact_ai_window_background_color", data["compact_ai_window_background_color"])
             if "compact_ai_window_text_color" in data:
                 self._cfg.set("compact_ai_window_text_color", data["compact_ai_window_text_color"])
+            if "ai_event_overlay_enabled" in data:
+                self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
             self._cfg.save()
         if "compact_ai_window_enabled" in data:
             self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
+        if "ai_event_overlay_enabled" in data:
+            self._ai_event_overlay_enabled = bool(data["ai_event_overlay_enabled"])
         if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
             self._compact_ai_window.reset_position_offset()
         if "fps" in data:
@@ -915,8 +921,45 @@ class PetWindow(QWidget):
                 self._apply_settings(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
+        elif line.startswith("AI_EVENT\t"):
+            try:
+                self._handle_ai_event(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
         elif line == "SHUTDOWN":
             self.close()
+
+    def _handle_ai_event(self, event: dict):
+        if not isinstance(event, dict):
+            return
+        if not self._ai_event_overlay_enabled:
+            return
+        target = str(
+            event.get("character")
+            or event.get("target_character")
+            or ""
+        ).strip()
+        if target and target != self._current_char:
+            return
+
+        action = str(event.get("action", "") or "").strip()
+        state = str(event.get("state", "") or "").strip().lower()
+        if not action and state in {"thinking", "tool"}:
+            action = "thinking"
+        elif not action and state == "error":
+            action = "surprised"
+        elif not action and state == "done":
+            action = "smile"
+        if action:
+            self._on_chat_action(action)
+
+        if not self.isVisible():
+            return
+        self._sync_compact_ai_window(allow_create=True, force_visible=True)
+        if self._compact_ai_window is None:
+            return
+        self._compact_ai_window.apply_ai_event(event)
+        self._sync_compact_ai_window(allow_create=True, force_visible=True)
 
     def _read_chat_process_error(self, process: QProcess):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
@@ -968,8 +1011,8 @@ class PetWindow(QWidget):
             return max(240, int(round(self.width() * 0.72))), None
         return max(240, int(round(self.width() * 0.9))), None
 
-    def _sync_compact_ai_window(self, allow_create: bool = False):
-        if not self._compact_ai_window_enabled or not self.isVisible():
+    def _sync_compact_ai_window(self, allow_create: bool = False, force_visible: bool = False):
+        if not (self._compact_ai_window_enabled or force_visible) or not self.isVisible():
             if self._compact_ai_window is not None:
                 self._compact_ai_window.hide()
             return

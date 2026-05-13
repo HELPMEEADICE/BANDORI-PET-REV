@@ -47,6 +47,10 @@ DEFAULTS = {
     "compact_ai_window_text_color": "#24242a",
     "compact_ai_window_opacity": 44,
     "compact_ai_window_font_size": 12,
+    "ai_event_overlay_enabled": False,
+    "ai_status_port_enabled": False,
+    "ai_status_port": 38472,
+    "ai_status_token": "",
 }
 
 MODEL_DEFAULTS = {

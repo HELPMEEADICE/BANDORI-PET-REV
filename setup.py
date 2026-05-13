@@ -154,6 +154,8 @@ executables = [
     Executable("pet_process.py", base=base, target_name="pet_process.exe"),
     Executable("settings_process.py", base=base, target_name="settings_process.exe"),
     Executable("chat_process.py", base=base, target_name="chat_process.exe"),
+    Executable("bandori_ai_event.py", base=None, target_name="bandori-ai-event.exe"),
+    Executable("bandori_codex_runner.py", base=None, target_name="bandori-codex-runner.exe"),
 ]
 
 setup(

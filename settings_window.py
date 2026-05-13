@@ -1976,6 +1976,48 @@ class SettingsWindow(QWidget):
         enabled_row.addWidget(self._compact_ai_window_enabled)
         layout.addLayout(enabled_row)
 
+        ai_event_row = QHBoxLayout()
+        ai_event_row.setContentsMargins(0, 0, 0, 0)
+        ai_event_label = BodyLabel(_tr("SettingsWindow.ai_event_overlay"), page)
+        self._ai_event_overlay_enabled = SwitchButton(page)
+        ai_event_row.addWidget(ai_event_label)
+        ai_event_row.addStretch()
+        ai_event_row.addWidget(self._ai_event_overlay_enabled)
+        layout.addLayout(ai_event_row)
+
+        ai_event_hint = BodyLabel(_tr("SettingsWindow.ai_event_overlay_hint"), page)
+        ai_event_hint.setWordWrap(True)
+        layout.addWidget(ai_event_hint)
+
+        port_row = QHBoxLayout()
+        port_row.setContentsMargins(0, 0, 0, 0)
+        self._ai_status_port_enabled = SwitchButton(page)
+        port_label = BodyLabel(_tr("SettingsWindow.ai_status_port"), page)
+        port_row.addWidget(port_label)
+        port_row.addStretch()
+        port_row.addWidget(self._ai_status_port_enabled)
+        layout.addLayout(port_row)
+
+        port_input_row = QHBoxLayout()
+        port_input_row.setContentsMargins(0, 0, 0, 0)
+        self._ai_status_port_input = FluentContextLineEdit(page)
+        self._ai_status_port_input.setFixedWidth(120)
+        self._ai_status_port_input.setValidator(QIntValidator(1024, 65535, self))
+        self._ai_status_port_input.setPlaceholderText("38472")
+        token_label = BodyLabel(_tr("SettingsWindow.ai_status_token"), page)
+        self._ai_status_token_input = FluentContextLineEdit(page)
+        self._ai_status_token_input.setPlaceholderText(_tr("SettingsWindow.ai_status_token_placeholder"))
+        port_input_row.addWidget(BodyLabel(_tr("SettingsWindow.ai_status_port_number"), page))
+        port_input_row.addWidget(self._ai_status_port_input)
+        port_input_row.addSpacing(12)
+        port_input_row.addWidget(token_label)
+        port_input_row.addWidget(self._ai_status_token_input, 1)
+        layout.addLayout(port_input_row)
+
+        port_hint = BodyLabel(_tr("SettingsWindow.ai_status_port_hint"), page)
+        port_hint.setWordWrap(True)
+        layout.addWidget(port_hint)
+
         opacity_label = BodyLabel(_tr("SettingsWindow.compact_window_opacity"), page)
         layout.addWidget(opacity_label)
         self._compact_window_opacity_slider = Slider(Qt.Orientation.Horizontal, page)
@@ -2111,6 +2153,10 @@ class SettingsWindow(QWidget):
             hasattr(self, attr)
             for attr in (
                 "_compact_ai_window_enabled",
+                "_ai_event_overlay_enabled",
+                "_ai_status_port_enabled",
+                "_ai_status_port_input",
+                "_ai_status_token_input",
                 "_compact_window_opacity_slider",
                 "_compact_window_opacity_value",
                 "_compact_window_font_size_slider",
@@ -2143,6 +2189,10 @@ class SettingsWindow(QWidget):
         if not self._cfg or not self._compact_config_widgets_ready():
             return
         self._compact_ai_window_enabled.setChecked(bool(self._cfg.get("compact_ai_window_enabled", False)))
+        self._ai_event_overlay_enabled.setChecked(bool(self._cfg.get("ai_event_overlay_enabled", False)))
+        self._ai_status_port_enabled.setChecked(bool(self._cfg.get("ai_status_port_enabled", False)))
+        self._ai_status_port_input.setText(str(self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472))))
+        self._ai_status_token_input.setText(str(self._cfg.get("ai_status_token", "") or ""))
         opacity = self._cfg.get("compact_ai_window_opacity", 44)
         try:
             opacity = int(opacity)
@@ -2175,6 +2225,10 @@ class SettingsWindow(QWidget):
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12),
             "compact_ai_window_background_color": self._cfg.get("compact_ai_window_background_color", ""),
             "compact_ai_window_text_color": self._cfg.get("compact_ai_window_text_color", "#24242a"),
+            "ai_event_overlay_enabled": self._cfg.get("ai_event_overlay_enabled", False),
+            "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False),
+            "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)),
+            "ai_status_token": self._cfg.get("ai_status_token", ""),
         }
         if self._compact_window_reset_position_pending:
             data["compact_ai_window_reset_position"] = True
@@ -2188,6 +2242,10 @@ class SettingsWindow(QWidget):
         self._cfg.set("compact_ai_window_font_size", self._compact_window_font_size_slider.value())
         self._cfg.set("compact_ai_window_background_color", self._selected_compact_color(self._compact_bg_color_btns, BANDORI_PRIMARY))
         self._cfg.set("compact_ai_window_text_color", self._selected_compact_color(self._compact_text_color_btns, "#24242a"))
+        self._cfg.set("ai_event_overlay_enabled", self._ai_event_overlay_enabled.isChecked())
+        self._cfg.set("ai_status_port_enabled", self._ai_status_port_enabled.isChecked())
+        self._cfg.set("ai_status_port", self._clamp_ai_status_port(self._ai_status_port_input.text()))
+        self._cfg.set("ai_status_token", self._ai_status_token_input.text().strip())
         try:
             self._cfg.save()
             if emit_update:
@@ -2214,6 +2272,14 @@ class SettingsWindow(QWidget):
         self._style_compact_color_buttons(self._compact_bg_color_btns)
         self._style_compact_color_buttons(self._compact_text_color_btns)
         self._compact_window_reset_position_pending = True
+
+    @staticmethod
+    def _clamp_ai_status_port(value) -> int:
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            port = 38472
+        return max(1024, min(65535, port))
 
     def _quality_options(self) -> list[tuple[str, str]]:
         return [
@@ -3161,6 +3227,10 @@ class SettingsWindow(QWidget):
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12) if self._cfg else 12,
             "compact_ai_window_background_color": self._cfg.get("compact_ai_window_background_color", "") if self._cfg else "",
             "compact_ai_window_text_color": self._cfg.get("compact_ai_window_text_color", "#24242a") if self._cfg else "#24242a",
+            "ai_event_overlay_enabled": self._cfg.get("ai_event_overlay_enabled", False) if self._cfg else False,
+            "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False) if self._cfg else False,
+            "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)) if self._cfg else 38472,
+            "ai_status_token": self._cfg.get("ai_status_token", "") if self._cfg else "",
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
             "models": [dict(item) for item in self._configured_models],
             "model_action_settings": self._cfg.get("model_action_settings", {}) if self._cfg else {},
