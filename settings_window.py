@@ -38,6 +38,12 @@ from app_theme import (
 
 import json
 
+from live2d_click_actions import (
+    CLICK_MOTION_NONE,
+    CLICK_MOTION_RANDOM,
+    CLICK_MOTION_REGIONS,
+    normalize_click_motion_actions,
+)
 from live2d_quality import normalize_live2d_quality
 
 _BG_LIGHT = "#ffffff"
@@ -770,13 +776,21 @@ class SettingsWindow(QWidget):
                     continue
                 entry = dict(item)
                 entry.update({"character": character, "costume": costume, "path": path})
+                entry["click_motion_actions"] = normalize_click_motion_actions(
+                    entry.get("click_motion_actions", {})
+                )
                 result.append(entry)
                 seen.add(character)
         if self._current_char and self._current_char not in seen:
             costume = self._current_costume or self._model_manager.get_default_costume(self._current_char)
             path = self._model_manager.get_model_json_path(self._current_char, costume)
             if path:
-                result.insert(0, {"character": self._current_char, "costume": costume, "path": path})
+                result.insert(0, {
+                    "character": self._current_char,
+                    "costume": costume,
+                    "path": path,
+                    "click_motion_actions": {},
+                })
         return result
 
     def _on_language_changed(self, index: int):
@@ -1135,22 +1149,21 @@ class SettingsWindow(QWidget):
         detail_shell = QVBoxLayout(self._model_detail_widget)
         detail_shell.setContentsMargins(0, 0, 0, 0)
         detail_shell.setSpacing(0)
-        detail_shell.addStretch(1)
 
         detail_center = QHBoxLayout()
         detail_center.setContentsMargins(0, 0, 0, 0)
-        detail_center.setSpacing(28)
+        detail_center.setSpacing(12)
         detail_center.addStretch(1)
 
         self._detail_card = CardWidget(self._model_detail_widget)
-        self._detail_card.setFixedSize(300, 440)
+        self._detail_card.setFixedSize(280, 420)
         card_layout = QVBoxLayout(self._detail_card)
         card_h_margin = 26
-        card_layout.setContentsMargins(card_h_margin, 24, card_h_margin, 24)
+        card_layout.setContentsMargins(card_h_margin, 22, card_h_margin, 22)
         card_layout.setSpacing(12)
 
         self._detail_image = QLabel(self._detail_card)
-        self._detail_image.setFixedSize(self._detail_card.width() - card_h_margin * 2, 285)
+        self._detail_image.setFixedSize(self._detail_card.width() - card_h_margin * 2, 260)
         self._detail_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._detail_image, 0, Qt.AlignmentFlag.AlignHCenter)
 
@@ -1164,57 +1177,113 @@ class SettingsWindow(QWidget):
         card_layout.addWidget(self._detail_costume)
         card_layout.addWidget(self._detail_band)
 
-        action_col = QVBoxLayout()
+        action_scroll = ScrollArea(self._model_detail_widget)
+        action_scroll.setWidgetResizable(True)
+        action_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        action_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        action_scroll.setFixedWidth(320)
+        action_scroll.setFixedHeight(self._detail_card.height())
+        action_scroll.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        action_container = self._make_theme_widget(QWidget(action_scroll))
+        action_container.setFixedWidth(292)
+        action_col = QVBoxLayout(action_container)
         action_col.setContentsMargins(0, 0, 0, 0)
-        action_col.setSpacing(14)
-        action_col.addStretch(1)
-        self._switch_model_btn = QPushButton("切换\n角色/服装", self._model_detail_widget)
-        self._switch_model_btn.setFixedSize(168, 168)
+        action_col.setSpacing(10)
+        self._switch_model_btn = QPushButton("切换\n角色/服装", action_container)
+        self._switch_model_btn.setFixedSize(132, 132)
         self._switch_model_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._switch_model_btn.clicked.connect(self._edit_selected_model)
         action_col.addWidget(self._switch_model_btn, 0, Qt.AlignmentFlag.AlignHCenter)
-        hint = BodyLabel("选择新的角色或服装", self._model_detail_widget)
+        hint = BodyLabel("选择新的角色或服装", action_container)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(hint)
 
-        motion_label = StrongBodyLabel("默认动作", self._model_detail_widget)
+        motion_label = StrongBodyLabel("默认动作", action_container)
         motion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(motion_label)
         motion_row = QHBoxLayout()
         motion_row.setSpacing(8)
-        self._default_motion_combo = ComboBox(self._model_detail_widget)
+        self._default_motion_combo = ComboBox(action_container)
         self._default_motion_combo.setMinimumWidth(190)
         self._default_motion_combo.currentIndexChanged.connect(self._on_default_motion_changed)
         motion_row.addWidget(self._default_motion_combo, 1)
-        self._default_motion_btn = PushButton("默认", self._model_detail_widget)
+        self._default_motion_btn = PushButton("默认", action_container)
         self._default_motion_btn.clicked.connect(self._reset_default_motion)
         motion_row.addWidget(self._default_motion_btn)
         action_col.addLayout(motion_row)
 
-        expression_label = StrongBodyLabel("默认表情", self._model_detail_widget)
+        expression_label = StrongBodyLabel("默认表情", action_container)
         expression_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(expression_label)
         expression_row = QHBoxLayout()
         expression_row.setSpacing(8)
-        self._default_expression_combo = ComboBox(self._model_detail_widget)
+        self._default_expression_combo = ComboBox(action_container)
         self._default_expression_combo.setMinimumWidth(190)
         self._default_expression_combo.currentIndexChanged.connect(self._on_default_expression_changed)
         expression_row.addWidget(self._default_expression_combo, 1)
-        self._default_expression_btn = PushButton("默认", self._model_detail_widget)
+        self._default_expression_btn = PushButton("默认", action_container)
         self._default_expression_btn.clicked.connect(self._reset_default_expression)
         expression_row.addWidget(self._default_expression_btn)
         action_col.addLayout(expression_row)
-        action_col.addStretch(1)
 
-        detail_center.addWidget(self._detail_card, 0, Qt.AlignmentFlag.AlignCenter)
-        detail_center.addLayout(action_col)
+        click_label = StrongBodyLabel(_tr("SettingsWindow.click_motion_title"), action_container)
+        click_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        action_col.addWidget(click_label)
+        click_hint = BodyLabel(_tr("SettingsWindow.click_motion_hint"), action_container)
+        click_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        click_hint.setWordWrap(True)
+        action_col.addWidget(click_hint)
+
+        click_grid_widget = QWidget(action_container)
+        click_grid = QGridLayout(click_grid_widget)
+        click_grid.setContentsMargins(0, 0, 0, 0)
+        click_grid.setHorizontalSpacing(8)
+        click_grid.setVerticalSpacing(6)
+        self._click_motion_combos = {}
+        self._click_expression_combos = {}
+        click_grid.addWidget(BodyLabel(_tr("SettingsWindow.click_motion_column_motion"), click_grid_widget), 0, 0)
+        click_grid.addWidget(BodyLabel(_tr("SettingsWindow.click_motion_column_expression"), click_grid_widget), 0, 1)
+        for index, region in enumerate(CLICK_MOTION_REGIONS):
+            row = index * 2 + 1
+            label = BodyLabel(_tr(f"SettingsWindow.click_motion_region_{region}"), click_grid_widget)
+            label.setWordWrap(True)
+            combo = ComboBox(click_grid_widget)
+            combo.setMinimumWidth(135)
+            combo.setMaximumWidth(140)
+            combo.currentIndexChanged.connect(
+                lambda index, r=region: self._on_click_motion_changed(r, index)
+            )
+            expression_combo = ComboBox(click_grid_widget)
+            expression_combo.setMinimumWidth(135)
+            expression_combo.setMaximumWidth(140)
+            expression_combo.currentIndexChanged.connect(
+                lambda index, r=region: self._on_click_expression_changed(r, index)
+            )
+            self._click_motion_combos[region] = combo
+            self._click_expression_combos[region] = expression_combo
+            click_grid.addWidget(label, row, 0, 1, 2)
+            click_grid.addWidget(combo, row + 1, 0)
+            click_grid.addWidget(expression_combo, row + 1, 1)
+        click_grid.setColumnStretch(0, 1)
+        click_grid.setColumnStretch(1, 1)
+        action_col.addWidget(click_grid_widget)
+
+        self._click_motion_reset_btn = PushButton(_tr("SettingsWindow.click_motion_reset"), action_container)
+        self._click_motion_reset_btn.clicked.connect(self._reset_click_motions)
+        action_col.addWidget(self._click_motion_reset_btn, 0, Qt.AlignmentFlag.AlignRight)
+        action_scroll.setWidget(action_container)
+
+        detail_center.addWidget(self._detail_card, 0, Qt.AlignmentFlag.AlignTop)
+        detail_center.addWidget(action_scroll, 0, Qt.AlignmentFlag.AlignTop)
         detail_center.addStretch(1)
-        detail_shell.addLayout(detail_center)
-        detail_shell.addStretch(1)
+        detail_shell.addLayout(detail_center, 1)
 
         self._detail_action_hint = hint
         self._detail_motion_label = motion_label
         self._detail_expression_label = expression_label
+        self._detail_click_motion_label = click_label
+        self._detail_click_motion_hint = click_hint
+        self._detail_action_scroll = action_scroll
         self._update_switch_button_style()
         qconfig.themeChanged.connect(self._update_switch_button_style)
 
@@ -1239,12 +1308,14 @@ class SettingsWindow(QWidget):
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
+        self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
+        self._detail_click_motion_hint.setStyleSheet(f"color: {hint_color};")
         self._switch_model_btn.setStyleSheet(f"""
             QPushButton {{
                 color: #ffffff;
                 background: {BANDORI_PRIMARY if not dark else BANDORI_PRIMARY_DARK};
                 border: 1px solid {accent_color(dark)};
-                border-radius: 84px;
+                border-radius: 66px;
                 font-size: 18px;
                 font-weight: 700;
             }}
@@ -1281,6 +1352,7 @@ class SettingsWindow(QWidget):
         self._detail_band.setText(f"乐队：{band_name}" if band_name else "")
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
+        self._populate_click_motion_combos(item)
 
         pixmap = QPixmap(self._model_manager.get_character_image_path(character))
         image_data = self._model_manager.get_character_image_data(character)
@@ -1367,6 +1439,103 @@ class SettingsWindow(QWidget):
             return
         item["default_expression"] = ""
         self._populate_default_expression_combo(item)
+        self._save_configured_models()
+
+    def _populate_click_motion_combos(self, item: dict):
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        actions = normalize_click_motion_actions(
+            item.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+        item["click_motion_actions"] = actions
+        for region, combo in self._click_motion_combos.items():
+            expression_combo = self._click_expression_combos[region]
+            current = actions.get(region, {})
+            current_motion = current.get("motion", "")
+            current_expression = current.get("expression", "")
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(_tr("SettingsWindow.click_motion_auto"), userData="")
+            combo.addItem(_tr("SettingsWindow.click_motion_random"), userData=CLICK_MOTION_RANDOM)
+            combo.addItem(_tr("SettingsWindow.click_motion_none"), userData=CLICK_MOTION_NONE)
+            for motion in motions:
+                combo.addItem(motion, userData=motion)
+            for idx in range(combo.count()):
+                if combo.itemData(idx) == current_motion:
+                    combo.setCurrentIndex(idx)
+                    break
+            combo.blockSignals(False)
+
+            expression_combo.blockSignals(True)
+            expression_combo.clear()
+            expression_combo.addItem(_tr("SettingsWindow.click_expression_default"), userData="")
+            for expression in expressions:
+                expression_combo.addItem(expression, userData=expression)
+            for idx in range(expression_combo.count()):
+                if expression_combo.itemData(idx) == current_expression:
+                    expression_combo.setCurrentIndex(idx)
+                    break
+            expression_combo.blockSignals(False)
+
+    def _on_click_motion_changed(self, region: str, index: int):
+        item = self._selected_model_item()
+        if not item:
+            return
+        combo = self._click_motion_combos.get(region)
+        if combo is None:
+            return
+        actions = normalize_click_motion_actions(item.get("click_motion_actions", {}))
+        value = combo.itemData(index) or ""
+        current = dict(actions.get(region, {}))
+        if value:
+            current["motion"] = value
+            if value == CLICK_MOTION_NONE:
+                current["expression"] = ""
+                expression_combo = self._click_expression_combos.get(region)
+                if expression_combo is not None:
+                    expression_combo.blockSignals(True)
+                    expression_combo.setCurrentIndex(0)
+                    expression_combo.blockSignals(False)
+            actions[region] = current
+        else:
+            current["motion"] = ""
+            if current.get("expression"):
+                actions[region] = current
+            else:
+                actions.pop(region, None)
+        item["click_motion_actions"] = actions
+        self._save_configured_models()
+
+    def _on_click_expression_changed(self, region: str, index: int):
+        item = self._selected_model_item()
+        if not item:
+            return
+        combo = self._click_expression_combos.get(region)
+        if combo is None:
+            return
+        actions = normalize_click_motion_actions(item.get("click_motion_actions", {}))
+        value = combo.itemData(index) or ""
+        current = dict(actions.get(region, {}))
+        if value:
+            current["expression"] = value
+            actions[region] = current
+        else:
+            current["expression"] = ""
+            if current.get("motion"):
+                actions[region] = current
+            else:
+                actions.pop(region, None)
+        item["click_motion_actions"] = actions
+        self._save_configured_models()
+
+    def _reset_click_motions(self):
+        item = self._selected_model_item()
+        if not item:
+            return
+        item["click_motion_actions"] = {}
+        self._populate_click_motion_combos(item)
         self._save_configured_models()
 
     def _enter_model_selection(self):
@@ -2496,6 +2665,7 @@ class SettingsWindow(QWidget):
             "pet_mode": "live2d",
             "default_motion": "",
             "default_expression": "",
+            "click_motion_actions": {},
         }
         replace_index = self._editing_model_index
         if replace_index is None and not self._adding_model:
@@ -2516,6 +2686,7 @@ class SettingsWindow(QWidget):
                 "pixel_window_y",
                 "default_motion",
                 "default_expression",
+                "click_motion_actions",
             ):
                 if key in self._configured_models[replace_index]:
                     preserved[key] = self._configured_models[replace_index][key]
@@ -2535,6 +2706,7 @@ class SettingsWindow(QWidget):
                         "pixel_window_y",
                         "default_motion",
                         "default_expression",
+                        "click_motion_actions",
                     ):
                         if key in item:
                             preserved[key] = item[key]
@@ -2676,6 +2848,7 @@ class SettingsWindow(QWidget):
             "game_topmost": self._game_topmost_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
+            "models": [dict(item) for item in self._configured_models],
         }
         if self._cfg:
             self._cfg.set("fps", settings["fps"])

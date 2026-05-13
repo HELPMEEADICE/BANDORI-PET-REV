@@ -3,6 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 from app_theme import BANDORI_PRIMARY
+from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
 
 BASE_DIR = app_base_dir()
@@ -52,6 +53,7 @@ MODEL_DEFAULTS = {
     "pet_mode": "live2d",
     "default_motion": "",
     "default_expression": "",
+    "click_motion_actions": {},
 }
 
 
@@ -93,6 +95,9 @@ class ConfigManager:
                 continue
             entry = dict(MODEL_DEFAULTS)
             entry.update(item)
+            entry["click_motion_actions"] = normalize_click_motion_actions(
+                entry.get("click_motion_actions", {})
+            )
             normalized.append(entry)
 
         self._data["models"] = normalized

@@ -43,11 +43,15 @@ class LuaCustomHitAreaState:
     def set_scene_areas(self, scene_areas):
         self._state.set_scene_areas(
             self._state,
-            _LUA.table_from(
-                _LUA.table_from((float(min_x), float(max_x), float(min_y), float(max_y)))
-                for min_x, max_x, min_y, max_y in scene_areas
-            )
+            _LUA.table_from(self._lua_scene_area(area) for area in scene_areas)
         )
+
+    def _lua_scene_area(self, area):
+        if len(area) == 5:
+            name, min_x, max_x, min_y, max_y = area
+            return _LUA.table_from((str(name), float(min_x), float(max_x), float(min_y), float(max_y)))
+        min_x, max_x, min_y, max_y = area
+        return _LUA.table_from(("", float(min_x), float(max_x), float(min_y), float(max_y)))
 
     def has_scene_areas(self) -> bool:
         return bool(self._state.has_scene_areas(self._state))
@@ -72,3 +76,21 @@ class LuaCustomHitAreaState:
 
     def hit_test(self, x: float, y: float) -> bool:
         return bool(self._state.hit_test(self._state, float(x), float(y)))
+
+    def hit_test_name(self, x: float, y: float) -> str:
+        name = self._state.hit_test_name(self._state, float(x), float(y))
+        return "" if name is None else str(name)
+
+    def bounds_for(self, name: str):
+        bounds = self._state.bounds_for(self._state, str(name or ""))
+        if bounds is None:
+            return None
+        min_x, max_x, min_y, max_y = bounds
+        return float(min_x), float(max_x), float(min_y), float(max_y)
+
+    def union_bounds(self):
+        bounds = self._state.union_bounds(self._state)
+        if bounds is None:
+            return None
+        min_x, max_x, min_y, max_y = bounds
+        return float(min_x), float(max_x), float(min_y), float(max_y)

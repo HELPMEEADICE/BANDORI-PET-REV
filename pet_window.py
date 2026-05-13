@@ -4,6 +4,7 @@ import json
 import os
 import random
 import re
+import time
 
 from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent
 from PySide6.QtGui import QColor, QIcon, QCursor, QMoveEvent, QResizeEvent
@@ -14,6 +15,13 @@ from PySide6.QtWidgets import (
 
 from app_theme import apply_app_theme
 from i18n_manager import tr as _tr
+from live2d_click_actions import (
+    CLICK_MOTION_NONE,
+    CLICK_MOTION_RANDOM,
+    click_motion_auto_buckets,
+    click_motion_region_for_point,
+    normalize_click_motion_actions,
+)
 from live2d_widget import Live2DWidget, normalize_live2d_quality
 from model_manager import ModelManager
 from pixel_pet_widget import PixelPetWidget, load_pixel_frames, pixel_path_for_character
@@ -150,6 +158,7 @@ class PetWindow(QWidget):
         self._show_pos_set = False
         self._motion_guard_token = 0
         self._expression_guard_token = 0
+        self._click_expression_hold_until = 0.0
         self._mouse_passthrough = False
         # QOpenGLWidget alpha reads are not reliable during WM_NCHITTEST on
         # Windows 11; keep hit sampling on the Qt timer path.
@@ -494,6 +503,9 @@ class PetWindow(QWidget):
             self._live2d_widget.set_render_quality(self._live2d_quality)
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
+        if "models" in data and self._cfg:
+            self._cfg.set("models", data["models"])
+            self._cfg.save()
         self._save_config()
 
     def _live2d_size(self):
@@ -524,9 +536,181 @@ class PetWindow(QWidget):
         self._set_mouse_passthrough(False)
         self.move(self.x() + dx, self.y() + dy)
 
-    def _on_click(self):
+    def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         if self._radial_menu and self._radial_menu.isVisible():
             self._radial_menu.dismiss()
+            return
+        if self._pixel_mode or x is None or y is None:
+            return
+        self._trigger_click_motion(float(x), float(y), area_name)
+
+    def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        area_bounds = self._click_motion_area_bounds(area_name)
+        region = click_motion_region_for_point(
+            x,
+            y,
+            self._live2d_widget.width(),
+            self._live2d_widget.height(),
+            area_name,
+            area_bounds,
+        )
+        feedback = self._configured_click_motion_feedback(region)
+        configured_motion = feedback.get("motion", "")
+        configured_expression = feedback.get("expression", "")
+        if configured_motion == CLICK_MOTION_NONE:
+            return
+        if configured_motion == CLICK_MOTION_RANDOM:
+            self._start_click_motion("", configured_expression)
+            return
+        if configured_motion:
+            self._start_click_motion(configured_motion, configured_expression)
+            return
+
+        motion = self._choose_click_action_motion(region)
+        if motion:
+            self._start_click_motion(motion, configured_expression)
+        else:
+            self._start_click_motion("", configured_expression)
+
+    def _click_motion_area_bounds(self, area_name: str):
+        area_name = str(area_name or "").strip().lower()
+        visible_bounds = self._live2d_widget.visible_model_bounds()
+        if area_name in {"head", "face"}:
+            return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
+        if area_name in {"body", "hit", ""}:
+            return (
+                visible_bounds
+                or self._live2d_widget.hit_area_bounds("body")
+                or self._live2d_widget.hit_area_union_bounds()
+            )
+        return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
+
+    def _configured_click_motion_feedback(self, region: str) -> dict[str, str]:
+        try:
+            motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
+        except Exception:
+            motion_names = []
+        expression_names = self._current_expression_names()
+        actions = normalize_click_motion_actions(
+            self._current_model_entry().get("click_motion_actions", {}),
+            motion_names,
+            expression_names,
+        )
+        return actions.get(region, {})
+
+    def _current_expression_names(self) -> list[str]:
+        model = self._live2d_widget.model
+        if model is None or not hasattr(model, "expressions"):
+            return []
+        try:
+            return list(model.expressions.keys())
+        except Exception:
+            return []
+
+    def _start_click_motion(self, motion_name: str = "", expression: str = ""):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        if expression:
+            self._apply_click_expression(expression)
+        try:
+            self._motion_guard_token += 1
+            token = self._motion_guard_token
+            if motion_name:
+                try:
+                    model.StartRandomMotion(
+                        motion_name,
+                        priority=self._live2d.MotionPriority.FORCE,
+                    )
+                except Exception:
+                    model.StartMotion(
+                        motion_name,
+                        0,
+                        self._live2d.MotionPriority.FORCE,
+                    )
+            else:
+                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE)
+            if expression:
+                QTimer.singleShot(80, lambda t=self._expression_guard_token, e=expression: self._set_click_expression_if_current(t, e))
+            QTimer.singleShot(9000, lambda t=token: self._clear_motion_if_current(t))
+            QTimer.singleShot(3200, lambda t=token: self._restore_default_if_finished(t))
+        except Exception:
+            if expression:
+                QTimer.singleShot(5000, lambda t=self._expression_guard_token: self._restore_default_expression_if_current(t))
+
+    def _apply_click_expression(self, expression: str):
+        expression = str(expression or "").strip()
+        if not expression:
+            return
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        self._expression_guard_token += 1
+        token = self._expression_guard_token
+        self._click_expression_hold_until = max(
+            self._click_expression_hold_until,
+            time.monotonic() + 5.0,
+        )
+        self._set_click_expression_if_current(token, expression)
+        QTimer.singleShot(5000, lambda t=token: self._restore_default_expression_if_current(t))
+
+    def _set_click_expression_if_current(self, token: int, expression: str):
+        if token != self._expression_guard_token:
+            return
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        try:
+            if hasattr(model, "expressions") and expression not in model.expressions:
+                return
+            model.SetExpression(expression)
+        except Exception:
+            return
+
+    def _choose_click_action_motion(self, region: str) -> str:
+        try:
+            motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
+        except Exception:
+            motion_names = []
+        if not motion_names:
+            return ""
+
+        for bucket in click_motion_auto_buckets(region):
+            available = [
+                motion for tag in bucket
+                if (motion := self._resolve_motion_tag(tag, motion_names))
+            ]
+            if available:
+                return random.choice(available)
+
+        non_idle = [
+            name for name in motion_names
+            if not str(name).lower().startswith(("idle", "sys-"))
+        ]
+        return random.choice(non_idle) if non_idle else ""
+
+    def _resolve_motion_tag(self, tag: str, motion_names: list[str]) -> str:
+        tag_low = tag.lower()
+        char_lower = (self._current_char or "").lower()
+        candidates = [tag_low]
+        if tag_low == "thinking":
+            candidates.extend(["nf", "nnf", "eeto", "odoodo"])
+
+        matches = []
+        for candidate in candidates:
+            candidate_prefix = f"{char_lower}_{candidate}" if char_lower else candidate
+            for motion_name in motion_names:
+                motion_low = str(motion_name).lower()
+                if motion_low == candidate or motion_low.startswith(candidate):
+                    matches.append(str(motion_name))
+                elif motion_low == candidate_prefix or motion_low.startswith(candidate_prefix):
+                    matches.append(str(motion_name))
+                elif re.search(rf"(^|[_\-]){re.escape(candidate)}($|[_\-]?\d)", motion_low):
+                    matches.append(str(motion_name))
+        return random.choice(matches) if matches else ""
 
     def _on_right_click(self, gx: int, gy: int):
         self._set_mouse_passthrough(False)
@@ -941,12 +1125,18 @@ class PetWindow(QWidget):
     def _restore_default_expression_if_current(self, token: int):
         if token != self._expression_guard_token:
             return
+        remaining_ms = int((self._click_expression_hold_until - time.monotonic()) * 1000)
+        if remaining_ms > 0:
+            QTimer.singleShot(min(remaining_ms, 1000), lambda t=token: self._restore_default_expression_if_current(t))
+            return
         model = self._live2d_widget.model
         if model is None:
             return
         self._apply_default_expression(model)
 
     def _apply_default_expression(self, model):
+        if time.monotonic() < self._click_expression_hold_until:
+            return
         try:
             if hasattr(model, "ResetExpression"):
                 model.ResetExpression()
@@ -1147,6 +1337,9 @@ class PetWindow(QWidget):
         default_expression = self._current_model_entry().get("default_expression", "")
         if default_expression:
             entry["default_expression"] = default_expression
+        click_motion_actions = self._current_model_entry().get("click_motion_actions", {})
+        if click_motion_actions:
+            entry["click_motion_actions"] = click_motion_actions
         entry["pet_mode"] = "pixel" if self._pixel_mode else "live2d"
         if self._pixel_mode:
             entry.update({

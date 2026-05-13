@@ -40,8 +40,11 @@ class Live2DWidget(QOpenGLWidget):
         self._system_scale = 1.0
         
         self._dragging = False
+        self._drag_moved = False
         self._drag_start_x = 0
         self._drag_start_y = 0
+        self._drag_origin_x = 0
+        self._drag_origin_y = 0
         self._window_drag_callback = None
         self._click_callback = None
         self._right_click_callback = None
@@ -60,6 +63,9 @@ class Live2DWidget(QOpenGLWidget):
             (-6, 0), (6, 0), (0, -6), (0, 6),
         )
         self._hit_alpha_cache = {}
+        self._visible_bounds_cache = None
+        self._visible_bounds_cache_at = -1000
+        self._visible_bounds_cache_ttl_ms = 500
         self._hit_alpha_cache_ttl_ms = 100
         self._hit_test_interval_ms = round(1000 / 30)
         self._last_hit_test_ms = -1000
@@ -215,7 +221,10 @@ class Live2DWidget(QOpenGLWidget):
                     continue
                 x0, x1 = float(x_range[0]), float(x_range[1])
                 y0, y1 = float(y_range[0]), float(y_range[1])
-                prepared.append((min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
+                area_name = name[:-2].strip().lower()
+                prepared.append((area_name, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
+            priority = {"head": 0, "face": 0, "body": 10}
+            prepared.sort(key=lambda item: (priority.get(item[0], 5), item[0]))
             return tuple(prepared)
         except Exception:
             return ()
@@ -375,9 +384,12 @@ class Live2DWidget(QOpenGLWidget):
         y = event.scenePosition().y()
         if self._is_model_hit_at(x, y):
             self._dragging = True
+            self._drag_moved = False
             gpos = event.globalPosition()
             self._drag_start_x = gpos.x()
             self._drag_start_y = gpos.y()
+            self._drag_origin_x = gpos.x()
+            self._drag_origin_y = gpos.y()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.RightButton:
@@ -388,18 +400,29 @@ class Live2DWidget(QOpenGLWidget):
                 self._right_click_callback(int(gpos.x()), int(gpos.y()))
             return
         if self._dragging:
+            should_click = (
+                event.button() == Qt.MouseButton.LeftButton
+                and not self._drag_moved
+                and self._click_callback
+                and self._is_model_hit_at(event.scenePosition().x(), event.scenePosition().y())
+            )
             self._dragging = False
-        elif self._click_callback and self._is_model_hit_at(
-            event.scenePosition().x(),
-            event.scenePosition().y(),
-        ):
-            self._click_callback()
+            if should_click:
+                x = event.scenePosition().x()
+                y = event.scenePosition().y()
+                self._click_callback(x, y, self.hit_area_name_at(x, y))
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._drag_locked:
             return
         if self._dragging and self._window_drag_callback:
             gpos = event.globalPosition()
+            if not self._drag_moved:
+                total_dx = gpos.x() - self._drag_origin_x
+                total_dy = gpos.y() - self._drag_origin_y
+                if total_dx * total_dx + total_dy * total_dy < 16:
+                    return
+                self._drag_moved = True
             dx = int(gpos.x() - self._drag_start_x)
             dy = int(gpos.y() - self._drag_start_y)
             if dx != 0 or dy != 0:
@@ -425,6 +448,26 @@ class Live2DWidget(QOpenGLWidget):
         if not self.rect().contains(local):
             return False
         return self._hit_state_at(local.x(), local.y())
+
+    def hit_area_name_at(self, x: float, y: float) -> str:
+        if not self._model:
+            return ""
+        return self._custom_hit_area_name_at(x, y) or self._sdk_hit_area_name_at(x, y)
+
+    def hit_area_bounds(self, area_name: str):
+        area_name = str(area_name or "").strip().lower()
+        if not area_name:
+            return None
+        try:
+            return self._custom_hit_areas.bounds_for(area_name)
+        except Exception:
+            return None
+
+    def hit_area_union_bounds(self):
+        try:
+            return self._custom_hit_areas.union_bounds()
+        except Exception:
+            return None
 
     def _is_model_hit_at(self, x: float, y: float) -> bool:
         if not self._model:
@@ -475,22 +518,98 @@ class Live2DWidget(QOpenGLWidget):
             return False
 
     def _is_in_sdk_hit_area(self, x: float, y: float) -> bool:
+        return bool(self._sdk_hit_area_name_at(x, y))
+
+    def _sdk_hit_area_name_at(self, x: float, y: float) -> str:
         model = self._model
         try:
             if not self._has_sdk_hit_areas():
-                return False
-            return model.HitTest("", x, y) is not None
+                return ""
+            return str(model.HitTest("", x, y) or "").strip().lower()
         except Exception:
-            return False
+            return ""
 
     def _is_in_custom_hit_area(self, x: float, y: float) -> bool:
         return self._custom_hit_areas.hit_test(x, y)
 
+    def _custom_hit_area_name_at(self, x: float, y: float) -> str:
+        try:
+            return self._custom_hit_areas.hit_test_name(x, y).strip().lower()
+        except Exception:
+            return ""
+
     def _clear_hit_framebuffer_cache(self):
         self._hit_alpha_cache.clear()
+        self._visible_bounds_cache = None
+        self._visible_bounds_cache_at = -1000
         self._last_hit_test_ms = -1000
         self._last_hit_state = False
         self._clear_pending_hit_pbos()
+
+    def visible_model_bounds(self):
+        if not self._initialized_gl or not self._model:
+            return None
+        now = self._hit_clock.elapsed()
+        if (
+            self._visible_bounds_cache is not None
+            and now - self._visible_bounds_cache_at <= self._visible_bounds_cache_ttl_ms
+        ):
+            return self._visible_bounds_cache
+        bounds = self._read_visible_model_bounds()
+        self._visible_bounds_cache = bounds
+        self._visible_bounds_cache_at = now
+        return bounds
+
+    def _read_visible_model_bounds(self):
+        width = int(self._cache_w * self._system_scale)
+        height = int(self._cache_h * self._system_scale)
+        if width <= 0 or height <= 0:
+            return None
+        try:
+            self._safe_make_current()
+            self._process_hit_pbo_results()
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+            data = gl.glReadPixels(0, 0, width, height, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
+        except Exception:
+            return None
+
+        if not data:
+            return None
+
+        raw = bytes(data)
+        min_x = width
+        max_x = -1
+        min_y = height
+        max_y = -1
+        stride = width * 4
+        threshold = self._hit_alpha_threshold
+        step = 1 if width * height <= 600000 else 2
+        for y_gl in range(0, height, step):
+            row_offset = y_gl * stride
+            hit_in_row = False
+            for x in range(0, width, step):
+                if raw[row_offset + x * 4 + 3] > threshold:
+                    hit_in_row = True
+                    if x < min_x:
+                        min_x = x
+                    if x > max_x:
+                        max_x = x
+            if hit_in_row:
+                qt_y = height - 1 - y_gl
+                if qt_y < min_y:
+                    min_y = qt_y
+                if qt_y > max_y:
+                    max_y = qt_y
+
+        if max_x < min_x or max_y < min_y:
+            return None
+        scale = self._system_scale or 1.0
+        return (
+            min_x / scale,
+            (max_x + step) / scale,
+            min_y / scale,
+            (max_y + step) / scale,
+        )
 
     def _init_hit_pbos(self):
         if self._hit_pbo_supported is not None:

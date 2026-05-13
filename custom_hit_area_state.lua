@@ -43,10 +43,11 @@ return function()
 
         for i = 1, #self.scene_areas do
             local area = self.scene_areas[i]
-            local min_x = area[1]
-            local max_x = area[2]
-            local min_y = area[3]
-            local max_y = area[4]
+            local name = area[1]
+            local min_x = area[2]
+            local max_x = area[3]
+            local min_y = area[4]
+            local max_y = area[5]
 
             local dx0 = min_x - c0x
             local dx1 = max_x - c0x
@@ -63,6 +64,7 @@ return function()
             local p3y = (-ay * dx1 + ax * dy1) * inv_det * height
 
             projected[#projected + 1] = {
+                name,
                 math.min(p0x, p1x, p2x, p3x),
                 math.max(p0x, p1x, p2x, p3x),
                 math.min(p0y, p1y, p2y, p3y),
@@ -73,14 +75,50 @@ return function()
         return true
     end
 
-    function state:hit_test(x, y)
+    function state:hit_test_name(x, y)
         for i = 1, #self.projected_areas do
             local area = self.projected_areas[i]
-            if area[1] <= x and x <= area[2] and area[3] <= y and y <= area[4] then
-                return true
+            if area[2] <= x and x <= area[3] and area[4] <= y and y <= area[5] then
+                return area[1]
             end
         end
+        return nil
+    end
+
+    function state:hit_test(x, y)
+        if self:hit_test_name(x, y) ~= nil then
+            return true
+        end
         return false
+    end
+
+    function state:bounds_for(name)
+        name = tostring(name or "")
+        for i = 1, #self.projected_areas do
+            local area = self.projected_areas[i]
+            if area[1] == name then
+                return area[2], area[3], area[4], area[5]
+            end
+        end
+        return nil
+    end
+
+    function state:union_bounds()
+        if #self.projected_areas == 0 then
+            return nil
+        end
+        local min_x = self.projected_areas[1][2]
+        local max_x = self.projected_areas[1][3]
+        local min_y = self.projected_areas[1][4]
+        local max_y = self.projected_areas[1][5]
+        for i = 2, #self.projected_areas do
+            local area = self.projected_areas[i]
+            min_x = math.min(min_x, area[2])
+            max_x = math.max(max_x, area[3])
+            min_y = math.min(min_y, area[4])
+            max_y = math.max(max_y, area[5])
+        end
+        return min_x, max_x, min_y, max_y
     end
 
     return state
