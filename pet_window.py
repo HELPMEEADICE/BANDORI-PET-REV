@@ -151,6 +151,9 @@ class PetWindow(QWidget):
             self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100) or 100)
         self._radial_menu = None
         self._compact_ai_window = None
+        self._compact_ai_bounds_cache = None
+        self._compact_ai_drag_bounds = None
+        self._suppress_compact_ai_sync = False
         self._compact_ai_window_enabled = bool(self._cfg.get("compact_ai_window_enabled", False)) if self._cfg else False
         self._ai_event_overlay_enabled = bool(self._cfg.get("ai_event_overlay_enabled", False)) if self._cfg else False
         self._chat_process = None
@@ -378,7 +381,8 @@ class PetWindow(QWidget):
 
     def moveEvent(self, event: QMoveEvent):
         super().moveEvent(event)
-        self._sync_compact_ai_window()
+        if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
+            self._sync_compact_ai_window()
         self._schedule_position_save()
 
     def resizeEvent(self, event: QResizeEvent):
@@ -605,8 +609,18 @@ class PetWindow(QWidget):
 
     def _on_drag(self, dx: int, dy: int):
         self._set_mouse_passthrough(False)
-        self.move(self.x() + dx, self.y() + dy)
-        self._sync_compact_ai_window()
+        self._suppress_compact_ai_sync = True
+        try:
+            self.move(self.x() + dx, self.y() + dy)
+        finally:
+            self._suppress_compact_ai_sync = False
+        self._move_compact_ai_with_pet(dx, dy)
+
+    def _is_pet_dragging(self) -> bool:
+        return bool(
+            getattr(self._live2d_widget, "_dragging", False)
+            or getattr(self._pixel_widget, "_dragging", False)
+        )
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         if self._radial_menu and self._radial_menu.isVisible():
@@ -993,7 +1007,6 @@ class PetWindow(QWidget):
                 self._current_char,
                 self._model_manager,
                 self._cfg,
-                self,
             )
             self._compact_ai_window.action_triggered.connect(self._on_chat_action)
         self._compact_ai_window.set_character(self._current_char)
@@ -1003,12 +1016,26 @@ class PetWindow(QWidget):
     def _compact_window_target(self):
         bounds = None
         if not self._pixel_mode:
-            bounds = self._live2d_widget.visible_model_bounds()
+            dragging = bool(getattr(self._live2d_widget, "_dragging", False))
+            if dragging:
+                if self._compact_ai_drag_bounds is None:
+                    self._compact_ai_drag_bounds = (
+                        self._compact_ai_bounds_cache
+                        or self._live2d_widget.visible_model_bounds()
+                    )
+                bounds = self._compact_ai_drag_bounds
+            else:
+                bounds = self._live2d_widget.visible_model_bounds()
+                if bounds:
+                    self._compact_ai_bounds_cache = bounds
+                self._compact_ai_drag_bounds = None
             if bounds:
                 left, right, _top, _bottom = bounds
                 width = max(1, int(round(right - left)))
                 return width, bounds
             return max(240, int(round(self.width() * 0.72))), None
+        self._compact_ai_bounds_cache = None
+        self._compact_ai_drag_bounds = None
         return max(240, int(round(self.width() * 0.9))), None
 
     def _sync_compact_ai_window(self, allow_create: bool = False, force_visible: bool = False):
@@ -1024,6 +1051,15 @@ class PetWindow(QWidget):
         self._compact_ai_window.position_near_pet(self.geometry(), target_width, bounds)
         self._compact_ai_window.show()
         self._compact_ai_window.raise_()
+
+    def _move_compact_ai_with_pet(self, dx: int, dy: int):
+        if (
+            self._compact_ai_window is None
+            or not self._compact_ai_window.isVisible()
+            or not (self._compact_ai_window_enabled or self._ai_event_overlay_enabled)
+        ):
+            return
+        self._compact_ai_window.follow_pet_delta(dx, dy, self.geometry())
 
     def _on_chat_action(self, action_name: str):
         model = self._live2d_widget.model

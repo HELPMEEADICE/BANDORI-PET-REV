@@ -36,20 +36,21 @@ class ModelManager:
         if not CHARACTERS_DIR.exists():
             return support
 
-        display_to_key = {
-            self.get_display_name(character): character
-            for character in self.characters
-        }
+        display_to_keys: dict[str, list[str]] = {}
+        for character in self.characters:
+            display_to_keys.setdefault(self.get_display_name(character), []).append(character)
         for entry in sorted(CHARACTERS_DIR.iterdir()):
             if not entry.is_dir():
                 continue
-            character = display_to_key.get(entry.name)
-            if not character:
+            characters = display_to_keys.get(entry.name, [])
+            if not characters:
                 continue
-            support[character] = any(
+            has_markdown = any(
                 path.is_file() and path.suffix.lower() == ".md"
                 for path in entry.iterdir()
             )
+            for character in characters:
+                support[character] = has_markdown
         return support
 
     def _scan(self):

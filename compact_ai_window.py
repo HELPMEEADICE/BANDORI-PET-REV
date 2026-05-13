@@ -104,6 +104,7 @@ class CompactAIWindow(QWidget):
         self._drag_start = QPoint()
         self._drag_window_start = QPoint()
         self._geometry_anim = None
+        self._output_scroll_needed = False
 
         self._init_ui()
         self.refresh_theme()
@@ -131,7 +132,7 @@ class CompactAIWindow(QWidget):
         self._output.setReadOnly(True)
         self._output.setAcceptRichText(False)
         self._output.setFrameShape(QFrame.Shape.NoFrame)
-        self._output.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._output.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._output.viewport().installEventFilter(self)
         layout.addWidget(self._output, 1)
@@ -145,8 +146,11 @@ class CompactAIWindow(QWidget):
         self._input.setObjectName("compactInput")
         self._input.setAcceptRichText(False)
         self._input.setFrameShape(QFrame.Shape.NoFrame)
+        self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setPlaceholderText("输入消息")
         self._input.send_requested.connect(self.send_message)
+        self._input.textChanged.connect(self._sync_scrollbar_policies)
         row.addWidget(self._input, 1)
 
         self._send_button = QPushButton("\u2191", self)
@@ -274,6 +278,13 @@ class CompactAIWindow(QWidget):
         x, y = self._clamp_to_screen(x, y, screen_geo, margin)
         self.move(x, y)
 
+    def follow_pet_delta(self, dx: int, dy: int, pet_geo: QRect):
+        self._pet_geo = QRect(pet_geo)
+        if self._geometry_anim is not None:
+            self._geometry_anim.stop()
+            self._geometry_anim = None
+        self.move(self.x() + int(dx), self.y() + int(dy))
+
     def reset_position_offset(self):
         self._manual_offset = None
 
@@ -286,11 +297,14 @@ class CompactAIWindow(QWidget):
     def _target_output_height(self) -> int:
         text = self._output.toPlainText().strip()
         if not text:
+            self._output_scroll_needed = False
             return self._base_output_height()
         doc = self._output.document()
         doc.setTextWidth(max(1, self._output.viewport().width()))
         content_height = int(round(doc.size().height())) + 18
-        return max(self._base_output_height(), min(self._max_output_height(), content_height))
+        max_height = self._max_output_height()
+        self._output_scroll_needed = content_height > max_height
+        return max(self._base_output_height(), min(max_height, content_height))
 
     def _target_window_height(self) -> int:
         return self._target_output_height() + self._input.height() + 8
@@ -304,6 +318,7 @@ class CompactAIWindow(QWidget):
             return
         output_height = self._target_output_height()
         self._output.setFixedHeight(output_height)
+        self._sync_scrollbar_policies()
         target_height = self._target_window_height()
         if self.height() == target_height:
             return
@@ -323,6 +338,32 @@ class CompactAIWindow(QWidget):
         self._geometry_anim.setStartValue(old_geo)
         self._geometry_anim.setEndValue(target_geo)
         self._geometry_anim.start()
+
+    def _sync_scrollbar_policies(self):
+        if not hasattr(self, "_output") or not hasattr(self, "_input"):
+            return
+        self._set_vertical_scrollbar_policy(
+            self._output,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            if self._output_scroll_needed else Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
+        self._set_vertical_scrollbar_policy(
+            self._input,
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            if self._text_edit_needs_vertical_scrollbar(self._input)
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
+
+    def _set_vertical_scrollbar_policy(self, edit: QTextEdit, policy: Qt.ScrollBarPolicy):
+        if edit.verticalScrollBarPolicy() != policy:
+            edit.setVerticalScrollBarPolicy(policy)
+
+    def _text_edit_needs_vertical_scrollbar(self, edit: QTextEdit) -> bool:
+        if not edit.toPlainText():
+            return False
+        doc = edit.document()
+        doc.setTextWidth(max(1, edit.viewport().width()))
+        return doc.size().height() > edit.viewport().height() + 8
 
     def _clamp_to_screen(self, x: int, y: int, screen_geo: QRect, margin: int) -> tuple[int, int]:
         x = max(screen_geo.left() + margin, min(x, screen_geo.right() - self.width() - margin))
