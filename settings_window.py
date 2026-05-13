@@ -1985,8 +1985,11 @@ class SettingsWindow(QWidget):
         ai_event_row.addWidget(self._ai_event_overlay_enabled)
         layout.addLayout(ai_event_row)
 
+        self._compact_hint_labels = []
+
         ai_event_hint = BodyLabel(_tr("SettingsWindow.ai_event_overlay_hint"), page)
         ai_event_hint.setWordWrap(True)
+        self._compact_hint_labels.append(ai_event_hint)
         layout.addWidget(ai_event_hint)
 
         port_row = QHBoxLayout()
@@ -2000,12 +2003,15 @@ class SettingsWindow(QWidget):
 
         port_input_row = QHBoxLayout()
         port_input_row.setContentsMargins(0, 0, 0, 0)
-        self._ai_status_port_input = FluentContextLineEdit(page)
+        port_input_row.setSpacing(8)
+        self._ai_status_port_input = LineEdit(page)
         self._ai_status_port_input.setFixedWidth(120)
+        self._ai_status_port_input.setFixedHeight(36)
         self._ai_status_port_input.setValidator(QIntValidator(1024, 65535, self))
         self._ai_status_port_input.setPlaceholderText("38472")
         token_label = BodyLabel(_tr("SettingsWindow.ai_status_token"), page)
-        self._ai_status_token_input = FluentContextLineEdit(page)
+        self._ai_status_token_input = LineEdit(page)
+        self._ai_status_token_input.setFixedHeight(36)
         self._ai_status_token_input.setPlaceholderText(_tr("SettingsWindow.ai_status_token_placeholder"))
         port_input_row.addWidget(BodyLabel(_tr("SettingsWindow.ai_status_port_number"), page))
         port_input_row.addWidget(self._ai_status_port_input)
@@ -2016,6 +2022,7 @@ class SettingsWindow(QWidget):
 
         port_hint = BodyLabel(_tr("SettingsWindow.ai_status_port_hint"), page)
         port_hint.setWordWrap(True)
+        self._compact_hint_labels.append(port_hint)
         layout.addWidget(port_hint)
 
         opacity_label = BodyLabel(_tr("SettingsWindow.compact_window_opacity"), page)
@@ -2041,6 +2048,7 @@ class SettingsWindow(QWidget):
         )
         font_hint = BodyLabel(_tr("SettingsWindow.compact_window_font_hint"), page)
         font_hint.setWordWrap(True)
+        self._compact_hint_labels.append(font_hint)
         layout.addWidget(self._compact_window_font_size_slider)
         layout.addWidget(self._compact_window_font_size_value)
         layout.addWidget(font_hint)
@@ -2091,6 +2099,7 @@ class SettingsWindow(QWidget):
         reset_btn.clicked.connect(self._reset_compact_window_config)
         hint = BodyLabel(_tr("SettingsWindow.compact_window_apply_hint"), page)
         hint.setWordWrap(True)
+        self._compact_hint_labels.append(hint)
         btn_row = QHBoxLayout()
         btn_row.addWidget(save_btn)
         btn_row.addWidget(reset_btn)
@@ -2098,6 +2107,8 @@ class SettingsWindow(QWidget):
         layout.addLayout(btn_row)
 
         self._load_compact_window_config()
+        self._style_compact_controls()
+        qconfig.themeChanged.connect(self._style_compact_controls)
         return page
 
     def _build_compact_color_row(self, page: QWidget, colors: list[tuple[str, str]], prop_name: str) -> list[QPushButton]:
@@ -2105,8 +2116,8 @@ class SettingsWindow(QWidget):
         row.setSpacing(6)
         btns: list[QPushButton] = []
         for color_hex, color_name in colors:
-            btn = QPushButton("", page)
-            btn.setFixedSize(28, 28)
+            btn = PushButton("", page)
+            btn.setFixedSize(32, 32)
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(color_name)
@@ -2129,24 +2140,40 @@ class SettingsWindow(QWidget):
         self._pulse_button(btn)
 
     def _style_compact_color_buttons(self, buttons: list[QPushButton]):
+        dark = isDarkTheme()
+        checked_border = accent_color(dark)
+        idle_border = "#4a4a4a" if dark else "#d7d7d7"
+        hover_border = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
         for btn in buttons:
             color = btn.property("compact_color")
             checked = btn.isChecked()
             btn.setText("\u2713" if checked else "")
-            size = 30 if checked else 28
-            btn.setFixedSize(size, size)
-            border = "3px solid #ffffff" if checked else "2px solid transparent"
+            btn.setFixedSize(32, 32)
+            border = f"2px solid {checked_border}" if checked else f"1px solid {idle_border}"
             text_color = "#111111" if QColor(color).lightness() > 170 else "#ffffff"
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: {color};
                     border: {border};
-                    border-radius: {size // 2}px;
+                    border-radius: 6px;
                     color: {text_color};
                     font-weight: 900;
                     font-size: 14px;
+                    padding: 0px;
+                }}
+                QPushButton:hover {{
+                    border: 2px solid {hover_border};
                 }}
             """)
+
+    def _style_compact_controls(self):
+        if not self._compact_config_widgets_ready():
+            return
+        muted = "#a0a7b7" if isDarkTheme() else "#6b7280"
+        for label in getattr(self, "_compact_hint_labels", []):
+            label.setStyleSheet(f"color: {muted}; font-size: 13px;")
+        self._style_compact_color_buttons(self._compact_bg_color_btns)
+        self._style_compact_color_buttons(self._compact_text_color_btns)
 
     def _compact_config_widgets_ready(self) -> bool:
         return all(
