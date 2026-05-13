@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_theme import apply_app_theme
+from compact_ai_window import CompactAIWindow
 from i18n_manager import tr as _tr
 from live2d_click_actions import (
     CLICK_MOTION_NONE,
@@ -149,6 +150,8 @@ class PetWindow(QWidget):
             )
             self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100) or 100)
         self._radial_menu = None
+        self._compact_ai_window = None
+        self._compact_ai_window_enabled = bool(self._cfg.get("compact_ai_window_enabled", False)) if self._cfg else False
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
@@ -374,13 +377,22 @@ class PetWindow(QWidget):
 
     def moveEvent(self, event: QMoveEvent):
         super().moveEvent(event)
+        self._sync_compact_ai_window()
         self._schedule_position_save()
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
+        self._sync_compact_ai_window()
         self._schedule_position_save()
 
+    def hideEvent(self, event):
+        if self._compact_ai_window is not None:
+            self._compact_ai_window.hide()
+        super().hideEvent(event)
+
     def closeEvent(self, event):
+        self._close_chat_process()
+        self._close_compact_ai_window()
         self._save_config()
         app = QApplication.instance()
         if app is not None:
@@ -498,13 +510,42 @@ class PetWindow(QWidget):
         if self._pixel_mode and not self._load_pixel_for_current_character():
             self._enable_live2d_mode(save=False)
         self._update_tooltip()
+        self._sync_compact_ai_window(allow_create=True)
         self._save_config()
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
         QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
+        QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
 
     def _apply_settings(self, data: dict):
+        compact_keys = {
+            "compact_ai_window_enabled",
+            "compact_ai_window_opacity",
+            "compact_ai_window_font_size",
+            "compact_ai_window_background_color",
+            "compact_ai_window_text_color",
+            "user_avatar_color",
+        }
+        if self._cfg and any(key in data for key in compact_keys):
+            self._cfg.load()
+            if "compact_ai_window_enabled" in data:
+                self._cfg.set("compact_ai_window_enabled", bool(data["compact_ai_window_enabled"]))
+            if "compact_ai_window_opacity" in data:
+                self._cfg.set("compact_ai_window_opacity", data["compact_ai_window_opacity"])
+            if "compact_ai_window_font_size" in data:
+                self._cfg.set("compact_ai_window_font_size", data["compact_ai_window_font_size"])
+            if "compact_ai_window_background_color" in data:
+                self._cfg.set("compact_ai_window_background_color", data["compact_ai_window_background_color"])
+            if "compact_ai_window_text_color" in data:
+                self._cfg.set("compact_ai_window_text_color", data["compact_ai_window_text_color"])
+            if "user_avatar_color" in data:
+                self._cfg.set("user_avatar_color", data["user_avatar_color"])
+            self._cfg.save()
+        if "compact_ai_window_enabled" in data:
+            self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
+        if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
+            self._compact_ai_window.reset_position_offset()
         if "fps" in data:
             self.set_fps(data["fps"])
         if "opacity" in data:
@@ -521,6 +562,7 @@ class PetWindow(QWidget):
             self._live2d_widget.set_render_quality(self._live2d_quality)
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
+        self._sync_compact_ai_window(allow_create=True)
         if self._cfg and ("models" in data or "model_action_settings" in data):
             self._cfg.load()
         if "model_action_settings" in data and self._cfg:
@@ -538,6 +580,7 @@ class PetWindow(QWidget):
         self._live2d_scale = _clamp_live2d_scale(value)
         if not self._pixel_mode:
             self.resize(*self._live2d_size())
+        self._sync_compact_ai_window()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -557,6 +600,7 @@ class PetWindow(QWidget):
     def _on_drag(self, dx: int, dy: int):
         self._set_mouse_passthrough(False)
         self.move(self.x() + dx, self.y() + dy)
+        self._sync_compact_ai_window()
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         if self._radial_menu and self._radial_menu.isVisible():
@@ -892,6 +936,51 @@ class PetWindow(QWidget):
             if not self._chat_process.waitForFinished(1000):
                 self._chat_process.kill()
         self._chat_process = None
+
+    def _close_compact_ai_window(self):
+        if self._compact_ai_window is None:
+            return
+        self._compact_ai_window.close()
+        self._compact_ai_window.deleteLater()
+        self._compact_ai_window = None
+
+    def _ensure_compact_ai_window(self):
+        if self._compact_ai_window is None:
+            self._compact_ai_window = CompactAIWindow(
+                self._current_char,
+                self._model_manager,
+                self._cfg,
+                self,
+            )
+            self._compact_ai_window.action_triggered.connect(self._on_chat_action)
+        self._compact_ai_window.set_character(self._current_char)
+        self._compact_ai_window.refresh_theme()
+        return self._compact_ai_window
+
+    def _compact_window_target(self):
+        bounds = None
+        if not self._pixel_mode:
+            bounds = self._live2d_widget.visible_model_bounds()
+            if bounds:
+                left, right, _top, _bottom = bounds
+                width = max(1, int(round(right - left)))
+                return width, bounds
+            return max(240, int(round(self.width() * 0.72))), None
+        return max(240, int(round(self.width() * 0.9))), None
+
+    def _sync_compact_ai_window(self, allow_create: bool = False):
+        if not self._compact_ai_window_enabled or not self.isVisible():
+            if self._compact_ai_window is not None:
+                self._compact_ai_window.hide()
+            return
+        if self._compact_ai_window is None:
+            if not allow_create:
+                return
+            self._ensure_compact_ai_window()
+        target_width, bounds = self._compact_window_target()
+        self._compact_ai_window.position_near_pet(self.geometry(), target_width, bounds)
+        self._compact_ai_window.show()
+        self._compact_ai_window.raise_()
 
     def _on_chat_action(self, action_name: str):
         model = self._live2d_widget.model
@@ -1432,6 +1521,7 @@ class PetWindow(QWidget):
     def _quit(self):
         QApplication.instance().removeEventFilter(self)
         self._close_chat_process()
+        self._close_compact_ai_window()
         if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
             self._settings_process.terminate()
             if not self._settings_process.waitForFinished(1000):
@@ -1453,6 +1543,7 @@ class PetWindow(QWidget):
         self._update_game_topmost_timer()
         QTimer.singleShot(0, self._prewarm_radial_menu)
         if self._show_pos_set:
+            self._sync_compact_ai_window(allow_create=True)
             return
         screen = QApplication.primaryScreen()
         if screen:
@@ -1463,6 +1554,7 @@ class PetWindow(QWidget):
             )
         self._show_pos_set = True
         self._play_entrance()
+        self._sync_compact_ai_window(allow_create=True)
 
     def _play_entrance(self):
         self.setWindowOpacity(0.0)

@@ -220,13 +220,42 @@ def main():
             launch_pet()
 
     def on_settings_changed(data):
-        pet_window_ref["fps"] = data.get("fps", 120)
-        pet_window_ref["opacity"] = data.get("opacity", 1.0)
-        pet_window_ref["dark"] = data.get("dark_theme", False)
-        pet_window_ref["vsync"] = data.get("vsync", True)
-        pet_window_ref["game_topmost"] = data.get("game_topmost", cfg.get("game_topmost", False))
-        pet_window_ref["live2d_quality"] = data.get("live2d_quality", "balanced")
-        pet_window_ref["live2d_scale"] = data.get("live2d_scale", cfg.get("live2d_scale", 100))
+        pet_window_ref["fps"] = data.get("fps", pet_window_ref.get("fps", cfg.get("fps", 120)))
+        pet_window_ref["opacity"] = data.get("opacity", pet_window_ref.get("opacity", cfg.get("opacity", 1.0)))
+        pet_window_ref["dark"] = data.get("dark_theme", pet_window_ref.get("dark", cfg.get("dark_theme", False)))
+        pet_window_ref["vsync"] = data.get("vsync", pet_window_ref.get("vsync", cfg.get("vsync", True)))
+        pet_window_ref["game_topmost"] = data.get(
+            "game_topmost",
+            pet_window_ref.get("game_topmost", cfg.get("game_topmost", False)),
+        )
+        pet_window_ref["live2d_quality"] = data.get(
+            "live2d_quality",
+            pet_window_ref.get("live2d_quality", cfg.get("live2d_quality", "balanced")),
+        )
+        pet_window_ref["live2d_scale"] = data.get(
+            "live2d_scale",
+            pet_window_ref.get("live2d_scale", cfg.get("live2d_scale", 100)),
+        )
+        pet_window_ref["compact_ai_window_enabled"] = data.get(
+            "compact_ai_window_enabled",
+            pet_window_ref.get("compact_ai_window_enabled", cfg.get("compact_ai_window_enabled", False)),
+        )
+        pet_window_ref["compact_ai_window_opacity"] = data.get(
+            "compact_ai_window_opacity",
+            pet_window_ref.get("compact_ai_window_opacity", cfg.get("compact_ai_window_opacity", 44)),
+        )
+        pet_window_ref["compact_ai_window_font_size"] = data.get(
+            "compact_ai_window_font_size",
+            pet_window_ref.get("compact_ai_window_font_size", cfg.get("compact_ai_window_font_size", 12)),
+        )
+        pet_window_ref["compact_ai_window_background_color"] = data.get(
+            "compact_ai_window_background_color",
+            pet_window_ref.get("compact_ai_window_background_color", cfg.get("compact_ai_window_background_color", "")),
+        )
+        pet_window_ref["compact_ai_window_text_color"] = data.get(
+            "compact_ai_window_text_color",
+            pet_window_ref.get("compact_ai_window_text_color", cfg.get("compact_ai_window_text_color", "#24242a")),
+        )
         cfg.load()
         cfg.set("fps", pet_window_ref["fps"])
         cfg.set("opacity", pet_window_ref["opacity"])
@@ -235,6 +264,13 @@ def main():
         cfg.set("game_topmost", pet_window_ref["game_topmost"])
         cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
         cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
+        cfg.set("compact_ai_window_enabled", pet_window_ref["compact_ai_window_enabled"])
+        cfg.set("compact_ai_window_opacity", pet_window_ref["compact_ai_window_opacity"])
+        cfg.set("compact_ai_window_font_size", pet_window_ref["compact_ai_window_font_size"])
+        cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
+        cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
+        if "user_avatar_color" in data:
+            cfg.set("user_avatar_color", data["user_avatar_color"])
         if "model_action_settings" in data:
             cfg.set("model_action_settings", data["model_action_settings"])
         if "models" in data:
@@ -258,6 +294,16 @@ def main():
             cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
         if "live2d_scale" in pet_window_ref:
             cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
+        if "compact_ai_window_enabled" in pet_window_ref:
+            cfg.set("compact_ai_window_enabled", pet_window_ref["compact_ai_window_enabled"])
+        if "compact_ai_window_opacity" in pet_window_ref:
+            cfg.set("compact_ai_window_opacity", pet_window_ref["compact_ai_window_opacity"])
+        if "compact_ai_window_font_size" in pet_window_ref:
+            cfg.set("compact_ai_window_font_size", pet_window_ref["compact_ai_window_font_size"])
+        if "compact_ai_window_background_color" in pet_window_ref:
+            cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
+        if "compact_ai_window_text_color" in pet_window_ref:
+            cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")

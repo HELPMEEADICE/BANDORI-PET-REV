@@ -42,6 +42,11 @@ DEFAULTS = {
     "pov_role_character": "",
     "llm_enable_thinking": None,
     "llm_show_reasoning": True,
+    "compact_ai_window_enabled": False,
+    "compact_ai_window_background_color": "",
+    "compact_ai_window_text_color": "#24242a",
+    "compact_ai_window_opacity": 44,
+    "compact_ai_window_font_size": 12,
 }
 
 MODEL_DEFAULTS = {
