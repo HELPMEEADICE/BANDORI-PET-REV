@@ -197,11 +197,15 @@ class RadialMenu(QWidget):
         self._center_scale = 1.0
         self._center_anim_value = 1.0
         self._lock_anim = None
+        self._windows_border_fix_applied = False
+        self._paint_prewarmed = False
 
         self.setMouseTracking(True)
 
     def _apply_windows_11_border_fix(self):
         if os.name != "nt" or _dwm_set_window_attribute is None:
+            return
+        if self._windows_border_fix_applied:
             return
         hwnd = int(self.winId())
         if not hwnd:
@@ -230,6 +234,7 @@ class RadialMenu(QWidget):
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             )
+        self._windows_border_fix_applied = True
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -240,6 +245,30 @@ class RadialMenu(QWidget):
         # Force native window creation during idle time so first popup stays responsive.
         self.winId()
         self._apply_windows_11_border_fix()
+        self._prewarm_paint_cache()
+
+    def _prewarm_paint_cache(self):
+        if self._paint_prewarmed:
+            return
+
+        total_w = self._radius * 2 + 80 * 2
+        total_h = self._radius * 2 + 80 * 2
+        if self.width() != total_w or self.height() != total_h:
+            self.resize(total_w, total_h)
+
+        # Windows can stall the first time Qt resolves emoji fallback fonts and
+        # translucent gradients. Render once while hidden so right-click only shows.
+        self._set_center_reveal_value(1.0)
+        menu_pixmap = QPixmap(total_w, total_h)
+        menu_pixmap.fill(Qt.GlobalColor.transparent)
+        self.render(menu_pixmap)
+
+        for item in self._items:
+            item_pixmap = QPixmap(item.widget.size())
+            item_pixmap.fill(Qt.GlobalColor.transparent)
+            item.widget.render(item_pixmap)
+
+        self._paint_prewarmed = True
 
     @property
     def locked(self):
