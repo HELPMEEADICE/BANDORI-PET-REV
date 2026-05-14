@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 from app_theme import apply_app_theme
 from chat_window import ChatWindow
 from config_manager import ConfigManager
-from i18n_manager import current_language, detect_system_language, set_language
+from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 
 
@@ -57,7 +57,6 @@ def main():
     window = ChatWindow(args.character, mgr, None, cfg, group_characters=characters if len(characters) > 1 else None)
     window.action_triggered.connect(window.emit_action_for_ipc)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-    window.closed.connect(lambda: cfg.set("language", current_language()))
     window.closed.connect(app.quit)
 
     shutdown_socket = QLocalSocket(app)
@@ -75,6 +74,7 @@ def main():
     window.position_next_to_pet(QRect(args.pet_x, args.pet_y, args.pet_w, args.pet_h))
 
     ret = app.exec()
+    cfg.load()
     cfg.save()
     return ret
 

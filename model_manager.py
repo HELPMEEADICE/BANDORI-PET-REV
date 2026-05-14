@@ -2,6 +2,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from i18n_manager import tr as _tr
 from process_utils import app_base_dir
 from zst_model_archive import (
     is_virtual_path,
@@ -184,7 +185,7 @@ class ModelManager:
         if ungrouped:
             self._bands.append({
                 "id": "others",
-                "display": "其他角色",
+                "display": _tr("ModelManager.others_band"),
                 "characters": ungrouped,
             })
 

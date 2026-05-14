@@ -16,7 +16,7 @@ from live2d_lua_adapter import live2d
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from config_manager import ConfigManager
-from i18n_manager import set_language, detect_system_language
+from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 
@@ -72,12 +72,12 @@ def main():
         tray_icon = QSystemTrayIcon(app)
         icon_path = os.path.join(BASE_DIR, "logo.ico")
         tray_icon.setIcon(QIcon(icon_path) if os.path.exists(icon_path) else QIcon())
-        tray_icon.setToolTip("BandoriPet")
+        tray_icon.setToolTip(_tr("MainTray.tooltip"))
 
         menu = QMenu()
-        settings_action = menu.addAction("设置")
+        settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
-        exit_action = menu.addAction("退出")
+        exit_action = menu.addAction(_tr("MainTray.exit"))
         exit_action.triggered.connect(quit_all)
         tray_icon.setContextMenu(menu)
         tray_icon.activated.connect(lambda reason: launch_settings_process(show_launch=False) if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -265,6 +265,10 @@ def main():
             launch_pet()
 
     def on_settings_changed(data):
+        language = data.get("language")
+        if language:
+            set_language(language)
+            pet_window_ref["language"] = language
         pet_window_ref["fps"] = data.get("fps", pet_window_ref.get("fps", cfg.get("fps", 120)))
         pet_window_ref["opacity"] = data.get("opacity", pet_window_ref.get("opacity", cfg.get("opacity", 1.0)))
         pet_window_ref["dark"] = data.get("dark_theme", pet_window_ref.get("dark", cfg.get("dark_theme", False)))
@@ -317,6 +321,8 @@ def main():
             pet_window_ref.get("ai_status_token", cfg.get("ai_status_token", "")),
         )
         cfg.load()
+        if language:
+            cfg.set("language", language)
         cfg.set("fps", pet_window_ref["fps"])
         cfg.set("opacity", pet_window_ref["opacity"])
         cfg.set("dark_theme", pet_window_ref["dark"])
@@ -344,6 +350,9 @@ def main():
 
     def launch_pet():
         cfg.load()
+        if "language" in pet_window_ref:
+            set_language(pet_window_ref["language"])
+            cfg.set("language", pet_window_ref["language"])
         if pet_window_ref.get("dark", False):
             apply_app_theme(True)
             cfg.set("dark_theme", True)

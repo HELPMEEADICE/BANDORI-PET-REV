@@ -21,6 +21,7 @@ from llm_manager import (
     parse_action_tags,
     strip_action_tags,
 )
+from i18n_manager import tr as _tr
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -148,7 +149,7 @@ class CompactAIWindow(QWidget):
         self._input.setFrameShape(QFrame.Shape.NoFrame)
         self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._input.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._input.setPlaceholderText("输入消息")
+        self._input.setPlaceholderText(_tr("CompactAIWindow.input_placeholder"))
         self._input.send_requested.connect(self.send_message)
         self._input.textChanged.connect(self._sync_scrollbar_policies)
         row.addWidget(self._input, 1)
@@ -505,11 +506,11 @@ class CompactAIWindow(QWidget):
 
     def _state_label(self, state: str) -> str:
         labels = {
-            "thinking": "正在思考...",
-            "tool": "正在执行...",
-            "stream": "正在输出...",
-            "error": "出错了",
-            "done": "完成",
+            "thinking": _tr("CompactAIWindow.state_thinking"),
+            "tool": _tr("CompactAIWindow.state_tool"),
+            "stream": _tr("CompactAIWindow.state_stream"),
+            "error": _tr("CompactAIWindow.state_error"),
+            "done": _tr("CompactAIWindow.state_done"),
         }
         return labels.get(state, state or "...")
 
@@ -522,7 +523,7 @@ class CompactAIWindow(QWidget):
         api_key = self._cfg.get("llm_api_key", "") if self._cfg else ""
         model_id = self._cfg.get("llm_model_id", "") if self._cfg else ""
         if not api_url or not api_key or not model_id:
-            self._set_output_text("LLM API 尚未配置。")
+            self._set_output_text(_tr("CompactAIWindow.llm_not_configured"))
             return
 
         self._input.clear()

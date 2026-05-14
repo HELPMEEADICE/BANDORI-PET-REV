@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from app_theme import apply_app_theme
 from compact_ai_window import CompactAIWindow
-from i18n_manager import tr as _tr
+from i18n_manager import tr as _tr, set_language
 from live2d_click_actions import (
     CLICK_MOTION_NONE,
     CLICK_MOTION_RANDOM,
@@ -524,6 +524,8 @@ class PetWindow(QWidget):
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
 
     def _apply_settings(self, data: dict):
+        if data.get("language"):
+            set_language(str(data["language"]))
         compact_keys = {
             "compact_ai_window_enabled",
             "compact_ai_window_opacity",
@@ -532,6 +534,7 @@ class PetWindow(QWidget):
             "compact_ai_window_text_color",
             "ai_event_overlay_enabled",
             "user_avatar_color",
+            "language",
         }
         if self._cfg and any(key in data for key in compact_keys):
             self._cfg.load()
@@ -549,6 +552,8 @@ class PetWindow(QWidget):
                 self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
+            if data.get("language"):
+                self._cfg.set("language", str(data["language"]))
             self._cfg.save()
         if "compact_ai_window_enabled" in data:
             self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
