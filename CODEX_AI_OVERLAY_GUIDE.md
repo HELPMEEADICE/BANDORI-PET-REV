@@ -90,11 +90,12 @@ http://127.0.0.1:38472/ai-events
 | `state` | `idle`、`thinking`、`tool`、`stream`、`error`、`done`、`clear` |
 | `title` | 悬浮窗第一行标题 |
 | `text` | 主要显示内容 |
-| `mode` | `replace` 或 `append`；`stream` 默认追加，其他状态默认替换 |
+| `mode` | `replace` 或 `append`；`stream` 默认追加，其他状态默认替换。若内容已经是完整展示文本，可用 `replace_raw` 或 `append_raw` 跳过来源/标题前缀 |
 | `progress` | 进度，支持 `0.35` 或 `35` |
 | `action` | 可选 Live2D 动作，如 `thinking`、`smile`、`surprised` |
 | `character` | 可选目标角色 key；留空会广播给所有桌宠 |
 | `ttl_ms` | 可选自动清空时间，单位毫秒 |
+| `anchor_to_pet` | 可选；为 `true` 时强制把悬浮窗重新贴近当前角色位置 |
 
 ### 3.1 PowerShell 示例
 
@@ -194,7 +195,17 @@ cd .\BANDORI-PET-FIX
 opencode
 ```
 
-插件会把 opencode 的会话、工具调用、文件编辑、命令执行、权限确认、完成和错误事件转成 BandoriPet 悬浮窗事件。
+插件会把 opencode 的会话、工具调用、文件编辑、命令执行、权限确认、模型输出、完成和错误事件转成 BandoriPet 悬浮窗事件。
+
+模型输出会在插件侧缓冲后以完整文本刷新到悬浮窗，避免流式 token 一段一段散落显示。输出结束后，悬浮窗会保留最终内容，并在末尾显示清除提示。
+
+在悬浮窗输入框发送：
+
+```text
+@clear
+```
+
+可以清空当前悬浮窗输出内容。这个命令只在 BandoriPet 本地处理，不会发送给 LLM。
 
 ### 4.2 可选环境变量
 
@@ -205,7 +216,11 @@ opencode
 | `BANDORI_AI_CHARACTER` | 空 | 指定显示的角色 key；留空广播给所有桌宠 |
 | `BANDORI_AI_SOURCE` | `opencode` | 悬浮窗事件来源名称 |
 | `BANDORI_AI_TTL_MS` | `4500` | 默认自动清空时间，单位毫秒 |
-| `BANDORI_AI_MAX_TEXT` | `240` | 单条悬浮窗文本最大长度 |
+| `BANDORI_AI_MAX_TEXT` | `240` | 状态类消息的单条文本最大长度 |
+| `BANDORI_AI_MAX_OUTPUT_TEXT` | `4000` | 模型输出在悬浮窗中保留的最大文本长度 |
+| `BANDORI_AI_OUTPUT_FLUSH_MS` | `160` | 模型流式输出刷新到悬浮窗的最小间隔，单位毫秒 |
+| `BANDORI_AI_OUTPUT_HOLD_MS` | `30000` | 模型输出结束后保护最终结果不被状态事件覆盖的时间，单位毫秒 |
+| `BANDORI_AI_DONE_HINT` | `opencode 输出完成，输入 @clear 清除` | 模型输出结束后追加到悬浮窗末尾的提示文字；设为空字符串可关闭提示 |
 | `BANDORI_AI_TIMEOUT_MS` | `900` | HTTP 推送超时时间，单位毫秒 |
 | `BANDORI_AI_DEBUG` | 空 | 设为 `1` 后把推送失败写入 opencode 日志 |
 | `BANDORI_AI_DISABLED` | 空 | 设为 `1` 后禁用插件 |
@@ -215,6 +230,14 @@ PowerShell 示例：
 ```powershell
 $env:BANDORI_AI_TOKEN = "your-token"
 $env:BANDORI_AI_CHARACTER = "kasumi"
+opencode
+```
+
+自定义最终提示和保留时长：
+
+```powershell
+$env:BANDORI_AI_DONE_HINT = "完成啦，输入 @clear 清除"
+$env:BANDORI_AI_OUTPUT_HOLD_MS = "60000"
 opencode
 ```
 
@@ -228,7 +251,11 @@ opencode
 
 - 手动运行 `bandori_ai_event.py` 能显示，但 Codex 不显示：说明总线正常；请确认 Codex 是通过 `bandori_codex_runner.py` 启动的。
 - opencode 不显示：确认是在包含 `.opencode/plugins/bandori-ai-overlay.js` 的项目目录启动，或已把插件放到 opencode 全局插件目录。
+- 修改 opencode 插件后行为没有变化：重启 opencode，让插件重新加载。
+- opencode 最终输出没有提示：确认插件已重新加载；如果关闭了提示，检查 `BANDORI_AI_DONE_HINT` 是否为空字符串。
+- opencode 最终输出很快被状态覆盖：调大 `BANDORI_AI_OUTPUT_HOLD_MS`。
+- 悬浮窗内容太长或太短：调整 `BANDORI_AI_MAX_OUTPUT_TEXT`。
 - HTTP 请求返回 `401`：设置页里填写了 Token，请发送 `Authorization: Bearer <token>` 或 `X-Bandori-Token: <token>`。
 - HTTP 请求连接失败：确认「启用本地 AI 状态端口」已打开，并点击了「应用」。
 - 有多个桌宠都显示：在事件里加 `"character": "kasumi"` 之类的角色 key。
-- 只想清空悬浮窗：发送 `{ "state": "clear" }`。
+- 只想从外部清空悬浮窗：发送 `{ "state": "clear" }`。如果是在悬浮窗输入框中清空，发送 `@clear`。
