@@ -1,4 +1,5 @@
 import ctypes
+import sys
 import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QMouseEvent, QCursor, QGuiApplication, QSurfaceFormat, QOpenGLContext, QMoveEvent, QResizeEvent
@@ -309,6 +310,17 @@ class Live2DWidget(QOpenGLWidget):
         self._init_hit_pbos()
         self._update_render_timer()
         self.update()
+
+    def resizeGL(self, w: int, h: int):
+        self._cache_w = w
+        self._cache_h = h
+        self._cache_w_half = w * 0.5
+        self._cache_h_half = h * 0.5
+        self._clear_hit_framebuffer_cache()
+        gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
+        if self._model:
+            self._model.Resize(w, h)
+            self._update_custom_hit_area_projection()
 
     def paintGL(self):
         if self._static_render and self._static_render_done:

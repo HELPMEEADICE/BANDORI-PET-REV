@@ -33,12 +33,16 @@ def _sel(name: str):
     return sel
 
 
+def _send_id(receiver: int, selector: str) -> int:
+    f = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    return sender(receiver, _sel(selector))
+
+
 def _get_ns_window(view_ptr: int) -> int:
     if not view_ptr:
         return 0
-    f = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
-    sender = ctypes.cast(_OBJC.objc_msgSend, f)
-    return sender(view_ptr, _sel("window"))
+    return _send_id(view_ptr, "window")
 
 
 def set_ignores_mouse_events(widget, enabled: bool):
@@ -108,7 +112,22 @@ def hide_dock_icon():
     try:
         from AppKit import NSApp, NSApplicationActivationPolicyAccessory
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    except ImportError:
+        return
+    except Exception:
+        pass
+    if not _init_objc():
+        return
+    try:
+        app_class = _OBJC.objc_getClass(b"NSApplication")
+        if not app_class:
+            return
+        app = _send_id(app_class, "sharedApplication")
+        if not app:
+            return
+        f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long)
+        sender = ctypes.cast(_OBJC.objc_msgSend, f)
+        sender(app, _sel("setActivationPolicy:"), 1)
+    except Exception:
         pass
 
 

@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import sys
 import time
 
 if os.name == "nt":
@@ -30,7 +31,7 @@ from pixel_pet_widget import PixelPetWidget, load_pixel_frames, pixel_path_for_c
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 from radial_menu import RadialMenu
 
-if os.name == "darwin":
+if sys.platform == "darwin":
     import macos_patch
 else:
     macos_patch = None
@@ -326,7 +327,7 @@ class PetWindow(QWidget):
             return
         if os.name == "nt":
             self._apply_passthrough_to_hwnd(int(self.winId()), enabled)
-        elif os.name == "darwin" and macos_patch is not None:
+        elif sys.platform == "darwin" and macos_patch is not None:
             macos_patch.set_ignores_mouse_events(self, enabled)
         else:
             return
@@ -359,7 +360,7 @@ class PetWindow(QWidget):
     def _update_mouse_passthrough(self):
         if self._use_native_hit_test_passthrough or not self.isVisible():
             return
-        if os.name not in ("nt", "darwin"):
+        if os.name != "nt" and sys.platform != "darwin":
             return
         if self._live2d_widget._dragging or self._pixel_widget._dragging:
             return
@@ -1461,7 +1462,7 @@ class PetWindow(QWidget):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
         self._update_game_topmost_timer()
-        if os.name == "darwin" and macos_patch is not None:
+        if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, lambda: (
                 macos_patch.set_window_no_shadow(self),
                 macos_patch.set_window_level_floating(self)
