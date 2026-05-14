@@ -25,31 +25,31 @@
 进入项目目录：
 
 ```powershell
-cd C:\Users\thoma\Documents\Codex\2026-05-10\https-github-com-thomasjjjjkooo-ops-bandori\BANDORI-PET-FIX
+cd .\BANDORI-PET-FIX
 ```
 
 运行一个 Codex 任务：
 
 ```powershell
-C:\Users\thoma\AppData\Local\Programs\Python\Python311\python.exe bandori_codex_runner.py -- "帮我总结这个项目的结构"
+python bandori_codex_runner.py -- "帮我总结这个项目的结构"
 ```
 
 指定工作目录：
 
 ```powershell
-C:\Users\thoma\AppData\Local\Programs\Python\Python311\python.exe bandori_codex_runner.py --workdir C:\Users\thoma\Documents\Codex\2026-05-10\https-github-com-thomasjjjjkooo-ops-bandori\BANDORI-PET-FIX -- "解释 pet_window.py 的事件流"
+python bandori_codex_runner.py --workdir . -- "解释 pet_window.py 的事件流"
 ```
 
 给 Codex 传参数时，把参数放在 wrapper 的 `--` 后面：
 
 ```powershell
-C:\Users\thoma\AppData\Local\Programs\Python\Python311\python.exe bandori_codex_runner.py -- -m gpt-5.4 "检查这个项目的潜在问题"
+python bandori_codex_runner.py -- -m gpt-5.4 "检查这个项目的潜在问题"
 ```
 
 指定只让某个角色显示：
 
 ```powershell
-C:\Users\thoma\AppData\Local\Programs\Python\Python311\python.exe bandori_codex_runner.py --character kasumi -- "帮我检查设置页代码"
+python bandori_codex_runner.py --character kasumi -- "帮我检查设置页代码"
 ```
 
 ### 2.2 打包后运行
@@ -172,9 +172,62 @@ with urllib.request.urlopen(request) as response:
     print(response.read().decode("utf-8"))
 ```
 
-## 4. 排错
+## 4. opencode 插件接入方式
+
+本仓库已提供项目级 opencode 本地插件：
+
+```text
+.opencode/plugins/bandori-ai-overlay.js
+```
+
+opencode 启动时会自动加载 `.opencode/plugins/` 下的 JavaScript/TypeScript 插件，不需要额外安装 npm 依赖。
+
+### 4.1 使用步骤
+
+1. 在 BandoriPet 设置里开启「接收 AI App 状态事件」。
+2. 开启「启用本地 AI 状态端口」。
+3. 确认端口为 `38472`，或通过环境变量覆盖插件端点。
+4. 在本项目目录启动 opencode：
+
+```powershell
+cd .\BANDORI-PET-FIX
+opencode
+```
+
+插件会把 opencode 的会话、工具调用、文件编辑、命令执行、权限确认、完成和错误事件转成 BandoriPet 悬浮窗事件。
+
+### 4.2 可选环境变量
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BANDORI_AI_ENDPOINT` | `http://127.0.0.1:38472/ai-events` | BandoriPet 本地状态端口地址 |
+| `BANDORI_AI_TOKEN` | 空 | 对应设置页 Token，插件会用 `Authorization: Bearer <token>` 发送 |
+| `BANDORI_AI_CHARACTER` | 空 | 指定显示的角色 key；留空广播给所有桌宠 |
+| `BANDORI_AI_SOURCE` | `opencode` | 悬浮窗事件来源名称 |
+| `BANDORI_AI_TTL_MS` | `4500` | 默认自动清空时间，单位毫秒 |
+| `BANDORI_AI_MAX_TEXT` | `240` | 单条悬浮窗文本最大长度 |
+| `BANDORI_AI_TIMEOUT_MS` | `900` | HTTP 推送超时时间，单位毫秒 |
+| `BANDORI_AI_DEBUG` | 空 | 设为 `1` 后把推送失败写入 opencode 日志 |
+| `BANDORI_AI_DISABLED` | 空 | 设为 `1` 后禁用插件 |
+
+PowerShell 示例：
+
+```powershell
+$env:BANDORI_AI_TOKEN = "your-token"
+$env:BANDORI_AI_CHARACTER = "kasumi"
+opencode
+```
+
+如果要全局启用，可以把 `.opencode/plugins/bandori-ai-overlay.js` 复制到：
+
+```text
+<opencode-config>/plugins/
+```
+
+## 5. 排错
 
 - 手动运行 `bandori_ai_event.py` 能显示，但 Codex 不显示：说明总线正常；请确认 Codex 是通过 `bandori_codex_runner.py` 启动的。
+- opencode 不显示：确认是在包含 `.opencode/plugins/bandori-ai-overlay.js` 的项目目录启动，或已把插件放到 opencode 全局插件目录。
 - HTTP 请求返回 `401`：设置页里填写了 Token，请发送 `Authorization: Bearer <token>` 或 `X-Bandori-Token: <token>`。
 - HTTP 请求连接失败：确认「启用本地 AI 状态端口」已打开，并点击了「应用」。
 - 有多个桌宠都显示：在事件里加 `"character": "kasumi"` 之类的角色 key。
