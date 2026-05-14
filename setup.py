@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import fluent_bootstrap  # noqa: F401
 from cx_Freeze import Executable, setup
 from cx_Freeze.command.build_exe import build_exe
 

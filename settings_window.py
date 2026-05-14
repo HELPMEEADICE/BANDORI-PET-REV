@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 
+import fluent_bootstrap  # noqa: F401
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
 from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDesktopServices
 from PySide6.QtWidgets import (
