@@ -8,6 +8,7 @@ BandoriPet.egg-info/
 third_party/
 venv/
 config.json
+.runtime/
 data.*
 *.zip
 *.7z

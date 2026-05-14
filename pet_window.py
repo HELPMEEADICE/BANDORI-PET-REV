@@ -37,6 +37,7 @@ HTCLIENT = 1
 GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
+WS_EX_NOACTIVATE = 0x08000000
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_DONOTROUND = 1
 SWP_NOSIZE = 0x0001
@@ -207,8 +208,10 @@ class PetWindow(QWidget):
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.NoDropShadowWindowHint
         )
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
@@ -285,7 +288,25 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+        self._apply_no_activate_to_hwnd(hwnd)
         self._enforce_game_topmost()
+
+    def _apply_no_activate_to_hwnd(self, hwnd: int):
+        if os.name != "nt" or not hwnd:
+            return
+        style = _get_window_long(hwnd, GWL_EXSTYLE)
+        if style & WS_EX_NOACTIVATE:
+            return
+        _set_window_long(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE)
+        _set_window_pos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
 
     def _update_game_topmost_timer(self):
         if os.name != "nt":
