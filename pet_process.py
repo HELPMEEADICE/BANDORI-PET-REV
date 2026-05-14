@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 
-from process_utils import app_base_dir
+from process_utils import app_base_dir, ensure_xwayland
 
 BASE_DIR = str(app_base_dir())
 
@@ -62,6 +62,7 @@ def _model_entry(cfg: ConfigManager, character: str) -> dict:
 
 
 def main():
+    ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
     cfg = ConfigManager()

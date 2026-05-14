@@ -4,6 +4,15 @@ import hashlib
 from pathlib import Path
 
 
+def ensure_xwayland():
+    if sys.platform not in ("linux", "linux2"):
+        return
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or os.environ.get("WAYLAND_DISPLAY"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
