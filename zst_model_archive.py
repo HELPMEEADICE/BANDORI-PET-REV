@@ -60,7 +60,7 @@ def clear_virtual_byte_cache():
         _VIRTUAL_BYTE_CACHE.clear()
 
 
-def prefetch_virtual_model_resources(model_json_path: str):
+def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expressions: bool = False):
     if not is_virtual_path(model_json_path):
         return
 
@@ -72,7 +72,11 @@ def prefetch_virtual_model_resources(model_json_path: str):
     except Exception:
         return
 
-    target_members = _model_resource_members(model_member, model_json)
+    target_members = _model_resource_members(
+        model_member,
+        model_json,
+        include_expressions=include_deferred_expressions,
+    )
     if not target_members:
         return
 
@@ -101,7 +105,7 @@ def prefetch_virtual_model_resources(model_json_path: str):
                 break
 
 
-def _model_resource_members(model_member: str, model_json: dict) -> set[str]:
+def _model_resource_members(model_member: str, model_json: dict, include_expressions: bool = False) -> set[str]:
     base_dir = posixpath.dirname(model_member)
     members = set()
 
@@ -116,7 +120,7 @@ def _model_resource_members(model_member: str, model_json: dict) -> set[str]:
     add(model_json.get("pose"))
 
     expressions = model_json.get("expressions", []) or []
-    if isinstance(expressions, list):
+    if include_expressions and isinstance(expressions, list):
         for expression in expressions:
             if isinstance(expression, dict):
                 add(expression.get("file"))

@@ -224,8 +224,8 @@ class PetWindow(QWidget):
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
-        self._pixel_frames = load_pixel_frames()
         self._pixel_mode = self._configured_pet_mode() == "pixel"
+        self._pixel_frames = load_pixel_frames() if self._pixel_mode else None
         self._pixel_ready = False
         self._show_pos_set = False
         self._radial_menu_prewarmed = False
@@ -658,7 +658,7 @@ class PetWindow(QWidget):
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
-        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
+        QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
 
     def _apply_settings(self, data: dict):
@@ -1576,6 +1576,8 @@ class PetWindow(QWidget):
         if not path:
             self._pixel_ready = False
             return False
+        if self._pixel_frames is None:
+            self._pixel_frames = load_pixel_frames()
         self._pixel_ready = self._pixel_widget.load_sprite(path, self._pixel_frames)
         return self._pixel_ready
 
