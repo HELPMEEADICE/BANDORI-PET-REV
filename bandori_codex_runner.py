@@ -6,6 +6,8 @@ import sys
 from typing import Any
 
 from ai_event_bus import publish_ai_event
+from i18n_manager import detect_system_language, set_language, tr as _tr
+from process_utils import app_base_dir
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -47,6 +49,18 @@ def _publish(source: str, state: str, title: str = "", text: str = "", character
     publish_ai_event(payload)
 
 
+def _init_language() -> None:
+    lang = ""
+    try:
+        config_path = app_base_dir() / "config.json"
+        if config_path.exists():
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            lang = data.get("language", "") if isinstance(data, dict) else ""
+    except Exception:
+        lang = ""
+    set_language(lang or detect_system_language())
+
+
 def _compact_text(value: Any) -> str:
     if value is None:
         return ""
@@ -85,16 +99,16 @@ def _mirror_codex_event(event: dict, source: str, character: str):
     lowered_text = text.lower()
 
     if "error" in kind or "failed" in kind or "error" in lowered_text:
-        _publish(source, "error", "Codex 出错", text, character, action="surprised")
+        _publish(source, "error", _tr("AiEvent.codex_error"), text, character, action="surprised")
         return
 
     if any(token in kind for token in ("exec", "tool", "command", "apply_patch", "shell")):
-        title = "Codex 正在使用工具"
+        title = _tr("AiEvent.codex_tool")
         _publish(source, "tool", title, text, character, action="thinking")
         return
 
     if any(token in kind for token in ("reason", "think", "plan", "started", "start")):
-        _publish(source, "thinking", "Codex 正在思考", text, character, action="thinking")
+        _publish(source, "thinking", _tr("AiEvent.codex_thinking"), text, character, action="thinking")
         return
 
     if any(token in kind for token in ("delta", "stream")):
@@ -104,11 +118,11 @@ def _mirror_codex_event(event: dict, source: str, character: str):
 
     if any(token in kind for token in ("message", "output", "response")):
         if text:
-            _publish(source, "stream", "Codex 输出", text, character)
+            _publish(source, "stream", _tr("AiEvent.codex_output"), text, character)
         return
 
     if any(token in kind for token in ("complete", "completed", "done", "finish", "finished", "turn_complete")):
-        _publish(source, "done", "Codex 完成", text or "任务完成", character)
+        _publish(source, "done", _tr("AiEvent.codex_done"), text or _tr("AiEvent.task_done"), character)
         return
 
     if text:
@@ -124,6 +138,7 @@ def _parse_json_line(line: str) -> dict | None:
 
 
 def main() -> int:
+    _init_language()
     parser = _build_parser()
     args = parser.parse_args()
     codex_args = list(args.codex_args)
@@ -137,7 +152,7 @@ def main() -> int:
     _publish(
         args.source,
         "thinking",
-        "Codex 启动中",
+        _tr("AiEvent.codex_starting"),
         " ".join(command),
         args.character,
         action="thinking",
@@ -154,7 +169,7 @@ def main() -> int:
             errors="replace",
         )
     except OSError as exc:
-        _publish(args.source, "error", "无法启动 Codex", str(exc), args.character, action="surprised")
+        _publish(args.source, "error", _tr("AiEvent.codex_start_failed"), str(exc), args.character, action="surprised")
         print(f"Failed to start Codex: {exc}", file=sys.stderr)
         return 127
 
@@ -167,15 +182,22 @@ def main() -> int:
             continue
         event = _parse_json_line(stripped)
         if event is None:
-            _publish(args.source, "stream", "Codex 输出", stripped, args.character, mode="append")
+            _publish(args.source, "stream", _tr("AiEvent.codex_output"), stripped, args.character, mode="append")
             continue
         _mirror_codex_event(event, args.source, args.character)
 
     return_code = process.wait()
     if return_code == 0:
-        _publish(args.source, "done", "Codex 完成", "任务完成", args.character)
+        _publish(args.source, "done", _tr("AiEvent.codex_done"), _tr("AiEvent.task_done"), args.character)
     else:
-        _publish(args.source, "error", "Codex 退出异常", f"退出码：{return_code}", args.character, action="surprised")
+        _publish(
+            args.source,
+            "error",
+            _tr("AiEvent.codex_abnormal_exit"),
+            _tr("AiEvent.exit_code", code=return_code),
+            args.character,
+            action="surprised",
+        )
     return return_code
 
 

@@ -794,7 +794,7 @@ class ChatWindow(QWidget):
         self._close_animating = False
         self._window_anim = None
 
-        self._display_name = "群聊" if self._is_group_chat else model_manager.get_display_name(character)
+        self._display_name = _tr("ChatWindow.group_chat") if self._is_group_chat else model_manager.get_display_name(character)
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
         avatar_paths = self._cfg.get("chat_avatar_paths", {}) if self._cfg else {}

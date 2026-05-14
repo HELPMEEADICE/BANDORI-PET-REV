@@ -59,9 +59,9 @@ _ROLEPLAY_STATUS_COLORS = {
 }
 
 _ROLEPLAY_STATUS_TIPS = {
-    "green": "支持高级角色扮演特性",
-    "yellow": "部分角色支持高级角色扮演特性",
-    "red": "尚未支持高级角色扮演",
+    "green": "SettingsWindow.roleplay_status_green",
+    "yellow": "SettingsWindow.roleplay_status_yellow",
+    "red": "SettingsWindow.roleplay_status_red",
 }
 
 PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
@@ -194,7 +194,7 @@ class AddModelListItem(QPushButton):
     add_requested = Signal()
 
     def __init__(self, parent=None):
-        super().__init__("+ 添加 Live2D 模型", parent)
+        super().__init__(_tr("SettingsWindow.model_list_add"), parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(38)
         self.clicked.connect(self.add_requested.emit)
@@ -226,7 +226,7 @@ class RoleplayStatusDot(QWidget):
         self._status = status if status in _ROLEPLAY_STATUS_COLORS else "red"
         self.setFixedSize(14, 14)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setToolTip(_ROLEPLAY_STATUS_TIPS.get(self._status, ""))
+        self.setToolTip(_tr(_ROLEPLAY_STATUS_TIPS.get(self._status, "")))
 
     def paintEvent(self, event):
         del event
@@ -244,6 +244,13 @@ def _theme_color(key: str) -> QColor:
         "dim": QColor("#999999" if isDarkTheme() else "#888888"),
     }
     return colors.get(key, QColor(_BG_LIGHT))
+
+
+def _wrap_label(label: QLabel):
+    label.setWordWrap(True)
+    label.setMinimumWidth(0)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    return label
 
 
 class CharacterCard(CardWidget):
@@ -728,8 +735,8 @@ class SettingsWindow(QWidget):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("SettingsWindow.title"))
-        self.setMinimumSize(1070, 650)
-        self.resize(1070, 650)
+        self.setMinimumSize(1180, 680)
+        self.resize(1180, 680)
 
         self._launched = False
         self._init_ui()
@@ -1025,7 +1032,7 @@ class SettingsWindow(QWidget):
 
     def _build_sidebar(self):
         sidebar = QWidget()
-        sidebar.setFixedWidth(180)
+        sidebar.setFixedWidth(210)
         sidebar.setObjectName("sidebar")
         self._sidebar = sidebar
 
@@ -1153,11 +1160,13 @@ class SettingsWindow(QWidget):
         top_row.addWidget(self._selection_back_btn)
         top_row.addStretch()
         self._selection_title = TitleLabel(_tr("SettingsWindow.band_title"), page)
+        self._selection_title.setMinimumWidth(0)
         top_row.addWidget(self._selection_title)
         top_row.addStretch()
         layout.addLayout(top_row)
 
-        self._selection_subtitle = SubtitleLabel(_tr("SettingsWindow.band_subtitle"), page)
+        self._selection_subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.band_subtitle"), page))
+        self._selection_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._selection_subtitle)
 
         scroll = ScrollArea()
@@ -1224,16 +1233,16 @@ class SettingsWindow(QWidget):
         action_col = QVBoxLayout(action_container)
         action_col.setContentsMargins(0, 0, 0, 0)
         action_col.setSpacing(10)
-        self._switch_model_btn = QPushButton("切换\n角色/服装", action_container)
+        self._switch_model_btn = QPushButton(_tr("SettingsWindow.model_switch"), action_container)
         self._switch_model_btn.setFixedSize(132, 132)
         self._switch_model_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._switch_model_btn.clicked.connect(self._edit_selected_model)
         action_col.addWidget(self._switch_model_btn, 0, Qt.AlignmentFlag.AlignHCenter)
-        hint = BodyLabel("选择新的角色或服装", action_container)
+        hint = _wrap_label(BodyLabel(_tr("SettingsWindow.model_detail_hint"), action_container))
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(hint)
 
-        motion_label = StrongBodyLabel("默认动作", action_container)
+        motion_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.default_motion"), action_container))
         motion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(motion_label)
         motion_row = QHBoxLayout()
@@ -1242,12 +1251,12 @@ class SettingsWindow(QWidget):
         self._default_motion_combo.setMinimumWidth(190)
         self._default_motion_combo.currentIndexChanged.connect(self._on_default_motion_changed)
         motion_row.addWidget(self._default_motion_combo, 1)
-        self._default_motion_btn = PushButton("默认", action_container)
+        self._default_motion_btn = PushButton(_tr("SettingsWindow.model_default"), action_container)
         self._default_motion_btn.clicked.connect(self._reset_default_motion)
         motion_row.addWidget(self._default_motion_btn)
         action_col.addLayout(motion_row)
 
-        expression_label = StrongBodyLabel("默认表情", action_container)
+        expression_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.default_expression"), action_container))
         expression_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(expression_label)
         expression_row = QHBoxLayout()
@@ -1256,17 +1265,16 @@ class SettingsWindow(QWidget):
         self._default_expression_combo.setMinimumWidth(190)
         self._default_expression_combo.currentIndexChanged.connect(self._on_default_expression_changed)
         expression_row.addWidget(self._default_expression_combo, 1)
-        self._default_expression_btn = PushButton("默认", action_container)
+        self._default_expression_btn = PushButton(_tr("SettingsWindow.model_default"), action_container)
         self._default_expression_btn.clicked.connect(self._reset_default_expression)
         expression_row.addWidget(self._default_expression_btn)
         action_col.addLayout(expression_row)
 
-        click_label = StrongBodyLabel(_tr("SettingsWindow.click_motion_title"), action_container)
+        click_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.click_motion_title"), action_container))
         click_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(click_label)
-        click_hint = BodyLabel(_tr("SettingsWindow.click_motion_hint"), action_container)
+        click_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.click_motion_hint"), action_container))
         click_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        click_hint.setWordWrap(True)
         action_col.addWidget(click_hint)
 
         click_grid_widget = QWidget(action_container)
@@ -1368,8 +1376,8 @@ class SettingsWindow(QWidget):
         self._selection_scroll.hide()
         self._selection_grid_widget.hide()
         self._selection_back_btn.hide()
-        self._selection_title.setText("Live2D 模型详情")
-        self._selection_subtitle.setText("从右侧列表选择已有模型，或点击切换按钮修改角色/服装。")
+        self._selection_title.setText(_tr("SettingsWindow.model_detail_title"))
+        self._selection_subtitle.setText(_tr("SettingsWindow.model_detail_subtitle"))
         self._model_detail_widget.show()
 
         character = item["character"]
@@ -1383,8 +1391,8 @@ class SettingsWindow(QWidget):
         costume_name = self._model_manager.get_costume_display_name(character, costume)
         band_name = self._model_manager.get_band_display_name(self._selected_band) if self._selected_band else ""
         self._detail_name.setText(display)
-        self._detail_costume.setText(f"服装：{costume_name}")
-        self._detail_band.setText(f"乐队：{band_name}" if band_name else "")
+        self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
+        self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
         self._populate_click_motion_combos(item)
@@ -1412,7 +1420,7 @@ class SettingsWindow(QWidget):
         combo = self._default_motion_combo
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("跟随模型默认", userData="")
+        combo.addItem(_tr("SettingsWindow.follow_model_default"), userData="")
         motions = self._model_manager.get_motion_names(item["character"], item["costume"])
         for motion in motions:
             combo.addItem(motion, userData=motion)
@@ -1446,7 +1454,7 @@ class SettingsWindow(QWidget):
         combo = self._default_expression_combo
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem("跟随模型默认", userData="")
+        combo.addItem(_tr("SettingsWindow.follow_model_default"), userData="")
         expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
         for expression in expressions:
             combo.addItem(expression, userData=expression)
@@ -1724,7 +1732,7 @@ class SettingsWindow(QWidget):
 
         title = TitleLabel(_tr("SettingsWindow.llm_title"), page)
         layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr("SettingsWindow.llm_subtitle"), page)
+        subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.llm_subtitle"), page))
         layout.addWidget(subtitle)
 
         api_url_label = BodyLabel(_tr("SettingsWindow.llm_api_url"), page)
@@ -1742,7 +1750,7 @@ class SettingsWindow(QWidget):
         self._llm_api_key.setFixedHeight(36)
         layout.addWidget(self._llm_api_key)
 
-        model_label = BodyLabel("主模型 ID", page)
+        model_label = BodyLabel(_tr("SettingsWindow.llm_primary_model_id"), page)
         layout.addWidget(model_label)
 
         model_row = QHBoxLayout()
@@ -1750,7 +1758,7 @@ class SettingsWindow(QWidget):
         self._llm_model_id = FluentContextLineEdit(page)
         self._llm_model_id.setPlaceholderText(_tr("SettingsWindow.llm_model_id_placeholder"))
         self._llm_model_id.setFixedHeight(36)
-        model_row.addWidget(self._llm_model_id)
+        model_row.addWidget(self._llm_model_id, 1)
 
         fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
         fetch_btn.setFixedHeight(36)
@@ -1758,14 +1766,14 @@ class SettingsWindow(QWidget):
         model_row.addWidget(fetch_btn)
         layout.addLayout(model_row)
 
-        aux_model_label = BodyLabel("辅助模型 ID", page)
+        aux_model_label = BodyLabel(_tr("SettingsWindow.llm_aux_model_id"), page)
         layout.addWidget(aux_model_label)
         self._llm_aux_model_id = FluentContextLineEdit(page)
-        self._llm_aux_model_id.setPlaceholderText("用于群聊发言顺序和条数规划；留空则使用主模型")
+        self._llm_aux_model_id.setPlaceholderText(_tr("SettingsWindow.llm_aux_model_id_placeholder"))
         self._llm_aux_model_id.setFixedHeight(36)
         aux_model_row = QHBoxLayout()
         aux_model_row.setSpacing(8)
-        aux_model_row.addWidget(self._llm_aux_model_id)
+        aux_model_row.addWidget(self._llm_aux_model_id, 1)
         aux_fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
         aux_fetch_btn.setFixedHeight(36)
         aux_fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_aux_model_id))
@@ -1816,8 +1824,7 @@ class SettingsWindow(QWidget):
         data_title = SubtitleLabel(_tr("SettingsWindow.chat_data_title"), page)
         layout.addWidget(data_title)
 
-        data_hint = BodyLabel(_tr("SettingsWindow.chat_data_hint"), page)
-        data_hint.setWordWrap(True)
+        data_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.chat_data_hint"), page))
         layout.addWidget(data_hint)
 
         data_btn_row = QHBoxLayout()
@@ -1864,11 +1871,11 @@ class SettingsWindow(QWidget):
         page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(8)
 
         title = TitleLabel(_tr("SettingsWindow.pov_title"), page)
         layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr("SettingsWindow.pov_subtitle"), page)
+        subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.pov_subtitle"), page))
         layout.addWidget(subtitle)
 
         profile_title = SubtitleLabel(_tr("SettingsWindow.llm_profile"), page)
@@ -1923,8 +1930,9 @@ class SettingsWindow(QWidget):
         layout.addWidget(prompt_label)
         self._pov_custom_prompt = FluentContextTextEdit(page)
         self._pov_custom_prompt.setPlaceholderText(_tr("SettingsWindow.pov_custom_prompt_placeholder"))
-        self._pov_custom_prompt.setMinimumHeight(90)
-        self._pov_custom_prompt.setMaximumHeight(150)
+        self._pov_custom_prompt.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._pov_custom_prompt.setMinimumHeight(64)
+        self._pov_custom_prompt.setMaximumHeight(96)
         layout.addWidget(self._pov_custom_prompt)
 
         role_label = BodyLabel(_tr("SettingsWindow.pov_role_character"), page)
@@ -1938,12 +1946,6 @@ class SettingsWindow(QWidget):
             )
         self._pov_role_character.currentIndexChanged.connect(self._sync_role_display_name)
         layout.addWidget(self._pov_role_character)
-
-        hint = BodyLabel(_tr("SettingsWindow.pov_hint"), page)
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        layout.addStretch()
 
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
         save_btn.setFixedHeight(36)
@@ -2906,8 +2908,8 @@ class SettingsWindow(QWidget):
         langs = available_languages()
         current = current_language()
         for lang in langs:
-            display = {"en_US": "English", "zh_CN": "中文"}.get(lang, lang)
-            self._lang_combo.addItem(display, lang)
+            display = _tr(f"Language.{lang}", default=lang)
+            self._lang_combo.addItem(display, userData=lang)
             if lang == current:
                 self._lang_combo.setCurrentIndex(self._lang_combo.count() - 1)
         self._lang_combo.currentIndexChanged.connect(self._on_language_changed)
@@ -2924,7 +2926,7 @@ class SettingsWindow(QWidget):
         self._apply_btn.clicked.connect(self._on_apply)
         layout.addWidget(self._apply_btn)
 
-        list_title = StrongBodyLabel("Live2D 模型列表", panel)
+        list_title = StrongBodyLabel(_tr("SettingsWindow.model_list_title"), panel)
         layout.addWidget(list_title)
         self._model_list_widget = QWidget(panel)
         self._model_list_widget.setObjectName("modelListWidget")
@@ -3231,8 +3233,8 @@ class SettingsWindow(QWidget):
         if self._show_launch and not (self._current_char and self._selected_costume):
             self._launched = False
             InfoBar.warning(
-                "请选择 Live2D 模型",
-                "首次启动前需要先选择角色和服装。",
+                _tr("SettingsWindow.launch_missing_model_title"),
+                _tr("SettingsWindow.launch_missing_model_content"),
                 duration=2500,
                 position=InfoBarPosition.TOP,
                 parent=self,
@@ -3242,6 +3244,7 @@ class SettingsWindow(QWidget):
         self._save_compact_window_config(show_info=False, emit_update=False)
         self._save_configured_models()
         settings = {
+            "language": current_language(),
             "fps": self._fps_slider.value(),
             "opacity": self._opacity_slider.value() / 100.0,
             "dark_theme": self._theme_switch.isChecked(),
@@ -3265,6 +3268,7 @@ class SettingsWindow(QWidget):
         if self._compact_window_reset_position_pending:
             settings["compact_ai_window_reset_position"] = True
         if self._cfg:
+            self._cfg.set("language", settings["language"])
             self._cfg.set("fps", settings["fps"])
             self._cfg.set("opacity", settings["opacity"])
             self._cfg.set("dark_theme", settings["dark_theme"])
