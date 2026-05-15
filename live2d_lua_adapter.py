@@ -2,6 +2,7 @@ import io
 import json
 import os
 import random
+import time
 from pathlib import Path
 
 from lupa.luajit21 import LuaRuntime
@@ -448,6 +449,7 @@ class LuaLAppModel:
             return
         opts = self._module._lua.table()
         opts[b"clear"] = False
+        opts[b"time_msec"] = time.monotonic() * 1000.0
         self._module._draw(self._renderer, opts)
 
     def Drag(self, x: float, y: float):

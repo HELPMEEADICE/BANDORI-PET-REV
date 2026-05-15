@@ -1,5 +1,4 @@
-from PySide6.QtGui import QColor
-
+from fluent_bootstrap import assert_pyside6_fluent_widgets
 from fluent_silencer import import_qfluentwidgets
 
 
@@ -23,5 +22,6 @@ def apply_app_theme(dark: bool):
     qfluent = import_qfluentwidgets(lambda: __import__(
         "qfluentwidgets", fromlist=["Theme", "setTheme", "setThemeColor"]
     ))
+    assert_pyside6_fluent_widgets()
     qfluent.setTheme(qfluent.Theme.DARK if dark else qfluent.Theme.LIGHT)
-    qfluent.setThemeColor(QColor(accent_color(dark)))
+    qfluent.setThemeColor(accent_color(dark))

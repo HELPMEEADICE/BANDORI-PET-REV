@@ -243,6 +243,12 @@ class PixelPetWidget(QWidget):
         return alpha
 
     def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.RightButton:
+            if self.is_sprite_hit_at_global(event.globalPosition().toPoint()) and self._right_click_callback:
+                gpos = event.globalPosition()
+                self._right_click_callback(int(gpos.x()), int(gpos.y()))
+            event.accept()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -254,9 +260,7 @@ class PixelPetWidget(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.RightButton:
-            if self.is_sprite_hit_at_global(event.globalPosition().toPoint()) and self._right_click_callback:
-                gpos = event.globalPosition()
-                self._right_click_callback(int(gpos.x()), int(gpos.y()))
+            event.accept()
             return
         if self._dragging:
             self._dragging = False

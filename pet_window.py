@@ -1,4 +1,5 @@
 import ctypes
+import ctypes.util
 import json
 import os
 import random
@@ -10,7 +11,7 @@ if os.name == "nt":
     import ctypes.wintypes
 
 from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent
-from PySide6.QtGui import QColor, QIcon, QCursor, QMoveEvent, QResizeEvent
+from PySide6.QtGui import QColor, QIcon, QCursor, QGuiApplication, QMoveEvent, QResizeEvent
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QApplication, QSystemTrayIcon, QMenu, QStackedLayout,
@@ -107,6 +108,61 @@ else:
     _set_window_pos = None
     _dwm_set_window_attribute = None
 
+_x11 = None
+_xext = None
+_SHAPE_SET = 0
+_SHAPE_INPUT = 2
+
+
+class _XRectangle(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_short),
+        ("y", ctypes.c_short),
+        ("width", ctypes.c_ushort),
+        ("height", ctypes.c_ushort),
+    ]
+
+
+if sys.platform.startswith("linux"):
+    try:
+        _x11 = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+        _x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        _x11.XOpenDisplay.restype = ctypes.c_void_p
+        _x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        _x11.XCloseDisplay.restype = ctypes.c_int
+        _x11.XFlush.argtypes = [ctypes.c_void_p]
+        _x11.XFlush.restype = ctypes.c_int
+        _x11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
+        _x11.XMoveWindow.restype = ctypes.c_int
+    except Exception:
+        _x11 = None
+    try:
+        _xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
+        _xext.XShapeCombineRectangles.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(_XRectangle),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        _xext.XShapeCombineRectangles.restype = None
+        _xext.XShapeCombineMask.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_ulong,
+            ctypes.c_int,
+        ]
+        _xext.XShapeCombineMask.restype = None
+    except Exception:
+        _xext = None
+
 
 def _is_windows_11_or_later() -> bool:
     if os.name != "nt":
@@ -168,8 +224,8 @@ class PetWindow(QWidget):
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
-        self._pixel_frames = load_pixel_frames()
         self._pixel_mode = self._configured_pet_mode() == "pixel"
+        self._pixel_frames = load_pixel_frames() if self._pixel_mode else None
         self._pixel_ready = False
         self._show_pos_set = False
         self._radial_menu_prewarmed = False
@@ -212,13 +268,16 @@ class PetWindow(QWidget):
         self.setWindowOpacity(self._opacity)
 
     def _init_ui(self):
-        self.setWindowFlags(
+        flags = (
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
             | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.NoDropShadowWindowHint
         )
+        if self._should_bypass_x11_window_manager():
+            flags |= Qt.WindowType.X11BypassWindowManagerHint
+        self.setWindowFlags(flags)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -250,6 +309,15 @@ class PetWindow(QWidget):
         self._pixel_widget.set_click_callback(self._on_click)
         self._pixel_widget.set_right_click_callback(self._on_right_click)
         self._stack.addWidget(self._pixel_widget)
+
+    @staticmethod
+    def _should_bypass_x11_window_manager() -> bool:
+        if not sys.platform.startswith("linux"):
+            return False
+        try:
+            return "xcb" in QGuiApplication.platformName().lower()
+        except Exception:
+            return False
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -357,6 +425,9 @@ class PetWindow(QWidget):
             self._apply_passthrough_to_hwnd(int(self.winId()), enabled)
         elif sys.platform == "darwin" and macos_patch is not None:
             macos_patch.set_ignores_mouse_events(self, enabled)
+        elif sys.platform.startswith("linux"):
+            if not self._apply_passthrough_to_x11_window(int(self.winId()), enabled):
+                return
         else:
             return
         self._mouse_passthrough = enabled
@@ -380,6 +451,40 @@ class PetWindow(QWidget):
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
 
+    def _apply_passthrough_to_x11_window(self, window: int, enabled: bool) -> bool:
+        if not self._should_bypass_x11_window_manager() or _x11 is None or _xext is None or not window:
+            return False
+        display = _x11.XOpenDisplay(None)
+        if not display:
+            return False
+        try:
+            if enabled:
+                _xext.XShapeCombineRectangles(
+                    display,
+                    ctypes.c_ulong(window),
+                    _SHAPE_INPUT,
+                    0,
+                    0,
+                    None,
+                    0,
+                    _SHAPE_SET,
+                    0,
+                )
+            else:
+                _xext.XShapeCombineMask(
+                    display,
+                    ctypes.c_ulong(window),
+                    _SHAPE_INPUT,
+                    0,
+                    0,
+                    0,
+                    _SHAPE_SET,
+                )
+            _x11.XFlush(display)
+            return True
+        finally:
+            _x11.XCloseDisplay(display)
+
     def _is_interaction_hit(self, global_pos: QPoint) -> bool:
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
@@ -388,7 +493,7 @@ class PetWindow(QWidget):
     def _update_mouse_passthrough(self):
         if self._use_native_hit_test_passthrough or not self.isVisible():
             return
-        if os.name != "nt" and sys.platform != "darwin":
+        if os.name != "nt" and sys.platform != "darwin" and not sys.platform.startswith("linux"):
             return
         if self._live2d_widget._dragging or self._pixel_widget._dragging:
             return
@@ -430,6 +535,7 @@ class PetWindow(QWidget):
     def closeEvent(self, event):
         self._close_chat_process()
         self._close_compact_ai_window()
+        self._close_settings_process()
         self._save_config()
         app = QApplication.instance()
         if app is not None:
@@ -552,7 +658,7 @@ class PetWindow(QWidget):
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
-        QTimer.singleShot(0, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
+        QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
 
     def _apply_settings(self, data: dict):
@@ -648,10 +754,24 @@ class PetWindow(QWidget):
         self._set_mouse_passthrough(False)
         self._suppress_compact_ai_sync = True
         try:
-            self.move(self.x() + dx, self.y() + dy)
+            self._move_unconstrained(self.x() + dx, self.y() + dy)
         finally:
             self._suppress_compact_ai_sync = False
         self._move_compact_ai_with_pet(dx, dy)
+
+    def _move_unconstrained(self, x: int, y: int):
+        if not self._should_bypass_x11_window_manager() or _x11 is None:
+            self.move(x, y)
+            return
+        display = _x11.XOpenDisplay(None)
+        if not display:
+            self.move(x, y)
+            return
+        try:
+            _x11.XMoveWindow(display, ctypes.c_ulong(int(self.winId())), int(x), int(y))
+            _x11.XFlush(display)
+        finally:
+            _x11.XCloseDisplay(display)
 
     def _is_pet_dragging(self) -> bool:
         return bool(
@@ -978,7 +1098,7 @@ class PetWindow(QWidget):
             except json.JSONDecodeError:
                 pass
         elif line == "SHUTDOWN":
-            self.close()
+            self._quit()
 
     def _handle_ai_event(self, event: dict):
         if not isinstance(event, dict):
@@ -1045,6 +1165,18 @@ class PetWindow(QWidget):
         self._compact_ai_window.close()
         self._compact_ai_window.deleteLater()
         self._compact_ai_window = None
+
+    def _close_settings_process(self):
+        process = self._settings_process
+        if process is None:
+            return
+        if process.state() != QProcess.ProcessState.NotRunning:
+            process.terminate()
+            if not process.waitForFinished(1000):
+                process.kill()
+                process.waitForFinished(1000)
+        self._settings_process = None
+        process.deleteLater()
 
     def _ensure_compact_ai_window(self):
         if self._compact_ai_window is None:
@@ -1444,6 +1576,8 @@ class PetWindow(QWidget):
         if not path:
             self._pixel_ready = False
             return False
+        if self._pixel_frames is None:
+            self._pixel_frames = load_pixel_frames()
         self._pixel_ready = self._pixel_widget.load_sprite(path, self._pixel_frames)
         return self._pixel_ready
 
@@ -1652,10 +1786,7 @@ class PetWindow(QWidget):
         QApplication.instance().removeEventFilter(self)
         self._close_chat_process()
         self._close_compact_ai_window()
-        if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
-            self._settings_process.terminate()
-            if not self._settings_process.waitForFinished(1000):
-                self._settings_process.kill()
+        self._close_settings_process()
         if self._tray_icon is not None:
             self._tray_icon.hide()
         QApplication.quit()

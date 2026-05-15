@@ -233,12 +233,15 @@ def main():
                 pass
             if process.state() != QProcess.ProcessState.NotRunning:
                 if force:
-                    process.kill()
-                    process.waitForFinished(0)
+                    if not process.waitForFinished(1000):
+                        process.kill()
+                        process.waitForFinished(1000)
                 else:
                     process.terminate()
                     if not process.waitForFinished(100):
                         process.kill()
+                        process.waitForFinished(1000)
+            process.deleteLater()
         pet_window_ref["processes"] = []
 
     def close_settings_process(force=False):
@@ -254,11 +257,13 @@ def main():
         if process.state() != QProcess.ProcessState.NotRunning:
             if force:
                 process.kill()
-                process.waitForFinished(0)
+                process.waitForFinished(1000)
             else:
                 process.terminate()
                 if not process.waitForFinished(1000):
                     process.kill()
+                    process.waitForFinished(1000)
+        process.deleteLater()
         settings_process_ref.pop("process", None)
         settings_process_ref.pop("show_launch", None)
 
@@ -506,6 +511,7 @@ def main():
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
+    app.aboutToQuit.connect(close_settings_process)
     app.aboutToQuit.connect(close_pet_processes)
 
     if has_configured_models or model_valid:
