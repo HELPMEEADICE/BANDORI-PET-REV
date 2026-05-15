@@ -9,6 +9,11 @@ from cx_Freeze import Executable, setup
 from cx_Freeze.command.bdist_msi import bdist_msi
 from cx_Freeze.command.build_exe import build_exe
 
+try:
+    from setuptools.command.bdist_rpm import bdist_rpm
+except ImportError:
+    from distutils.command.bdist_rpm import bdist_rpm
+
 
 BASE_DIR = Path(__file__).resolve().parent
 BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
@@ -30,6 +35,10 @@ class BuildExeWithEmptyModels(build_exe):
 
 class BuildMsiAlias(bdist_msi):
     """Expose cx_Freeze's MSI builder as `python setup.py build_msi`."""
+
+
+class BuildRpmAlias(bdist_rpm):
+    """Expose RPM builder as `python setup.py build_rpm`."""
 
 
 def include_if_exists(path: str) -> tuple[str, str] | None:
@@ -161,6 +170,10 @@ build_msi_options = {
     }
 } if sys.platform == "win32" else {}
 
+build_rpm_options = {
+    "dist_dir": str(BASE_DIR / "BUILD"),
+} if sys.platform.startswith("linux") else {}
+
 base = "Win32GUI" if sys.platform == "win32" else None
 icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
 
@@ -179,7 +192,13 @@ setup(
     name="BandoriPet",
     version="2.2.0",
     description="Bandori desktop pet",
-    options={"build_exe": build_exe_options, "build_msi": build_msi_options, "bdist_msi": build_msi_options},
+    options={
+        "build_exe": build_exe_options,
+        "build_msi": build_msi_options,
+        "bdist_msi": build_msi_options,
+        "build_rpm": build_rpm_options,
+        "bdist_rpm": build_rpm_options,
+    },
     executables=executables,
-    cmdclass={"build_exe": BuildExeWithEmptyModels, "build_msi": BuildMsiAlias},
+    cmdclass={"build_exe": BuildExeWithEmptyModels, "build_msi": BuildMsiAlias, "build_rpm": BuildRpmAlias},
 )

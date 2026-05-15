@@ -194,6 +194,8 @@
     "MainTray.tooltip": "BandoriPet",
     "MainTray.settings": "设置",
     "MainTray.exit": "退出",
+    "ModelResources.missing_title": "缺少模型资源",
+    "ModelResources.missing_content": "未找到 models 文件夹，请先下载并解压模型资源。\n点击确定后将使用默认浏览器打开下载链接。",
     "ModelManager.others_band": "其他角色",
     "CompactAIWindow.input_placeholder": "输入消息",
     "CompactAIWindow.state_thinking": "正在思考...",

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import QMessageBox
 
 from i18n_manager import tr as _tr
@@ -30,11 +30,15 @@ def models_dir_exists() -> bool:
 
 
 def prompt_download_model_resources(parent=None) -> None:
-    QMessageBox.warning(
-        parent,
-        "缺少模型资源",
-        "未找到 models 文件夹，请先下载并解压模型资源。\n点击确定后将使用默认浏览器打开下载链接。",
-    )
+    message_box = QMessageBox(parent)
+    message_box.setIcon(QMessageBox.Icon.Warning)
+    message_box.setWindowTitle(_tr("ModelResources.missing_title"))
+    message_box.setText(_tr("ModelResources.missing_content"))
+    message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    icon_path = BASE_DIR / "logo.ico"
+    if icon_path.exists():
+        message_box.setWindowIcon(QIcon(str(icon_path)))
+    message_box.exec()
     QDesktopServices.openUrl(QUrl(MODELS_DOWNLOAD_URL))
 
 
