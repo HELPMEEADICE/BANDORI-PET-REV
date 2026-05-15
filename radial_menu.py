@@ -25,6 +25,7 @@ DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
 DWMWCP_DONOTROUND = 1
 DWMWA_COLOR_NONE = 0xFFFFFFFE
+WM_NCCALCSIZE = 0x0083
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
@@ -183,7 +184,9 @@ class RadialMenu(QWidget):
             flags |= Qt.WindowType.X11BypassWindowManagerHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAutoFillBackground(False)
 
         self._items: list[_ItemData] = []
         self._is_showing = False
@@ -197,15 +200,22 @@ class RadialMenu(QWidget):
         self._center_scale = 1.0
         self._center_anim_value = 1.0
         self._lock_anim = None
-        self._windows_border_fix_applied = False
         self._paint_prewarmed = False
 
         self.setMouseTracking(True)
 
+    def nativeEvent(self, event_type, message):
+        if os.name == "nt":
+            try:
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if msg.message == WM_NCCALCSIZE:
+                    return True, 0
+            except Exception:
+                pass
+        return super().nativeEvent(event_type, message)
+
     def _apply_windows_11_border_fix(self):
         if os.name != "nt" or _dwm_set_window_attribute is None:
-            return
-        if self._windows_border_fix_applied:
             return
         hwnd = int(self.winId())
         if not hwnd:
@@ -234,7 +244,6 @@ class RadialMenu(QWidget):
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             )
-        self._windows_border_fix_applied = True
 
     def showEvent(self, event):
         super().showEvent(event)
