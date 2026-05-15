@@ -66,6 +66,14 @@ def set_window_level_floating(widget) -> bool:
     return _set_window_level(widget, 3)
 
 
+def set_window_level_status_bar(widget) -> bool:
+    # NSStatusWindowLevel — high enough that AppKit's constrainFrameRect:toScreen:
+    # stops clamping the window to below the menu bar, so the user can drag the
+    # pet anywhere on screen even when the visible character is offset inside
+    # the window's transparent bounds.
+    return _set_window_level(widget, 25)
+
+
 def set_window_level_above_menu_bar(widget) -> bool:
     return _set_window_level(widget, 101)
 
@@ -103,6 +111,61 @@ def set_window_no_shadow(widget) -> bool:
     f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
     sender = ctypes.cast(_OBJC.objc_msgSend, f)
     sender(window, _sel("setHasShadow:"), ctypes.c_bool(False))
+    return True
+
+
+def set_hides_on_deactivate(widget, hides: bool) -> bool:
+    # Qt.Tool maps to NSPanel on macOS, and NSPanel defaults to
+    # hidesOnDeactivate:YES — so any time the user clicks another app the
+    # window vanishes. Force it off so floating helpers stay visible.
+    if not _init_objc() or widget is None:
+        return False
+    try:
+        win_id = int(widget.winId())
+    except (TypeError, ValueError):
+        return False
+    if not win_id:
+        return False
+    window = _get_ns_window(win_id)
+    if not window:
+        return False
+    f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    sender(window, _sel("setHidesOnDeactivate:"), ctypes.c_bool(hides))
+    return True
+
+
+# NSWindowCollectionBehavior bits used by the pet window so it shows up across
+# every Space and over fullscreen apps without joining the Cmd+~ cycle.
+NS_COLLECTION_CAN_JOIN_ALL_SPACES = 1 << 0
+NS_COLLECTION_STATIONARY = 1 << 4
+NS_COLLECTION_IGNORES_CYCLE = 1 << 6
+NS_COLLECTION_FULL_SCREEN_AUXILIARY = 1 << 8
+
+PET_COLLECTION_BEHAVIOR = (
+    NS_COLLECTION_CAN_JOIN_ALL_SPACES
+    | NS_COLLECTION_STATIONARY
+    | NS_COLLECTION_IGNORES_CYCLE
+    | NS_COLLECTION_FULL_SCREEN_AUXILIARY
+)
+
+
+def set_collection_behavior(widget, mask: int) -> bool:
+    if not _init_objc() or widget is None:
+        return False
+    try:
+        win_id = int(widget.winId())
+    except (TypeError, ValueError):
+        return False
+    if not win_id:
+        return False
+    window = _get_ns_window(win_id)
+    if not window:
+        return False
+    # NSWindowCollectionBehavior is NSUInteger (unsigned long on 64-bit darwin).
+    f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    sender(window, _sel("setCollectionBehavior:"), ctypes.c_ulong(int(mask)))
     return True
 
 

@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.wintypes
 import os
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect
@@ -40,6 +41,11 @@ if os.name == "nt":
     _dwm_set_window_attribute.restype = ctypes.c_long
 else:
     _dwm_set_window_attribute = None
+
+if sys.platform == "darwin":
+    import macos_patch
+else:
+    macos_patch = None
 
 
 def _color_from_config(value: str, alpha: int) -> QColor:
@@ -396,6 +402,18 @@ class CompactAIWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
+        if macos_patch is not None:
+            QTimer.singleShot(0, self._apply_macos_window_polish)
+
+    def _apply_macos_window_polish(self):
+        if macos_patch is None:
+            return
+        macos_patch.set_window_no_shadow(self)
+        macos_patch.set_window_level_floating(self)
+        # Tool window = NSPanel; default hidesOnDeactivate makes it disappear
+        # whenever the user clicks another app. Pin it visible.
+        macos_patch.set_hides_on_deactivate(self, False)
+        macos_patch.set_collection_behavior(self, macos_patch.PET_COLLECTION_BEHAVIOR)
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
