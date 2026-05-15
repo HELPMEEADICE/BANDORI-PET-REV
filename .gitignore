@@ -3,6 +3,7 @@ __pycache__/
 .runtime/
 models/
 pixels/
+BUILD/
 build/
 BandoriPet.egg-info/
 third_party/

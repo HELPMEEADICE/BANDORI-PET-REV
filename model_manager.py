@@ -2,6 +2,11 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtWidgets import QMessageBox
+
 from i18n_manager import tr as _tr
 from process_utils import app_base_dir
 from zst_model_archive import (
@@ -17,6 +22,24 @@ MODELS_DIR = BASE_DIR / "models"
 OUTFIT_JSON = BASE_DIR / "outfit.json"
 BAND_JSON = BASE_DIR / "band.json"
 CHARACTERS_DIR = BASE_DIR / "characters"
+MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
+
+
+def models_dir_exists() -> bool:
+    return MODELS_DIR.is_dir()
+
+
+def prompt_download_model_resources(parent=None) -> None:
+    message_box = QMessageBox(parent)
+    message_box.setIcon(QMessageBox.Icon.Warning)
+    message_box.setWindowTitle(_tr("ModelResources.missing_title"))
+    message_box.setText(_tr("ModelResources.missing_content"))
+    message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    icon_path = BASE_DIR / "logo.ico"
+    if icon_path.exists():
+        message_box.setWindowIcon(QIcon(str(icon_path)))
+    message_box.exec()
+    QDesktopServices.openUrl(QUrl(MODELS_DOWNLOAD_URL))
 
 
 class ModelManager:
@@ -57,6 +80,8 @@ class ModelManager:
     def _scan(self):
         ModelManager._model_paths = {}
         ModelManager._character_images = {}
+        if not models_dir_exists():
+            return
         entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
         for entry in entries:
             if entry.is_dir():

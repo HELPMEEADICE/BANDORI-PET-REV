@@ -12,7 +12,7 @@ from app_theme import apply_app_theme
 from chat_window import ChatWindow
 from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
-from model_manager import ModelManager
+from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 
 
 def _parse_args():
@@ -43,6 +43,10 @@ def main():
     app.setQuitOnLastWindowClosed(True)
 
     apply_app_theme(cfg.get("dark_theme", False))
+
+    if not models_dir_exists():
+        prompt_download_model_resources()
+        return 0
 
     mgr = ModelManager()
     models = cfg.get("models", [])

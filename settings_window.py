@@ -126,6 +126,7 @@ class ModelListItem(QWidget):
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._character))
         layout.addWidget(self._remove_btn)
+        self.setFixedHeight(50)
         self._apply_theme()
         qconfig.themeChanged.connect(self._apply_theme)
         if self._current:
@@ -2929,12 +2930,21 @@ class SettingsWindow(QWidget):
 
         list_title = StrongBodyLabel(_tr("SettingsWindow.model_list_title"), panel)
         layout.addWidget(list_title)
+
+        self._model_list_scroll = ScrollArea(panel)
+        self._model_list_scroll.setWidgetResizable(True)
+        self._model_list_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._model_list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._model_list_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._model_list_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
         self._model_list_widget = QWidget(panel)
         self._model_list_widget.setObjectName("modelListWidget")
         self._model_list_layout = QVBoxLayout(self._model_list_widget)
         self._model_list_layout.setContentsMargins(0, 0, 0, 0)
         self._model_list_layout.setSpacing(6)
-        layout.addWidget(self._model_list_widget)
+        self._model_list_scroll.setWidget(self._model_list_widget)
+        layout.addWidget(self._model_list_scroll, 1)
         self._update_model_list_style()
         qconfig.themeChanged.connect(self._update_model_list_style)
 

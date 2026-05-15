@@ -14,7 +14,7 @@ from config_manager import ConfigManager
 from i18n_manager import current_language, detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
-from model_manager import ModelManager
+from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 from pet_window import PetWindow
 
 
@@ -84,6 +84,10 @@ def main():
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(False)
     apply_app_theme(cfg.get("dark_theme", False))
+
+    if not args.model_path and not models_dir_exists():
+        prompt_download_model_resources()
+        return 0
 
     mgr = SingleModelManager(args.character, args.costume, args.model_path) if args.model_path else ModelManager()
     pet = PetWindow(

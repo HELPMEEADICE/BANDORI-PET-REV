@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from live2d_lua_adapter import live2d
 from live2d_widget import Live2DWidget
-from model_manager import ModelManager
+from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
@@ -58,6 +58,10 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     apply_app_theme(cfg.get("dark_theme", False))
+
+    if not models_dir_exists():
+        prompt_download_model_resources()
+        return 0
 
     mgr = ModelManager()
     pet_window_ref = {"processes": []}

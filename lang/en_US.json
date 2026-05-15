@@ -194,6 +194,8 @@
     "MainTray.tooltip": "BandoriPet",
     "MainTray.settings": "Settings",
     "MainTray.exit": "Exit",
+    "ModelResources.missing_title": "Missing model resources",
+    "ModelResources.missing_content": "The models folder was not found. Please download and extract the model resources first.\nClick OK to open the download link in your default browser.",
     "ModelManager.others_band": "Other Characters",
     "CompactAIWindow.input_placeholder": "Type a message",
     "CompactAIWindow.state_thinking": "Thinking...",

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import fluent_bootstrap  # noqa: F401
 from cx_Freeze import Executable, setup
+from cx_Freeze.command.bdist_msi import bdist_msi
 from cx_Freeze.command.build_exe import build_exe
 
 
@@ -25,6 +26,10 @@ class BuildExeWithEmptyModels(build_exe):
             shutil.rmtree(BYTECODE_BUILD_DIR)
         models_dir = Path(self.build_exe) / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
+
+
+class BuildMsiAlias(bdist_msi):
+    """Expose cx_Freeze's MSI builder as `python setup.py build_msi`."""
 
 
 def include_if_exists(path: str) -> tuple[str, str] | None:
@@ -147,6 +152,15 @@ build_exe_options = {
     "zip_exclude_packages": [],
 }
 
+build_msi_options = {
+    "dist_dir": str(BASE_DIR / "BUILD"),
+    "summary_data": {
+        "author": "BandoriPet",
+        "comments": "Bandori desktop pet",
+        "keywords": "BandoriPet,Live2D,Desktop Pet",
+    }
+} if sys.platform == "win32" else {}
+
 base = "Win32GUI" if sys.platform == "win32" else None
 icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
 
@@ -163,9 +177,9 @@ executables = [
 
 setup(
     name="BandoriPet",
-    version="1.0.0",
+    version="2.2.1",
     description="Bandori desktop pet",
-    options={"build_exe": build_exe_options},
+    options={"build_exe": build_exe_options, "build_msi": build_msi_options, "bdist_msi": build_msi_options},
     executables=executables,
-    cmdclass={"build_exe": BuildExeWithEmptyModels},
+    cmdclass={"build_exe": BuildExeWithEmptyModels, "build_msi": BuildMsiAlias},
 )
