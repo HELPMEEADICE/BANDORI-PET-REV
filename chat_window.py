@@ -29,6 +29,7 @@ from app_theme import (
 import ctypes
 import os
 import shutil
+import sys
 from datetime import datetime
 import json
 import re
@@ -36,6 +37,11 @@ from pathlib import Path
 
 if os.name == "nt":
     import ctypes.wintypes
+
+if sys.platform == "darwin":
+    import macos_patch
+else:
+    macos_patch = None
 
 from llm_manager import (
     build_system_prompt, LLMStreamWorker, NonStreamWorker,
@@ -832,9 +838,20 @@ class ChatWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_11_border_fix()
+        if macos_patch is not None:
+            QTimer.singleShot(0, self._apply_macos_window_polish)
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
             QTimer.singleShot(0, self._play_entrance)
+
+    def _apply_macos_window_polish(self):
+        if macos_patch is None:
+            return
+        macos_patch.set_window_no_shadow(self)
+        macos_patch.set_window_level_floating(self)
+        # Tool window = NSPanel; default hidesOnDeactivate makes it disappear
+        # whenever the user clicks another app. Pin the chat visible.
+        macos_patch.set_hides_on_deactivate(self, False)
 
     def _apply_windows_11_border_fix(self):
         if os.name != "nt" or _dwm_set_window_attribute is None:
