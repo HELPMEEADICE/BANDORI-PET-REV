@@ -61,6 +61,7 @@
     "SettingsWindow.llm_avatar_color": "头像颜色",
     "SettingsWindow.llm_api_url": "API 地址",
     "SettingsWindow.llm_api_url_placeholder": "https://api.openai.com/v1/chat/completions",
+    "SettingsWindow.llm_api_url_hint": "提示：API 地址需要包含 /v1/chat/completions，例如 https://api.openai.com/v1/chat/completions。",
     "SettingsWindow.llm_api_key": "API 密钥",
     "SettingsWindow.llm_api_key_placeholder": "sk-...",
     "SettingsWindow.llm_model_id": "模型 ID",

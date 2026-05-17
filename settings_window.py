@@ -1745,7 +1745,13 @@ class SettingsWindow(QWidget):
         self._llm_api_url = FluentContextLineEdit(page)
         self._llm_api_url.setPlaceholderText(_tr("SettingsWindow.llm_api_url_placeholder"))
         self._llm_api_url.setFixedHeight(36)
-        layout.addWidget(self._llm_api_url)
+        api_url_input_col = QVBoxLayout()
+        api_url_input_col.setContentsMargins(0, 0, 0, 0)
+        api_url_input_col.setSpacing(4)
+        api_url_input_col.addWidget(self._llm_api_url)
+        self._llm_api_url_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.llm_api_url_hint"), page))
+        api_url_input_col.addWidget(self._llm_api_url_hint)
+        layout.addLayout(api_url_input_col)
 
         api_key_label = BodyLabel(_tr("SettingsWindow.llm_api_key"), page)
         layout.addWidget(api_key_label)
@@ -2453,6 +2459,7 @@ class SettingsWindow(QWidget):
             hasattr(self, attr)
             for attr in (
                 "_llm_api_url",
+                "_llm_api_url_hint",
                 "_llm_api_key",
                 "_llm_model_id",
                 "_llm_aux_model_id",
@@ -2516,6 +2523,8 @@ class SettingsWindow(QWidget):
         self._llm_aux_model_id.setStyleSheet(style)
         self._user_name.setStyleSheet(style)
         self._pov_custom_prompt.setStyleSheet(style)
+        hint_color = "#a7b0bf" if dark else "#687385"
+        self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
 
     def _style_avatar_buttons(self):

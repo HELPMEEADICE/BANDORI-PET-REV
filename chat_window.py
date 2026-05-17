@@ -772,32 +772,28 @@ class MessageBubble(QWidget):
 
         if self._role == "user":
             inner.addStretch()
-            inner.addLayout(stack)
+            inner.addLayout(stack, 4)
             inner.addWidget(self._avatar, 0, Qt.AlignmentFlag.AlignTop)
             inner.setContentsMargins(48, 0, 0, 0)
         else:
             inner.addWidget(self._avatar, 0, Qt.AlignmentFlag.AlignTop)
-            inner.addLayout(stack)
+            inner.addLayout(stack, 4)
             inner.addStretch()
             inner.setContentsMargins(0, 0, 48, 0)
 
         layout.addLayout(inner)
-        QTimer.singleShot(0, self._update_bubble_width)
 
     def _make_container(self, user: bool) -> QWidget:
         w = RoundedPanel()
         w.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         return w
 
-    def _available_bubble_width(self) -> int:
-        width = self.width()
+    def _available_bubble_width(self, viewport_width: int = 0) -> int:
+        width = viewport_width or self.width()
         if width <= 0 and self.parentWidget():
             width = self.parentWidget().width()
         if width <= 0:
-            return 320
-
-        # Message layout margins + avatar row reserve: outer margins (24),
-        # side indent (48), avatar (28), and the avatar/bubble spacing (8).
+            width = 320
         return max(80, width - 108)
 
     @staticmethod
@@ -823,12 +819,13 @@ class MessageBubble(QWidget):
             content_width = max(content_width, reasoning_width + 28)
         return max(36, content_width + 24)
 
-    def _update_bubble_width(self):
+    def update_bubble_width(self, viewport_width: int = 0):
+        available_width = self._available_bubble_width(viewport_width)
         natural_width = self._natural_bubble_width()
-        available_width = self._available_bubble_width()
         target_width = min(natural_width, available_width)
         should_wrap = natural_width > available_width or self._has_plain_newline(self._label)
         self._label.setWordWrap(should_wrap)
+        self._reasoning_label.setWordWrap(True)
         self._container.setFixedWidth(target_width)
 
         text_width = max(1, target_width - 24)
@@ -838,10 +835,7 @@ class MessageBubble(QWidget):
         self._reasoning_title.setFixedWidth(reasoning_text_width)
         self._reasoning_label.setFixedWidth(reasoning_text_width)
         self._container.updateGeometry()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_bubble_width()
+        self.updateGeometry()
 
     def _initials(self) -> str:
         text = self._author.strip()
@@ -868,7 +862,7 @@ class MessageBubble(QWidget):
     def _tick_typing(self):
         self._dot_step = (self._dot_step + 1) % 4
         self._stream_label.setText(_tr("ChatWindow.streaming") + "." * self._dot_step)
-        self._update_bubble_width()
+        self.update_bubble_width()
 
     def apply_theme(self):
         dark = isDarkTheme()
@@ -922,7 +916,7 @@ class MessageBubble(QWidget):
         if self._streaming and old_height > 0:
             self.setMaximumHeight(old_height)
         self._label.setText(text)
-        self._update_bubble_width()
+        self.update_bubble_width()
         if self._streaming:
             self._animate_stream_text()
             QTimer.singleShot(0, lambda h=old_height: self._animate_stream_height(h))
@@ -935,7 +929,7 @@ class MessageBubble(QWidget):
             self.setMaximumHeight(old_height)
         self._reasoning_label.setText(self._reasoning)
         self._reasoning_panel.setVisible(self._should_show_reasoning())
-        self._update_bubble_width()
+        self.update_bubble_width()
         if self._streaming:
             if self._reasoning_panel.isVisible() and not was_visible:
                 self._animate_stream_text()
@@ -989,7 +983,7 @@ class MessageBubble(QWidget):
             self._typing_timer.stop()
             self._stream_label.hide()
             self.setMaximumHeight(16777215)
-            self._update_bubble_width()
+            self.update_bubble_width()
 
 
 class ChatWindow(QWidget):
@@ -1032,6 +1026,7 @@ class ChatWindow(QWidget):
         self._closing = False
         self._close_animating = False
         self._window_anim = None
+        self._pending_history_menu_action = None
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -1309,6 +1304,7 @@ class ChatWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_resize_grip()
+        self._relayout_message_bubbles()
 
     def _position_resize_grip(self):
         if not getattr(self, "_resize_grip", None):
@@ -1804,6 +1800,13 @@ class ChatWindow(QWidget):
                 bubbles.append(widget)
         return bubbles
 
+    def _relayout_message_bubbles(self):
+        if not hasattr(self, "_scroll"):
+            return
+        viewport_width = self._scroll.viewport().width()
+        for bubble in self._message_bubbles():
+            bubble.update_bubble_width(viewport_width)
+
     def _clear_message_widgets(self):
         if self._msg_layout.count() > 0:
             item = self._msg_layout.takeAt(self._msg_layout.count() - 1)
@@ -1908,7 +1911,9 @@ class ChatWindow(QWidget):
                 reset_action.setEnabled(bool(self._chat_avatar_paths.get(character)))
                 reset_action.triggered.connect(lambda _checked=False, c=character: self._reset_character_avatar(c))
             pos = self._title_avatar.mapToGlobal(self._title_avatar.rect().bottomLeft())
+            self._pending_history_menu_action = None
             menu.exec(pos)
+            self._run_pending_history_menu_action()
             return
         else:
             change_action = menu.addAction(_tr("ChatWindow.avatar_change"))
@@ -2007,35 +2012,40 @@ class ChatWindow(QWidget):
         new_action.triggered.connect(self._new_conversation)
 
         pos = self._title_avatar.mapToGlobal(self._title_avatar.rect().bottomLeft())
+        self._pending_history_menu_action = None
         menu.exec(pos)
+        self._run_pending_history_menu_action()
 
     def _select_history_row(self, menu: QMenu, conv_id: int):
-        QTimer.singleShot(0, lambda menu=menu, conv_id=conv_id: self._close_menu_and_switch_conversation(menu, conv_id))
+        self._pending_history_menu_action = ("switch", conv_id)
+        QTimer.singleShot(0, menu.close)
 
     def _select_group_history_row(self, menu: QMenu, conversation_id: str):
-        QTimer.singleShot(0, lambda menu=menu, conversation_id=conversation_id: self._close_menu_and_switch_group_conversation(menu, conversation_id))
+        self._pending_history_menu_action = ("switch_group", conversation_id)
+        QTimer.singleShot(0, menu.close)
 
     def _delete_group_history_row(self, menu: QMenu, conversation_id: str):
-        QTimer.singleShot(0, lambda menu=menu, conversation_id=conversation_id: self._close_menu_and_delete_group_conversation(menu, conversation_id))
+        self._pending_history_menu_action = ("delete_group", conversation_id)
+        QTimer.singleShot(0, menu.close)
 
     def _delete_history_row(self, menu: QMenu, conv_id: int):
-        QTimer.singleShot(0, lambda menu=menu, conv_id=conv_id: self._close_menu_and_delete_conversation(menu, conv_id))
+        self._pending_history_menu_action = ("delete", conv_id)
+        QTimer.singleShot(0, menu.close)
 
-    def _close_menu_and_switch_conversation(self, menu: QMenu, conv_id: int):
-        menu.close()
-        self._switch_conversation(conv_id)
-
-    def _close_menu_and_delete_conversation(self, menu: QMenu, conv_id: int):
-        menu.close()
-        self._delete_conversation(conv_id)
-
-    def _close_menu_and_switch_group_conversation(self, menu: QMenu, conversation_id: str):
-        menu.close()
-        self._switch_group_conversation(conversation_id)
-
-    def _close_menu_and_delete_group_conversation(self, menu: QMenu, conversation_id: str):
-        menu.close()
-        self._delete_group_conversation(conversation_id)
+    def _run_pending_history_menu_action(self):
+        action = self._pending_history_menu_action
+        self._pending_history_menu_action = None
+        if not action:
+            return
+        name, value = action
+        if name == "switch":
+            QTimer.singleShot(0, lambda value=value: self._switch_conversation(value))
+        elif name == "delete":
+            QTimer.singleShot(0, lambda value=value: self._delete_conversation(value))
+        elif name == "switch_group":
+            QTimer.singleShot(0, lambda value=value: self._switch_group_conversation(value))
+        elif name == "delete_group":
+            QTimer.singleShot(0, lambda value=value: self._delete_group_conversation(value))
 
     def _switch_group_chat(self, characters: list[str]):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
@@ -2311,6 +2321,7 @@ class ChatWindow(QWidget):
             )
             self._msg_layout.addWidget(bubble)
         self._msg_layout.addStretch()
+        self._relayout_message_bubbles()
         QTimer.singleShot(50, self._scroll_to_bottom)
 
     def _message_author(self, content: str) -> str:
@@ -2394,6 +2405,7 @@ class ChatWindow(QWidget):
                 avatar_focus=avatar_focus,
             )
             self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
+            self._relayout_message_bubbles()
             self._scroll_to_bottom()
             return
 
@@ -2411,6 +2423,7 @@ class ChatWindow(QWidget):
             show_reasoning=self._show_reasoning,
         )
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
+        self._relayout_message_bubbles()
 
         if self._is_group_chat:
             self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text)
@@ -2534,6 +2547,7 @@ class ChatWindow(QWidget):
         )
         self._current_bubble.set_streaming(True)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
+        self._relayout_message_bubbles()
         self._scroll_to_bottom()
 
         messages = self._build_messages_for_character(character, spoken_names)

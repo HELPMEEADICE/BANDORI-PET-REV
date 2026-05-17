@@ -61,6 +61,7 @@
     "SettingsWindow.llm_avatar_color": "Avatar Color",
     "SettingsWindow.llm_api_url": "API URL",
     "SettingsWindow.llm_api_url_placeholder": "https://api.openai.com/v1/chat/completions",
+    "SettingsWindow.llm_api_url_hint": "Tip: include /v1/chat/completions in the API URL, for example https://api.openai.com/v1/chat/completions.",
     "SettingsWindow.llm_api_key": "API Key",
     "SettingsWindow.llm_api_key_placeholder": "sk-...",
     "SettingsWindow.llm_model_id": "Model ID",

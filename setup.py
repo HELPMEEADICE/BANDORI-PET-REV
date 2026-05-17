@@ -177,7 +177,7 @@ executables = [
 
 setup(
     name="BandoriPet",
-    version="2.2.3",
+    version="2.2.4",
     description="Bandori desktop pet",
     options={"build_exe": build_exe_options, "build_msi": build_msi_options, "bdist_msi": build_msi_options},
     executables=executables,
