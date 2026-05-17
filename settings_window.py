@@ -69,6 +69,15 @@ PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
 PROJECT_LICENSE_URL = f"{PROJECT_REPO_URL}/blob/main/LICENSE"
 
 
+def _app_icon_path() -> str:
+    base = app_base_dir()
+    for name in ("icon.ico", "logo.ico"):
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 class FluentContextLineEdit(QLineEdit):
     def contextMenuEvent(self, event):
         menu = LineEditMenu(self)
@@ -736,8 +745,8 @@ class SettingsWindow(QWidget):
         self._saved_user_name = ""
         self._compact_window_reset_position_pending = False
 
-        icon_path = os.path.join(app_base_dir(), "logo.ico")
-        if os.path.exists(icon_path):
+        icon_path = _app_icon_path()
+        if icon_path:
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("SettingsWindow.title"))
         self.setMinimumSize(1180, 680)
@@ -1045,9 +1054,19 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(8, 12, 8, 12)
         layout.setSpacing(4)
 
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(10, 4, 4, 10)
+        brand_row.setSpacing(8)
+        icon_path = _app_icon_path()
+        if icon_path:
+            icon_label = QLabel(sidebar)
+            icon_label.setFixedSize(24, 24)
+            icon_label.setPixmap(QIcon(icon_path).pixmap(24, 24))
+            brand_row.addWidget(icon_label)
         title = StrongBodyLabel(_tr("SettingsWindow.nav_title"), sidebar)
-        title.setContentsMargins(12, 4, 0, 8)
-        layout.addWidget(title)
+        title.setMinimumWidth(0)
+        brand_row.addWidget(title, 1)
+        layout.addLayout(brand_row)
 
         btn_chars = NavButton("characters", FluentIcon.EMOJI_TAB_SYMBOLS, _tr("SettingsWindow.nav_chars"), sidebar)
         btn_chars.nav_activated.connect(self._on_nav_selected)
@@ -2387,26 +2406,53 @@ class SettingsWindow(QWidget):
         page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.about_title"), page)
-        layout.addWidget(title)
+        hero = QWidget(page)
+        hero.setObjectName("aboutHero")
+        hero.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setSpacing(18)
 
-        subtitle = SubtitleLabel(_tr("SettingsWindow.about_subtitle"), page)
+        icon_path = _app_icon_path()
+        if icon_path:
+            icon_label = QLabel(hero)
+            icon_label.setObjectName("aboutHeroIcon")
+            icon_label.setFixedSize(84, 84)
+            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_label.setPixmap(QIcon(icon_path).pixmap(72, 72))
+            hero_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        hero_text = QVBoxLayout()
+        hero_text.setContentsMargins(0, 0, 0, 0)
+        hero_text.setSpacing(8)
+        title = TitleLabel(_tr("SettingsWindow.about_title"), hero)
+        subtitle = SubtitleLabel(_tr("SettingsWindow.about_subtitle"), hero)
         subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
-
-        desc = BodyLabel(_tr("SettingsWindow.about_desc"), page)
+        desc = BodyLabel(_tr("SettingsWindow.about_desc"), hero)
         desc.setWordWrap(True)
-        layout.addWidget(desc)
+        hero_text.addWidget(title)
+        hero_text.addWidget(subtitle)
+        hero_text.addWidget(desc)
+        hero_layout.addLayout(hero_text, 1)
+        layout.addWidget(hero)
 
-        license_label = BodyLabel(_tr("SettingsWindow.about_license"), page)
+        info_card = QWidget(page)
+        info_card.setObjectName("aboutInfoCard")
+        info_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(18, 16, 18, 16)
+        info_layout.setSpacing(10)
+
+        license_label = BodyLabel(_tr("SettingsWindow.about_license"), info_card)
         license_label.setWordWrap(True)
-        layout.addWidget(license_label)
+        info_layout.addWidget(license_label)
 
-        disclaimer = BodyLabel(_tr("SettingsWindow.about_disclaimer"), page)
+        disclaimer = BodyLabel(_tr("SettingsWindow.about_disclaimer"), info_card)
         disclaimer.setWordWrap(True)
-        layout.addWidget(disclaimer)
+        info_layout.addWidget(disclaimer)
+        layout.addWidget(info_card)
 
         link_label = QLabel(
             _tr(
@@ -2414,7 +2460,7 @@ class SettingsWindow(QWidget):
                 repo=PROJECT_REPO_URL,
                 license=PROJECT_LICENSE_URL,
             ),
-            page,
+            info_card,
         )
         link_label.setWordWrap(True)
         link_label.setTextFormat(Qt.TextFormat.RichText)
@@ -2422,26 +2468,62 @@ class SettingsWindow(QWidget):
         link_label.setOpenExternalLinks(True)
         self._style_about_link(link_label)
         qconfig.themeChanged.connect(lambda: self._style_about_link(link_label))
-        layout.addWidget(link_label)
+        info_layout.addWidget(link_label)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 2, 0, 0)
         btn_row.setSpacing(10)
-        repo_btn = TransparentPushButton(FluentIcon.GITHUB, _tr("SettingsWindow.about_open_repo"), page)
+        repo_btn = TransparentPushButton(FluentIcon.GITHUB, _tr("SettingsWindow.about_open_repo"), info_card)
         repo_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_REPO_URL)))
-        license_btn = TransparentPushButton(FluentIcon.HELP, _tr("SettingsWindow.about_open_license"), page)
+        license_btn = TransparentPushButton(FluentIcon.HELP, _tr("SettingsWindow.about_open_license"), info_card)
         license_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_LICENSE_URL)))
         btn_row.addWidget(repo_btn)
         btn_row.addWidget(license_btn)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        info_layout.addLayout(btn_row)
 
         tech = BodyLabel(_tr("SettingsWindow.about_tech"), page)
+        tech.setObjectName("aboutTech")
         tech.setWordWrap(True)
         layout.addWidget(tech)
 
+        self._style_about_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_about_page(page))
         layout.addStretch()
         return page
+
+    @staticmethod
+    def _style_about_page(page: QWidget):
+        dark = isDarkTheme()
+        hero_bg = "#2b1730" if dark else "#fff0f6"
+        hero_border = "#5f2a43" if dark else "#ffd1e2"
+        card_bg = "#242424" if dark else "#ffffff"
+        card_border = "#3a3a3a" if dark else "#ead8df"
+        icon_bg = "#3d1d31" if dark else "#ffffff"
+        text = "#f8f4f7" if dark else "#231f24"
+        muted = "#cbb8c4" if dark else "#6f5b68"
+        page.setStyleSheet(f"""
+            QWidget#aboutHero {{
+                background: {hero_bg};
+                border: 1px solid {hero_border};
+                border-radius: 18px;
+            }}
+            QLabel#aboutHeroIcon {{
+                background: {icon_bg};
+                border: 1px solid {hero_border};
+                border-radius: 20px;
+            }}
+            QWidget#aboutInfoCard {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+            }}
+            QWidget#aboutHero TitleLabel {{ color: {text}; }}
+            QWidget#aboutHero SubtitleLabel {{ color: {text}; font-weight: 700; }}
+            QWidget#aboutHero BodyLabel {{ color: {muted}; font-size: 13px; line-height: 1.5; }}
+            QWidget#aboutInfoCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            BodyLabel#aboutTech {{ color: {muted}; font-size: 13px; padding: 2px 4px; }}
+        """)
 
     @staticmethod
     def _style_about_link(label: QLabel):
@@ -2848,10 +2930,12 @@ class SettingsWindow(QWidget):
 
     def _build_side_panel(self):
         panel = self._make_theme_widget(QWidget())
-        panel.setFixedWidth(220)
+        panel.setObjectName("settingsSidePanel")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        panel.setFixedWidth(240)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
         settings_title = StrongBodyLabel(_tr("SettingsWindow.side_settings"), panel)
         layout.addWidget(settings_title)
@@ -2961,8 +3045,28 @@ class SettingsWindow(QWidget):
         layout.addWidget(self._model_list_scroll, 1)
         self._update_model_list_style()
         qconfig.themeChanged.connect(self._update_model_list_style)
+        self._update_side_panel_style()
+        qconfig.themeChanged.connect(self._update_side_panel_style)
 
         return panel
+
+    def _update_side_panel_style(self):
+        if not hasattr(self, "_model_list_scroll"):
+            return
+        dark = isDarkTheme()
+        bg = "#232125" if dark else "#fff8fb"
+        border = "#3b343a" if dark else "#f1d7e1"
+        title = "#fff6fb" if dark else "#2b2228"
+        muted = "#d4c3cc" if dark else "#6a5b63"
+        self._model_list_scroll.parentWidget().setStyleSheet(f"""
+            QWidget#settingsSidePanel {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 16px;
+            }}
+            QWidget#settingsSidePanel StrongBodyLabel {{ color: {title}; font-size: 14px; font-weight: 700; }}
+            QWidget#settingsSidePanel BodyLabel {{ color: {muted}; font-size: 13px; }}
+        """)
 
     def _update_model_list_style(self):
         if not hasattr(self, "_model_list_widget"):
