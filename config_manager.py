@@ -39,6 +39,7 @@ DEFAULTS = {
     "chat_avatar_paths": {},
     "pov_mode": "off",
     "pov_custom_prompt": "",
+    "pov_custom_personas": [],
     "pov_role_character": "",
     "llm_enable_thinking": None,
     "llm_show_reasoning": True,

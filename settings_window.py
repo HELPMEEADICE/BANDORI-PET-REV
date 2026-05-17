@@ -69,6 +69,15 @@ PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
 PROJECT_LICENSE_URL = f"{PROJECT_REPO_URL}/blob/main/LICENSE"
 
 
+def _app_icon_path() -> str:
+    base = app_base_dir()
+    for name in ("icon.ico", "logo.ico"):
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
 class FluentContextLineEdit(QLineEdit):
     def contextMenuEvent(self, event):
         menu = LineEditMenu(self)
@@ -736,8 +745,8 @@ class SettingsWindow(QWidget):
         self._saved_user_name = ""
         self._compact_window_reset_position_pending = False
 
-        icon_path = os.path.join(app_base_dir(), "logo.ico")
-        if os.path.exists(icon_path):
+        icon_path = _app_icon_path()
+        if icon_path:
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("SettingsWindow.title"))
         self.setMinimumSize(1180, 680)
@@ -1045,9 +1054,19 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(8, 12, 8, 12)
         layout.setSpacing(4)
 
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(10, 4, 4, 10)
+        brand_row.setSpacing(8)
+        icon_path = _app_icon_path()
+        if icon_path:
+            icon_label = QLabel(sidebar)
+            icon_label.setFixedSize(24, 24)
+            icon_label.setPixmap(QIcon(icon_path).pixmap(24, 24))
+            brand_row.addWidget(icon_label)
         title = StrongBodyLabel(_tr("SettingsWindow.nav_title"), sidebar)
-        title.setContentsMargins(12, 4, 0, 8)
-        layout.addWidget(title)
+        title.setMinimumWidth(0)
+        brand_row.addWidget(title, 1)
+        layout.addLayout(brand_row)
 
         btn_chars = NavButton("characters", FluentIcon.EMOJI_TAB_SYMBOLS, _tr("SettingsWindow.nav_chars"), sidebar)
         btn_chars.nav_activated.connect(self._on_nav_selected)
@@ -1946,6 +1965,24 @@ class SettingsWindow(QWidget):
         self._pov_custom_prompt.setMaximumHeight(96)
         layout.addWidget(self._pov_custom_prompt)
 
+        persona_label = BodyLabel(_tr("SettingsWindow.pov_saved_personas"), page)
+        layout.addWidget(persona_label)
+        persona_row = QHBoxLayout()
+        persona_row.setSpacing(8)
+        self._pov_persona_combo = ComboBox(page)
+        self._pov_persona_combo.setFixedHeight(36)
+        self._pov_persona_combo.currentIndexChanged.connect(self._on_pov_persona_selected)
+        persona_row.addWidget(self._pov_persona_combo, 1)
+        save_persona_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.pov_save_persona"), page)
+        save_persona_btn.setFixedHeight(36)
+        save_persona_btn.clicked.connect(self._save_current_pov_persona)
+        persona_row.addWidget(save_persona_btn)
+        delete_persona_btn = PushButton(FluentIcon.CLOSE, _tr("SettingsWindow.pov_delete_persona"), page)
+        delete_persona_btn.setFixedHeight(36)
+        delete_persona_btn.clicked.connect(self._delete_current_pov_persona)
+        persona_row.addWidget(delete_persona_btn)
+        layout.addLayout(persona_row)
+
         role_label = BodyLabel(_tr("SettingsWindow.pov_role_character"), page)
         layout.addWidget(role_label)
         self._pov_role_character = ComboBox(page)
@@ -2385,28 +2422,57 @@ class SettingsWindow(QWidget):
 
     def _build_about_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("aboutPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.about_title"), page)
-        layout.addWidget(title)
+        hero = QWidget(page)
+        hero.setObjectName("aboutHero")
+        hero.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(24, 22, 24, 22)
+        hero_layout.setSpacing(18)
 
-        subtitle = SubtitleLabel(_tr("SettingsWindow.about_subtitle"), page)
+        icon_path = _app_icon_path()
+        if icon_path:
+            icon_label = QLabel(hero)
+            icon_label.setObjectName("aboutHeroIcon")
+            icon_label.setFixedSize(84, 84)
+            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon_label.setPixmap(QIcon(icon_path).pixmap(72, 72))
+            hero_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        hero_text = QVBoxLayout()
+        hero_text.setContentsMargins(0, 0, 0, 0)
+        hero_text.setSpacing(8)
+        title = TitleLabel(_tr("SettingsWindow.about_title"), hero)
+        subtitle = SubtitleLabel(_tr("SettingsWindow.about_subtitle"), hero)
         subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
-
-        desc = BodyLabel(_tr("SettingsWindow.about_desc"), page)
+        desc = BodyLabel(_tr("SettingsWindow.about_desc"), hero)
         desc.setWordWrap(True)
-        layout.addWidget(desc)
+        hero_text.addWidget(title)
+        hero_text.addWidget(subtitle)
+        hero_text.addWidget(desc)
+        hero_layout.addLayout(hero_text, 1)
+        layout.addWidget(hero)
 
-        license_label = BodyLabel(_tr("SettingsWindow.about_license"), page)
+        info_card = QWidget(page)
+        info_card.setObjectName("aboutInfoCard")
+        info_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(18, 16, 18, 16)
+        info_layout.setSpacing(10)
+
+        license_label = BodyLabel(_tr("SettingsWindow.about_license"), info_card)
         license_label.setWordWrap(True)
-        layout.addWidget(license_label)
+        info_layout.addWidget(license_label)
 
-        disclaimer = BodyLabel(_tr("SettingsWindow.about_disclaimer"), page)
+        disclaimer = BodyLabel(_tr("SettingsWindow.about_disclaimer"), info_card)
         disclaimer.setWordWrap(True)
-        layout.addWidget(disclaimer)
+        info_layout.addWidget(disclaimer)
+        layout.addWidget(info_card)
 
         link_label = QLabel(
             _tr(
@@ -2414,7 +2480,7 @@ class SettingsWindow(QWidget):
                 repo=PROJECT_REPO_URL,
                 license=PROJECT_LICENSE_URL,
             ),
-            page,
+            info_card,
         )
         link_label.setWordWrap(True)
         link_label.setTextFormat(Qt.TextFormat.RichText)
@@ -2422,26 +2488,66 @@ class SettingsWindow(QWidget):
         link_label.setOpenExternalLinks(True)
         self._style_about_link(link_label)
         qconfig.themeChanged.connect(lambda: self._style_about_link(link_label))
-        layout.addWidget(link_label)
+        info_layout.addWidget(link_label)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 2, 0, 0)
         btn_row.setSpacing(10)
-        repo_btn = TransparentPushButton(FluentIcon.GITHUB, _tr("SettingsWindow.about_open_repo"), page)
+        repo_btn = TransparentPushButton(FluentIcon.GITHUB, _tr("SettingsWindow.about_open_repo"), info_card)
         repo_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_REPO_URL)))
-        license_btn = TransparentPushButton(FluentIcon.HELP, _tr("SettingsWindow.about_open_license"), page)
+        license_btn = TransparentPushButton(FluentIcon.HELP, _tr("SettingsWindow.about_open_license"), info_card)
         license_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(PROJECT_LICENSE_URL)))
         btn_row.addWidget(repo_btn)
         btn_row.addWidget(license_btn)
         btn_row.addStretch()
-        layout.addLayout(btn_row)
+        info_layout.addLayout(btn_row)
 
         tech = BodyLabel(_tr("SettingsWindow.about_tech"), page)
+        tech.setObjectName("aboutTech")
         tech.setWordWrap(True)
         layout.addWidget(tech)
 
+        self._style_about_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_about_page(page))
         layout.addStretch()
         return page
+
+    @staticmethod
+    def _style_about_page(page: QWidget):
+        dark = isDarkTheme()
+        hero_bg = "#2b1730" if dark else "#fff0f6"
+        hero_border = "#5f2a43" if dark else "#ffd1e2"
+        card_bg = "#242424" if dark else "#ffffff"
+        card_border = "#3a3a3a" if dark else "#ead8df"
+        icon_bg = "#3d1d31" if dark else "#ffffff"
+        page_bg = _BG_DARK if dark else _BG_LIGHT
+        text = "#f8f4f7" if dark else "#231f24"
+        muted = "#cbb8c4" if dark else "#6f5b68"
+        page.setStyleSheet(f"""
+            QWidget#aboutPage {{
+                background: {page_bg};
+            }}
+            QWidget#aboutHero {{
+                background: {hero_bg};
+                border: 1px solid {hero_border};
+                border-radius: 18px;
+            }}
+            QLabel#aboutHeroIcon {{
+                background: {icon_bg};
+                border: 1px solid {hero_border};
+                border-radius: 20px;
+            }}
+            QWidget#aboutInfoCard {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+            }}
+            QWidget#aboutHero TitleLabel {{ color: {text}; }}
+            QWidget#aboutHero SubtitleLabel {{ color: {text}; font-weight: 700; }}
+            QWidget#aboutHero BodyLabel {{ color: {muted}; font-size: 13px; line-height: 1.5; }}
+            QWidget#aboutInfoCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            BodyLabel#aboutTech {{ color: {muted}; font-size: 13px; padding: 2px 4px; }}
+        """)
 
     @staticmethod
     def _style_about_link(label: QLabel):
@@ -2468,6 +2574,7 @@ class SettingsWindow(QWidget):
                 "_user_name",
                 "_pov_mode",
                 "_pov_custom_prompt",
+                "_pov_persona_combo",
                 "_pov_role_character",
                 "_avatar_color_btns",
             )
@@ -2592,6 +2699,7 @@ class SettingsWindow(QWidget):
                     self._pov_mode.setCurrentIndex(i)
                     break
             self._pov_custom_prompt.setPlainText(self._cfg.get("pov_custom_prompt", ""))
+            self._reload_pov_persona_combo()
             saved_role = self._cfg.get("pov_role_character", "")
             for i in range(self._pov_role_character.count()):
                 if self._pov_role_character.itemData(i) == saved_role:
@@ -2602,12 +2710,116 @@ class SettingsWindow(QWidget):
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
         self._pov_custom_prompt.setEnabled(mode == "custom")
+        self._pov_persona_combo.setEnabled(mode == "custom")
         self._pov_role_character.setEnabled(mode == "role")
         self._user_name.setEnabled(mode != "role")
         if mode == "role":
             self._sync_role_display_name()
         else:
             self._user_name.setText(getattr(self, "_saved_user_name", ""))
+
+    def _normalized_pov_personas(self) -> list[dict]:
+        if not self._cfg:
+            return []
+        raw_personas = self._cfg.get("pov_custom_personas", [])
+        if not isinstance(raw_personas, list):
+            return []
+        personas = []
+        seen_prompts = set()
+        for item in raw_personas:
+            if not isinstance(item, dict):
+                continue
+            prompt = str(item.get("prompt", "") or "").strip()
+            if not prompt or prompt in seen_prompts:
+                continue
+            title = str(item.get("title", "") or "").strip() or self._pov_persona_title(prompt)
+            personas.append({"title": title, "prompt": prompt})
+            seen_prompts.add(prompt)
+        return personas
+
+    def _reload_pov_persona_combo(self):
+        if not hasattr(self, "_pov_persona_combo"):
+            return
+        current_prompt = self._pov_custom_prompt.toPlainText().strip() if hasattr(self, "_pov_custom_prompt") else ""
+        self._pov_persona_combo.blockSignals(True)
+        self._pov_persona_combo.clear()
+        self._pov_persona_combo.addItem(_tr("SettingsWindow.pov_persona_new"), userData="")
+        selected_index = 0
+        for persona in self._normalized_pov_personas():
+            self._pov_persona_combo.addItem(persona["title"], userData=persona["prompt"])
+            if persona["prompt"] == current_prompt:
+                selected_index = self._pov_persona_combo.count() - 1
+        self._pov_persona_combo.setCurrentIndex(selected_index)
+        self._pov_persona_combo.blockSignals(False)
+
+    def _on_pov_persona_selected(self, index: int):
+        prompt = self._pov_persona_combo.itemData(index) or ""
+        for i in range(self._pov_mode.count()):
+            if self._pov_mode.itemData(i) == "custom":
+                self._pov_mode.setCurrentIndex(i)
+                break
+        if not prompt:
+            self._pov_custom_prompt.clear()
+            return
+        self._pov_custom_prompt.setPlainText(prompt)
+
+    @staticmethod
+    def _pov_persona_title(prompt: str) -> str:
+        title = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
+        if len(title) > 24:
+            title = title[:24] + "..."
+        return title or "Persona"
+
+    def _save_current_pov_persona(self):
+        if not self._cfg or not hasattr(self, "_pov_custom_prompt"):
+            return
+        prompt = self._pov_custom_prompt.toPlainText().strip()
+        if not prompt:
+            InfoBar.warning(
+                _tr("SettingsWindow.pov_persona_empty_title"),
+                _tr("SettingsWindow.pov_persona_empty_content"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        personas = [p for p in self._normalized_pov_personas() if p.get("prompt") != prompt]
+        personas.append({"title": self._pov_persona_title(prompt), "prompt": prompt})
+        self._cfg.set("pov_custom_personas", personas)
+        self._cfg.set("pov_custom_prompt", prompt)
+        try:
+            self._cfg.save()
+        except Exception:
+            return
+        self._reload_pov_persona_combo()
+        InfoBar.success(
+            _tr("SettingsWindow.pov_persona_saved_title"),
+            _tr("SettingsWindow.pov_persona_saved_content"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _delete_current_pov_persona(self):
+        if not self._cfg or not hasattr(self, "_pov_persona_combo"):
+            return
+        prompt = self._pov_persona_combo.itemData(self._pov_persona_combo.currentIndex()) or ""
+        if not prompt:
+            return
+        personas = [p for p in self._normalized_pov_personas() if p.get("prompt") != prompt]
+        self._cfg.set("pov_custom_personas", personas)
+        try:
+            self._cfg.save()
+        except Exception:
+            return
+        self._reload_pov_persona_combo()
+        InfoBar.success(
+            _tr("SettingsWindow.pov_persona_deleted_title"),
+            _tr("SettingsWindow.pov_persona_deleted_content"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _sync_role_display_name(self):
         if self._pov_mode.itemData(self._pov_mode.currentIndex()) != "role":
@@ -2848,10 +3060,12 @@ class SettingsWindow(QWidget):
 
     def _build_side_panel(self):
         panel = self._make_theme_widget(QWidget())
-        panel.setFixedWidth(220)
+        panel.setObjectName("settingsSidePanel")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        panel.setFixedWidth(240)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
         settings_title = StrongBodyLabel(_tr("SettingsWindow.side_settings"), panel)
         layout.addWidget(settings_title)
@@ -2961,8 +3175,28 @@ class SettingsWindow(QWidget):
         layout.addWidget(self._model_list_scroll, 1)
         self._update_model_list_style()
         qconfig.themeChanged.connect(self._update_model_list_style)
+        self._update_side_panel_style()
+        qconfig.themeChanged.connect(self._update_side_panel_style)
 
         return panel
+
+    def _update_side_panel_style(self):
+        if not hasattr(self, "_model_list_scroll"):
+            return
+        dark = isDarkTheme()
+        bg = "#232125" if dark else "#fff8fb"
+        border = "#3b343a" if dark else "#f1d7e1"
+        title = "#fff6fb" if dark else "#2b2228"
+        muted = "#d4c3cc" if dark else "#6a5b63"
+        self._model_list_scroll.parentWidget().setStyleSheet(f"""
+            QWidget#settingsSidePanel {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 16px;
+            }}
+            QWidget#settingsSidePanel StrongBodyLabel {{ color: {title}; font-size: 14px; font-weight: 700; }}
+            QWidget#settingsSidePanel BodyLabel {{ color: {muted}; font-size: 13px; }}
+        """)
 
     def _update_model_list_style(self):
         if not hasattr(self, "_model_list_widget"):
