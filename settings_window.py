@@ -1965,6 +1965,24 @@ class SettingsWindow(QWidget):
         self._pov_custom_prompt.setMaximumHeight(96)
         layout.addWidget(self._pov_custom_prompt)
 
+        persona_label = BodyLabel(_tr("SettingsWindow.pov_saved_personas"), page)
+        layout.addWidget(persona_label)
+        persona_row = QHBoxLayout()
+        persona_row.setSpacing(8)
+        self._pov_persona_combo = ComboBox(page)
+        self._pov_persona_combo.setFixedHeight(36)
+        self._pov_persona_combo.currentIndexChanged.connect(self._on_pov_persona_selected)
+        persona_row.addWidget(self._pov_persona_combo, 1)
+        save_persona_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.pov_save_persona"), page)
+        save_persona_btn.setFixedHeight(36)
+        save_persona_btn.clicked.connect(self._save_current_pov_persona)
+        persona_row.addWidget(save_persona_btn)
+        delete_persona_btn = PushButton(FluentIcon.CLOSE, _tr("SettingsWindow.pov_delete_persona"), page)
+        delete_persona_btn.setFixedHeight(36)
+        delete_persona_btn.clicked.connect(self._delete_current_pov_persona)
+        persona_row.addWidget(delete_persona_btn)
+        layout.addLayout(persona_row)
+
         role_label = BodyLabel(_tr("SettingsWindow.pov_role_character"), page)
         layout.addWidget(role_label)
         self._pov_role_character = ComboBox(page)
@@ -2404,6 +2422,8 @@ class SettingsWindow(QWidget):
 
     def _build_about_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("aboutPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -2500,9 +2520,13 @@ class SettingsWindow(QWidget):
         card_bg = "#242424" if dark else "#ffffff"
         card_border = "#3a3a3a" if dark else "#ead8df"
         icon_bg = "#3d1d31" if dark else "#ffffff"
+        page_bg = _BG_DARK if dark else _BG_LIGHT
         text = "#f8f4f7" if dark else "#231f24"
         muted = "#cbb8c4" if dark else "#6f5b68"
         page.setStyleSheet(f"""
+            QWidget#aboutPage {{
+                background: {page_bg};
+            }}
             QWidget#aboutHero {{
                 background: {hero_bg};
                 border: 1px solid {hero_border};
@@ -2550,6 +2574,7 @@ class SettingsWindow(QWidget):
                 "_user_name",
                 "_pov_mode",
                 "_pov_custom_prompt",
+                "_pov_persona_combo",
                 "_pov_role_character",
                 "_avatar_color_btns",
             )
@@ -2674,6 +2699,7 @@ class SettingsWindow(QWidget):
                     self._pov_mode.setCurrentIndex(i)
                     break
             self._pov_custom_prompt.setPlainText(self._cfg.get("pov_custom_prompt", ""))
+            self._reload_pov_persona_combo()
             saved_role = self._cfg.get("pov_role_character", "")
             for i in range(self._pov_role_character.count()):
                 if self._pov_role_character.itemData(i) == saved_role:
@@ -2684,12 +2710,116 @@ class SettingsWindow(QWidget):
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
         self._pov_custom_prompt.setEnabled(mode == "custom")
+        self._pov_persona_combo.setEnabled(mode == "custom")
         self._pov_role_character.setEnabled(mode == "role")
         self._user_name.setEnabled(mode != "role")
         if mode == "role":
             self._sync_role_display_name()
         else:
             self._user_name.setText(getattr(self, "_saved_user_name", ""))
+
+    def _normalized_pov_personas(self) -> list[dict]:
+        if not self._cfg:
+            return []
+        raw_personas = self._cfg.get("pov_custom_personas", [])
+        if not isinstance(raw_personas, list):
+            return []
+        personas = []
+        seen_prompts = set()
+        for item in raw_personas:
+            if not isinstance(item, dict):
+                continue
+            prompt = str(item.get("prompt", "") or "").strip()
+            if not prompt or prompt in seen_prompts:
+                continue
+            title = str(item.get("title", "") or "").strip() or self._pov_persona_title(prompt)
+            personas.append({"title": title, "prompt": prompt})
+            seen_prompts.add(prompt)
+        return personas
+
+    def _reload_pov_persona_combo(self):
+        if not hasattr(self, "_pov_persona_combo"):
+            return
+        current_prompt = self._pov_custom_prompt.toPlainText().strip() if hasattr(self, "_pov_custom_prompt") else ""
+        self._pov_persona_combo.blockSignals(True)
+        self._pov_persona_combo.clear()
+        self._pov_persona_combo.addItem(_tr("SettingsWindow.pov_persona_new"), userData="")
+        selected_index = 0
+        for persona in self._normalized_pov_personas():
+            self._pov_persona_combo.addItem(persona["title"], userData=persona["prompt"])
+            if persona["prompt"] == current_prompt:
+                selected_index = self._pov_persona_combo.count() - 1
+        self._pov_persona_combo.setCurrentIndex(selected_index)
+        self._pov_persona_combo.blockSignals(False)
+
+    def _on_pov_persona_selected(self, index: int):
+        prompt = self._pov_persona_combo.itemData(index) or ""
+        for i in range(self._pov_mode.count()):
+            if self._pov_mode.itemData(i) == "custom":
+                self._pov_mode.setCurrentIndex(i)
+                break
+        if not prompt:
+            self._pov_custom_prompt.clear()
+            return
+        self._pov_custom_prompt.setPlainText(prompt)
+
+    @staticmethod
+    def _pov_persona_title(prompt: str) -> str:
+        title = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
+        if len(title) > 24:
+            title = title[:24] + "..."
+        return title or "Persona"
+
+    def _save_current_pov_persona(self):
+        if not self._cfg or not hasattr(self, "_pov_custom_prompt"):
+            return
+        prompt = self._pov_custom_prompt.toPlainText().strip()
+        if not prompt:
+            InfoBar.warning(
+                _tr("SettingsWindow.pov_persona_empty_title"),
+                _tr("SettingsWindow.pov_persona_empty_content"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        personas = [p for p in self._normalized_pov_personas() if p.get("prompt") != prompt]
+        personas.append({"title": self._pov_persona_title(prompt), "prompt": prompt})
+        self._cfg.set("pov_custom_personas", personas)
+        self._cfg.set("pov_custom_prompt", prompt)
+        try:
+            self._cfg.save()
+        except Exception:
+            return
+        self._reload_pov_persona_combo()
+        InfoBar.success(
+            _tr("SettingsWindow.pov_persona_saved_title"),
+            _tr("SettingsWindow.pov_persona_saved_content"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _delete_current_pov_persona(self):
+        if not self._cfg or not hasattr(self, "_pov_persona_combo"):
+            return
+        prompt = self._pov_persona_combo.itemData(self._pov_persona_combo.currentIndex()) or ""
+        if not prompt:
+            return
+        personas = [p for p in self._normalized_pov_personas() if p.get("prompt") != prompt]
+        self._cfg.set("pov_custom_personas", personas)
+        try:
+            self._cfg.save()
+        except Exception:
+            return
+        self._reload_pov_persona_combo()
+        InfoBar.success(
+            _tr("SettingsWindow.pov_persona_deleted_title"),
+            _tr("SettingsWindow.pov_persona_deleted_content"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _sync_role_display_name(self):
         if self._pov_mode.itemData(self._pov_mode.currentIndex()) != "role":
