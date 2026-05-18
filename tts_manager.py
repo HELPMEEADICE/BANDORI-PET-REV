@@ -19,6 +19,100 @@ from process_utils import app_base_dir
 _ACTION_TAG_RE = re.compile(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]")
 
 
+CHARACTER_TRILINGUAL_NAMES = {
+    "户山香澄":   ("戸山香澄 (Toyama Kasumi)",    "Kasumi Toyama"),
+    "花园多惠":    ("花園たえ (Hanazono Tae)",      "Tae Hanazono"),
+    "牛込里美":    ("牛込りみ (Ushigome Rimi)",      "Rimi Ushigome"),
+    "山吹沙绫":    ("山吹沙綾 (Yamabuki Saaya)",    "Saaya Yamabuki"),
+    "市谷有咲":    ("市ヶ谷有咲 (Ichigaya Arisa)",   "Arisa Ichigaya"),
+    "美竹兰":     ("美竹蘭 (Mitake Ran)",         "Ran Mitake"),
+    "青叶摩卡":    ("青葉モカ (Aoba Moca)",        "Moca Aoba"),
+    "上原绯玛丽":   ("上原ひまり (Uehara Himari)",    "Himari Uehara"),
+    "宇田川巴":    ("宇田川巴 (Udagawa Tomoe)",     "Tomoe Udagawa"),
+    "羽泽鸫":     ("羽沢つぐみ (Hazawa Tsugumi)",    "Tsugumi Hazawa"),
+    "丸山彩":     ("丸山彩 (Maruyama Aya)",       "Aya Maruyama"),
+    "冰川日菜":    ("氷川日菜 (Hikawa Hina)",       "Hina Hikawa"),
+    "白鹭千圣":    ("白鷺千聖 (Shirasagi Chisato)",  "Chisato Shirasagi"),
+    "大和麻弥":    ("大和麻弥 (Yamato Maya)",       "Maya Yamato"),
+    "若宫伊芙":    ("若宮イヴ (Wakamiya Eve)",      "Eve Wakamiya"),
+    "弦卷心":     ("弦巻こころ (Tsurumaki Kokoro)",  "Kokoro Tsurumaki"),
+    "濑田薰":     ("瀬田薫 (Seta Kaoru)",         "Kaoru Seta"),
+    "北泽育美":    ("北沢はぐみ (Kitazawa Hagumi)",  "Hagumi Kitazawa"),
+    "松原花音":    ("松原花音 (Matsubara Kanon)",    "Kanon Matsubara"),
+    "奥泽美咲":    ("奥沢美咲 (Okusawa Misaki)",     "Misaki Okusawa (Michelle)"),
+    "凑友希那":    ("湊友希那 (Minato Yukina)",      "Yukina Minato"),
+    "冰川纱夜":    ("氷川紗夜 (Hikawa Sayo)",       "Sayo Hikawa"),
+    "今井莉莎":    ("今井リサ (Imai Lisa)",         "Lisa Imai"),
+    "宇田川亚子":   ("宇田川あこ (Udagawa Ako)",     "Ako Udagawa"),
+    "白金燐子":    ("白金燐子 (Shirokane Rinko)",    "Rinko Shirokane"),
+    "鳰原令王那":   ("鳰原令王那 / レイヤ (Nihara Reona / PAREO)", "Reona Nihara (PAREO)"),
+    "佐藤益木":    ("佐藤ますき (Satou Masuki / MASKING)", "Masuki Satou (MASKING)"),
+    "和奏瑞依":    ("和奏レイ (Wakana Rei / LAYER)", "Rei Wakana (LAYER)"),
+    "朝日六花":    ("朝日六花 (Asahi Rokka / LOCK)",  "Rokka Asahi (LOCK)"),
+    "珠手知由":    ("珠手ちゆ (Shude Chiyu / CHU²)",  "Chiyu Shude (CHU²)"),
+    "仓田真白":    ("倉田ましろ (Kurata Mashiro)",     "Mashiro Kurata"),
+    "桐谷透子":    ("桐ヶ谷透子 (Kirigaya Touko)",    "Touko Kirigaya"),
+    "广町七深":    ("広町七深 (Hiromachi Nanami)",     "Nanami Hiromachi"),
+    "二叶筑紫":    ("二葉つくし (Futaba Tsukushi)",     "Tsukushi Futaba"),
+    "八潮瑠唯":    ("八潮瑠唯 (Yashio Rui)",         "Rui Yashio"),
+    "高松灯":     ("高松燈 (Takamatsu Tomori)",     "Tomori Takamatsu"),
+    "千早爱音":    ("千早愛音 (Chihaya Anon)",      "Anon Chihaya"),
+    "要乐奈":     ("要楽奈 (Kaname Rāna)",        "Rāna Kaname"),
+    "长崎素世":    ("長崎そよ (Nagasaki Soyo)",      "Soyo Nagasaki"),
+    "椎名立希":    ("椎名立希 (Shiina Taki)",        "Taki Shiina"),
+    "丰川祥子":    ("豊川祥子 (Togawa Sakiko)",     "Sakiko Togawa"),
+    "若叶睦":     ("若葉睦 (Wakaba Mutsumi)",      "Mutsumi Wakaba"),
+    "三角初华":    ("三角初華 (Misumi Uika)",       "Uika Misumi"),
+    "八幡海玲":    ("八幡海鈴 (Yahata Umiri)",       "Umiri Yahata"),
+    "祐天寺若麦":   ("祐天寺にゃむ (Yūtenji Nyamu)",  "Nyamu Yūtenji"),
+    "纯田真奈":    ("純田まな (Sumida Mana)",       "Mana Sumida"),
+    "户山明日香":   ("戸山明日香 (Toyama Asuka)",    "Asuka Toyama"),
+    "汐見蛍":     ("汐見螢 (Shiomi Hotaru)",       "Hotaru Shiomi"),
+}
+
+
+_ONE_CHAR_SURNAMES = frozenset({"凑", "要"})
+
+
+def _find_referenced_characters(text: str) -> dict:
+    if not text:
+        return {}
+    matched: dict[str, tuple[str, str]] = {}
+    for cn, (jp, en_) in CHARACTER_TRILINGUAL_NAMES.items():
+        if cn in text:
+            matched[cn] = (jp, en_)
+            continue
+        for slen in (3, 2, 1):
+            if slen >= len(cn):
+                continue
+            surname = cn[:slen]
+            given = cn[slen:]
+            if slen == 1 and surname not in _ONE_CHAR_SURNAMES:
+                continue
+            if surname in text:
+                matched[cn] = (jp, en_)
+                break
+            if len(given) >= 2 and given in text:
+                matched[cn] = (jp, en_)
+                break
+    return matched
+
+
+def _build_translation_system_prompt(target_language_name: str, text: str = "") -> str:
+    referenced = _find_referenced_characters(text)
+    if referenced:
+        appendix = "\n\n### BanG Dream! Character Name Reference (CN | JP | EN)\n"
+        appendix += "\n".join(
+            f"  {cn}  |  {jp}  |  {en_}"
+            for cn, (jp, en_) in referenced.items()
+        )
+        return (
+            f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
+            f"翻译人物名称时请参照以下对照表，按目标语言使用对应名称：\n{appendix}"
+        )
+    return f"把用户给出的中文聊天台词翻译成自然{target_language_name}，只输出译文，不要解释。保留语气，不要输出动作标签。"
+
+
 def flush_tts_sentence(buffer: str) -> str:
     return buffer.strip()
 
@@ -70,7 +164,7 @@ class TTSTranslationWorker(QThread):
         body = {
             "model": model_id,
             "messages": [
-                {"role": "system", "content": f"把用户给出的中文聊天台词翻译成自然{self._language_name(target_language)}，只输出译文，不要解释。保留语气，不要输出动作标签。"},
+                {"role": "system", "content": _build_translation_system_prompt(self._language_name(target_language), text)},
                 {"role": "user", "content": text},
             ],
             "stream": False,
@@ -230,7 +324,7 @@ class TTSRequestWorker(QThread):
         body = {
             "model": model_id,
             "messages": [
-                {"role": "system", "content": f"把用户给出的中文聊天台词翻译成自然{self._language_name(target_language)}，只输出译文，不要解释。保留语气，不要输出动作标签。"},
+                {"role": "system", "content": _build_translation_system_prompt(self._language_name(target_language), text)},
                 {"role": "user", "content": text},
             ],
             "stream": False,
