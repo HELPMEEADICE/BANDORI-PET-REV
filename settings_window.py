@@ -53,6 +53,11 @@ from relationship_memory import (
 
 import json
 
+from startup_manager import (
+    is_startup_enabled,
+    is_supported as is_startup_supported,
+    set_startup_enabled,
+)
 from live2d_click_actions import (
     CLICK_MOTION_NONE,
     CLICK_MOTION_RANDOM,
@@ -811,6 +816,13 @@ class SettingsWindow(QWidget):
         self._hide_live2d_model = (
             bool(self._cfg.get("hide_live2d_model", False)) if self._cfg else False
         )
+        self._live2d_idle_actions_enabled = (
+            bool(self._cfg.get("live2d_idle_actions_enabled", True)) if self._cfg else True
+        )
+        self._auto_start_supported = is_startup_supported()
+        self._auto_start_enabled = False
+        if self._auto_start_supported:
+            self._auto_start_enabled = is_startup_enabled()
         self._live2d_quality = normalize_live2d_quality(
             self._cfg.get("live2d_quality", "balanced") if self._cfg else "balanced"
         )
@@ -1379,6 +1391,19 @@ class SettingsWindow(QWidget):
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(hint)
 
+        idle_row = QHBoxLayout()
+        idle_row.setSpacing(8)
+        idle_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_idle_actions"), action_container))
+        self._live2d_idle_actions_switch = SwitchButton(action_container)
+        self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
+        self._live2d_idle_actions_switch.checkedChanged.connect(self._on_live2d_idle_actions_changed)
+        idle_row.addWidget(idle_label, 1)
+        idle_row.addWidget(self._live2d_idle_actions_switch, 0, Qt.AlignmentFlag.AlignRight)
+        action_col.addLayout(idle_row)
+        idle_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.live2d_idle_actions_hint"), action_container))
+        idle_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        action_col.addWidget(idle_hint)
+
         motion_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.default_motion"), action_container))
         motion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(motion_label)
@@ -1497,6 +1522,8 @@ class SettingsWindow(QWidget):
         detail_shell.addLayout(detail_center, 1)
 
         self._detail_action_hint = hint
+        self._detail_idle_label = idle_label
+        self._detail_idle_hint = idle_hint
         self._detail_motion_label = motion_label
         self._detail_expression_label = expression_label
         self._detail_click_motion_label = click_label
@@ -1525,6 +1552,8 @@ class SettingsWindow(QWidget):
             }}
         """)
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
+        self._detail_idle_label.setStyleSheet(f"color: {hint_color};")
+        self._detail_idle_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
@@ -1592,6 +1621,12 @@ class SettingsWindow(QWidget):
             if item["character"] == self._selected_list_character:
                 return item
         return None
+
+    def _on_live2d_idle_actions_changed(self, checked: bool):
+        self._live2d_idle_actions_enabled = bool(checked)
+        if self._cfg:
+            self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
+            self._cfg.save()
 
     def _populate_default_motion_combo(self, item: dict):
         combo = self._default_motion_combo
@@ -4569,6 +4604,19 @@ class SettingsWindow(QWidget):
         hide_live2d_row.addWidget(self._hide_live2d_model_switch)
         layout.addLayout(hide_live2d_row)
 
+        auto_start_label = BodyLabel(_tr("SettingsWindow.side_auto_start"), panel)
+        self._auto_start_switch = SwitchButton(panel)
+        self._auto_start_switch.setChecked(self._auto_start_enabled)
+        self._auto_start_switch.setEnabled(self._auto_start_supported)
+        if not self._auto_start_supported:
+            self._auto_start_switch.setToolTip(_tr("SettingsWindow.auto_start_unsupported"))
+            auto_start_label.setToolTip(_tr("SettingsWindow.auto_start_unsupported"))
+        auto_start_row = QHBoxLayout()
+        auto_start_row.addWidget(auto_start_label)
+        auto_start_row.addStretch()
+        auto_start_row.addWidget(self._auto_start_switch)
+        layout.addLayout(auto_start_row)
+
         opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), panel)
         layout.addWidget(opacity_label)
         self._opacity_slider = Slider(Qt.Orientation.Horizontal, panel)
@@ -4947,6 +4995,28 @@ class SettingsWindow(QWidget):
         self._fps_slider.setEnabled(not checked)
         self._fps_value.setEnabled(not checked)
 
+    def _apply_auto_start_setting(self) -> bool:
+        enabled = bool(self._auto_start_switch.isChecked()) if hasattr(self, "_auto_start_switch") else False
+        if not self._auto_start_supported:
+            if self._cfg:
+                self._cfg.set("auto_start", False)
+            return True
+        try:
+            set_startup_enabled(enabled)
+            self._auto_start_enabled = enabled
+            if self._cfg:
+                self._cfg.set("auto_start", enabled)
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.auto_start_failed_title"),
+                _tr("SettingsWindow.auto_start_failed_content", error=str(exc)),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
+
     def _on_apply(self):
         if self._launched:
             return
@@ -4965,6 +5035,9 @@ class SettingsWindow(QWidget):
                 parent=self,
             )
             return
+        if not self._apply_auto_start_setting():
+            self._launched = False
+            return
         self._save_llm_config()
         self._save_compact_window_config(show_info=False, emit_update=False)
         self._save_configured_models()
@@ -4976,6 +5049,8 @@ class SettingsWindow(QWidget):
             "vsync": self._vsync_switch.isChecked(),
             "game_topmost": self._game_topmost_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
+            "live2d_idle_actions_enabled": self._live2d_idle_actions_switch.isChecked(),
+            "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False) if self._cfg else False,
@@ -5001,6 +5076,8 @@ class SettingsWindow(QWidget):
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("game_topmost", settings["game_topmost"])
             self._cfg.set("hide_live2d_model", settings["hide_live2d_model"])
+            self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
+            self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()

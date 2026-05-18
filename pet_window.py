@@ -212,6 +212,9 @@ class PetWindow(QWidget):
         self._vsync = True
         self._game_topmost = bool(config_manager.get("game_topmost", False)) if config_manager else False
         self._hide_live2d_model = bool(config_manager.get("hide_live2d_model", False)) if config_manager else False
+        self._live2d_idle_actions_enabled = (
+            bool(config_manager.get("live2d_idle_actions_enabled", True)) if config_manager else True
+        )
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
         self._tray_icon = None
@@ -568,6 +571,27 @@ class PetWindow(QWidget):
         elif not self.isVisible():
             self.show()
 
+    def set_live2d_idle_actions_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if self._live2d_idle_actions_enabled == enabled:
+            return
+        self._live2d_idle_actions_enabled = enabled
+        self._motion_guard_token += 1
+        self._last_context_idle_action_at = time.monotonic()
+        self._cursor_was_near_live2d = False
+        if not enabled:
+            model = self._live2d_widget.model
+            if model is not None:
+                try:
+                    model.ClearMotions()
+                except Exception:
+                    pass
+        else:
+            QTimer.singleShot(
+                50,
+                lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False),
+            )
+
     def moveEvent(self, event: QMoveEvent):
         super().moveEvent(event)
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
@@ -721,7 +745,7 @@ class PetWindow(QWidget):
         self._last_context_idle_action_at = self._last_user_interaction_at
 
     def _tick_context_idle_behavior(self):
-        if self._pixel_mode or not self.isVisible():
+        if not self._live2d_idle_actions_enabled or self._pixel_mode or not self.isVisible():
             return
         model = self._live2d_widget.model
         if model is None or self._is_pet_dragging():
@@ -755,6 +779,8 @@ class PetWindow(QWidget):
         return ""
 
     def _maybe_trigger_mouse_approach_behavior(self):
+        if not self._live2d_idle_actions_enabled:
+            return
         if self._radial_menu is not None and self._radial_menu.isVisible():
             return
         cursor = QCursor.pos()
@@ -793,6 +819,8 @@ class PetWindow(QWidget):
             self._last_mouse_approach_action_at = now
 
     def _start_context_idle_behavior(self, kind: str) -> bool:
+        if not self._live2d_idle_actions_enabled:
+            return False
         model = self._live2d_widget.model
         if model is None:
             return False
@@ -926,6 +954,7 @@ class PetWindow(QWidget):
             "user_avatar_color",
             "language",
             "hide_live2d_model",
+            "live2d_idle_actions_enabled",
         }
         if self._cfg and any(key in data for key in compact_keys):
             self._cfg.load()
@@ -943,6 +972,8 @@ class PetWindow(QWidget):
                 self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
             if "hide_live2d_model" in data:
                 self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
+            if "live2d_idle_actions_enabled" in data:
+                self._cfg.set("live2d_idle_actions_enabled", bool(data["live2d_idle_actions_enabled"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
             if data.get("language"):
@@ -967,6 +998,8 @@ class PetWindow(QWidget):
             self.set_game_topmost(data["game_topmost"])
         if "hide_live2d_model" in data:
             self.set_hide_live2d_model(data["hide_live2d_model"])
+        if "live2d_idle_actions_enabled" in data:
+            self.set_live2d_idle_actions_enabled(data["live2d_idle_actions_enabled"])
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -1709,6 +1742,13 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return
+        if not self._live2d_idle_actions_enabled:
+            if force_clear:
+                try:
+                    model.ClearMotions()
+                except Exception:
+                    pass
+            return
         if force_clear:
             try:
                 model.ClearMotions()
@@ -1721,10 +1761,14 @@ class PetWindow(QWidget):
     def _start_idle_motion_if_current(self, token: int, smooth: bool):
         if token != self._motion_guard_token:
             return
+        if not self._live2d_idle_actions_enabled:
+            return
         self._start_idle_motion(smooth=smooth)
 
     def _restore_default_if_finished(self, token: int):
         if token != self._motion_guard_token:
+            return
+        if not self._live2d_idle_actions_enabled:
             return
         model = self._live2d_widget.model
         if model is None:
@@ -1739,6 +1783,8 @@ class PetWindow(QWidget):
         self._restore_default_motion(self._motion_guard_token, force_clear=False)
 
     def _start_idle_motion(self, smooth: bool):
+        if not self._live2d_idle_actions_enabled:
+            return
         model = self._live2d_widget.model
         if model is None:
             return
@@ -1984,6 +2030,7 @@ class PetWindow(QWidget):
             self._cfg.set("vsync", self._vsync)
             self._cfg.set("game_topmost", self._game_topmost)
             self._cfg.set("hide_live2d_model", self._hide_live2d_model)
+            self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
