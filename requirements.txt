@@ -6,3 +6,7 @@ PySide6-Fluent-Widgets>=1.11.0
 PySideSix-Frameless-Window>=0.8.0
 zstandard>=0.22.0
 lupa>=2.2
+numpy>=1.23.0
+requests>=2.31.0
+sounddevice>=0.4.6
+soundfile>=0.12.1

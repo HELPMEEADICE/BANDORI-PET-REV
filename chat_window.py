@@ -6,10 +6,11 @@ from PySide6.QtWidgets import (
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
     QApplication, QGraphicsOpacityEffect, QWidgetAction,
     QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
+    QSplitter, QSplitterHandle,
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, isDarkTheme
+from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, TransparentToolButton, isDarkTheme
 from qfluentwidgets.components.widgets.menu import TextEditMenu
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
@@ -28,6 +29,7 @@ from app_theme import (
 
 import ctypes
 import base64
+import math
 import mimetypes
 import os
 import shutil
@@ -50,13 +52,14 @@ from llm_manager import (
     build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags,
 )
+from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
 from relationship_memory import (
     analyze_interaction,
     build_relationship_context,
     format_character_status,
     user_key_from_config,
 )
-from action_bus import publish_action
+from action_bus import publish_action, publish_lip_sync
 
 
 _BG_LIGHT = "#f5f7fb"
@@ -75,6 +78,9 @@ _AVATAR_PIXMAP_CACHE_LIMIT = 96
 _HISTORY_ROW_WIDTH = 368
 _HISTORY_ROW_HEIGHT = 48
 _HISTORY_SCROLL_WIDTH = _HISTORY_ROW_WIDTH + 24
+_GROUP_SIDEBAR_DEFAULT_RATIO = 0.28
+_GROUP_SIDEBAR_MIN_RATIO = 0.18
+_GROUP_SIDEBAR_MAX_RATIO = 0.46
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -290,6 +296,8 @@ class RoundedPanel(QWidget):
         self._border = QColor("transparent")
         self._border_width = 0
         self._radii = (0.0, 0.0, 0.0, 0.0)
+        self._wave_glow = False
+        self._wave_phase = 0.0
 
     def set_panel_style(self, bg: str, border: str = "transparent", radius=0, border_width: int = 0):
         self._bg = QColor(bg)
@@ -302,6 +310,11 @@ class RoundedPanel(QWidget):
             self._radii = (r, r, r, r)
         self.update()
 
+    def set_wave_glow(self, enabled: bool, phase: float = 0.0):
+        self._wave_glow = enabled
+        self._wave_phase = phase
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -309,6 +322,14 @@ class RoundedPanel(QWidget):
         rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
         path = _rounded_path(rect, self._radii)
         painter.fillPath(path, self._bg)
+        if self._wave_glow:
+            for index, base_alpha in enumerate((150, 90, 45)):
+                wave = (math.sin(self._wave_phase + index * 0.85) + 1.0) / 2.0
+                color = QColor(255, 105, 180, int(base_alpha * (0.45 + wave * 0.55)))
+                pen = QPen(color, 2.0 + index * 1.35 + wave * 1.2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawPath(path)
         if self._border_width > 0 and self._border.alpha() > 0:
             pen = QPen(self._border, self._border_width)
             painter.setPen(pen)
@@ -375,6 +396,66 @@ class IconButton(QToolButton):
             QToolButton:pressed {{ background: {pressed}; }}
             QToolButton:disabled {{ background: {'#252932' if dark else '#e6ebf3'}; color: {'#6b7280' if dark else '#a0a8b8'}; }}
         """)
+
+
+class FluentSplitterHandle(QSplitterHandle):
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._hovered = False
+        self._pressed = False
+        self.setCursor(Qt.CursorShape.SizeHorCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._pressed = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._pressed = False
+        self.update()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        dark = isDarkTheme()
+        if self._pressed:
+            color = QColor(accent_color(dark))
+            width = 4
+            alpha = 190
+        elif self._hovered:
+            color = QColor("#8f98ad" if dark else "#9aa8c2")
+            width = 3
+            alpha = 150
+        else:
+            color = QColor("#3d4658" if dark else "#d6deec")
+            width = 2
+            alpha = 120
+        color.setAlpha(alpha)
+        x = (self.width() - width) / 2
+        y = 18
+        height = max(28, self.height() - 36)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(QRectF(x, y, width, height), width / 2, width / 2)
+
+
+class FluentSplitter(QSplitter):
+    def createHandle(self):
+        return FluentSplitterHandle(self.orientation(), self)
 
 
 class ChatResizeGrip(QWidget):
@@ -623,22 +704,26 @@ class GroupChatListRow(QWidget):
     def __init__(self, characters: list[str], title: str, preview: str, current: bool, parent=None):
         super().__init__(parent)
         self._characters = list(characters)
+        self._title_text = title
+        self._preview_text = preview
         self._current = current
         self._hovered = False
         self._pressed = False
         self._bg_color = QColor("transparent")
         self._indicator_color = QColor("transparent")
+        self._border_color = QColor("transparent")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(64)
+        self.setFixedHeight(60)
+        self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 7, 10, 7)
+        layout.setSpacing(9)
 
         avatar = QLabel(title[:1].upper(), self)
         avatar.setObjectName("GroupListAvatar")
-        avatar.setFixedSize(34, 34)
+        avatar.setFixedSize(32, 32)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(avatar)
@@ -648,14 +733,20 @@ class GroupChatListRow(QWidget):
         text_stack.setSpacing(2)
         title_label = QLabel(title, self)
         title_label.setObjectName("GroupListTitle")
+        title_label.setMinimumWidth(0)
+        title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         title_label.setTextFormat(Qt.TextFormat.PlainText)
         title_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        title_label.setToolTip(title)
         preview_label = QLabel(preview, self)
         preview_label.setObjectName("GroupListPreview")
+        preview_label.setMinimumWidth(0)
+        preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         preview_label.setTextFormat(Qt.TextFormat.PlainText)
         preview_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         preview_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        preview_label.setToolTip(preview)
         text_stack.addWidget(title_label)
         text_stack.addWidget(preview_label)
         layout.addLayout(text_stack, 1)
@@ -664,23 +755,38 @@ class GroupChatListRow(QWidget):
         self._title_label = title_label
         self._preview_label = preview_label
         self.apply_theme()
+        self._update_elided_texts()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elided_texts()
+
+    def _update_elided_texts(self):
+        for label, text in (
+            (self._title_label, self._title_text),
+            (self._preview_label, self._preview_text),
+        ):
+            width = max(24, label.width() - 2)
+            label.setText(label.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, width))
 
     def apply_theme(self):
         dark = isDarkTheme()
         if dark:
             normal_bg = "transparent"
-            hover_bg = "#161c29"
-            pressed_bg = "#111724"
-            selected_bg = "#12192a"
-            selected_hover_bg = "#101626"
-            selected_pressed_bg = "#0c1220"
+            hover_bg = "#202636"
+            pressed_bg = "#1b2130"
+            selected_bg = "#252c3d"
+            selected_hover_bg = "#2a3244"
+            selected_pressed_bg = "#202838"
+            selected_border = "#343d52"
         else:
             normal_bg = "transparent"
-            hover_bg = "#f1f4fa"
-            pressed_bg = "#e7ecf5"
-            selected_bg = "#eaf0fb"
-            selected_hover_bg = "#e1e8f5"
-            selected_pressed_bg = "#d7e0ef"
+            hover_bg = "#f3f6fb"
+            pressed_bg = "#e9eef7"
+            selected_bg = "#ffffff"
+            selected_hover_bg = "#f8fbff"
+            selected_pressed_bg = "#edf3fb"
+            selected_border = "#d9e3f3"
 
         if self._current:
             bg = selected_pressed_bg if self._pressed else selected_hover_bg if self._hovered else selected_bg
@@ -689,10 +795,11 @@ class GroupChatListRow(QWidget):
 
         title = "#f8f8fb" if dark else "#1f2328"
         preview = "#a9b0c3" if dark else "#657089"
-        avatar_bg = _TEAMS_ACCENT if self._current else ("#2a2f3b" if dark else "#e4eaf6")
-        avatar_fg = "#ffffff" if self._current else ("#dce4f7" if dark else "#44506a")
+        avatar_bg = accent_color(dark) if self._current else ("#2d3444" if dark else "#edf2f9")
+        avatar_fg = "#ffffff" if self._current else ("#dce4f7" if dark else "#4f5d74")
         self._bg_color = QColor(bg)
         self._indicator_color = QColor(accent_color(dark) if self._current else "transparent")
+        self._border_color = QColor(selected_border if self._current else "transparent")
         self.setStyleSheet(f"""
             GroupChatListRow {{
                 background: transparent;
@@ -700,7 +807,7 @@ class GroupChatListRow(QWidget):
             QLabel#GroupListAvatar {{
                 background: {avatar_bg};
                 color: {avatar_fg};
-                border-radius: 17px;
+                border-radius: 16px;
                 font-weight: 700;
             }}
             QLabel#GroupListTitle {{
@@ -714,6 +821,7 @@ class GroupChatListRow(QWidget):
                 font-size: 11px;
             }}
         """)
+        self._update_elided_texts()
         self.update()
 
     def paintEvent(self, event):
@@ -724,8 +832,12 @@ class GroupChatListRow(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(self._bg_color)
             painter.drawRoundedRect(rect, 8, 8)
+        if self._border_color.alpha() > 0:
+            painter.setPen(QPen(self._border_color, 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
         if self._current:
-            indicator = QRectF(1, 10, 3, self.height() - 20)
+            indicator = QRectF(1, 14, 3, self.height() - 28)
             painter.setBrush(self._indicator_color)
             painter.drawRoundedRect(indicator, 1.5, 1.5)
         super().paintEvent(event)
@@ -825,10 +937,15 @@ class MessageBubble(QWidget):
         self._avatar_data = avatar_data
         self._avatar_focus = avatar_focus
         self._streaming = False
+        self._tts_playing = False
+        self._tts_wave_phase = 0.0
         self._dot_step = 0
         self._typing_timer = QTimer(self)
         self._typing_timer.setInterval(420)
         self._typing_timer.timeout.connect(self._tick_typing)
+        self._tts_wave_timer = QTimer(self)
+        self._tts_wave_timer.setInterval(55)
+        self._tts_wave_timer.timeout.connect(self._tick_tts_wave)
         self._text_opacity_effect = None
         self._text_fade_anim = None
         self._height_anim = None
@@ -1009,6 +1126,10 @@ class MessageBubble(QWidget):
         self._stream_label.setText(_tr("ChatWindow.streaming") + "." * self._dot_step)
         self.update_bubble_width()
 
+    def _tick_tts_wave(self):
+        self._tts_wave_phase = (self._tts_wave_phase + 0.34) % (math.pi * 2.0)
+        self._container.set_wave_glow(True, self._tts_wave_phase)
+
     def apply_theme(self):
         dark = isDarkTheme()
         user = self._role == "user"
@@ -1130,6 +1251,18 @@ class MessageBubble(QWidget):
             self.setMaximumHeight(16777215)
             self.update_bubble_width()
 
+    def set_tts_playing(self, playing: bool):
+        if self._tts_playing == playing:
+            return
+        self._tts_playing = playing
+        if playing:
+            self._tts_wave_phase = 0.0
+            self._container.set_wave_glow(True, self._tts_wave_phase)
+            self._tts_wave_timer.start()
+        else:
+            self._tts_wave_timer.stop()
+            self._container.set_wave_glow(False)
+
 
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
@@ -1157,6 +1290,23 @@ class ChatWindow(QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._tts_text_buffer = ""
+        self._tts_tag_buffer = ""
+        self._tts_queue: list[tuple[int, str, str]] = []
+        self._tts_active_workers: dict[int, TTSRequestWorker] = {}
+        self._tts_translation_workers: dict[int, TTSTranslationWorker] = {}
+        self._tts_audio_buffers: dict[int, list[tuple[bytes, str]]] = {}
+        self._tts_bubbles: dict[int, MessageBubble] = {}
+        self._tts_characters: dict[int, str] = {}
+        self._tts_completed_sequences: set[int] = set()
+        self._tts_generation = 0
+        self._tts_next_sequence = 0
+        self._tts_next_play_sequence = 0
+        self._tts_playing_sequence: int | None = None
+        self._tts_max_parallel = 1
+        self._tts_player = TTSPlayer(self)
+        self._tts_player.level_changed.connect(self._on_tts_level_changed)
+        self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
         self._pending_actions.clear()
         self._seen_actions.clear()
         self._stream_flush_timer = QTimer(self)
@@ -1176,6 +1326,26 @@ class ChatWindow(QWidget):
         self._window_anim = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
+        self._group_splitter = None
+        self._group_toggle_btn = None
+        self._group_sidebar_toggle_btn = None
+        self._group_splitter_adjusting = False
+        self._group_sidebar_ratio = self._normalized_group_sidebar_ratio(
+            self._cfg.get("group_chat_sidebar_ratio", _GROUP_SIDEBAR_DEFAULT_RATIO)
+        ) if self._cfg else _GROUP_SIDEBAR_DEFAULT_RATIO
+        self._group_sidebar_collapsed = bool(
+            self._cfg.get("group_chat_sidebar_collapsed", False)
+        ) if self._is_group_chat and self._cfg else False
+        self._group_sidebar_save_timer = QTimer(self)
+        self._group_sidebar_save_timer.setSingleShot(True)
+        self._group_sidebar_save_timer.timeout.connect(self._save_group_sidebar_settings)
+        self._group_sidebar_ratio_timer = QTimer(self)
+        self._group_sidebar_ratio_timer.setSingleShot(True)
+        self._group_sidebar_ratio_timer.timeout.connect(self._apply_group_sidebar_ratio_to_splitter)
+        self._group_relayout_timer = QTimer(self)
+        self._group_relayout_timer.setSingleShot(True)
+        self._group_relayout_timer.setInterval(45)
+        self._group_relayout_timer.timeout.connect(self._relayout_message_bubbles)
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -1213,6 +1383,13 @@ class ChatWindow(QWidget):
         qconfig.themeChanged.connect(self._apply_theme)
 
         self._load_or_create_conversation()
+
+    def _normalized_group_sidebar_ratio(self, value) -> float:
+        try:
+            ratio = float(value)
+        except (TypeError, ValueError):
+            ratio = _GROUP_SIDEBAR_DEFAULT_RATIO
+        return max(_GROUP_SIDEBAR_MIN_RATIO, min(_GROUP_SIDEBAR_MAX_RATIO, ratio))
 
     def _normalize_group_characters(self, characters: list[str]) -> list[str]:
         result = []
@@ -1408,17 +1585,32 @@ class ChatWindow(QWidget):
             shell_layout = QHBoxLayout(self._shell)
             shell_layout.setContentsMargins(0, 0, 0, 0)
             shell_layout.setSpacing(0)
+            self._group_splitter = FluentSplitter(Qt.Orientation.Horizontal, self._shell)
+            self._group_splitter.setObjectName("GroupChatSplitter")
+            self._group_splitter.setChildrenCollapsible(False)
+            self._group_splitter.setHandleWidth(10)
+            self._group_splitter.setOpaqueResize(True)
+            self._group_splitter.splitterMoved.connect(self._on_group_splitter_moved)
+            shell_layout.addWidget(self._group_splitter)
+
             self._group_sidebar = self._build_group_sidebar()
-            shell_layout.addWidget(self._group_sidebar, 1)
+            self._group_splitter.addWidget(self._group_sidebar)
 
             content = QWidget(self._shell)
             content.setObjectName("ChatContent")
+            content.setMinimumWidth(360)
             content_layout = QVBoxLayout(content)
             content_layout.setContentsMargins(0, 0, 0, 0)
             content_layout.setSpacing(0)
-            shell_layout.addWidget(content, 3)
+            self._group_splitter.addWidget(content)
+            self._group_splitter.setStretchFactor(0, 0)
+            self._group_splitter.setStretchFactor(1, 1)
+            if self._group_sidebar_collapsed:
+                self._group_sidebar.setVisible(False)
+            QTimer.singleShot(0, self._restore_group_splitter_sizes)
         else:
             self._group_sidebar = None
+            self._group_splitter = None
             shell_layout = QVBoxLayout(self._shell)
             shell_layout.setContentsMargins(0, 0, 0, 0)
             shell_layout.setSpacing(0)
@@ -1450,6 +1642,8 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._is_group_chat and not self._group_sidebar_collapsed:
+            self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
         self._relayout_message_bubbles()
 
@@ -1462,20 +1656,128 @@ class ChatWindow(QWidget):
             max(0, self._shell.height() - self._resize_grip.height() - inset),
         )
 
+    def _restore_group_splitter_sizes(self):
+        if not self._group_splitter:
+            return
+        if self._group_sidebar_collapsed:
+            self._set_group_sidebar_collapsed(True, persist=False)
+            return
+        self._apply_group_sidebar_ratio_to_splitter()
+
+    def _schedule_group_sidebar_ratio_apply(self):
+        if self._group_sidebar_ratio_timer.isActive():
+            self._group_sidebar_ratio_timer.stop()
+        self._group_sidebar_ratio_timer.start(0)
+
+    def _schedule_group_relayout(self):
+        if self._group_relayout_timer.isActive():
+            return
+        self._group_relayout_timer.start()
+
+    def _apply_group_sidebar_ratio_to_splitter(self):
+        if (
+            not self._group_splitter
+            or not self._group_sidebar
+            or self._group_sidebar_collapsed
+            or self._group_splitter_adjusting
+        ):
+            return
+        total = max(1, self._group_splitter.width())
+        min_width = self._group_sidebar.minimumWidth()
+        max_width = max(min_width, int(total * _GROUP_SIDEBAR_MAX_RATIO))
+        sidebar_width = int(total * self._group_sidebar_ratio)
+        sidebar_width = max(min_width, min(max_width, sidebar_width))
+        content_width = max(1, total - sidebar_width)
+        self._group_splitter_adjusting = True
+        self._group_splitter.setSizes([sidebar_width, content_width])
+        self._group_splitter_adjusting = False
+
+    def _on_group_splitter_moved(self, pos: int, index: int):
+        if self._group_splitter_adjusting or not self._group_splitter or self._group_sidebar_collapsed:
+            return
+        sizes = self._group_splitter.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return
+        ratio = self._normalized_group_sidebar_ratio(sizes[0] / total)
+        if abs(ratio - (sizes[0] / total)) > 0.001:
+            self._group_sidebar_ratio = ratio
+            self._apply_group_sidebar_ratio_to_splitter()
+        else:
+            self._group_sidebar_ratio = ratio
+        self._schedule_group_sidebar_settings_save()
+        self._schedule_group_relayout()
+
+    def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
+        if not self._is_group_chat or not self._group_splitter or not self._group_sidebar:
+            return
+        self._group_sidebar_collapsed = bool(collapsed)
+        self._group_sidebar.setVisible(not self._group_sidebar_collapsed)
+        if self._group_sidebar_collapsed:
+            self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
+        else:
+            self._schedule_group_sidebar_ratio_apply()
+        self._sync_group_sidebar_toggle_buttons()
+        self._apply_theme()
+        self._schedule_group_relayout()
+        if persist:
+            self._schedule_group_sidebar_settings_save()
+
+    def _toggle_group_sidebar(self):
+        self._set_group_sidebar_collapsed(not self._group_sidebar_collapsed)
+
+    def _sync_group_sidebar_toggle_buttons(self):
+        if self._group_toggle_btn is not None:
+            icon = FluentIcon.MENU if self._group_sidebar_collapsed else FluentIcon.CARE_LEFT_SOLID
+            self._group_toggle_btn.setIcon(icon.icon())
+            self._group_toggle_btn.setToolTip(
+                _tr("ChatWindow.group_list_expand")
+                if self._group_sidebar_collapsed
+                else _tr("ChatWindow.group_list_collapse")
+            )
+        if self._group_sidebar_toggle_btn is not None:
+            self._group_sidebar_toggle_btn.setIcon(FluentIcon.CARE_LEFT_SOLID.icon())
+            self._group_sidebar_toggle_btn.setToolTip(_tr("ChatWindow.group_list_collapse"))
+
+    def _schedule_group_sidebar_settings_save(self):
+        if self._cfg:
+            self._group_sidebar_save_timer.start(250)
+
+    def _save_group_sidebar_settings(self):
+        if not self._cfg:
+            return
+        self._cfg.set("group_chat_sidebar_ratio", self._group_sidebar_ratio)
+        self._cfg.set("group_chat_sidebar_collapsed", self._group_sidebar_collapsed)
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+
     def _build_group_sidebar(self):
         sidebar = RoundedPanel(self._shell)
         sidebar.setObjectName("GroupSidebar")
-        sidebar.setFixedWidth(220)
+        sidebar.setMinimumWidth(164)
+        sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(12, 12, 10, 12)
         layout.setSpacing(10)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         title = StrongBodyLabel(_tr("ChatWindow.group_list"), sidebar)
         title.setObjectName("GroupSidebarTitle")
+        title.setMinimumWidth(0)
+        header.addWidget(title, 1)
+        collapse_btn = TransparentToolButton(FluentIcon.CARE_LEFT_SOLID, sidebar)
+        collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        collapse_btn.setFixedSize(28, 28)
+        collapse_btn.clicked.connect(lambda: self._set_group_sidebar_collapsed(True))
+        header.addWidget(collapse_btn)
         subtitle = BodyLabel(_tr("ChatWindow.group_list_hint"), sidebar)
         subtitle.setObjectName("GroupSidebarSubtitle")
         subtitle.setWordWrap(True)
-        layout.addWidget(title)
+        layout.addLayout(header)
         layout.addWidget(subtitle)
 
         scroll = QScrollArea(sidebar)
@@ -1488,13 +1790,14 @@ class ChatWindow(QWidget):
         list_widget = QWidget(scroll)
         list_widget.setObjectName("GroupList")
         list_layout = QVBoxLayout(list_widget)
-        list_layout.setContentsMargins(0, 2, 4, 2)
-        list_layout.setSpacing(6)
+        list_layout.setContentsMargins(0, 2, 2, 2)
+        list_layout.setSpacing(4)
         scroll.setWidget(list_widget)
         layout.addWidget(scroll, 1)
 
         self._group_sidebar_title = title
         self._group_sidebar_subtitle = subtitle
+        self._group_sidebar_toggle_btn = collapse_btn
         self._group_list_scroll = scroll
         self._group_list_widget = list_widget
         self._group_list_layout = list_layout
@@ -1546,12 +1849,6 @@ class ChatWindow(QWidget):
             row.selected.connect(self._switch_group_chat)
             row.context_menu_requested.connect(self._show_group_chat_context_menu)
             self._group_list_layout.addWidget(row)
-            if idx < len(chats) - 1:
-                separator = QFrame(self._group_list_widget)
-                separator.setObjectName("GroupListSeparator")
-                separator.setFrameShape(QFrame.Shape.HLine)
-                separator.setFixedHeight(1)
-                self._group_list_layout.addWidget(separator)
         self._group_list_layout.addStretch()
 
     def _build_titlebar(self):
@@ -1584,6 +1881,13 @@ class ChatWindow(QWidget):
         layout.addLayout(title_stack)
         layout.addStretch()
 
+        if self._is_group_chat:
+            group_toggle_btn = IconButton(FluentIcon.CARE_LEFT_SOLID, bar)
+            group_toggle_btn.setFixedSize(32, 32)
+            group_toggle_btn.clicked.connect(self._toggle_group_sidebar)
+            layout.addWidget(group_toggle_btn)
+            self._group_toggle_btn = group_toggle_btn
+
         new_btn = IconButton(FluentIcon.ADD, bar)
         new_btn.setFixedSize(32, 32)
         new_btn.setToolTip(_tr("ChatWindow.new_chat"))
@@ -1600,6 +1904,7 @@ class ChatWindow(QWidget):
         self._title_avatar = avatar
         self._title_label = title
         self._update_title_avatar()
+        self._sync_group_sidebar_toggle_buttons()
 
         self._drag_start = None
 
@@ -1819,8 +2124,13 @@ class ChatWindow(QWidget):
         """)
 
         self._shell.set_panel_style(bg, border, 14, 1)
-        title_radius = (0, 14, 0, 0) if self._is_group_chat else (14, 14, 0, 0)
-        input_radius = (0, 0, 14, 0) if self._is_group_chat else (0, 0, 14, 14)
+        group_sidebar_visible = (
+            self._is_group_chat
+            and self._group_sidebar is not None
+            and not self._group_sidebar_collapsed
+        )
+        title_radius = (0, 14, 0, 0) if group_sidebar_visible else (14, 14, 0, 0)
+        input_radius = (0, 0, 14, 0) if group_sidebar_visible else (0, 0, 14, 14)
         self._titlebar.set_panel_style(title_bg, title_border, title_radius, 0)
         self._titlebar.setStyleSheet(f"""
             QLabel#TitleAvatar {{
@@ -1835,15 +2145,23 @@ class ChatWindow(QWidget):
             }}
         """)
 
+        if self._group_splitter is not None:
+            self._group_splitter.setStyleSheet(f"""
+                QSplitter#GroupChatSplitter {{
+                    background: transparent;
+                    border: none;
+                }}
+            """)
+
         if self._group_sidebar is not None:
-            sidebar_bg = "#151923" if dark else "#ffffff"
-            sidebar_border = "#242a37" if dark else "#e0e6f2"
-            self._group_sidebar.set_panel_style(sidebar_bg, sidebar_border, (14, 0, 0, 14), 0)
+            sidebar_bg = "#151923" if dark else "#f8fafd"
+            sidebar_border = "#242a37" if dark else "#e6ebf3"
+            self._group_sidebar.set_panel_style(sidebar_bg, "transparent", (14, 0, 0, 14), 0)
             self._group_sidebar.setStyleSheet(f"""
                 QLabel#GroupSidebarTitle {{
                     color: {text_color};
                     background: transparent;
-                    font-size: 15px;
+                    font-size: 14px;
                     font-weight: 700;
                 }}
                 QLabel#GroupSidebarSubtitle {{
@@ -1911,6 +2229,12 @@ class ChatWindow(QWidget):
         self._status_dot.setStyleSheet(f"background: {_TELEGRAM_ACCENT}; border-radius: 3px;")
         self._new_btn.apply_theme()
         self._close_btn.apply_theme()
+        if self._group_toggle_btn is not None:
+            self._group_toggle_btn.apply_theme()
+        if self._group_sidebar_toggle_btn is not None:
+            if hasattr(self._group_sidebar_toggle_btn, "apply_theme"):
+                self._group_sidebar_toggle_btn.apply_theme()
+        self._sync_group_sidebar_toggle_buttons()
         self._send_btn.apply_theme()
         self._attach_btn.apply_theme()
         if getattr(self, "_resize_grip", None):
@@ -2923,6 +3247,7 @@ class ChatWindow(QWidget):
         self._pending_attachments = []
         self._update_attachment_hint()
         self._set_busy(True, planning=self._is_group_chat)
+        self._reset_tts_stream()
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
@@ -3108,6 +3433,10 @@ class ChatWindow(QWidget):
                 self._current_bubble.set_streaming(True)
                 self._scroll_to_bottom()
 
+        tts_clean = self._clean_tts_stream_text(text)
+        if tts_clean:
+            self._enqueue_tts_text(tts_clean, self._active_response_character)
+
         clean = strip_action_tags(text)
         if clean:
             self._stream_buffer += clean
@@ -3139,6 +3468,7 @@ class ChatWindow(QWidget):
 
         clean = strip_action_tags(full_text)
         reasoning_clean = strip_action_tags(reasoning_text)
+        self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
@@ -3216,6 +3546,7 @@ class ChatWindow(QWidget):
             self._current_bubble.set_text(f"Error: {error_msg}")
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
+        self._reset_tts_stream(stop_player=False)
         self._set_busy(False)
         self._input.setFocus()
         self._sync_input_height()
@@ -3232,6 +3563,221 @@ class ChatWindow(QWidget):
             self._seen_actions.add(key)
             self.action_triggered.emit(self._pending_action_character, action)
         self._pending_actions.clear()
+
+    def _tts_enabled(self) -> bool:
+        return bool(self._cfg and self._cfg.get("tts_enabled", False))
+
+    def _tts_config_snapshot(self) -> dict:
+        keys = (
+            "tts_api_url",
+            "tts_language",
+            "tts_reference_character",
+            "tts_streaming",
+            "tts_temperature",
+            "tts_translate_to_selected_language",
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+        )
+        return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
+
+    def _reset_tts_stream(self, stop_player: bool = True):
+        self._tts_text_buffer = ""
+        self._tts_tag_buffer = ""
+        self._tts_queue.clear()
+        self._clear_tts_bubble_highlights()
+        for worker in list(self._tts_active_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+        for worker in list(self._tts_translation_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+        self._tts_active_workers.clear()
+        self._tts_translation_workers.clear()
+        self._tts_audio_buffers.clear()
+        self._tts_bubbles.clear()
+        self._tts_characters.clear()
+        self._tts_completed_sequences.clear()
+        self._tts_generation += 1
+        self._tts_next_sequence = 0
+        self._tts_next_play_sequence = 0
+        self._tts_playing_sequence = None
+        if stop_player:
+            self._tts_player.stop()
+
+    def _enqueue_tts_text(self, text: str, character: str):
+        if not self._tts_enabled():
+            return
+        text = strip_tts_action_tags(text)
+        if not text:
+            return
+        self._tts_text_buffer += text
+
+    def _flush_tts_text(self, character: str):
+        if not self._tts_enabled():
+            return
+        self._tts_tag_buffer = ""
+        text = flush_tts_sentence(self._tts_text_buffer)
+        self._tts_text_buffer = ""
+        if text:
+            sequence = self._tts_next_sequence
+            self._tts_next_sequence += 1
+            if self._current_bubble:
+                self._tts_bubbles[sequence] = self._current_bubble
+            self._tts_characters[sequence] = character
+            self._queue_tts_request(sequence, text, character)
+        self._start_next_tts_request()
+
+    def _clear_tts_bubble_highlights(self):
+        for bubble in self._tts_bubbles.values():
+            bubble.set_tts_playing(False)
+
+    def _set_tts_bubble_playing(self, sequence: int | None):
+        for seq, bubble in list(self._tts_bubbles.items()):
+            bubble.set_tts_playing(sequence is not None and seq == sequence)
+
+    def _queue_tts_request(self, sequence: int, text: str, character: str):
+        if self._tts_should_translate():
+            worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, self._tts_config_snapshot(), self)
+            self._tts_translation_workers[sequence] = worker
+            worker.translated.connect(self._on_tts_translation_ready)
+            worker.error.connect(self._on_tts_error)
+            worker.finished.connect(self._on_tts_translation_finished)
+            worker.start()
+            return
+        self._tts_queue.append((sequence, text, character))
+
+    def _tts_should_translate(self) -> bool:
+        if not self._cfg or not self._cfg.get("tts_translate_to_selected_language", True):
+            return False
+        language = self._cfg.get("tts_language", "Chinese") or "Chinese"
+        return language not in {"Chinese", "zh", "中文"}
+
+    def _clean_tts_stream_text(self, text: str) -> str:
+        source = self._tts_tag_buffer + text
+        self._tts_tag_buffer = ""
+        output = []
+        i = 0
+        while i < len(source):
+            if source[i] != "[":
+                output.append(source[i])
+                i += 1
+                continue
+
+            end = source.find("]", i + 1)
+            if end < 0:
+                fragment = source[i:]
+                if re.fullmatch(r"\[[A-Za-z0-9_.\-]*", fragment):
+                    self._tts_tag_buffer = fragment
+                else:
+                    output.append(source[i])
+                    output.append(fragment[1:])
+                break
+
+            tag = source[i + 1:end]
+            if tag == "DONE" or re.fullmatch(r"[A-Za-z0-9_.\-]+", tag):
+                i = end + 1
+                continue
+            output.append(source[i:end + 1])
+            i = end + 1
+        return "".join(output)
+
+    def _start_next_tts_request(self):
+        if self._tts_active_workers or self._tts_playing_sequence is not None or not self._tts_player.is_idle():
+            return
+        next_index = next((i for i, item in enumerate(self._tts_queue) if item[0] == self._tts_next_play_sequence), None)
+        if next_index is None:
+            return
+        sequence, text, character = self._tts_queue.pop(next_index)
+        config = self._tts_config_snapshot()
+        config["tts_translate_to_selected_language"] = False
+        worker = TTSRequestWorker(sequence, self._tts_generation, text, character, config, self)
+        self._tts_active_workers[sequence] = worker
+        worker.audio_ready.connect(self._on_tts_audio_ready)
+        worker.error.connect(self._on_tts_error)
+        worker.finished.connect(self._on_tts_worker_finished)
+        worker.start()
+
+    def _on_tts_translation_ready(self, sequence: int, generation: int, text: str, character: str):
+        if generation != self._tts_generation or sequence not in self._tts_translation_workers:
+            return
+        self._tts_queue.append((sequence, text, character))
+        self._start_next_tts_request()
+
+    def _on_tts_translation_finished(self):
+        worker = self.sender()
+        sequence = getattr(worker, "sequence", None)
+        if sequence is None or self._tts_translation_workers.get(sequence) is not worker:
+            return
+        self._tts_translation_workers.pop(sequence, None)
+
+    def _on_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
+        if generation != self._tts_generation or sequence not in self._tts_active_workers:
+            return
+        if sequence < self._tts_next_play_sequence:
+            return
+        if sequence == self._tts_next_play_sequence:
+            if self._tts_playing_sequence is None:
+                self._tts_playing_sequence = sequence
+                self._set_tts_bubble_playing(sequence)
+            if self._tts_playing_sequence == sequence:
+                self._tts_player.enqueue(audio, media_type)
+                return
+        self._tts_audio_buffers.setdefault(sequence, []).append((audio, media_type))
+
+    def _on_tts_error(self, error_msg: str):
+        del error_msg
+
+    def _on_tts_level_changed(self, level: float):
+        character = self._tts_characters.get(self._tts_playing_sequence)
+        if character:
+            publish_lip_sync(character, level)
+
+    def _on_tts_playback_finished(self):
+        self._release_tts_audio_in_order()
+        self._start_next_tts_request()
+
+    def _on_tts_worker_finished(self):
+        worker = self.sender()
+        sequence = getattr(worker, "sequence", None)
+        generation = getattr(worker, "generation", None)
+        if generation != self._tts_generation or sequence is None or self._tts_active_workers.get(sequence) is not worker:
+            return
+        self._tts_active_workers.pop(sequence, None)
+        self._tts_completed_sequences.add(sequence)
+        self._release_tts_audio_in_order()
+        self._start_next_tts_request()
+
+    def _release_tts_audio_in_order(self):
+        if self._tts_playing_sequence is not None:
+            if self._tts_playing_sequence not in self._tts_completed_sequences or not self._tts_player.is_idle():
+                return
+            sequence = self._tts_playing_sequence
+            for audio, media_type in self._tts_audio_buffers.pop(sequence, []):
+                self._tts_player.enqueue(audio, media_type)
+            if not self._tts_player.is_idle():
+                return
+            self._tts_completed_sequences.remove(sequence)
+            self._tts_next_play_sequence = sequence + 1
+            self._tts_playing_sequence = None
+            self._set_tts_bubble_playing(None)
+            self._tts_bubbles.pop(sequence, None)
+            self._tts_characters.pop(sequence, None)
+
+        while self._tts_next_play_sequence in self._tts_completed_sequences and not self._tts_audio_buffers.get(self._tts_next_play_sequence):
+            self._tts_bubbles.pop(self._tts_next_play_sequence, None)
+            self._tts_characters.pop(self._tts_next_play_sequence, None)
+            self._tts_completed_sequences.remove(self._tts_next_play_sequence)
+            self._tts_next_play_sequence += 1
+
+        buffers = self._tts_audio_buffers.pop(self._tts_next_play_sequence, [])
+        if not buffers:
+            return
+        self._tts_playing_sequence = self._tts_next_play_sequence
+        self._set_tts_bubble_playing(self._tts_playing_sequence)
+        for audio, media_type in buffers:
+            self._tts_player.enqueue(audio, media_type)
 
     def emit_action_for_ipc(self, character: str, action: str):
         publish_action(character, action)
@@ -3274,7 +3820,16 @@ class ChatWindow(QWidget):
         if self._group_plan_worker and self._group_plan_worker.isRunning():
             self._group_plan_worker.quit()
             self._group_plan_worker.wait(2000)
+        for worker in list(self._tts_active_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1000)
+        for worker in list(self._tts_translation_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1000)
         self._stream_flush_timer.stop()
+        self._tts_player.stop()
         self._db.close()
         self.closed.emit()
         super().closeEvent(event)

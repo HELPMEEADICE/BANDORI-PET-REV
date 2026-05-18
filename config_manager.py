@@ -42,6 +42,8 @@ DEFAULTS = {
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
     "chat_avatar_paths": {},
+    "group_chat_sidebar_ratio": 0.28,
+    "group_chat_sidebar_collapsed": False,
     "pov_mode": "off",
     "pov_custom_prompt": "",
     "pov_custom_personas": [],
@@ -57,6 +59,13 @@ DEFAULTS = {
     "ai_status_port_enabled": False,
     "ai_status_port": 38472,
     "ai_status_token": "",
+    "tts_enabled": False,
+    "tts_api_url": "http://127.0.0.1:9880/",
+    "tts_language": "Chinese",
+    "tts_reference_character": "",
+    "tts_streaming": True,
+    "tts_temperature": 0.9,
+    "tts_translate_to_selected_language": True,
 }
 
 MODEL_DEFAULTS = {

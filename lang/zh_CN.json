@@ -348,6 +348,8 @@
     "ChatWindow.group_chat_named": "群聊：{members}",
     "ChatWindow.group_list": "群聊列表",
     "ChatWindow.group_list_hint": "只显示聊过的群聊；切换时不改变桌面模型显示。",
+    "ChatWindow.group_list_collapse": "收起群聊列表",
+    "ChatWindow.group_list_expand": "展开群聊列表",
     "ChatWindow.rename_group": "修改群聊名称",
     "ChatWindow.rename_group_title": "修改群聊名称",
     "ChatWindow.rename_group_label": "输入新的群聊显示名称，留空恢复默认名称：",

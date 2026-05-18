@@ -52,6 +52,9 @@ class Live2DWidget(QOpenGLWidget):
         self._static_render = False
         self._static_render_done = False
         self._clear_color = (0.0, 0.0, 0.0, 0.0)
+        self._lip_sync_level = 0.0
+        self._lip_sync_target = 0.0
+        self._lip_sync_last_ms = -1000
         self._hit_alpha_threshold = 8
         self._hit_probe_offsets = (
             (0, 0),
@@ -156,6 +159,11 @@ class Live2DWidget(QOpenGLWidget):
     def set_clear_color(self, r: float, g: float, b: float, a: float):
         self._clear_color = (r, g, b, a)
         self._static_render_done = False
+        self.update()
+
+    def set_lip_sync_level(self, level: float):
+        self._lip_sync_target = max(0.0, min(float(level), 0.55))
+        self._lip_sync_last_ms = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
         self.update()
 
     def set_live2d_module(self, module):
@@ -447,9 +455,23 @@ class Live2DWidget(QOpenGLWidget):
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
         
         self._model.Update()
+        self._apply_lip_sync()
         self._model.Draw()
         if self._static_render:
             self._static_render_done = True
+
+    def _apply_lip_sync(self):
+        if not self._model:
+            return
+        now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
+        target = self._lip_sync_target if now - self._lip_sync_last_ms <= 180 else 0.0
+        self._lip_sync_level += (target - self._lip_sync_level) * 0.55
+        if self._lip_sync_level < 0.01:
+            self._lip_sync_level = 0.0
+        try:
+            self._model.SetParameterValue("PARAM_MOUTH_OPEN_Y", self._lip_sync_level, 1.0)
+        except Exception:
+            pass
 
     # --------------------------------------------------------------------------
     # 碰撞检测 & Alpha 抓取逻辑

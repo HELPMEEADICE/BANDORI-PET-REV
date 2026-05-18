@@ -180,7 +180,7 @@ def main():
             handle_ipc_line(raw_line.rstrip("\r\n"))
 
     def handle_ipc_line(line: str):
-        if line.startswith("ACTION\t"):
+        if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
         elif line.startswith("AI_EVENT\t"):
             broadcast_ipc_line(line)
