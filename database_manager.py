@@ -512,6 +512,45 @@ class DatabaseManager:
         ).fetchall()
         return [_memory_row_dict(row) for row in rows]
 
+    def update_character_memory(
+        self,
+        memory_id: int,
+        character: str,
+        user_key: str,
+        kind: str,
+        content: str,
+        importance: int = 50,
+    ) -> bool:
+        user_key = self._normalize_user_key(user_key)
+        content = str(content or "").strip()
+        if not memory_id or not content:
+            return False
+        kind = (kind or "note").strip() or "note"
+        importance = _clamp_int(importance, 1, 100, 50)
+        cur = self._conn.execute(
+            "UPDATE character_memories "
+            "SET kind=?, content=?, importance=?, updated_at=? "
+            "WHERE id=? AND character=? AND user_key=?",
+            (kind, content, importance, _now_text(), memory_id, character, user_key),
+        )
+        self._conn.commit()
+        return bool(cur.rowcount)
+
+    def delete_character_memory(self, memory_id: int, character: str = "", user_key: str = "") -> bool:
+        if not memory_id:
+            return False
+        params: list = [memory_id]
+        where = "id=?"
+        if character:
+            where += " AND character=?"
+            params.append(character)
+        if user_key:
+            where += " AND user_key=?"
+            params.append(self._normalize_user_key(user_key))
+        cur = self._conn.execute(f"DELETE FROM character_memories WHERE {where}", params)
+        self._conn.commit()
+        return bool(cur.rowcount)
+
     def delete_character_memories_like(self, character: str, user_key: str, query: str) -> int:
         user_key = self._normalize_user_key(user_key)
         query = str(query or "").strip()

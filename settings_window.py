@@ -42,6 +42,14 @@ from app_theme import (
     accent_color,
     apply_app_theme,
 )
+from database_manager import DatabaseManager
+from relationship_memory import (
+    MEMORY_KIND_LABELS,
+    affection_label,
+    display_user_name,
+    mood_label,
+    user_key_from_config,
+)
 
 import json
 
@@ -83,6 +91,7 @@ CLICK_MOTION_SCOPES = {
     CLICK_MOTION_SCOPE_CHARACTER,
     CLICK_MOTION_SCOPE_COSTUME,
 }
+MEMORY_KIND_ORDER = ("profile", "preference", "relationship", "manual", "note")
 
 
 def _app_icon_path() -> str:
@@ -787,6 +796,10 @@ class SettingsWindow(QWidget):
         self._costume_page = None
         self._llm_page = None
         self._pov_page = None
+        self._memory_page = None
+        self._memory_db = None
+        self._memory_items: list[dict] = []
+        self._selected_memory_id = 0
         self._compact_window_page = None
         self._quality_page = None
         self._about_page = None
@@ -910,6 +923,12 @@ class SettingsWindow(QWidget):
     def closeEvent(self, event):
         self._dispose_live2d_preview()
         self._cleanup_workers()
+        if self._memory_db is not None:
+            try:
+                self._memory_db.close()
+            except Exception:
+                pass
+            self._memory_db = None
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -1074,6 +1093,9 @@ class SettingsWindow(QWidget):
         if key in {"llm", "pov"}:
             self._ensure_llm_and_pov_pages()
             return self._pages.get(key)
+        if key == "memory":
+            self._memory_page = self._add_lazy_page("memory", self._build_memory_page())
+            return self._memory_page
         if key == "compact_window":
             self._compact_window_page = self._add_lazy_page("compact_window", self._build_compact_window_page())
             return self._compact_window_page
@@ -1141,6 +1163,11 @@ class SettingsWindow(QWidget):
         self._nav_buttons["pov"] = btn_pov
         layout.addWidget(btn_pov)
 
+        btn_memory = NavButton("memory", FluentIcon.HISTORY, _tr("SettingsWindow.nav_memory"), sidebar)
+        btn_memory.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["memory"] = btn_memory
+        layout.addWidget(btn_memory)
+
         btn_compact = NavButton("compact_window", FluentIcon.ROBOT, _tr("SettingsWindow.nav_compact_window"), sidebar)
         btn_compact.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["compact_window"] = btn_compact
@@ -1193,6 +1220,8 @@ class SettingsWindow(QWidget):
         else:
             self._costume_page.hide()
             page.show()
+            if nav_key == "memory":
+                self._refresh_memory_page()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -2531,6 +2560,405 @@ class SettingsWindow(QWidget):
         layout.addLayout(btn_row)
 
         return page
+
+    def _build_memory_page(self):
+        page = self._make_theme_widget(QWidget())
+        page.setObjectName("memoryPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        title = TitleLabel(_tr("SettingsWindow.memory_title"), page)
+        layout.addWidget(title)
+        subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.memory_subtitle"), page))
+        layout.addWidget(subtitle)
+
+        selector_row = QHBoxLayout()
+        selector_row.setContentsMargins(0, 0, 0, 0)
+        selector_row.setSpacing(10)
+        selector_row.addWidget(BodyLabel(_tr("SettingsWindow.memory_character"), page))
+        self._memory_character_combo = OpaqueDropDownComboBox(page)
+        self._memory_character_combo.setFixedHeight(36)
+        selected_character = self._current_char or self._selected_list_character
+        selected_index = 0
+        for index, char_key in enumerate(self._model_manager.characters):
+            self._memory_character_combo.addItem(
+                self._model_manager.get_display_name(char_key),
+                userData=char_key,
+            )
+            if char_key == selected_character:
+                selected_index = index
+        self._memory_character_combo.setCurrentIndex(selected_index)
+        self._memory_character_combo.currentIndexChanged.connect(lambda _i: self._refresh_memory_page())
+        selector_row.addWidget(self._memory_character_combo, 1)
+        self._memory_user_label = BodyLabel("", page)
+        self._memory_user_label.setMinimumWidth(0)
+        selector_row.addWidget(self._memory_user_label, 1)
+        layout.addLayout(selector_row)
+
+        status_panel = QWidget(page)
+        status_panel.setObjectName("memoryStatusPanel")
+        status_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        status_layout = QGridLayout(status_panel)
+        status_layout.setContentsMargins(16, 14, 16, 14)
+        status_layout.setHorizontalSpacing(18)
+        status_layout.setVerticalSpacing(8)
+        self._memory_affection_value = StrongBodyLabel("", status_panel)
+        self._memory_trust_value = StrongBodyLabel("", status_panel)
+        self._memory_familiarity_value = StrongBodyLabel("", status_panel)
+        self._memory_mood_value = StrongBodyLabel("", status_panel)
+        self._memory_updated_value = BodyLabel("", status_panel)
+        for column, (label_key, value_label) in enumerate((
+            ("SettingsWindow.memory_affection", self._memory_affection_value),
+            ("SettingsWindow.memory_trust", self._memory_trust_value),
+            ("SettingsWindow.memory_familiarity", self._memory_familiarity_value),
+            ("SettingsWindow.memory_mood", self._memory_mood_value),
+        )):
+            caption = BodyLabel(_tr(label_key), status_panel)
+            caption.setObjectName("memoryStatCaption")
+            status_layout.addWidget(caption, 0, column)
+            status_layout.addWidget(value_label, 1, column)
+        self._memory_updated_value.setObjectName("memoryUpdated")
+        status_layout.addWidget(self._memory_updated_value, 2, 0, 1, 4)
+        layout.addWidget(status_panel)
+
+        memory_title = SubtitleLabel(_tr("SettingsWindow.memory_editor_title"), page)
+        layout.addWidget(memory_title)
+        memory_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.memory_editor_hint"), page))
+        memory_hint.setObjectName("memoryHint")
+        layout.addWidget(memory_hint)
+
+        self._memory_item_combo = OpaqueDropDownComboBox(page)
+        self._memory_item_combo.setFixedHeight(36)
+        self._memory_item_combo.currentIndexChanged.connect(self._on_memory_item_selected)
+        layout.addWidget(self._memory_item_combo)
+
+        edit_row = QHBoxLayout()
+        edit_row.setContentsMargins(0, 0, 0, 0)
+        edit_row.setSpacing(10)
+        edit_row.addWidget(BodyLabel(_tr("SettingsWindow.memory_kind"), page))
+        self._memory_kind_combo = OpaqueDropDownComboBox(page)
+        self._memory_kind_combo.setFixedHeight(36)
+        for kind in MEMORY_KIND_ORDER:
+            self._memory_kind_combo.addItem(self._memory_kind_label(kind), userData=kind)
+        edit_row.addWidget(self._memory_kind_combo, 1)
+        edit_row.addSpacing(8)
+        edit_row.addWidget(BodyLabel(_tr("SettingsWindow.memory_importance"), page))
+        self._memory_importance_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._memory_importance_slider.setRange(1, 100)
+        self._memory_importance_slider.setSingleStep(1)
+        self._memory_importance_slider.setValue(70)
+        self._memory_importance_value = BodyLabel("70", page)
+        self._memory_importance_slider.valueChanged.connect(
+            lambda v: self._memory_importance_value.setText(str(v))
+        )
+        edit_row.addWidget(self._memory_importance_slider, 1)
+        edit_row.addWidget(self._memory_importance_value)
+        layout.addLayout(edit_row)
+
+        self._memory_content = FluentContextTextEdit(page)
+        self._memory_content.setPlaceholderText(_tr("SettingsWindow.memory_content_placeholder"))
+        self._memory_content.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._memory_content.setMinimumHeight(96)
+        self._memory_content.setMaximumHeight(150)
+        layout.addWidget(self._memory_content)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(8)
+        new_btn = PushButton(FluentIcon.ADD, _tr("SettingsWindow.memory_new"), page)
+        new_btn.setFixedHeight(36)
+        new_btn.clicked.connect(self._start_new_memory)
+        save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.memory_save"), page)
+        save_btn.setFixedHeight(36)
+        save_btn.clicked.connect(self._save_memory_item)
+        self._memory_delete_btn = PushButton(FluentIcon.DELETE, _tr("SettingsWindow.memory_delete"), page)
+        self._memory_delete_btn.setFixedHeight(36)
+        self._memory_delete_btn.clicked.connect(self._delete_memory_item)
+        refresh_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.memory_refresh"), page)
+        refresh_btn.setFixedHeight(36)
+        refresh_btn.clicked.connect(lambda: self._refresh_memory_page())
+        btn_row.addWidget(new_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(self._memory_delete_btn)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        command_panel = QWidget(page)
+        command_panel.setObjectName("memoryCommandPanel")
+        command_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        command_layout = QVBoxLayout(command_panel)
+        command_layout.setContentsMargins(16, 14, 16, 14)
+        command_layout.setSpacing(8)
+        command_layout.addWidget(SubtitleLabel(_tr("SettingsWindow.memory_commands_title"), command_panel))
+        for key in (
+            "SettingsWindow.memory_command_status",
+            "SettingsWindow.memory_command_remember",
+            "SettingsWindow.memory_command_forget",
+        ):
+            line = BodyLabel(_tr(key), command_panel)
+            line.setWordWrap(True)
+            line.setObjectName("memoryCommandLine")
+            command_layout.addWidget(line)
+        layout.addWidget(command_panel)
+
+        layout.addStretch()
+        self._style_memory_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_memory_page(page))
+        self._refresh_memory_page()
+        return page
+
+    def _memory_database(self) -> DatabaseManager:
+        if self._memory_db is None:
+            self._memory_db = DatabaseManager()
+        return self._memory_db
+
+    @staticmethod
+    def _memory_kind_label(kind: str) -> str:
+        return _tr(
+            f"SettingsWindow.memory_kind_{kind}",
+            default=MEMORY_KIND_LABELS.get(kind, kind or "note"),
+        )
+
+    def _selected_memory_character(self) -> str:
+        if not hasattr(self, "_memory_character_combo"):
+            return self._current_char or (self._model_manager.characters[0] if self._model_manager.characters else "")
+        character = self._memory_character_combo.itemData(self._memory_character_combo.currentIndex())
+        return character or self._current_char or (self._model_manager.characters[0] if self._model_manager.characters else "")
+
+    def _memory_page_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_memory_character_combo",
+                "_memory_user_label",
+                "_memory_affection_value",
+                "_memory_trust_value",
+                "_memory_familiarity_value",
+                "_memory_mood_value",
+                "_memory_updated_value",
+                "_memory_item_combo",
+                "_memory_kind_combo",
+                "_memory_importance_slider",
+                "_memory_content",
+                "_memory_delete_btn",
+            )
+        )
+
+    def _memory_item_title(self, memory: dict) -> str:
+        kind = self._memory_kind_label(memory.get("kind", "note"))
+        content = str(memory.get("content", "") or "").replace("\n", " ").strip()
+        if len(content) > 56:
+            content = content[:56].rstrip() + "..."
+        return f"{kind} - {content or _tr('SettingsWindow.memory_empty_content')}"
+
+    def _set_memory_kind(self, kind: str):
+        for index in range(self._memory_kind_combo.count()):
+            if self._memory_kind_combo.itemData(index) == kind:
+                self._memory_kind_combo.setCurrentIndex(index)
+                return
+        self._memory_kind_combo.setCurrentIndex(0)
+
+    def _refresh_memory_page(self, prefer_memory_id: int | None = None):
+        if not self._memory_page_ready():
+            return
+        character = self._selected_memory_character()
+        if not character:
+            return
+        db = self._memory_database()
+        user_key = user_key_from_config(self._cfg)
+        user_display = display_user_name(user_key) or _tr("SettingsWindow.memory_default_user")
+        self._memory_user_label.setText(_tr("SettingsWindow.memory_current_user", display=user_display))
+
+        state = db.get_relationship_state(character, user_key)
+        self._memory_affection_value.setText(
+            _tr(
+                "SettingsWindow.memory_affection_value",
+                value=state["affection"],
+                label=affection_label(state["affection"]),
+            )
+        )
+        self._memory_trust_value.setText(_tr("SettingsWindow.memory_score_value", value=state["trust"]))
+        self._memory_familiarity_value.setText(_tr("SettingsWindow.memory_score_value", value=state["familiarity"]))
+        self._memory_mood_value.setText(
+            _tr(
+                "SettingsWindow.memory_mood_value",
+                mood=mood_label(state["mood"]),
+                value=state["mood_intensity"],
+            )
+        )
+        updated_at = state.get("updated_at") or _tr("SettingsWindow.memory_never_updated")
+        self._memory_updated_value.setText(_tr("SettingsWindow.memory_updated_at", time=updated_at))
+
+        self._memory_items = db.get_character_memories(character, user_key, limit=100)
+        target_id = self._selected_memory_id if prefer_memory_id is None else int(prefer_memory_id or 0)
+        selected_index = 0
+        self._memory_item_combo.blockSignals(True)
+        self._memory_item_combo.clear()
+        self._memory_item_combo.addItem(_tr("SettingsWindow.memory_new_item"), userData=0)
+        for memory in self._memory_items:
+            self._memory_item_combo.addItem(self._memory_item_title(memory), userData=memory["id"])
+            if memory["id"] == target_id:
+                selected_index = self._memory_item_combo.count() - 1
+        self._memory_item_combo.setCurrentIndex(selected_index)
+        self._memory_item_combo.blockSignals(False)
+        self._on_memory_item_selected(selected_index)
+
+    def _on_memory_item_selected(self, index: int):
+        if not self._memory_page_ready():
+            return
+        memory_id = int(self._memory_item_combo.itemData(index) or 0)
+        self._selected_memory_id = memory_id
+        memory = next((item for item in self._memory_items if item.get("id") == memory_id), None)
+        if memory:
+            self._set_memory_kind(memory.get("kind", "note"))
+            self._memory_importance_slider.setValue(max(1, min(100, int(memory.get("importance") or 50))))
+            self._memory_content.setPlainText(memory.get("content", "") or "")
+            self._memory_delete_btn.setEnabled(True)
+            return
+        self._set_memory_kind("profile")
+        self._memory_importance_slider.setValue(70)
+        self._memory_content.clear()
+        self._memory_delete_btn.setEnabled(False)
+
+    def _start_new_memory(self):
+        if not self._memory_page_ready():
+            return
+        self._memory_item_combo.setCurrentIndex(0)
+        self._memory_content.setFocus()
+
+    def _save_memory_item(self):
+        if not self._memory_page_ready():
+            return
+        content = self._memory_content.toPlainText().strip()
+        if not content:
+            InfoBar.warning(
+                _tr("SettingsWindow.memory_empty_title"),
+                _tr("SettingsWindow.memory_empty_content"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        character = self._selected_memory_character()
+        user_key = user_key_from_config(self._cfg)
+        kind = self._memory_kind_combo.itemData(self._memory_kind_combo.currentIndex()) or "note"
+        importance = self._memory_importance_slider.value()
+        try:
+            if self._selected_memory_id:
+                saved = self._memory_database().update_character_memory(
+                    self._selected_memory_id,
+                    character,
+                    user_key,
+                    kind,
+                    content,
+                    importance,
+                )
+                memory_id = self._selected_memory_id if saved else 0
+            else:
+                memory_id = 0
+            if not memory_id:
+                memory_id = self._memory_database().add_character_memory(
+                    character,
+                    user_key,
+                    kind,
+                    content,
+                    importance,
+                )
+            self._refresh_memory_page(memory_id)
+            InfoBar.success(
+                _tr("SettingsWindow.memory_saved_title"),
+                _tr("SettingsWindow.memory_saved_content"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.memory_failed_title"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+    def _delete_memory_item(self):
+        if not self._memory_page_ready() or not self._selected_memory_id:
+            return
+        reply = QMessageBox.warning(
+            self,
+            _tr("SettingsWindow.memory_delete_confirm_title"),
+            _tr("SettingsWindow.memory_delete_confirm_content"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        character = self._selected_memory_character()
+        user_key = user_key_from_config(self._cfg)
+        try:
+            self._memory_database().delete_character_memory(self._selected_memory_id, character, user_key)
+            self._selected_memory_id = 0
+            self._refresh_memory_page(0)
+            InfoBar.success(
+                _tr("SettingsWindow.memory_deleted_title"),
+                _tr("SettingsWindow.memory_deleted_content"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.memory_failed_title"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+    def _style_memory_page(self, page: QWidget):
+        dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
+        panel_bg = "#252525" if dark else "#ffffff"
+        panel_border = "#3b3b3b" if dark else "#e4d9df"
+        muted = "#a7b0bf" if dark else "#687385"
+        text = "#f3f3f6" if dark else "#202126"
+        input_bg = "#282828" if dark else "#ffffff"
+        input_border = "#505050" if dark else "#d0d0d0"
+        page.setStyleSheet(f"""
+            QWidget#memoryPage {{
+                background: {page_bg};
+            }}
+            QWidget#memoryStatusPanel,
+            QWidget#memoryCommandPanel {{
+                background: {panel_bg};
+                border: 1px solid {panel_border};
+                border-radius: 12px;
+            }}
+            BodyLabel#memoryStatCaption,
+            BodyLabel#memoryUpdated,
+            BodyLabel#memoryHint {{
+                color: {muted};
+                font-size: 13px;
+            }}
+            BodyLabel#memoryCommandLine {{
+                color: {text};
+                font-size: 13px;
+            }}
+            QTextEdit {{
+                background: {input_bg};
+                color: {text};
+                border: 1px solid {input_border};
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }}
+            QTextEdit:focus {{
+                border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY};
+            }}
+        """)
 
     def _build_compact_window_page(self):
         page = self._make_theme_widget(QWidget())
