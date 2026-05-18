@@ -178,6 +178,13 @@ LIVE2D_BASE_WIDTH = 400
 LIVE2D_BASE_HEIGHT = 500
 LIVE2D_SCALE_MIN = 25
 LIVE2D_SCALE_MAX = 500
+LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
+LIVE2D_DAZE_AFTER_SECONDS = 7 * 60
+LIVE2D_SLEEP_AFTER_SECONDS = 18 * 60
+LIVE2D_AMBIENT_COOLDOWN_SECONDS = 90
+LIVE2D_MOUSE_APPROACH_COOLDOWN_SECONDS = 35
+LIVE2D_MOUSE_APPROACH_RADIUS = 230
+LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 310
 
 
 def _clamp_live2d_scale(value) -> int:
@@ -232,6 +239,12 @@ class PetWindow(QWidget):
         self._motion_guard_token = 0
         self._expression_guard_token = 0
         self._click_expression_hold_until = 0.0
+        now = time.monotonic()
+        self._last_user_interaction_at = now
+        self._last_context_idle_action_at = 0.0
+        self._last_mouse_approach_action_at = 0.0
+        self._cursor_was_near_live2d = False
+        self._daily_context_idle_seen = set()
         self._mouse_passthrough = False
         # QOpenGLWidget alpha reads are not reliable during WM_NCHITTEST on
         # Windows 11; keep hit sampling on the Qt timer path.
@@ -242,6 +255,9 @@ class PetWindow(QWidget):
         self._topmost_timer = QTimer(self)
         self._topmost_timer.setInterval(1000)
         self._topmost_timer.timeout.connect(self._enforce_game_topmost)
+        self._context_idle_timer = QTimer(self)
+        self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
+        self._context_idle_timer.timeout.connect(self._tick_context_idle_behavior)
         self._ipc_socket = QLocalSocket(self)
         self._ipc_buffer = ""
         self._ipc_reconnect_timer = QTimer(self)
@@ -261,6 +277,7 @@ class PetWindow(QWidget):
             self._init_tray()
         self._load_initial_model()
         self._passthrough_timer.start()
+        self._context_idle_timer.start()
         self._update_game_topmost_timer()
         self._connect_ipc_socket()
         QApplication.instance().installEventFilter(self)
@@ -671,6 +688,7 @@ class PetWindow(QWidget):
         path = self._model_manager.get_model_json_path(character, costume)
         if not path:
             return
+        self._note_user_interaction()
         self._close_chat_process()
         self._current_char = character
         self._current_costume = costume
@@ -684,8 +702,207 @@ class PetWindow(QWidget):
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
+        self._last_context_idle_action_at = 0.0
+        self._cursor_was_near_live2d = False
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
+
+    def _note_user_interaction(self):
+        self._last_user_interaction_at = time.monotonic()
+        self._last_context_idle_action_at = self._last_user_interaction_at
+
+    def _tick_context_idle_behavior(self):
+        if self._pixel_mode or not self.isVisible():
+            return
+        model = self._live2d_widget.model
+        if model is None or self._is_pet_dragging():
+            return
+        self._maybe_trigger_mouse_approach_behavior()
+        if self._radial_menu is not None and self._radial_menu.isVisible():
+            return
+        now = time.monotonic()
+        if now - self._last_context_idle_action_at < LIVE2D_AMBIENT_COOLDOWN_SECONDS:
+            return
+        idle_seconds = now - self._last_user_interaction_at
+        action_kind = self._context_idle_kind(idle_seconds)
+        if not action_kind:
+            return
+        if self._start_context_idle_behavior(action_kind):
+            self._last_context_idle_action_at = now
+            if action_kind == "morning":
+                self._daily_context_idle_seen.add(f"{time.strftime('%Y-%m-%d')}:morning")
+
+    def _context_idle_kind(self, idle_seconds: float) -> str:
+        hour = time.localtime().tm_hour
+        today = time.strftime("%Y-%m-%d")
+        if 5 <= hour < 10 and f"{today}:morning" not in self._daily_context_idle_seen:
+            return "morning"
+        if idle_seconds >= LIVE2D_SLEEP_AFTER_SECONDS:
+            return "sleep"
+        if (hour >= 23 or hour < 5) and idle_seconds >= 90:
+            return "late_night"
+        if idle_seconds >= LIVE2D_DAZE_AFTER_SECONDS:
+            return "daze"
+        return ""
+
+    def _maybe_trigger_mouse_approach_behavior(self):
+        if self._radial_menu is not None and self._radial_menu.isVisible():
+            return
+        cursor = QCursor.pos()
+        approach_radius = max(
+            LIVE2D_MOUSE_APPROACH_RADIUS,
+            min(480, int(max(self.width(), self.height()) * 0.55)),
+        )
+        exit_radius = max(LIVE2D_MOUSE_APPROACH_EXIT_RADIUS, approach_radius + 80)
+        if not self.geometry().adjusted(
+            -exit_radius,
+            -exit_radius,
+            exit_radius,
+            exit_radius,
+        ).contains(cursor):
+            self._cursor_was_near_live2d = False
+            return
+        center = self.geometry().center()
+        dx = cursor.x() - center.x()
+        dy = cursor.y() - center.y()
+        dist_sq = dx * dx + dy * dy
+        if dist_sq > exit_radius * exit_radius:
+            self._cursor_was_near_live2d = False
+            return
+        near = dist_sq <= approach_radius * approach_radius
+        if not near:
+            return
+        now = time.monotonic()
+        if self._cursor_was_near_live2d:
+            return
+        self._cursor_was_near_live2d = True
+        if now - self._last_user_interaction_at < 6:
+            return
+        if now - self._last_mouse_approach_action_at < LIVE2D_MOUSE_APPROACH_COOLDOWN_SECONDS:
+            return
+        if self._start_context_idle_behavior("approach"):
+            self._last_mouse_approach_action_at = now
+
+    def _start_context_idle_behavior(self, kind: str) -> bool:
+        model = self._live2d_widget.model
+        if model is None:
+            return False
+        try:
+            if not model.IsMotionFinished():
+                return False
+        except Exception:
+            pass
+
+        motion_names = self._current_motion_names()
+        motion = self._choose_context_idle_motion(kind, motion_names)
+        expression = self._choose_context_idle_expression(kind)
+        if not motion and not expression:
+            return False
+
+        started = False
+        if motion:
+            self._motion_guard_token += 1
+            token = self._motion_guard_token
+            try:
+                model.StartRandomMotion(
+                    motion,
+                    priority=self._live2d.MotionPriority.FORCE,
+                    onFinishMotionHandler=self._on_motion_finished,
+                )
+                started = True
+            except Exception:
+                try:
+                    model.StartMotion(
+                        motion,
+                        0,
+                        self._live2d.MotionPriority.FORCE,
+                        onFinishMotionHandler=self._on_motion_finished,
+                    )
+                    started = True
+                except Exception:
+                    started = False
+            if started:
+                QTimer.singleShot(9000, lambda t=token: self._clear_motion_if_current(t))
+                QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
+
+        expression_applied = False
+        if expression:
+            self._expression_guard_token += 1
+            token = self._expression_guard_token
+            try:
+                model.SetExpression(expression)
+                expression_applied = True
+                QTimer.singleShot(6000, lambda t=token: self._restore_default_expression_if_current(t))
+            except Exception:
+                pass
+        return started or expression_applied
+
+    def _current_motion_names(self) -> list[str]:
+        model = self._live2d_widget.model
+        if model is None:
+            return []
+        try:
+            return list(model.modelSetting.getMotionNames())
+        except Exception:
+            return []
+
+    def _choose_context_idle_motion(self, kind: str, motion_names: list[str]) -> str:
+        if not motion_names:
+            return ""
+        tags_by_kind = {
+            "morning": ("stretch", "akubi", "sigh", "smile", "kime", "idle02"),
+            "late_night": ("sleep", "akubi", "sigh", "sad", "idle02"),
+            "sleep": ("sleep", "akubi", "sigh", "sad", "idle02"),
+            "daze": ("stare", "mitore", "thinking", "eeto", "odoodo", "nf", "idle02"),
+            "approach": ("surprised", "smile", "nf", "idle02"),
+        }
+        for tag in tags_by_kind.get(kind, ()):
+            motion = self._resolve_motion_tag(tag, motion_names)
+            if motion:
+                return motion
+        if kind in {"sleep", "late_night"}:
+            idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
+            return random.choice(idle_names) if idle_names else ""
+        return ""
+
+    def _choose_context_idle_expression(self, kind: str) -> str:
+        tags_by_kind = {
+            "morning": ("smile", "default", "idle"),
+            "late_night": ("sad", "sleep", "idle", "default"),
+            "sleep": ("sad", "sleep", "idle", "default"),
+            "daze": ("idle", "default", "sad"),
+            "approach": ("surprised", "smile", "default"),
+        }
+        for tag in tags_by_kind.get(kind, ()):
+            expression = self._find_expression_tag(tag)
+            if expression:
+                return expression
+        return ""
+
+    def _find_expression_tag(self, tag: str) -> str:
+        tag = str(tag or "").strip().lower()
+        if not tag:
+            return ""
+        model = self._live2d_widget.model
+        if model is None or not hasattr(model, "expressions"):
+            return ""
+        try:
+            names = list(model.expressions.keys())
+        except Exception:
+            return ""
+        char_prefix = (self._current_char or "").lower()
+        for name in names:
+            name_low = str(name).lower()
+            name_base = os.path.splitext(name_low)[0]
+            if name_low == tag or name_base == tag:
+                return name
+            if char_prefix and name_base == f"{char_prefix}_{tag}":
+                return name
+        for name in names:
+            name_base = os.path.splitext(str(name).lower())[0]
+            if name_base.endswith(f"_{tag}") or name_base.startswith(f"{tag}"):
+                return name
+        return ""
 
     def _apply_settings(self, data: dict):
         if data.get("language"):
@@ -777,6 +994,7 @@ class PetWindow(QWidget):
         )
 
     def _on_drag(self, dx: int, dy: int):
+        self._note_user_interaction()
         self._set_mouse_passthrough(False)
         self._suppress_compact_ai_sync = True
         try:
@@ -806,6 +1024,7 @@ class PetWindow(QWidget):
         )
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
+        self._note_user_interaction()
         if self._radial_menu and self._radial_menu.isVisible():
             self._radial_menu.dismiss()
             return
@@ -982,6 +1201,7 @@ class PetWindow(QWidget):
         return random.choice(matches) if matches else ""
 
     def _on_right_click(self, gx: int, gy: int):
+        self._note_user_interaction()
         self._set_mouse_passthrough(False)
         radial_menu = self._ensure_radial_menu()
         if radial_menu.isVisible():
@@ -1044,6 +1264,7 @@ class PetWindow(QWidget):
         self._radial_menu_prewarmed = True
 
     def _on_radial_chat(self):
+        self._note_user_interaction()
         self._open_chat()
 
     def _open_chat(self):
@@ -1271,6 +1492,7 @@ class PetWindow(QWidget):
         self._compact_ai_window.follow_pet_delta(dx, dy, self.geometry())
 
     def _on_chat_action(self, action_name: str):
+        self._note_user_interaction()
         model = self._live2d_widget.model
         if model is None:
             return
@@ -1429,9 +1651,11 @@ class PetWindow(QWidget):
                 pass
 
     def _on_radial_costume(self):
+        self._note_user_interaction()
         self._open_settings(start_on_costumes=True)
 
     def _on_radial_motion(self):
+        self._note_user_interaction()
         model = self._live2d_widget.model
         if model is None:
             return
@@ -1592,6 +1816,7 @@ class PetWindow(QWidget):
             self._cfg.save()
 
     def _on_radial_pixel(self):
+        self._note_user_interaction()
         if self._pixel_mode:
             self._enable_live2d_mode()
         else:
