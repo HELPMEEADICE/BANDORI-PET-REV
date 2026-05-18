@@ -27,7 +27,7 @@ class I18nManager:
     def _load(self):
         path = self._lang_dir / f"{self._current_lang}.json"
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8-sig") as f:
                 self._translations = json.load(f)
         else:
             self._translations = {}

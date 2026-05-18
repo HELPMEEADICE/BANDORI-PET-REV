@@ -3020,7 +3020,41 @@ class ChatWindow(QWidget):
         total = 0
         for character in self._memory_target_characters():
             total += self._db.delete_character_memories_like(character, user_key, query)
-        self._show_local_assistant_message(_tr("ChatWindow.memory_forget_result", "已删除 {count} 条包含“{query}”的长期记忆。", count=total, query=query))
+        self._show_local_assistant_message(_tr("ChatWindow.memory_forget_result", "已删除 {count} 条包含\u201c{query}\u201d的长期记忆。", count=total, query=query))
+
+    def _set_relationship_value_text(self, field: str, text: str):
+        text = text.strip()
+        if not text:
+            self._show_local_assistant_message(_tr("ChatWindow.set_value_hint", "请输入数值。例如：@好感度 80"))
+            return
+        user_key = self._user_memory_key()
+        if field == "mood":
+            try:
+                value = int(text)
+            except ValueError:
+                self._show_local_assistant_message(_tr("ChatWindow.set_mood_hint", "请输入 0-100 的心情数值。例如：@当前心情 75（数值越高心情越好）"))
+                return
+            value = max(0, min(100, value))
+            from relationship_memory import mood_from_intensity, MOOD_LABELS
+            mood_key = mood_from_intensity(value)
+            label = MOOD_LABELS[mood_key]
+            for character in self._memory_target_characters():
+                self._db.upsert_relationship_state(character, user_key, mood=mood_key, mood_intensity=value)
+            self._show_local_assistant_message(
+                _tr("ChatWindow.mood_set", "已设置当前心情为：{mood}（{label}，数值 {value}/100）",
+                    mood=mood_key, label=label, value=value))
+            return
+        try:
+            value = int(text)
+        except ValueError:
+            self._show_local_assistant_message(_tr("ChatWindow.set_value_not_number", "请输入 0-100 的数字。"))
+            return
+        value = max(0, min(100, value))
+        field_cn = {"affection": "好感度", "trust": "信任", "familiarity": "熟悉度"}[field]
+        for character in self._memory_target_characters():
+            self._db.upsert_relationship_state(character, user_key, **{field: value})
+        self._show_local_assistant_message(
+            _tr("ChatWindow.relationship_set", "{field} 已设置为：{value}/100", field=field_cn, value=value))
 
     def _handle_local_memory_command(self, text: str) -> bool:
         stripped = text.strip()
@@ -3038,6 +3072,26 @@ class ChatWindow(QWidget):
             if stripped.startswith(prefix):
                 self._input.clear()
                 self._forget_memory_text(stripped[len(prefix):])
+                return True
+        for prefix in ("@好感度 ", "/好感度 ", "@affection ", "/affection "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("affection", stripped[len(prefix):])
+                return True
+        for prefix in ("@信任 ", "/信任 ", "@trust ", "/trust "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("trust", stripped[len(prefix):])
+                return True
+        for prefix in ("@熟悉度 ", "/熟悉度 ", "@familiarity ", "/familiarity "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("familiarity", stripped[len(prefix):])
+                return True
+        for prefix in ("@当前心情 ", "/当前心情 ", "@setmood ", "/setmood "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("mood", stripped[len(prefix):])
                 return True
         return False
 

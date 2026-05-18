@@ -2908,6 +2908,10 @@ class SettingsWindow(QWidget):
             "SettingsWindow.memory_command_status",
             "SettingsWindow.memory_command_remember",
             "SettingsWindow.memory_command_forget",
+            "SettingsWindow.memory_command_affection",
+            "SettingsWindow.memory_command_trust",
+            "SettingsWindow.memory_command_familiarity",
+            "SettingsWindow.memory_command_mood",
         ):
             line = BodyLabel(_tr(key), command_panel)
             line.setWordWrap(True)

@@ -642,6 +642,38 @@ class CompactAIWindow(QWidget):
     def _display_user_name(self) -> str:
         return str(self._cfg.get("user_name", "") or "").strip() if self._cfg else ""
 
+    def _set_relationship_value_text(self, field: str, text: str):
+        text = text.strip()
+        if not text:
+            self._set_output_text(_tr("ChatWindow.set_value_hint", "请输入数值。例如：@好感度 80"))
+            return
+        user_key = self._user_memory_key()
+        if field == "mood":
+            try:
+                value = int(text)
+            except ValueError:
+                self._set_output_text(_tr("ChatWindow.set_mood_hint", "请输入 0-100 的心情数值。例如：@当前心情 75（数值越高心情越好）"))
+                return
+            value = max(0, min(100, value))
+            from relationship_memory import mood_from_intensity, MOOD_LABELS
+            mood_key = mood_from_intensity(value)
+            label = MOOD_LABELS[mood_key]
+            self._db.upsert_relationship_state(self._character, user_key, mood=mood_key, mood_intensity=value)
+            self._set_output_text(
+                _tr("ChatWindow.mood_set", "已设置当前心情为：{mood}（{label}，数值 {value}/100）",
+                    mood=mood_key, label=label, value=value))
+            return
+        try:
+            value = int(text)
+        except ValueError:
+            self._set_output_text(_tr("ChatWindow.set_value_not_number", "请输入 0-100 的数字。"))
+            return
+        value = max(0, min(100, value))
+        field_cn = {"affection": "好感度", "trust": "信任", "familiarity": "熟悉度"}[field]
+        self._db.upsert_relationship_state(self._character, user_key, **{field: value})
+        self._set_output_text(
+            _tr("ChatWindow.relationship_set", "{field} 已设置为：{value}/100", field=field_cn, value=value))
+
     def _handle_local_memory_command(self, text: str) -> bool:
         stripped = text.strip()
         lowered = stripped.lower()
@@ -692,7 +724,27 @@ class CompactAIWindow(QWidget):
                     self._user_memory_key(),
                     query,
                 )
-                self._set_output_text(_tr("ChatWindow.memory_forget_result", "已删除 {count} 条包含“{query}”的长期记忆。", count=count, query=query))
+                self._set_output_text(_tr("ChatWindow.memory_forget_result", "已删除 {count} 条包含\u201c{query}\u201d的长期记忆。", count=count, query=query))
+                return True
+        for prefix in ("@好感度 ", "/好感度 ", "@affection ", "/affection "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("affection", stripped[len(prefix):])
+                return True
+        for prefix in ("@信任 ", "/信任 ", "@trust ", "/trust "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("trust", stripped[len(prefix):])
+                return True
+        for prefix in ("@熟悉度 ", "/熟悉度 ", "@familiarity ", "/familiarity "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("familiarity", stripped[len(prefix):])
+                return True
+        for prefix in ("@当前心情 ", "/当前心情 ", "@setmood ", "/setmood "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._set_relationship_value_text("mood", stripped[len(prefix):])
                 return True
         return False
 

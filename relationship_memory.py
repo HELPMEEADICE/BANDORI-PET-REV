@@ -21,6 +21,21 @@ MOOD_LABELS = {
     "tired": "疲惫",
 }
 
+_MOOD_INTENSITY_MAP = [
+    (10, "angry"),
+    (25, "annoyed"),
+    (35, "hurt"),
+    (45, "sad"),
+    (55, "concerned"),
+    (65, "tired"),
+    (75, "calm"),
+    (85, "thoughtful"),
+    (92, "soft"),
+    (97, "shy"),
+    (99, "happy"),
+    (100, "excited"),
+]
+
 MEMORY_KIND_LABELS = {
     "manual": "手动记忆",
     "profile": "用户信息",
@@ -98,6 +113,14 @@ def mood_label(mood: str) -> str:
         return _tr("Relationship.mood_calm", "平静")
     key = str(mood).strip()
     return _tr(f"Relationship.mood_{key}", MOOD_LABELS.get(key, key))
+
+
+def mood_from_intensity(value: int) -> str:
+    value = max(0, min(100, value))
+    for threshold, mood_key in _MOOD_INTENSITY_MAP:
+        if value <= threshold:
+            return mood_key
+    return "calm"
 
 
 def affection_label(value: int) -> str:
