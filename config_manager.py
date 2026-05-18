@@ -52,6 +52,13 @@ DEFAULTS = {
     "ai_status_port_enabled": False,
     "ai_status_port": 38472,
     "ai_status_token": "",
+    "tts_enabled": False,
+    "tts_api_url": "http://127.0.0.1:9880/",
+    "tts_language": "Chinese",
+    "tts_reference_character": "",
+    "tts_streaming": True,
+    "tts_temperature": 0.9,
+    "tts_translate_to_selected_language": True,
 }
 
 MODEL_DEFAULTS = {

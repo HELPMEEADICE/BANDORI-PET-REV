@@ -27,6 +27,7 @@ from app_theme import (
 )
 
 import ctypes
+import math
 import os
 import shutil
 import sys
@@ -47,13 +48,14 @@ from llm_manager import (
     build_system_prompt, LLMStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags,
 )
+from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
 from relationship_memory import (
     analyze_interaction,
     build_relationship_context,
     format_character_status,
     user_key_from_config,
 )
-from action_bus import publish_action
+from action_bus import publish_action, publish_lip_sync
 
 
 _BG_LIGHT = "#f5f7fb"
@@ -286,6 +288,8 @@ class RoundedPanel(QWidget):
         self._border = QColor("transparent")
         self._border_width = 0
         self._radii = (0.0, 0.0, 0.0, 0.0)
+        self._wave_glow = False
+        self._wave_phase = 0.0
 
     def set_panel_style(self, bg: str, border: str = "transparent", radius=0, border_width: int = 0):
         self._bg = QColor(bg)
@@ -298,6 +302,11 @@ class RoundedPanel(QWidget):
             self._radii = (r, r, r, r)
         self.update()
 
+    def set_wave_glow(self, enabled: bool, phase: float = 0.0):
+        self._wave_glow = enabled
+        self._wave_phase = phase
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -305,6 +314,14 @@ class RoundedPanel(QWidget):
         rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)
         path = _rounded_path(rect, self._radii)
         painter.fillPath(path, self._bg)
+        if self._wave_glow:
+            for index, base_alpha in enumerate((150, 90, 45)):
+                wave = (math.sin(self._wave_phase + index * 0.85) + 1.0) / 2.0
+                color = QColor(255, 105, 180, int(base_alpha * (0.45 + wave * 0.55)))
+                pen = QPen(color, 2.0 + index * 1.35 + wave * 1.2)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawPath(path)
         if self._border_width > 0 and self._border.alpha() > 0:
             pen = QPen(self._border, self._border_width)
             painter.setPen(pen)
@@ -821,10 +838,15 @@ class MessageBubble(QWidget):
         self._avatar_data = avatar_data
         self._avatar_focus = avatar_focus
         self._streaming = False
+        self._tts_playing = False
+        self._tts_wave_phase = 0.0
         self._dot_step = 0
         self._typing_timer = QTimer(self)
         self._typing_timer.setInterval(420)
         self._typing_timer.timeout.connect(self._tick_typing)
+        self._tts_wave_timer = QTimer(self)
+        self._tts_wave_timer.setInterval(55)
+        self._tts_wave_timer.timeout.connect(self._tick_tts_wave)
         self._text_opacity_effect = None
         self._text_fade_anim = None
         self._height_anim = None
@@ -1005,6 +1027,10 @@ class MessageBubble(QWidget):
         self._stream_label.setText(_tr("ChatWindow.streaming") + "." * self._dot_step)
         self.update_bubble_width()
 
+    def _tick_tts_wave(self):
+        self._tts_wave_phase = (self._tts_wave_phase + 0.34) % (math.pi * 2.0)
+        self._container.set_wave_glow(True, self._tts_wave_phase)
+
     def apply_theme(self):
         dark = isDarkTheme()
         user = self._role == "user"
@@ -1126,6 +1152,18 @@ class MessageBubble(QWidget):
             self.setMaximumHeight(16777215)
             self.update_bubble_width()
 
+    def set_tts_playing(self, playing: bool):
+        if self._tts_playing == playing:
+            return
+        self._tts_playing = playing
+        if playing:
+            self._tts_wave_phase = 0.0
+            self._container.set_wave_glow(True, self._tts_wave_phase)
+            self._tts_wave_timer.start()
+        else:
+            self._tts_wave_timer.stop()
+            self._container.set_wave_glow(False)
+
 
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
@@ -1153,6 +1191,23 @@ class ChatWindow(QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._tts_text_buffer = ""
+        self._tts_tag_buffer = ""
+        self._tts_queue: list[tuple[int, str, str]] = []
+        self._tts_active_workers: dict[int, TTSRequestWorker] = {}
+        self._tts_translation_workers: dict[int, TTSTranslationWorker] = {}
+        self._tts_audio_buffers: dict[int, list[tuple[bytes, str]]] = {}
+        self._tts_bubbles: dict[int, MessageBubble] = {}
+        self._tts_characters: dict[int, str] = {}
+        self._tts_completed_sequences: set[int] = set()
+        self._tts_generation = 0
+        self._tts_next_sequence = 0
+        self._tts_next_play_sequence = 0
+        self._tts_playing_sequence: int | None = None
+        self._tts_max_parallel = 1
+        self._tts_player = TTSPlayer(self)
+        self._tts_player.level_changed.connect(self._on_tts_level_changed)
+        self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
         self._pending_actions.clear()
         self._seen_actions.clear()
         self._stream_flush_timer = QTimer(self)
@@ -2769,6 +2824,7 @@ class ChatWindow(QWidget):
 
         self._input.clear()
         self._set_busy(True, planning=self._is_group_chat)
+        self._reset_tts_stream()
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
@@ -2942,6 +2998,10 @@ class ChatWindow(QWidget):
                 self._current_bubble.set_streaming(True)
                 self._scroll_to_bottom()
 
+        tts_clean = self._clean_tts_stream_text(text)
+        if tts_clean:
+            self._enqueue_tts_text(tts_clean, self._active_response_character)
+
         clean = strip_action_tags(text)
         if clean:
             self._stream_buffer += clean
@@ -2973,6 +3033,7 @@ class ChatWindow(QWidget):
 
         clean = strip_action_tags(full_text)
         reasoning_clean = strip_action_tags(reasoning_text)
+        self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
@@ -3050,6 +3111,7 @@ class ChatWindow(QWidget):
             self._current_bubble.set_text(f"Error: {error_msg}")
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
+        self._reset_tts_stream(stop_player=False)
         self._set_busy(False)
         self._input.setFocus()
         self._sync_input_height()
@@ -3066,6 +3128,221 @@ class ChatWindow(QWidget):
             self._seen_actions.add(key)
             self.action_triggered.emit(self._pending_action_character, action)
         self._pending_actions.clear()
+
+    def _tts_enabled(self) -> bool:
+        return bool(self._cfg and self._cfg.get("tts_enabled", False))
+
+    def _tts_config_snapshot(self) -> dict:
+        keys = (
+            "tts_api_url",
+            "tts_language",
+            "tts_reference_character",
+            "tts_streaming",
+            "tts_temperature",
+            "tts_translate_to_selected_language",
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+        )
+        return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
+
+    def _reset_tts_stream(self, stop_player: bool = True):
+        self._tts_text_buffer = ""
+        self._tts_tag_buffer = ""
+        self._tts_queue.clear()
+        self._clear_tts_bubble_highlights()
+        for worker in list(self._tts_active_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+        for worker in list(self._tts_translation_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+        self._tts_active_workers.clear()
+        self._tts_translation_workers.clear()
+        self._tts_audio_buffers.clear()
+        self._tts_bubbles.clear()
+        self._tts_characters.clear()
+        self._tts_completed_sequences.clear()
+        self._tts_generation += 1
+        self._tts_next_sequence = 0
+        self._tts_next_play_sequence = 0
+        self._tts_playing_sequence = None
+        if stop_player:
+            self._tts_player.stop()
+
+    def _enqueue_tts_text(self, text: str, character: str):
+        if not self._tts_enabled():
+            return
+        text = strip_tts_action_tags(text)
+        if not text:
+            return
+        self._tts_text_buffer += text
+
+    def _flush_tts_text(self, character: str):
+        if not self._tts_enabled():
+            return
+        self._tts_tag_buffer = ""
+        text = flush_tts_sentence(self._tts_text_buffer)
+        self._tts_text_buffer = ""
+        if text:
+            sequence = self._tts_next_sequence
+            self._tts_next_sequence += 1
+            if self._current_bubble:
+                self._tts_bubbles[sequence] = self._current_bubble
+            self._tts_characters[sequence] = character
+            self._queue_tts_request(sequence, text, character)
+        self._start_next_tts_request()
+
+    def _clear_tts_bubble_highlights(self):
+        for bubble in self._tts_bubbles.values():
+            bubble.set_tts_playing(False)
+
+    def _set_tts_bubble_playing(self, sequence: int | None):
+        for seq, bubble in list(self._tts_bubbles.items()):
+            bubble.set_tts_playing(sequence is not None and seq == sequence)
+
+    def _queue_tts_request(self, sequence: int, text: str, character: str):
+        if self._tts_should_translate():
+            worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, self._tts_config_snapshot(), self)
+            self._tts_translation_workers[sequence] = worker
+            worker.translated.connect(self._on_tts_translation_ready)
+            worker.error.connect(self._on_tts_error)
+            worker.finished.connect(self._on_tts_translation_finished)
+            worker.start()
+            return
+        self._tts_queue.append((sequence, text, character))
+
+    def _tts_should_translate(self) -> bool:
+        if not self._cfg or not self._cfg.get("tts_translate_to_selected_language", True):
+            return False
+        language = self._cfg.get("tts_language", "Chinese") or "Chinese"
+        return language not in {"Chinese", "zh", "中文"}
+
+    def _clean_tts_stream_text(self, text: str) -> str:
+        source = self._tts_tag_buffer + text
+        self._tts_tag_buffer = ""
+        output = []
+        i = 0
+        while i < len(source):
+            if source[i] != "[":
+                output.append(source[i])
+                i += 1
+                continue
+
+            end = source.find("]", i + 1)
+            if end < 0:
+                fragment = source[i:]
+                if re.fullmatch(r"\[[A-Za-z0-9_.\-]*", fragment):
+                    self._tts_tag_buffer = fragment
+                else:
+                    output.append(source[i])
+                    output.append(fragment[1:])
+                break
+
+            tag = source[i + 1:end]
+            if tag == "DONE" or re.fullmatch(r"[A-Za-z0-9_.\-]+", tag):
+                i = end + 1
+                continue
+            output.append(source[i:end + 1])
+            i = end + 1
+        return "".join(output)
+
+    def _start_next_tts_request(self):
+        if self._tts_active_workers or self._tts_playing_sequence is not None or not self._tts_player.is_idle():
+            return
+        next_index = next((i for i, item in enumerate(self._tts_queue) if item[0] == self._tts_next_play_sequence), None)
+        if next_index is None:
+            return
+        sequence, text, character = self._tts_queue.pop(next_index)
+        config = self._tts_config_snapshot()
+        config["tts_translate_to_selected_language"] = False
+        worker = TTSRequestWorker(sequence, self._tts_generation, text, character, config, self)
+        self._tts_active_workers[sequence] = worker
+        worker.audio_ready.connect(self._on_tts_audio_ready)
+        worker.error.connect(self._on_tts_error)
+        worker.finished.connect(self._on_tts_worker_finished)
+        worker.start()
+
+    def _on_tts_translation_ready(self, sequence: int, generation: int, text: str, character: str):
+        if generation != self._tts_generation or sequence not in self._tts_translation_workers:
+            return
+        self._tts_queue.append((sequence, text, character))
+        self._start_next_tts_request()
+
+    def _on_tts_translation_finished(self):
+        worker = self.sender()
+        sequence = getattr(worker, "sequence", None)
+        if sequence is None or self._tts_translation_workers.get(sequence) is not worker:
+            return
+        self._tts_translation_workers.pop(sequence, None)
+
+    def _on_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
+        if generation != self._tts_generation or sequence not in self._tts_active_workers:
+            return
+        if sequence < self._tts_next_play_sequence:
+            return
+        if sequence == self._tts_next_play_sequence:
+            if self._tts_playing_sequence is None:
+                self._tts_playing_sequence = sequence
+                self._set_tts_bubble_playing(sequence)
+            if self._tts_playing_sequence == sequence:
+                self._tts_player.enqueue(audio, media_type)
+                return
+        self._tts_audio_buffers.setdefault(sequence, []).append((audio, media_type))
+
+    def _on_tts_error(self, error_msg: str):
+        del error_msg
+
+    def _on_tts_level_changed(self, level: float):
+        character = self._tts_characters.get(self._tts_playing_sequence)
+        if character:
+            publish_lip_sync(character, level)
+
+    def _on_tts_playback_finished(self):
+        self._release_tts_audio_in_order()
+        self._start_next_tts_request()
+
+    def _on_tts_worker_finished(self):
+        worker = self.sender()
+        sequence = getattr(worker, "sequence", None)
+        generation = getattr(worker, "generation", None)
+        if generation != self._tts_generation or sequence is None or self._tts_active_workers.get(sequence) is not worker:
+            return
+        self._tts_active_workers.pop(sequence, None)
+        self._tts_completed_sequences.add(sequence)
+        self._release_tts_audio_in_order()
+        self._start_next_tts_request()
+
+    def _release_tts_audio_in_order(self):
+        if self._tts_playing_sequence is not None:
+            if self._tts_playing_sequence not in self._tts_completed_sequences or not self._tts_player.is_idle():
+                return
+            sequence = self._tts_playing_sequence
+            for audio, media_type in self._tts_audio_buffers.pop(sequence, []):
+                self._tts_player.enqueue(audio, media_type)
+            if not self._tts_player.is_idle():
+                return
+            self._tts_completed_sequences.remove(sequence)
+            self._tts_next_play_sequence = sequence + 1
+            self._tts_playing_sequence = None
+            self._set_tts_bubble_playing(None)
+            self._tts_bubbles.pop(sequence, None)
+            self._tts_characters.pop(sequence, None)
+
+        while self._tts_next_play_sequence in self._tts_completed_sequences and not self._tts_audio_buffers.get(self._tts_next_play_sequence):
+            self._tts_bubbles.pop(self._tts_next_play_sequence, None)
+            self._tts_characters.pop(self._tts_next_play_sequence, None)
+            self._tts_completed_sequences.remove(self._tts_next_play_sequence)
+            self._tts_next_play_sequence += 1
+
+        buffers = self._tts_audio_buffers.pop(self._tts_next_play_sequence, [])
+        if not buffers:
+            return
+        self._tts_playing_sequence = self._tts_next_play_sequence
+        self._set_tts_bubble_playing(self._tts_playing_sequence)
+        for audio, media_type in buffers:
+            self._tts_player.enqueue(audio, media_type)
 
     def emit_action_for_ipc(self, character: str, action: str):
         publish_action(character, action)
@@ -3108,7 +3385,16 @@ class ChatWindow(QWidget):
         if self._group_plan_worker and self._group_plan_worker.isRunning():
             self._group_plan_worker.quit()
             self._group_plan_worker.wait(2000)
+        for worker in list(self._tts_active_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1000)
+        for worker in list(self._tts_translation_workers.values()):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1000)
         self._stream_flush_timer.stop()
+        self._tts_player.stop()
         self._db.close()
         self.closed.emit()
         super().closeEvent(event)

@@ -279,6 +279,7 @@ class LuaLive2DModule:
         self._draw = None
         self._drag = None
         self._hit_test = None
+        self._set_parameter = None
         self._apply_texture_quality = None
         self.MotionPriority = MotionPriority
 
@@ -325,6 +326,9 @@ class LuaLive2DModule:
         self._draw = lua.eval(b"function(renderer, opts) return renderer:draw(opts) end")
         self._drag = lua.eval(b"function(renderer, x, y) return renderer:drag(x, y) end")
         self._hit_test = lua.eval(b"function(renderer, x, y) return renderer:hit_test(x, y) end")
+        self._set_parameter = lua.eval(
+            b"function(renderer, param_id, value, weight) return renderer:set_parameter(param_id, value, weight) end"
+        )
         self._set_offset = lua.eval(b"function(renderer, x, y) return renderer:set_offset(x, y) end")
         self._apply_texture_quality = lua.eval(
             b"(function() "
@@ -417,6 +421,7 @@ class LuaLAppModel:
         self.modelSetting = None
         self.matrixManager = _MatrixManager()
         self.expressions = {}
+        self._pending_parameters = {}
 
     def LoadModelJson(self, model_json_path: str, disable_precision=False):
         del disable_precision
@@ -450,6 +455,15 @@ class LuaLAppModel:
         opts = self._module._lua.table()
         opts[b"clear"] = False
         opts[b"time_msec"] = time.monotonic() * 1000.0
+        if self._pending_parameters:
+            params = self._module._lua.table()
+            for index, (param_id, value, weight) in enumerate(self._pending_parameters.values(), 1):
+                item = self._module._lua.table()
+                item[b"id"] = str(param_id).encode("utf-8")
+                item[b"value"] = float(value)
+                item[b"weight"] = float(weight)
+                params[index] = item
+            opts[b"parameters"] = params
         self._module._draw(self._renderer, opts)
 
     def Drag(self, x: float, y: float):
@@ -459,6 +473,9 @@ class LuaLAppModel:
     def SetOffset(self, x: float, y: float):
         if self._renderer is not None:
             self._module._set_offset(self._renderer, float(x), float(y))
+
+    def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
+        self._pending_parameters[str(param_id)] = (str(param_id), float(value), float(weight))
 
     def HitTest(self, _area_name: str, x: float, y: float):
         if self._renderer is None:

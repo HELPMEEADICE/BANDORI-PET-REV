@@ -3,7 +3,7 @@ from datetime import datetime
 
 import fluent_bootstrap  # noqa: F401
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
-from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDesktopServices
+from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QScrollArea,
@@ -795,6 +795,7 @@ class SettingsWindow(QWidget):
         self._char_page = None
         self._costume_page = None
         self._llm_page = None
+        self._tts_page = None
         self._pov_page = None
         self._memory_page = None
         self._memory_db = None
@@ -1093,6 +1094,9 @@ class SettingsWindow(QWidget):
         if key in {"llm", "pov"}:
             self._ensure_llm_and_pov_pages()
             return self._pages.get(key)
+        if key == "tts":
+            self._tts_page = self._add_lazy_page("tts", self._build_tts_page())
+            return self._tts_page
         if key == "memory":
             self._memory_page = self._add_lazy_page("memory", self._build_memory_page())
             return self._memory_page
@@ -1157,6 +1161,11 @@ class SettingsWindow(QWidget):
         btn_llm.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["llm"] = btn_llm
         layout.addWidget(btn_llm)
+
+        btn_tts = NavButton("tts", FluentIcon.ROBOT, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar)
+        btn_tts.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["tts"] = btn_tts
+        layout.addWidget(btn_tts)
 
         btn_pov = NavButton("pov", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_pov"), sidebar)
         btn_pov.nav_activated.connect(self._on_nav_selected)
@@ -2453,6 +2462,112 @@ class SettingsWindow(QWidget):
 
         return page
 
+    def _build_tts_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        title = TitleLabel(_tr("SettingsWindow.tts_title", "聊天 TTS"), page)
+        layout.addWidget(title)
+        subtitle = _wrap_label(SubtitleLabel(_tr(
+            "SettingsWindow.tts_subtitle",
+            "配置聊天回复的语音合成、参考音频和非中文 TTS 翻译。",
+        ), page))
+        layout.addWidget(subtitle)
+
+        tts_enable_row = QHBoxLayout()
+        tts_enable_row.setContentsMargins(0, 0, 0, 0)
+        tts_enable_label = BodyLabel(_tr("SettingsWindow.tts_enabled", "启用聊天语音合成"), page)
+        self._tts_enabled = SwitchButton(page)
+        tts_enable_row.addWidget(tts_enable_label)
+        tts_enable_row.addStretch()
+        tts_enable_row.addWidget(self._tts_enabled)
+        layout.addLayout(tts_enable_row)
+
+        tts_api_label = BodyLabel(_tr("SettingsWindow.tts_api_url", "TTS API 地址"), page)
+        layout.addWidget(tts_api_label)
+        self._tts_api_url = FluentContextLineEdit(page)
+        self._tts_api_url.setPlaceholderText("http://127.0.0.1:9880/")
+        self._tts_api_url.setFixedHeight(36)
+        layout.addWidget(self._tts_api_url)
+
+        tts_lang_label = BodyLabel(_tr("SettingsWindow.tts_language", "TTS 文本语言"), page)
+        layout.addWidget(tts_lang_label)
+        self._tts_language = OpaqueDropDownComboBox(page)
+        self._tts_language.addItem(_tr("SettingsWindow.tts_language_chinese", "中文"), userData="Chinese")
+        self._tts_language.addItem(_tr("SettingsWindow.tts_language_japanese", "日语"), userData="Japanese")
+        self._tts_language.addItem(_tr("SettingsWindow.tts_language_english", "英语"), userData="English")
+        self._tts_language.setFixedHeight(36)
+        layout.addWidget(self._tts_language)
+
+        tts_ref_label = BodyLabel(_tr("SettingsWindow.tts_reference", "参考音频角色"), page)
+        layout.addWidget(tts_ref_label)
+        self._tts_reference_character = OpaqueDropDownComboBox(page)
+        self._tts_reference_character.addItem(_tr("SettingsWindow.tts_reference_auto", "跟随聊天角色"), userData="")
+        ref_dir = app_base_dir() / "audio_reference"
+        ref_paths = []
+        if ref_dir.exists():
+            for suffix in ("*.mp3", "*.wav", "*.flac", "*.ogg", "*.m4a"):
+                ref_paths.extend(ref_dir.glob(suffix))
+        seen_refs = set()
+        for audio_path in sorted(ref_paths, key=lambda path: path.stem):
+            key = audio_path.stem
+            if key in seen_refs:
+                continue
+            seen_refs.add(key)
+            display = self._model_manager.get_display_name(key) if key in self._model_manager.characters else key
+            self._tts_reference_character.addItem(display, userData=key)
+        self._tts_reference_character.setFixedHeight(36)
+        layout.addWidget(self._tts_reference_character)
+
+        tts_temperature_label = BodyLabel(_tr("SettingsWindow.tts_temperature", "TTS 温度参数"), page)
+        layout.addWidget(tts_temperature_label)
+        self._tts_temperature = FluentContextLineEdit(page)
+        self._tts_temperature.setPlaceholderText("0.9")
+        self._tts_temperature.setFixedHeight(36)
+        temp_validator = QDoubleValidator(0.01, 2.0, 2, self._tts_temperature)
+        temp_validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self._tts_temperature.setValidator(temp_validator)
+        layout.addWidget(self._tts_temperature)
+
+        tts_stream_row = QHBoxLayout()
+        tts_stream_row.setContentsMargins(0, 0, 0, 0)
+        tts_stream_label = BodyLabel(_tr("SettingsWindow.tts_streaming", "启用 TTS 流式请求"), page)
+        self._tts_streaming = SwitchButton(page)
+        self._tts_streaming.setChecked(True)
+        tts_stream_row.addWidget(tts_stream_label)
+        tts_stream_row.addStretch()
+        tts_stream_row.addWidget(self._tts_streaming)
+        layout.addLayout(tts_stream_row)
+
+        tts_translate_row = QHBoxLayout()
+        tts_translate_row.setContentsMargins(0, 0, 0, 0)
+        tts_translate_label = BodyLabel(_tr("SettingsWindow.tts_translate_to_selected_language", "非中文 TTS 时用快速模型逐段翻译到所选语言"), page)
+        self._tts_translate_to_selected_language = SwitchButton(page)
+        self._tts_translate_to_selected_language.setChecked(True)
+        tts_translate_row.addWidget(tts_translate_label)
+        tts_translate_row.addStretch()
+        tts_translate_row.addWidget(self._tts_translate_to_selected_language)
+        layout.addLayout(tts_translate_row)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
+        save_btn.setFixedHeight(36)
+        save_btn.clicked.connect(self._save_tts_config)
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self._load_tts_config()
+        self._style_tts_inputs()
+        qconfig.themeChanged.connect(self._style_tts_inputs)
+
+        return page
+
     def _build_pov_page(self):
         page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
@@ -3534,6 +3649,21 @@ class SettingsWindow(QWidget):
                 "_avatar_color_btns",
             )
         )
+
+    def _tts_config_widgets_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_tts_enabled",
+                "_tts_api_url",
+                "_tts_language",
+                "_tts_reference_character",
+                "_tts_temperature",
+                "_tts_streaming",
+                "_tts_translate_to_selected_language",
+            )
+        )
+
     def _set_live2d_scale_controls(self, value: int):
         value = _clamp_live2d_scale(value)
         self._live2d_scale = value
@@ -3588,6 +3718,29 @@ class SettingsWindow(QWidget):
         hint_color = "#a7b0bf" if dark else "#687385"
         self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
+
+    def _style_tts_inputs(self):
+        if not self._tts_config_widgets_ready():
+            return
+        dark = isDarkTheme()
+        input_bg = "#282828" if dark else "#ffffff"
+        input_border = "#505050" if dark else "#d0d0d0"
+        text_color = "#e8e8e8" if dark else "#000000"
+        style = f"""
+            QLineEdit {{
+                background: {input_bg};
+                color: {text_color};
+                border: 1px solid {input_border};
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
+                border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY};
+            }}
+        """
+        self._tts_api_url.setStyleSheet(style)
+        self._tts_temperature.setStyleSheet(style)
 
     def _style_avatar_buttons(self):
         for btn in self._avatar_color_btns:
@@ -3661,6 +3814,24 @@ class SettingsWindow(QWidget):
                     self._pov_role_character.setCurrentIndex(i)
                     break
             self._on_pov_mode_changed(self._pov_mode.currentIndex())
+
+    def _load_tts_config(self):
+        if self._cfg and self._tts_config_widgets_ready():
+            self._tts_enabled.setChecked(bool(self._cfg.get("tts_enabled", False)))
+            self._tts_api_url.setText(self._cfg.get("tts_api_url", "http://127.0.0.1:9880/"))
+            saved_tts_language = self._cfg.get("tts_language", "Chinese")
+            for i in range(self._tts_language.count()):
+                if self._tts_language.itemData(i) == saved_tts_language:
+                    self._tts_language.setCurrentIndex(i)
+                    break
+            saved_ref = self._cfg.get("tts_reference_character", "")
+            for i in range(self._tts_reference_character.count()):
+                if self._tts_reference_character.itemData(i) == saved_ref:
+                    self._tts_reference_character.setCurrentIndex(i)
+                    break
+            self._tts_temperature.setText(str(self._cfg.get("tts_temperature", 0.9)))
+            self._tts_streaming.setChecked(bool(self._cfg.get("tts_streaming", True)))
+            self._tts_translate_to_selected_language.setChecked(bool(self._cfg.get("tts_translate_to_selected_language", True)))
 
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
@@ -3809,6 +3980,32 @@ class SettingsWindow(QWidget):
             else:
                 self._cfg.set("llm_enable_thinking", None)
             self._cfg.set("llm_show_reasoning", self._llm_show_reasoning.isChecked())
+            try:
+                self._cfg.save()
+                InfoBar.success(
+                    _tr("SettingsWindow.llm_saved_title"),
+                    _tr("SettingsWindow.llm_saved_content"),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            except Exception:
+                pass
+
+    def _save_tts_config(self):
+        if self._cfg and self._tts_config_widgets_ready():
+            self._cfg.set("tts_enabled", self._tts_enabled.isChecked())
+            self._cfg.set("tts_api_url", self._tts_api_url.text().strip() or "http://127.0.0.1:9880/")
+            self._cfg.set("tts_language", self._tts_language.itemData(self._tts_language.currentIndex()) or "Chinese")
+            self._cfg.set("tts_reference_character", self._tts_reference_character.itemData(self._tts_reference_character.currentIndex()) or "")
+            try:
+                temperature = max(0.01, min(2.0, float(self._tts_temperature.text().strip() or "0.9")))
+            except ValueError:
+                temperature = 0.9
+            self._tts_temperature.setText(str(temperature))
+            self._cfg.set("tts_temperature", temperature)
+            self._cfg.set("tts_streaming", self._tts_streaming.isChecked())
+            self._cfg.set("tts_translate_to_selected_language", self._tts_translate_to_selected_language.isChecked())
             try:
                 self._cfg.save()
                 InfoBar.success(
