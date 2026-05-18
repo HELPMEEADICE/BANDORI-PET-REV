@@ -1,11 +1,11 @@
 import fluent_bootstrap  # noqa: F401
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
     QApplication, QGraphicsOpacityEffect, QWidgetAction,
-    QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox, QSizeGrip,
+    QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
 )
 
 from i18n_manager import tr as _tr
@@ -62,6 +62,9 @@ _TELEGRAM_ACCENT = BANDORI_PRIMARY
 _AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _AVATAR_PIXMAP_CACHE = {}
 _AVATAR_PIXMAP_CACHE_LIMIT = 96
+_HISTORY_ROW_WIDTH = 368
+_HISTORY_ROW_HEIGHT = 48
+_HISTORY_SCROLL_WIDTH = _HISTORY_ROW_WIDTH + 24
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -364,6 +367,80 @@ class IconButton(QToolButton):
         """)
 
 
+class ChatResizeGrip(QWidget):
+    def __init__(self, target: QWidget, parent=None):
+        super().__init__(parent)
+        self._target = target
+        self._hovered = False
+        self._pressed = False
+        self._start_pos = None
+        self._start_size = None
+        self.setFixedSize(18, 18)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self.setToolTip(_tr("ChatWindow.resize_tooltip"))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self._start_pos = event.globalPosition().toPoint()
+            self._start_size = self._target.size()
+            self.update()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._pressed and self._start_pos is not None and self._start_size is not None:
+            delta = event.globalPosition().toPoint() - self._start_pos
+            minimum = self._target.minimumSize()
+            self._target.resize(
+                max(minimum.width(), self._start_size.width() + delta.x()),
+                max(minimum.height(), self._start_size.height() + delta.y()),
+            )
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._pressed:
+            self._pressed = False
+            self._start_pos = None
+            self._start_size = None
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        dark = isDarkTheme()
+        color = QColor(accent_color(dark) if self._pressed else ("#aab4c5" if dark else "#98a5ba"))
+        color.setAlpha(220 if (self._hovered or self._pressed) else 150)
+        pen = QPen(color, 1.45)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        w = self.width()
+        h = self.height()
+        for offset in (6, 10, 14):
+            painter.drawLine(w - offset, h - 4, w - 4, h - offset)
+        super().paintEvent(event)
+
+
 class ConversationHistoryRow(QWidget):
     selected = Signal(object)
     delete_requested = Signal(object)
@@ -372,100 +449,158 @@ class ConversationHistoryRow(QWidget):
         super().__init__(parent)
         self._conv_id = conv_id
         self._current = current
+        self._hovered = False
+        self._pressed = False
+        self._bg_color = QColor("transparent")
+        self._indicator_color = QColor("transparent")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(288, 36)
+        self.setMinimumSize(_HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT)
+        self.setFixedHeight(_HISTORY_ROW_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 6, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 6, 2, 6)
+        layout.setSpacing(10)
 
-        marker = QLabel("✓" if current else "", self)
-        marker.setFixedWidth(14)
-        marker.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(marker)
+        leading_icon = QToolButton(self)
+        leading_icon.setObjectName("HistoryLeadingIcon")
+        leading_icon.setIcon((FluentIcon.ACCEPT_MEDIUM if current else FluentIcon.HISTORY).icon())
+        leading_icon.setIconSize(QSize(15, 15))
+        leading_icon.setFixedSize(26, 26)
+        leading_icon.setAutoRaise(True)
+        leading_icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        leading_icon.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        layout.addWidget(leading_icon)
 
         label = QLabel(title, self)
+        label.setObjectName("HistoryTitle")
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(label, 1)
 
         delete_btn = QToolButton(self)
-        delete_btn.setText("×")
-        delete_btn.setFixedSize(24, 24)
+        delete_btn.setObjectName("HistoryDeleteButton")
+        delete_btn.setIcon(FluentIcon.DELETE.icon())
+        delete_btn.setIconSize(QSize(15, 15))
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setAutoRaise(True)
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_btn.setToolTip(_tr("ChatWindow.delete_conv"))
         delete_btn.clicked.connect(self._emit_delete)
         layout.addWidget(delete_btn)
 
-        self._marker = marker
+        self._leading_icon = leading_icon
         self._label = label
         self._delete_btn = delete_btn
         self.apply_theme()
 
+    def set_row_width(self, width: int):
+        self.setMinimumWidth(max(_HISTORY_ROW_WIDTH, int(width)))
+
     def apply_theme(self):
         dark = isDarkTheme()
-        bg = BANDORI_PRIMARY_SOFT_DARK if self._current and dark else BANDORI_PRIMARY_SOFT if self._current else "transparent"
+        if dark:
+            normal_bg = "transparent"
+            hover_bg = "#202634"
+            pressed_bg = "#171d29"
+            selected_bg = "#1f2940"
+            selected_hover_bg = "#26324c"
+            selected_pressed_bg = "#1a2438"
+            icon_bg = "#252c3b"
+            icon_fg = "#dbe5ff"
+        else:
+            normal_bg = "transparent"
+            hover_bg = "#f4f7fc"
+            pressed_bg = "#e8edf6"
+            selected_bg = "#edf4ff"
+            selected_hover_bg = "#e4eefc"
+            selected_pressed_bg = "#dbe7f7"
+            icon_bg = "#eef3fb"
+            icon_fg = "#4b5874"
+
+        if self._current:
+            bg = selected_pressed_bg if self._pressed else selected_hover_bg if self._hovered else selected_bg
+        else:
+            bg = pressed_bg if self._pressed else hover_bg if self._hovered else normal_bg
+
         text = "#f7f7fb" if dark else "#1f2328"
-        marker = _TELEGRAM_ACCENT if self._current else "transparent"
+        icon_bg = accent_color(dark) if self._current else icon_bg
+        icon_fg = "#ffffff" if self._current else icon_fg
         danger = "#ff6b6b" if dark else "#c42b1c"
-        hover = "#3a2630" if dark else "#fde7e9"
-        self._hover_bg = hover
-        self._normal_bg = bg
+        danger_hover = "#3a2630" if dark else "#fde7e9"
+        danger_pressed = "#4a202d" if dark else "#f7d4d8"
+        self._bg_color = QColor(bg)
+        self._indicator_color = QColor(accent_color(dark) if self._current else "transparent")
         self.setStyleSheet(f"""
             ConversationHistoryRow {{
-                background: {bg};
-                border-radius: 6px;
-            }}
-            QLabel {{
-                color: {text};
                 background: transparent;
             }}
-            QToolButton {{
+            QLabel#HistoryTitle {{
+                color: {text};
+                background: transparent;
+                font-size: 13px;
+            }}
+            QToolButton#HistoryLeadingIcon {{
+                background: {icon_bg};
+                color: {icon_fg};
+                border: none;
+                border-radius: 13px;
+                padding: 0px;
+            }}
+            QToolButton#HistoryDeleteButton {{
                 background: transparent;
                 color: {danger};
                 border: none;
-                border-radius: 12px;
-                font-size: 18px;
-                font-weight: 700;
-                padding-bottom: 2px;
+                border-radius: 14px;
+                padding: 0px;
             }}
-            QToolButton:hover {{
-                background: {hover};
+            QToolButton#HistoryDeleteButton:hover {{
+                background: {danger_hover};
+            }}
+            QToolButton#HistoryDeleteButton:pressed {{
+                background: {danger_pressed};
             }}
         """)
-        self._marker.setStyleSheet(f"color: {marker}; background: transparent; font-weight: 700;")
 
     def enterEvent(self, event):
-        self._hover_glow(True)
+        self._hovered = True
+        self.apply_theme()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._hover_glow(False)
+        self._hovered = False
+        self._pressed = False
+        self.apply_theme()
         super().leaveEvent(event)
 
-    def _hover_glow(self, entering: bool):
-        if hasattr(self, '_hover_anim'):
-            self._hover_anim.stop()
-        eff = self.graphicsEffect()
-        if not isinstance(eff, QGraphicsColorizeEffect):
-            eff = QGraphicsColorizeEffect(self)
-            eff.setColor(QColor(BANDORI_PRIMARY_DARK))
-            eff.setStrength(0.0)
-            self.setGraphicsEffect(eff)
-        self._hover_anim = QPropertyAnimation(eff, b"strength")
-        self._hover_anim.setDuration(160)
-        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._hover_anim.setStartValue(eff.strength())
-        self._hover_anim.setEndValue(0.25 if entering else 0.0)
-        if not entering:
-            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
-        self._hover_anim.start()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self._delete_btn.geometry().contains(event.position().toPoint()):
+            self._pressed = True
+            self.apply_theme()
+        super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        self._pressed = False
+        self.apply_theme()
         if event.button() == Qt.MouseButton.LeftButton and not self._delete_btn.geometry().contains(event.position().toPoint()):
             self.selected.emit(self._conv_id)
         super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(1, 2, self.width() - 2, self.height() - 4)
+        if self._bg_color.alpha() > 0:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._bg_color)
+            painter.drawRoundedRect(rect, 8, 8)
+        if self._current:
+            indicator = QRectF(1, 12, 3, self.height() - 24)
+            painter.setBrush(self._indicator_color)
+            painter.drawRoundedRect(indicator, 1.5, 1.5)
+        super().paintEvent(event)
 
     def _emit_delete(self):
         self.delete_requested.emit(self._conv_id)
@@ -1294,12 +1429,10 @@ class ChatWindow(QWidget):
 
         content_layout.addWidget(self._build_input_area())
 
-        if self._is_group_chat:
-            self._resize_grip = QSizeGrip(self._shell)
-            self._resize_grip.setObjectName("GroupChatResizeGrip")
-            self._resize_grip.setFixedSize(18, 18)
-            self._resize_grip.raise_()
-            self._position_resize_grip()
+        self._resize_grip = ChatResizeGrip(self, self._shell)
+        self._resize_grip.setObjectName("ChatResizeGrip")
+        self._resize_grip.raise_()
+        self._position_resize_grip()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1309,10 +1442,10 @@ class ChatWindow(QWidget):
     def _position_resize_grip(self):
         if not getattr(self, "_resize_grip", None):
             return
-        margin = 6
+        inset = 5
         self._resize_grip.move(
-            max(0, self._shell.width() - self._resize_grip.width() - margin),
-            max(0, self._shell.height() - self._resize_grip.height() - margin),
+            max(0, self._shell.width() - self._resize_grip.width() - inset),
+            max(0, self._shell.height() - self._resize_grip.height() - inset),
         )
 
     def _build_group_sidebar(self):
@@ -1759,6 +1892,8 @@ class ChatWindow(QWidget):
         self._new_btn.apply_theme()
         self._close_btn.apply_theme()
         self._send_btn.apply_theme()
+        if getattr(self, "_resize_grip", None):
+            self._resize_grip.update()
         self._update_title_avatar()
 
         self._scroll.setStyleSheet(f"""
@@ -1821,6 +1956,54 @@ class ChatWindow(QWidget):
                 del item
         self._msg_layout.addStretch()
 
+    def _history_scroll_style(self, bg: str, dark: bool) -> str:
+        handle = "#566074" if dark else "#c4cfe3"
+        handle_hover = "#69758d" if dark else "#aebbd4"
+        return f"""
+            QScrollArea#ConversationHistoryScroll {{
+                background: {bg};
+                border: none;
+            }}
+            QScrollArea#ConversationHistoryScroll > QWidget > QWidget {{
+                background: {bg};
+            }}
+            QWidget#ConversationHistoryList {{
+                background: {bg};
+            }}
+            QScrollArea#ConversationHistoryScroll QScrollBar:vertical {{
+                background: {bg};
+                width: 8px;
+                margin: 4px 0px 4px 0px;
+            }}
+            QScrollArea#ConversationHistoryScroll QScrollBar::handle:vertical {{
+                background: {handle};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            QScrollArea#ConversationHistoryScroll QScrollBar::handle:vertical:hover {{
+                background: {handle_hover};
+            }}
+            QScrollArea#ConversationHistoryScroll QScrollBar::add-line:vertical,
+            QScrollArea#ConversationHistoryScroll QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollArea#ConversationHistoryScroll QScrollBar::add-page:vertical,
+            QScrollArea#ConversationHistoryScroll QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
+        """
+
+    def _fit_history_menu_widgets(self, menu: QMenu, rows: list[ConversationHistoryRow], scrolls: list[QScrollArea]):
+        if not rows and not scrolls:
+            return
+        menu.adjustSize()
+        content_width = max(_HISTORY_ROW_WIDTH, menu.sizeHint().width() - 40)
+        for row in rows:
+            row.set_row_width(content_width)
+        for scroll in scrolls:
+            scroll.setFixedWidth(content_width + 20)
+        menu.adjustSize()
+
     def _conversation_title(self, conv: dict) -> str:
         messages = self._db.get_messages(conv["id"])
         preview = ""
@@ -1853,18 +2036,19 @@ class ChatWindow(QWidget):
         border = "#303849" if dark else "#d8deea"
         text = "#f7f7fb" if dark else "#1f2328"
         muted = "#9aa5bd" if dark else "#657089"
-        menu.setStyleSheet(f"""
+        menu_style = f"""
             QMenu#ConversationHistoryMenu {{
                 background: {bg};
                 color: {text};
                 border: 1px solid {border};
-                border-radius: 10px;
-                padding: 6px;
+                border-radius: 12px;
+                padding: 8px;
+                font-size: 13px;
             }}
             QMenu#ConversationHistoryMenu::item {{
-                padding: 8px 28px 8px 10px;
-                border-radius: 6px;
-                min-width: 288px;
+                padding: 9px 12px 9px 12px;
+                border-radius: 8px;
+                min-width: {_HISTORY_ROW_WIDTH}px;
             }}
             QMenu#ConversationHistoryMenu::item:selected {{
                 background: {hover};
@@ -1872,37 +2056,76 @@ class ChatWindow(QWidget):
             QMenu#ConversationHistoryMenu::separator {{
                 height: 1px;
                 background: {border};
-                margin: 6px 4px;
+                margin: 8px 4px;
             }}
             QMenu#ConversationHistoryMenu::item:disabled {{
                 color: {muted};
             }}
-        """)
+        """
+        menu.setStyleSheet(menu_style)
+        history_rows: list[ConversationHistoryRow] = []
+        history_scrolls: list[QScrollArea] = []
 
         if self._is_group_chat:
             conversations = self._db.get_group_conversations(self._conversation_key)
-            title = menu.addAction(_tr("ChatWindow.history_title"))
+            title = Action(FluentIcon.HISTORY, _tr("ChatWindow.history_title"), menu)
+            menu.addAction(title)
             title.setEnabled(False)
             if conversations:
+                history_parent = menu
+                history_layout = None
+                if len(conversations) > 8:
+                    history_parent = QWidget(menu)
+                    history_parent.setObjectName("ConversationHistoryList")
+                    history_layout = QVBoxLayout(history_parent)
+                    history_layout.setContentsMargins(4, 4, 8, 4)
+                    history_layout.setSpacing(4)
                 for conv in conversations:
                     row = ConversationHistoryRow(
                         conv["conversation_id"],
                         self._group_preview(conv),
                         conv["conversation_id"] == self._group_conv_id,
-                        menu,
+                        history_parent,
                     )
                     row.selected.connect(lambda conv_id: self._select_group_history_row(menu, conv_id))
                     row.delete_requested.connect(lambda conv_id: self._delete_group_history_row(menu, conv_id))
-                    action = QWidgetAction(menu)
-                    action.setDefaultWidget(row)
-                    menu.addAction(action)
+                    history_rows.append(row)
+                    if history_layout is not None:
+                        history_layout.addWidget(row)
+                    else:
+                        action = QWidgetAction(menu)
+                        action.setDefaultWidget(row)
+                        menu.addAction(action)
+                if history_layout is not None:
+                    scroll = QScrollArea(menu)
+                    scroll.setObjectName("ConversationHistoryScroll")
+                    scroll.setWidgetResizable(True)
+                    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+                    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                    scroll.setFixedSize(_HISTORY_SCROLL_WIDTH, 8 * (_HISTORY_ROW_HEIGHT + 4) + 8)
+                    scroll.setWidget(history_parent)
+                    scroll.viewport().setAutoFillBackground(False)
+                    scroll.setStyleSheet(self._history_scroll_style(bg, dark))
+                    history_scrolls.append(scroll)
+                    scroll_action = QWidgetAction(menu)
+                    scroll_action.setDefaultWidget(scroll)
+                    menu.addAction(scroll_action)
             else:
                 empty = menu.addAction(_tr("ChatWindow.no_convs"))
                 empty.setEnabled(False)
             menu.addSeparator()
 
-            change_menu = menu.addMenu(_tr("ChatWindow.avatar_change_menu"))
-            reset_menu = menu.addMenu(_tr("ChatWindow.avatar_reset_menu"))
+            change_menu = QMenu(_tr("ChatWindow.avatar_change_menu"), menu)
+            change_menu.setObjectName("ConversationHistoryMenu")
+            change_menu.setIcon(FluentIcon.PHOTO.icon())
+            change_menu.setStyleSheet(menu_style)
+            menu.addMenu(change_menu)
+            reset_menu = QMenu(_tr("ChatWindow.avatar_reset_menu"), menu)
+            reset_menu.setObjectName("ConversationHistoryMenu")
+            reset_menu.setIcon(FluentIcon.RETURN.icon())
+            reset_menu.setStyleSheet(menu_style)
+            menu.addMenu(reset_menu)
             for character in self._group_characters:
                 display = self._model_manager.get_display_name(character)
                 change_action = change_menu.addAction(display)
@@ -1912,18 +2135,22 @@ class ChatWindow(QWidget):
                 reset_action.triggered.connect(lambda _checked=False, c=character: self._reset_character_avatar(c))
             pos = self._title_avatar.mapToGlobal(self._title_avatar.rect().bottomLeft())
             self._pending_history_menu_action = None
+            self._fit_history_menu_widgets(menu, history_rows, history_scrolls)
             menu.exec(pos)
             self._run_pending_history_menu_action()
             return
         else:
-            change_action = menu.addAction(_tr("ChatWindow.avatar_change"))
+            change_action = Action(FluentIcon.PHOTO, _tr("ChatWindow.avatar_change"), menu)
+            menu.addAction(change_action)
             change_action.triggered.connect(lambda: self._set_character_avatar(self._character))
-            reset_action = menu.addAction(_tr("ChatWindow.avatar_reset"))
+            reset_action = Action(FluentIcon.RETURN, _tr("ChatWindow.avatar_reset"), menu)
+            menu.addAction(reset_action)
             reset_action.setEnabled(bool(self._chat_avatar_paths.get(self._character)))
             reset_action.triggered.connect(lambda: self._reset_character_avatar(self._character))
         menu.addSeparator()
 
-        title = menu.addAction(_tr("ChatWindow.history_title"))
+        title = Action(FluentIcon.HISTORY, _tr("ChatWindow.history_title"), menu)
+        menu.addAction(title)
         title.setEnabled(False)
         menu.addSeparator()
 
@@ -1946,6 +2173,7 @@ class ChatWindow(QWidget):
                 )
                 row.selected.connect(lambda conv_id: self._select_history_row(menu, conv_id))
                 row.delete_requested.connect(lambda conv_id: self._delete_history_row(menu, conv_id))
+                history_rows.append(row)
                 layout.addWidget(row)
 
             scroll = QScrollArea(menu)
@@ -1954,42 +2182,11 @@ class ChatWindow(QWidget):
             scroll.setFrameShape(QScrollArea.Shape.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            scroll.setFixedSize(312, 10 * 40 + 8)
+            scroll.setFixedSize(_HISTORY_SCROLL_WIDTH, 8 * (_HISTORY_ROW_HEIGHT + 4) + 8)
             scroll.setWidget(container)
             scroll.viewport().setAutoFillBackground(False)
-            scroll.setStyleSheet(f"""
-                QScrollArea#ConversationHistoryScroll {{
-                    background: {bg};
-                    border: none;
-                }}
-                QScrollArea#ConversationHistoryScroll > QWidget > QWidget {{
-                    background: {bg};
-                }}
-                QWidget#ConversationHistoryList {{
-                    background: {bg};
-                }}
-                QScrollArea#ConversationHistoryScroll QScrollBar:vertical {{
-                    background: {bg};
-                    width: 8px;
-                    margin: 4px 0px 4px 0px;
-                }}
-                QScrollArea#ConversationHistoryScroll QScrollBar::handle:vertical {{
-                    background: {'#566074' if dark else '#c4cfe3'};
-                    border-radius: 4px;
-                    min-height: 30px;
-                }}
-                QScrollArea#ConversationHistoryScroll QScrollBar::handle:vertical:hover {{
-                    background: {'#69758d' if dark else '#aebbd4'};
-                }}
-                QScrollArea#ConversationHistoryScroll QScrollBar::add-line:vertical,
-                QScrollArea#ConversationHistoryScroll QScrollBar::sub-line:vertical {{
-                    height: 0px;
-                }}
-                QScrollArea#ConversationHistoryScroll QScrollBar::add-page:vertical,
-                QScrollArea#ConversationHistoryScroll QScrollBar::sub-page:vertical {{
-                    background: transparent;
-                }}
-            """)
+            scroll.setStyleSheet(self._history_scroll_style(bg, dark))
+            history_scrolls.append(scroll)
             scroll_action = QWidgetAction(menu)
             scroll_action.setDefaultWidget(scroll)
             menu.addAction(scroll_action)
@@ -2003,16 +2200,19 @@ class ChatWindow(QWidget):
                 )
                 row.selected.connect(lambda conv_id: self._select_history_row(menu, conv_id))
                 row.delete_requested.connect(lambda conv_id: self._delete_history_row(menu, conv_id))
+                history_rows.append(row)
                 action = QWidgetAction(menu)
                 action.setDefaultWidget(row)
                 menu.addAction(action)
 
         menu.addSeparator()
-        new_action = menu.addAction(_tr("ChatWindow.new_conversation"))
+        new_action = Action(FluentIcon.ADD, _tr("ChatWindow.new_conversation"), menu)
+        menu.addAction(new_action)
         new_action.triggered.connect(self._new_conversation)
 
         pos = self._title_avatar.mapToGlobal(self._title_avatar.rect().bottomLeft())
         self._pending_history_menu_action = None
+        self._fit_history_menu_widgets(menu, history_rows, history_scrolls)
         menu.exec(pos)
         self._run_pending_history_menu_action()
 
