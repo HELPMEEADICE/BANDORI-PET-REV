@@ -68,6 +68,50 @@ def _message_row_dict(row, grouped: bool = False) -> dict | None:
     }
 
 
+def _memory_row_dict(row) -> dict:
+    return {
+        "id": _db_int(row[0]) or 0,
+        "character": _db_text(row[1]),
+        "user_key": _db_text(row[2]),
+        "kind": _db_text(row[3], "note") or "note",
+        "content": _db_text(row[4]),
+        "importance": _db_int(row[5]) or 0,
+        "source_message_id": _db_int(row[6]),
+        "source_group_message_id": _db_int(row[7]),
+        "created_at": _db_text(row[8]),
+        "updated_at": _db_text(row[9]),
+    }
+
+
+def _state_row_dict(row) -> dict:
+    if not row:
+        return {}
+    return {
+        "id": _db_int(row[0]) or 0,
+        "character": _db_text(row[1]),
+        "user_key": _db_text(row[2]),
+        "affection": _db_int(row[3]) or 50,
+        "trust": _db_int(row[4]) or 50,
+        "familiarity": _db_int(row[5]) or 0,
+        "mood": _db_text(row[6], "calm") or "calm",
+        "mood_intensity": _db_int(row[7]) or 20,
+        "summary": _db_text(row[8]),
+        "updated_at": _db_text(row[9]),
+    }
+
+
+def _clamp_int(value, low: int, high: int, default: int = 0) -> int:
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        number = default
+    return max(low, min(high, number))
+
+
+def _now_text() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _same_path(a: str | os.PathLike, b: str | os.PathLike) -> bool:
     return Path(a).resolve() == Path(b).resolve()
 
@@ -232,7 +276,54 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS relationship_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character TEXT NOT NULL,
+                user_key TEXT NOT NULL DEFAULT '',
+                affection INTEGER NOT NULL DEFAULT 50,
+                trust INTEGER NOT NULL DEFAULT 50,
+                familiarity INTEGER NOT NULL DEFAULT 0,
+                mood TEXT NOT NULL DEFAULT 'calm',
+                mood_intensity INTEGER NOT NULL DEFAULT 20,
+                summary TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(character, user_key)
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS character_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character TEXT NOT NULL,
+                user_key TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'note',
+                content TEXT NOT NULL,
+                importance INTEGER NOT NULL DEFAULT 50,
+                source_message_id INTEGER,
+                source_group_message_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(character, user_key, content)
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS mood_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character TEXT NOT NULL,
+                user_key TEXT NOT NULL DEFAULT '',
+                event_type TEXT NOT NULL DEFAULT 'interaction',
+                affection_delta INTEGER NOT NULL DEFAULT 0,
+                trust_delta INTEGER NOT NULL DEFAULT 0,
+                familiarity_delta INTEGER NOT NULL DEFAULT 0,
+                mood TEXT NOT NULL DEFAULT '',
+                mood_intensity INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
         columns = [r[1] for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()]
         if "reasoning_content" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
@@ -242,6 +333,230 @@ class DatabaseManager:
         if "reasoning_content" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
+
+    def _normalize_user_key(self, user_key: str) -> str:
+        return (user_key or "__default__").strip() or "__default__"
+
+    def get_relationship_state(self, character: str, user_key: str = "") -> dict:
+        user_key = self._normalize_user_key(user_key)
+        row = self._conn.execute(
+            "SELECT id, character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at "
+            "FROM relationship_states WHERE character=? AND user_key=?",
+            (character, user_key),
+        ).fetchone()
+        if row:
+            return _state_row_dict(row)
+        return {
+            "id": 0,
+            "character": character,
+            "user_key": user_key,
+            "affection": 50,
+            "trust": 50,
+            "familiarity": 0,
+            "mood": "calm",
+            "mood_intensity": 20,
+            "summary": "",
+            "updated_at": "",
+        }
+
+    def upsert_relationship_state(
+        self,
+        character: str,
+        user_key: str = "",
+        *,
+        affection: int | None = None,
+        trust: int | None = None,
+        familiarity: int | None = None,
+        mood: str | None = None,
+        mood_intensity: int | None = None,
+        summary: str | None = None,
+    ) -> dict:
+        user_key = self._normalize_user_key(user_key)
+        current = self.get_relationship_state(character, user_key)
+        next_state = {
+            "affection": _clamp_int(current["affection"] if affection is None else affection, 0, 100, 50),
+            "trust": _clamp_int(current["trust"] if trust is None else trust, 0, 100, 50),
+            "familiarity": _clamp_int(current["familiarity"] if familiarity is None else familiarity, 0, 100, 0),
+            "mood": (mood if mood is not None else current["mood"]) or "calm",
+            "mood_intensity": _clamp_int(
+                current["mood_intensity"] if mood_intensity is None else mood_intensity,
+                0,
+                100,
+                20,
+            ),
+            "summary": current["summary"] if summary is None else str(summary or ""),
+        }
+        now = _now_text()
+        self._conn.execute(
+            "INSERT INTO relationship_states "
+            "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(character, user_key) DO UPDATE SET "
+            "affection=excluded.affection, trust=excluded.trust, familiarity=excluded.familiarity, "
+            "mood=excluded.mood, mood_intensity=excluded.mood_intensity, summary=excluded.summary, "
+            "updated_at=excluded.updated_at",
+            (
+                character,
+                user_key,
+                next_state["affection"],
+                next_state["trust"],
+                next_state["familiarity"],
+                next_state["mood"],
+                next_state["mood_intensity"],
+                next_state["summary"],
+                now,
+            ),
+        )
+        self._conn.commit()
+        return self.get_relationship_state(character, user_key)
+
+    def apply_relationship_delta(
+        self,
+        character: str,
+        user_key: str = "",
+        *,
+        affection_delta: int = 0,
+        trust_delta: int = 0,
+        familiarity_delta: int = 0,
+        mood: str = "",
+        mood_intensity: int | None = None,
+        event_type: str = "interaction",
+        reason: str = "",
+    ) -> dict:
+        user_key = self._normalize_user_key(user_key)
+        current = self.get_relationship_state(character, user_key)
+        if mood_intensity is None:
+            if mood:
+                mood_intensity = max(25, min(85, current["mood_intensity"] + 8))
+            else:
+                mood_intensity = max(10, current["mood_intensity"] - 3)
+        next_state = self.upsert_relationship_state(
+            character,
+            user_key,
+            affection=current["affection"] + affection_delta,
+            trust=current["trust"] + trust_delta,
+            familiarity=current["familiarity"] + familiarity_delta,
+            mood=mood or current["mood"],
+            mood_intensity=mood_intensity,
+        )
+        self.add_mood_event(
+            character,
+            user_key,
+            event_type=event_type,
+            affection_delta=affection_delta,
+            trust_delta=trust_delta,
+            familiarity_delta=familiarity_delta,
+            mood=mood,
+            mood_intensity=mood_intensity,
+            reason=reason,
+        )
+        return next_state
+
+    def add_character_memory(
+        self,
+        character: str,
+        user_key: str,
+        kind: str,
+        content: str,
+        importance: int = 50,
+        *,
+        source_message_id: int | None = None,
+        source_group_message_id: int | None = None,
+    ) -> int:
+        user_key = self._normalize_user_key(user_key)
+        content = str(content or "").strip()
+        if not content:
+            return 0
+        kind = (kind or "note").strip() or "note"
+        importance = _clamp_int(importance, 1, 100, 50)
+        now = _now_text()
+        cur = self._conn.execute(
+            "INSERT INTO character_memories "
+            "(character, user_key, kind, content, importance, source_message_id, source_group_message_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(character, user_key, content) DO UPDATE SET "
+            "kind=excluded.kind, importance=max(character_memories.importance, excluded.importance), "
+            "source_message_id=coalesce(excluded.source_message_id, character_memories.source_message_id), "
+            "source_group_message_id=coalesce(excluded.source_group_message_id, character_memories.source_group_message_id), "
+            "updated_at=excluded.updated_at",
+            (
+                character,
+                user_key,
+                kind,
+                content,
+                importance,
+                source_message_id,
+                source_group_message_id,
+                now,
+                now,
+            ),
+        )
+        self._conn.commit()
+        if cur.lastrowid:
+            return cur.lastrowid
+        row = self._conn.execute(
+            "SELECT id FROM character_memories WHERE character=? AND user_key=? AND content=?",
+            (character, user_key, content),
+        ).fetchone()
+        return _db_int(row[0]) if row else 0
+
+    def get_character_memories(self, character: str, user_key: str = "", limit: int = 8) -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        limit = _clamp_int(limit, 1, 100, 8)
+        rows = self._conn.execute(
+            "SELECT id, character, user_key, kind, content, importance, source_message_id, "
+            "source_group_message_id, created_at, updated_at "
+            "FROM character_memories WHERE character=? AND user_key=? "
+            "ORDER BY importance DESC, updated_at DESC, id DESC LIMIT ?",
+            (character, user_key, limit),
+        ).fetchall()
+        return [_memory_row_dict(row) for row in rows]
+
+    def delete_character_memories_like(self, character: str, user_key: str, query: str) -> int:
+        user_key = self._normalize_user_key(user_key)
+        query = str(query or "").strip()
+        if not query:
+            return 0
+        cur = self._conn.execute(
+            "DELETE FROM character_memories WHERE character=? AND user_key=? AND content LIKE ?",
+            (character, user_key, f"%{query}%"),
+        )
+        self._conn.commit()
+        return int(cur.rowcount or 0)
+
+    def add_mood_event(
+        self,
+        character: str,
+        user_key: str,
+        *,
+        event_type: str = "interaction",
+        affection_delta: int = 0,
+        trust_delta: int = 0,
+        familiarity_delta: int = 0,
+        mood: str = "",
+        mood_intensity: int = 0,
+        reason: str = "",
+    ) -> int:
+        user_key = self._normalize_user_key(user_key)
+        cur = self._conn.execute(
+            "INSERT INTO mood_events "
+            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, mood, mood_intensity, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                character,
+                user_key,
+                event_type or "interaction",
+                _clamp_int(affection_delta, -100, 100, 0),
+                _clamp_int(trust_delta, -100, 100, 0),
+                _clamp_int(familiarity_delta, -100, 100, 0),
+                mood or "",
+                _clamp_int(mood_intensity, 0, 100, 0),
+                reason or "",
+                _now_text(),
+            ),
+        )
+        self._conn.commit()
+        return cur.lastrowid
 
     def create_conversation(self, character: str, title: str = "") -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

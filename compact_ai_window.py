@@ -22,7 +22,14 @@ from llm_manager import (
     parse_action_tags,
     strip_action_tags,
 )
+from database_manager import DatabaseManager
 from i18n_manager import tr as _tr
+from relationship_memory import (
+    analyze_interaction,
+    build_relationship_context,
+    format_character_status,
+    user_key_from_config,
+)
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -97,8 +104,10 @@ class CompactAIWindow(QWidget):
         self._character = character
         self._model_manager = model_manager
         self._cfg = config_manager
+        self._db = DatabaseManager()
         self._worker = None
         self._history = []
+        self._last_user_text = ""
         self._stream_text = ""
         self._thinking_text = ""
         self._external_stream_text = ""
@@ -554,6 +563,8 @@ class CompactAIWindow(QWidget):
             self._thinking_text = ""
             self._set_output_text("")
             return
+        if self._handle_local_memory_command(text):
+            return
         if self._worker is not None:
             return
 
@@ -567,6 +578,7 @@ class CompactAIWindow(QWidget):
         self._input.clear()
         self._history.append({"role": "user", "content": text})
         self._history = self._history[-12:]
+        self._last_user_text = text
         self._stream_text = ""
         self._thinking_text = ""
         self._set_output_text("...")
@@ -581,7 +593,14 @@ class CompactAIWindow(QWidget):
         self._worker.start()
 
     def _build_messages(self) -> list[dict]:
-        messages = [{"role": "system", "content": build_system_prompt(self._character, self._cfg)}]
+        system_prompt = build_system_prompt(self._character, self._cfg)
+        system_prompt += "\n\n" + build_relationship_context(
+            self._db,
+            self._character,
+            self._user_memory_key(),
+            self._display_user_name(),
+        )
+        messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         now = datetime.now().strftime("%Y-%m-%d %I:%M %p")
         for i in range(len(history) - 1, -1, -1):
@@ -603,17 +622,103 @@ class CompactAIWindow(QWidget):
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         del reasoning_text, actions
+        acts = parse_action_tags(full_text)
         clean = strip_action_tags(full_text)
         if clean:
             self._stream_text = clean
             self._set_output_text(clean)
             self._history.append({"role": "assistant", "content": clean})
             self._history = self._history[-12:]
-        for action in parse_action_tags(full_text):
+        self._apply_relationship_update(clean, acts)
+        for action in acts:
             self.action_triggered.emit(action)
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
+
+    def _user_memory_key(self) -> str:
+        return user_key_from_config(self._cfg)
+
+    def _display_user_name(self) -> str:
+        return str(self._cfg.get("user_name", "") or "").strip() if self._cfg else ""
+
+    def _handle_local_memory_command(self, text: str) -> bool:
+        stripped = text.strip()
+        lowered = stripped.lower()
+        if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
+            self._input.clear()
+            self._set_output_text(format_character_status(
+                self._db,
+                self._character,
+                self._user_memory_key(),
+                self._model_manager.get_display_name(self._character),
+            ))
+            return True
+        for prefix in ("@remember ", "/remember ", "@记住 ", "/记住 "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                content = stripped[len(prefix):].strip()
+                if not content:
+                    self._set_output_text("要记住什么？可以输入 @记住 你的内容。")
+                    return True
+                self._db.add_character_memory(
+                    self._character,
+                    self._user_memory_key(),
+                    "manual",
+                    "用户希望我记住：" + content,
+                    95,
+                )
+                self._db.apply_relationship_delta(
+                    self._character,
+                    self._user_memory_key(),
+                    trust_delta=1,
+                    familiarity_delta=1,
+                    mood="soft",
+                    mood_intensity=42,
+                    event_type="manual_memory",
+                    reason="用户手动添加长期记忆",
+                )
+                self._set_output_text("已记住：" + content)
+                return True
+        for prefix in ("@forget ", "/forget ", "@忘记 ", "/忘记 "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                query = stripped[len(prefix):].strip()
+                if not query:
+                    self._set_output_text("要忘记哪条记忆？可以输入 @忘记 关键词。")
+                    return True
+                count = self._db.delete_character_memories_like(
+                    self._character,
+                    self._user_memory_key(),
+                    query,
+                )
+                self._set_output_text(f"已删除 {count} 条包含“{query}”的长期记忆。")
+                return True
+        return False
+
+    def _apply_relationship_update(self, assistant_text: str, actions: list[str]):
+        if not self._last_user_text.strip():
+            return
+        analysis = analyze_interaction(self._last_user_text, assistant_text, actions)
+        self._db.apply_relationship_delta(
+            self._character,
+            self._user_memory_key(),
+            affection_delta=analysis["affection_delta"],
+            trust_delta=analysis["trust_delta"],
+            familiarity_delta=analysis["familiarity_delta"],
+            mood=analysis["mood"],
+            mood_intensity=analysis["mood_intensity"],
+            event_type="compact_chat",
+            reason=analysis["reason"],
+        )
+        for memory in analysis.get("memories", []):
+            self._db.add_character_memory(
+                self._character,
+                self._user_memory_key(),
+                memory["kind"],
+                memory["content"],
+                memory["importance"],
+            )
 
     def _on_response_error(self, error_msg: str):
         self._set_output_text(f"Error: {error_msg}")
@@ -633,4 +738,5 @@ class CompactAIWindow(QWidget):
         if self._worker is not None:
             self._worker.cancel()
             self._worker = None
+        self._db.close()
         super().closeEvent(event)

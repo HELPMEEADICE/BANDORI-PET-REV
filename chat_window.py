@@ -47,6 +47,12 @@ from llm_manager import (
     build_system_prompt, LLMStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags,
 )
+from relationship_memory import (
+    analyze_interaction,
+    build_relationship_context,
+    format_character_status,
+    user_key_from_config,
+)
 from action_bus import publish_action
 
 
@@ -1158,6 +1164,9 @@ class ChatWindow(QWidget):
         self._group_plan_worker = None
         self._plan_divider = None
         self._active_response_character = character
+        self._last_user_text = ""
+        self._last_user_message_id: int | None = None
+        self._last_group_user_message_id: int | None = None
         self._closing = False
         self._close_animating = False
         self._window_anim = None
@@ -2576,6 +2585,123 @@ class ChatWindow(QWidget):
             return text
         return f"【{self._model_manager.get_display_name(character)}】\n{text}"
 
+    def _user_memory_key(self) -> str:
+        return user_key_from_config(self._cfg)
+
+    def _memory_target_characters(self) -> list[str]:
+        return list(self._group_characters) if self._is_group_chat else [self._character]
+
+    def _show_local_assistant_message(self, text: str):
+        avatar_character = self._character
+        avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(avatar_character)
+        bubble = MessageBubble(
+            text,
+            "assistant",
+            self._display_name,
+            avatar_path=avatar_path,
+            avatar_data=avatar_data,
+            avatar_focus=avatar_focus,
+            show_reasoning=self._show_reasoning,
+        )
+        self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
+        self._relayout_message_bubbles()
+        self._scroll_to_bottom()
+
+    def _relationship_status_text(self) -> str:
+        user_key = self._user_memory_key()
+        parts = []
+        for character in self._memory_target_characters():
+            parts.append(format_character_status(
+                self._db,
+                character,
+                user_key,
+                self._model_manager.get_display_name(character),
+            ))
+        return "\n\n".join(parts)
+
+    def _remember_manual_text(self, text: str):
+        content = text.strip()
+        if not content:
+            self._show_local_assistant_message("要记住什么？可以输入 @记住 你的内容。")
+            return
+        user_key = self._user_memory_key()
+        for character in self._memory_target_characters():
+            self._db.add_character_memory(
+                character,
+                user_key,
+                "manual",
+                "用户希望我记住：" + content,
+                95,
+            )
+            self._db.apply_relationship_delta(
+                character,
+                user_key,
+                trust_delta=1,
+                familiarity_delta=1,
+                mood="soft",
+                mood_intensity=42,
+                event_type="manual_memory",
+                reason="用户手动添加长期记忆",
+            )
+        self._show_local_assistant_message("已记住：" + content)
+
+    def _forget_memory_text(self, text: str):
+        query = text.strip()
+        if not query:
+            self._show_local_assistant_message("要忘记哪条记忆？可以输入 @忘记 关键词。")
+            return
+        user_key = self._user_memory_key()
+        total = 0
+        for character in self._memory_target_characters():
+            total += self._db.delete_character_memories_like(character, user_key, query)
+        self._show_local_assistant_message(f"已删除 {total} 条包含“{query}”的长期记忆。")
+
+    def _handle_local_memory_command(self, text: str) -> bool:
+        stripped = text.strip()
+        lowered = stripped.lower()
+        if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
+            self._input.clear()
+            self._show_local_assistant_message(self._relationship_status_text())
+            return True
+        for prefix in ("@remember ", "/remember ", "@记住 ", "/记住 "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._remember_manual_text(stripped[len(prefix):])
+                return True
+        for prefix in ("@forget ", "/forget ", "@忘记 ", "/忘记 "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._forget_memory_text(stripped[len(prefix):])
+                return True
+        return False
+
+    def _apply_relationship_update(self, character: str, user_text: str, assistant_text: str, actions: list[str]):
+        if not user_text.strip() or not character:
+            return
+        user_key = self._user_memory_key()
+        analysis = analyze_interaction(user_text, assistant_text, actions)
+        self._db.apply_relationship_delta(
+            character,
+            user_key,
+            affection_delta=analysis["affection_delta"],
+            trust_delta=analysis["trust_delta"],
+            familiarity_delta=analysis["familiarity_delta"],
+            mood=analysis["mood"],
+            mood_intensity=analysis["mood_intensity"],
+            event_type="chat",
+            reason=analysis["reason"],
+        )
+        for memory in analysis.get("memories", []):
+            self._db.add_character_memory(
+                character,
+                user_key,
+                memory["kind"],
+                memory["content"],
+                memory["importance"],
+                source_message_id=self._last_user_message_id,
+                source_group_message_id=self._last_group_user_message_id,
+            )
+
     def _group_system_prompt(self, character: str, spoken_names: list[str]) -> str:
         prompt = build_system_prompt(character, self._cfg)
         names = [self._model_manager.get_display_name(c) for c in self._group_characters]
@@ -2587,6 +2713,12 @@ class ChatWindow(QWidget):
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
+        system_prompt += "\n\n" + build_relationship_context(
+            self._db,
+            character,
+            self._user_memory_key(),
+            self._user_name or _tr("ChatWindow.you"),
+        )
         messages = [{"role": "system", "content": system_prompt}]
         if self._is_group_chat:
             history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
@@ -2610,6 +2742,9 @@ class ChatWindow(QWidget):
     def _send_message(self):
         text = self._input.toPlainText().strip()
         if not text:
+            return
+
+        if self._handle_local_memory_command(text):
             return
 
         api_url = self._cfg.get("llm_api_url", "")
@@ -2649,11 +2784,14 @@ class ChatWindow(QWidget):
         self._relayout_message_bubbles()
 
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text)
+            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text)
+            self._last_user_message_id = None
         else:
             if self._conv_id is None:
                 self._conv_id = self._db.create_conversation(self._conversation_key)
-            self._db.add_message(self._conv_id, "user", text)
+            self._last_user_message_id = self._db.add_message(self._conv_id, "user", text)
+            self._last_group_user_message_id = None
+        self._last_user_text = text
         self._refresh_group_list()
         if self._is_group_chat:
             self._group_spoken = []
@@ -2828,43 +2966,6 @@ class ChatWindow(QWidget):
         self._scroll_to_bottom()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
-        self._pending_action_character = self._active_response_character
-        self._pending_actions.extend(parse_action_tags(full_text))
-        self._flush_actions()
-
-        clean = strip_action_tags(full_text)
-        reasoning_clean = strip_action_tags(reasoning_text)
-        if self._current_bubble:
-            self._stream_flush_timer.stop()
-            self._stream_buffer = ""
-            self._visible_stream_text = clean
-            self._reasoning_stream_text = reasoning_clean
-            self._current_bubble.set_streaming(False)
-            self._current_bubble.set_reasoning(reasoning_clean)
-            self._current_bubble.set_text(clean)
-
-        stored = self._assistant_content(self._active_response_character, clean)
-        if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean)
-            self._refresh_group_list()
-        elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean)
-            self._refresh_group_list()
-
-        if self._is_group_chat:
-            self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
-            self._worker = None
-            self._current_bubble = None
-            self._start_next_group_response()
-        else:
-            self._set_busy(False)
-            self._input.setFocus()
-            self._sync_input_height()
-            self._worker = None
-            self._current_bubble = None
-            self._scroll_to_bottom()
-
-    def _on_response_finished_nonstream(self, full_text: str, reasoning_text: str, actions: list):
         acts = parse_action_tags(full_text)
         self._pending_action_character = self._active_response_character
         self._pending_actions.extend(acts)
@@ -2888,6 +2989,47 @@ class ChatWindow(QWidget):
         elif self._conv_id:
             self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean)
             self._refresh_group_list()
+        self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
+
+        if self._is_group_chat:
+            self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
+            self._worker = None
+            self._current_bubble = None
+            self._start_next_group_response()
+        else:
+            self._set_busy(False)
+            self._input.setFocus()
+            self._sync_input_height()
+            self._worker = None
+            self._current_bubble = None
+            self._scroll_to_bottom()
+
+    def _on_response_finished_nonstream(self, full_text: str, reasoning_text: str, actions: list):
+        del actions
+        acts = parse_action_tags(full_text)
+        self._pending_action_character = self._active_response_character
+        self._pending_actions.extend(acts)
+        self._flush_actions()
+
+        clean = strip_action_tags(full_text)
+        reasoning_clean = strip_action_tags(reasoning_text)
+        if self._current_bubble:
+            self._stream_flush_timer.stop()
+            self._stream_buffer = ""
+            self._visible_stream_text = clean
+            self._reasoning_stream_text = reasoning_clean
+            self._current_bubble.set_streaming(False)
+            self._current_bubble.set_reasoning(reasoning_clean)
+            self._current_bubble.set_text(clean)
+
+        stored = self._assistant_content(self._active_response_character, clean)
+        if self._is_group_chat:
+            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean)
+            self._refresh_group_list()
+        elif self._conv_id:
+            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean)
+            self._refresh_group_list()
+        self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
 
         if self._is_group_chat:
             self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
