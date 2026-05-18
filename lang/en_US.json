@@ -348,6 +348,8 @@
     "ChatWindow.group_chat_named": "Group: {members}",
     "ChatWindow.group_list": "Group Chats",
     "ChatWindow.group_list_hint": "Only chatted groups appear; switching does not change desktop models.",
+    "ChatWindow.group_list_collapse": "Collapse group list",
+    "ChatWindow.group_list_expand": "Expand group list",
     "ChatWindow.rename_group": "Rename group",
     "ChatWindow.rename_group_title": "Rename group",
     "ChatWindow.rename_group_label": "Enter a group display name, or leave it empty to restore the default:",

@@ -42,6 +42,8 @@ DEFAULTS = {
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
     "chat_avatar_paths": {},
+    "group_chat_sidebar_ratio": 0.28,
+    "group_chat_sidebar_collapsed": False,
     "pov_mode": "off",
     "pov_custom_prompt": "",
     "pov_custom_personas": [],
