@@ -817,6 +817,7 @@ class SettingsWindow(QWidget):
             self._cfg.get("live2d_scale", 0) if self._cfg else 0
         )
         self._saved_user_name = ""
+        self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
 
         icon_path = _app_icon_path()
@@ -1227,6 +1228,19 @@ class SettingsWindow(QWidget):
                 self._refresh_memory_page()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
+
+    def _activate_char_page_for_model_list(self):
+        page = self._ensure_page("characters")
+        if page is None:
+            return
+        for key, btn in self._nav_buttons.items():
+            btn.setChecked(key == "characters")
+        for stacked_page in self._pages.values():
+            stacked_page.hide()
+        self._costume_page.hide()
+        self._char_page.show()
+        self._current_page = "characters"
+        self._animate_indicator("characters")
 
     def _animate_indicator(self, nav_key: str):
         btn = self._nav_buttons.get(nav_key)
@@ -2318,11 +2332,37 @@ class SettingsWindow(QWidget):
         subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.llm_subtitle"), page))
         layout.addWidget(subtitle)
 
+        profile_label = BodyLabel(_tr("SettingsWindow.llm_api_profile", default="API 配置档案"), page)
+        layout.addWidget(profile_label)
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(8)
+        self._llm_api_profile_combo = OpaqueDropDownComboBox(page)
+        self._llm_api_profile_combo.setFixedHeight(36)
+        self._llm_api_profile_combo.currentIndexChanged.connect(self._on_llm_api_profile_selected)
+        profile_row.addWidget(self._llm_api_profile_combo, 1)
+
+        self._llm_api_profile_name = FluentContextLineEdit(page)
+        self._llm_api_profile_name.setPlaceholderText(_tr("SettingsWindow.llm_api_profile_name_placeholder", default="配置名称"))
+        self._llm_api_profile_name.setFixedHeight(36)
+        profile_row.addWidget(self._llm_api_profile_name, 1)
+
+        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_api_profile_save", default="保存档案并应用"), page)
+        save_profile_btn.setFixedHeight(36)
+        save_profile_btn.clicked.connect(self._save_llm_api_profile)
+        profile_row.addWidget(save_profile_btn)
+
+        delete_profile_btn = PushButton(FluentIcon.DELETE, _tr("SettingsWindow.llm_api_profile_delete", default="删除"), page)
+        delete_profile_btn.setFixedHeight(36)
+        delete_profile_btn.clicked.connect(self._delete_llm_api_profile)
+        profile_row.addWidget(delete_profile_btn)
+        layout.addLayout(profile_row)
+
         api_url_label = BodyLabel(_tr("SettingsWindow.llm_api_url"), page)
         layout.addWidget(api_url_label)
         self._llm_api_url = FluentContextLineEdit(page)
         self._llm_api_url.setPlaceholderText(_tr("SettingsWindow.llm_api_url_placeholder"))
         self._llm_api_url.setFixedHeight(36)
+        self._llm_api_url.textChanged.connect(lambda: self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex()) if hasattr(self, "_llm_api_mode") else None)
         api_url_input_col = QVBoxLayout()
         api_url_input_col.setContentsMargins(0, 0, 0, 0)
         api_url_input_col.setSpacing(4)
@@ -2368,6 +2408,24 @@ class SettingsWindow(QWidget):
         aux_fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_aux_model_id))
         aux_model_row.addWidget(aux_fetch_btn)
         layout.addLayout(aux_model_row)
+
+        api_mode_label = BodyLabel(_tr("SettingsWindow.llm_api_mode", default="API 模式"), page)
+        layout.addWidget(api_mode_label)
+        self._llm_api_mode = OpaqueDropDownComboBox(page)
+        self._llm_api_mode.addItem(_tr("SettingsWindow.llm_api_mode_chat", default="兼容 Chat Completions"), userData="chat_completions")
+        self._llm_api_mode.addItem(_tr("SettingsWindow.llm_api_mode_responses", default="OpenAI Responses（多模态/工具）"), userData="responses")
+        self._llm_api_mode.setFixedHeight(36)
+        self._llm_api_mode.currentIndexChanged.connect(self._on_llm_api_mode_changed)
+        layout.addWidget(self._llm_api_mode)
+
+        web_search_row = QHBoxLayout()
+        web_search_row.setContentsMargins(0, 0, 0, 0)
+        web_search_label = BodyLabel(_tr("SettingsWindow.llm_web_search_enabled", default="联网搜索"), page)
+        self._llm_web_search_enabled = SwitchButton(page)
+        web_search_row.addWidget(web_search_label)
+        web_search_row.addStretch()
+        web_search_row.addWidget(self._llm_web_search_enabled)
+        layout.addLayout(web_search_row)
 
         thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
         layout.addWidget(thinking_label)
@@ -2442,7 +2500,7 @@ class SettingsWindow(QWidget):
         test_btn.clicked.connect(self._test_connection)
         btn_row.addWidget(test_btn)
 
-        save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
+        save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.llm_apply_current", default="应用当前配置"), page)
         save_btn.setFixedHeight(36)
         save_btn.clicked.connect(self._save_llm_config)
         btn_row.addWidget(save_btn)
@@ -3527,6 +3585,10 @@ class SettingsWindow(QWidget):
                 "_llm_api_key",
                 "_llm_model_id",
                 "_llm_aux_model_id",
+                "_llm_api_profile_combo",
+                "_llm_api_profile_name",
+                "_llm_api_mode",
+                "_llm_web_search_enabled",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
                 "_user_name",
@@ -3586,6 +3648,7 @@ class SettingsWindow(QWidget):
         self._llm_api_key.setStyleSheet(style)
         self._llm_model_id.setStyleSheet(style)
         self._llm_aux_model_id.setStyleSheet(style)
+        self._llm_api_profile_name.setStyleSheet(style)
         self._user_name.setStyleSheet(style)
         self._pov_custom_prompt.setStyleSheet(style)
         hint_color = "#a7b0bf" if dark else "#687385"
@@ -3638,6 +3701,13 @@ class SettingsWindow(QWidget):
             self._llm_api_key.setText(self._cfg.get("llm_api_key", ""))
             self._llm_model_id.setText(self._cfg.get("llm_model_id", ""))
             self._llm_aux_model_id.setText(self._cfg.get("llm_aux_model_id", ""))
+            api_mode = self._cfg.get("llm_api_mode", "chat_completions")
+            for i in range(self._llm_api_mode.count()):
+                if self._llm_api_mode.itemData(i) == api_mode:
+                    self._llm_api_mode.setCurrentIndex(i)
+                    break
+            self._llm_web_search_enabled.setChecked(bool(self._cfg.get("llm_web_search_enabled", False)))
+            self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
             self._saved_user_name = self._cfg.get("user_name", "")
             self._user_name.setText(self._saved_user_name)
             saved_color = self._cfg.get("user_avatar_color", BANDORI_PRIMARY)
@@ -3664,6 +3734,228 @@ class SettingsWindow(QWidget):
                     self._pov_role_character.setCurrentIndex(i)
                     break
             self._on_pov_mode_changed(self._pov_mode.currentIndex())
+            self._reload_llm_api_profiles(
+                self._cfg.get("llm_active_api_profile", "") or self._matching_llm_api_profile_name()
+            )
+
+    def _normalized_llm_api_profiles(self) -> list[dict]:
+        if not self._cfg:
+            return []
+        profiles = self._cfg.get("llm_api_profiles", [])
+        if not isinstance(profiles, list):
+            return []
+        normalized = []
+        seen = set()
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name", "") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            api_mode = str(profile.get("llm_api_mode", "chat_completions") or "chat_completions")
+            if api_mode not in ("chat_completions", "responses"):
+                api_mode = "chat_completions"
+            normalized.append({
+                "name": name,
+                "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
+                "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
+                "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
+                "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+                "llm_api_mode": api_mode,
+                "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+                "llm_enable_thinking": profile.get("llm_enable_thinking", None)
+                if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
+                "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
+            })
+        return normalized
+
+    def _current_llm_api_profile(self, name: str) -> dict:
+        thinking_idx = self._llm_enable_thinking.currentIndex()
+        thinking = True if thinking_idx == 1 else False if thinking_idx == 2 else None
+        return {
+            "name": name.strip(),
+            "llm_api_url": self._llm_api_url.text().strip(),
+            "llm_api_key": self._llm_api_key.text().strip(),
+            "llm_model_id": self._llm_model_id.text().strip(),
+            "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
+            "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
+            "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
+            "llm_enable_thinking": thinking,
+            "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
+        }
+
+    def _llm_profiles_equal(self, left: dict, right: dict) -> bool:
+        keys = (
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+            "llm_api_mode",
+            "llm_web_search_enabled",
+            "llm_enable_thinking",
+            "llm_show_reasoning",
+        )
+        return all(left.get(key) == right.get(key) for key in keys)
+
+    def _matching_llm_api_profile_name(self) -> str:
+        current = self._current_llm_api_profile("__current__")
+        for profile in self._normalized_llm_api_profiles():
+            if self._llm_profiles_equal(current, profile):
+                return profile["name"]
+        return ""
+
+    def _persist_current_llm_api_config(self, active_profile_name: str | None = None):
+        if not self._cfg:
+            return
+        active = self._current_llm_api_profile("__active__")
+        for key, value in active.items():
+            if key != "name":
+                self._cfg.set(key, value)
+        if active_profile_name is not None:
+            self._cfg.set("llm_active_api_profile", active_profile_name)
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+
+    def _reload_llm_api_profiles(self, selected_name: str = ""):
+        self._loading_llm_profile = True
+        try:
+            profiles = self._normalized_llm_api_profiles()
+            current_name = selected_name or self._llm_api_profile_name.text().strip()
+            self._llm_api_profile_combo.clear()
+            self._llm_api_profile_combo.addItem(_tr("SettingsWindow.llm_api_profile_none", default="未选择"), userData="")
+            selected_index = 0
+            for profile in profiles:
+                self._llm_api_profile_combo.addItem(profile["name"], userData=profile["name"])
+                if profile["name"] == current_name:
+                    selected_index = self._llm_api_profile_combo.count() - 1
+            self._llm_api_profile_combo.setCurrentIndex(selected_index)
+            if selected_index > 0:
+                self._llm_api_profile_name.setText(current_name)
+            elif not selected_name:
+                self._llm_api_profile_name.clear()
+        finally:
+            self._loading_llm_profile = False
+
+    def _apply_llm_api_profile(self, profile: dict):
+        self._llm_api_url.setText(profile.get("llm_api_url", ""))
+        self._llm_api_key.setText(profile.get("llm_api_key", ""))
+        self._llm_model_id.setText(profile.get("llm_model_id", ""))
+        self._llm_aux_model_id.setText(profile.get("llm_aux_model_id", ""))
+        api_mode = profile.get("llm_api_mode", "chat_completions")
+        for i in range(self._llm_api_mode.count()):
+            if self._llm_api_mode.itemData(i) == api_mode:
+                self._llm_api_mode.setCurrentIndex(i)
+                break
+        self._llm_web_search_enabled.setChecked(bool(profile.get("llm_web_search_enabled", False)))
+        thinking = profile.get("llm_enable_thinking", None)
+        self._llm_enable_thinking.setCurrentIndex(1 if thinking is True else 2 if thinking is False else 0)
+        self._llm_show_reasoning.setChecked(bool(profile.get("llm_show_reasoning", True)))
+        self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
+
+    def _on_llm_api_profile_selected(self, index: int):
+        if self._loading_llm_profile or index < 0:
+            return
+        name = self._llm_api_profile_combo.itemData(index) or ""
+        self._llm_api_profile_name.setText(name)
+        if not name:
+            return
+        for profile in self._normalized_llm_api_profiles():
+            if profile["name"] == name:
+                self._apply_llm_api_profile(profile)
+                self._persist_current_llm_api_config(name)
+                return
+
+    def _save_llm_api_profile(self):
+        if not self._cfg or not self._llm_config_widgets_ready():
+            return
+        name = self._llm_api_profile_name.text().strip()
+        if not name:
+            current = self._llm_api_profile_combo.itemData(self._llm_api_profile_combo.currentIndex()) or ""
+            name = current.strip()
+        if not name:
+            InfoBar.warning(
+                _tr("SettingsWindow.llm_api_profile_name_required_title", default="需要名称"),
+                _tr("SettingsWindow.llm_api_profile_name_required_content", default="请先填写配置名称。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
+        profiles.append(self._current_llm_api_profile(name))
+        self._cfg.set("llm_api_profiles", profiles)
+        self._cfg.set("llm_active_api_profile", name)
+        self._persist_current_llm_api_config(name)
+        try:
+            self._cfg.save()
+            self._reload_llm_api_profiles(name)
+            InfoBar.success(
+                _tr("SettingsWindow.llm_api_profile_saved_title", default="档案已保存"),
+                _tr("SettingsWindow.llm_api_profile_saved_content", default="当前 API 配置已保存。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception:
+            pass
+
+    def _delete_llm_api_profile(self):
+        if not self._cfg or not self._llm_config_widgets_ready():
+            return
+        name = self._llm_api_profile_combo.itemData(self._llm_api_profile_combo.currentIndex()) or self._llm_api_profile_name.text().strip()
+        if not name:
+            return
+        profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
+        self._cfg.set("llm_api_profiles", profiles)
+        if self._cfg.get("llm_active_api_profile", "") == name:
+            self._cfg.set("llm_active_api_profile", "")
+        try:
+            self._cfg.save()
+            self._llm_api_profile_name.clear()
+            self._reload_llm_api_profiles()
+            InfoBar.success(
+                _tr("SettingsWindow.llm_api_profile_deleted_title", default="档案已删除"),
+                _tr("SettingsWindow.llm_api_profile_deleted_content", default="API 配置档案已删除。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception:
+            pass
+
+    def _on_llm_api_mode_changed(self, index: int):
+        mode = self._llm_api_mode.itemData(index) if hasattr(self, "_llm_api_mode") else "chat_completions"
+        responses = mode == "responses"
+        api_url = self._llm_api_url.text().strip() if hasattr(self, "_llm_api_url") else ""
+        hosted_tools_available = responses and (not api_url or self._supports_openai_responses_api(api_url))
+        if hasattr(self, "_llm_web_search_enabled"):
+            self._llm_web_search_enabled.setEnabled(hosted_tools_available)
+        if hasattr(self, "_llm_api_url_hint"):
+            if responses:
+                if api_url and not self._supports_openai_responses_api(api_url):
+                    self._llm_api_url_hint.setText(_tr(
+                        "SettingsWindow.llm_api_url_hint_responses_fallback",
+                        default="此服务商不支持 OpenAI Responses，运行时会自动使用 Chat Completions 兼容模式；OpenAI 内置联网搜索不可用。",
+                    ))
+                else:
+                    self._llm_api_url_hint.setText(_tr(
+                        "SettingsWindow.llm_api_url_hint_responses",
+                        default="Responses 模式可填写 https://api.openai.com/v1/responses；如果仍填写 /chat/completions，程序会自动换成 /responses。",
+                    ))
+            else:
+                self._llm_api_url_hint.setText(_tr("SettingsWindow.llm_api_url_hint"))
+
+    def _supports_openai_responses_api(self, api_url: str) -> bool:
+        return "api.openai.com" in (api_url or "").lower()
+
+    def _effective_llm_api_mode(self) -> str:
+        mode = self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) if hasattr(self, "_llm_api_mode") else "chat_completions"
+        if mode == "responses" and self._supports_openai_responses_api(self._llm_api_url.text().strip()):
+            return "responses"
+        return "chat_completions"
 
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
@@ -3790,6 +4082,8 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
+            self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
+            self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
             if pov_mode == "role":
                 user_name = self._pov_role_character.currentText().strip()
@@ -3812,8 +4106,11 @@ class SettingsWindow(QWidget):
             else:
                 self._cfg.set("llm_enable_thinking", None)
             self._cfg.set("llm_show_reasoning", self._llm_show_reasoning.isChecked())
+            active_profile = self._matching_llm_api_profile_name()
+            self._cfg.set("llm_active_api_profile", active_profile)
             try:
                 self._cfg.save()
+                self._reload_llm_api_profiles(active_profile)
                 InfoBar.success(
                     _tr("SettingsWindow.llm_saved_title"),
                     _tr("SettingsWindow.llm_saved_content"),
@@ -3927,7 +4224,8 @@ class SettingsWindow(QWidget):
                 self._test_worker.quit()
                 self._test_worker.wait(2000)
 
-        self._test_worker = TestConnectionWorker(api_url, api_key, model_id, parent=self)
+        api_mode = self._effective_llm_api_mode() if hasattr(self, "_llm_api_mode") else "chat_completions"
+        self._test_worker = TestConnectionWorker(api_url, api_key, model_id, api_mode, parent=self)
         self._test_worker.finished.connect(self._on_test_finished)
         self._test_worker.error.connect(self._on_test_error)
         self._test_worker.start()
@@ -3967,6 +4265,7 @@ class SettingsWindow(QWidget):
 
         base_url = api_url.rstrip("/")
         base_url = base_url.rsplit("/chat/completions", 1)[0]
+        base_url = base_url.rsplit("/responses", 1)[0]
         models_url = base_url + "/models"
 
         if hasattr(self, '_fetch_worker') and self._fetch_worker is not None:
@@ -4219,6 +4518,7 @@ class SettingsWindow(QWidget):
     def _select_model_list_item(self, character: str):
         for item in self._configured_models:
             if item["character"] == character:
+                self._activate_char_page_for_model_list()
                 self._selected_list_character = character
                 self._editing_list_character = ""
                 self._editing_model_index = None
@@ -4232,6 +4532,7 @@ class SettingsWindow(QWidget):
                 return
 
     def _add_model_from_list(self):
+        self._activate_char_page_for_model_list()
         self._selected_list_character = ""
         self._editing_list_character = ""
         self._editing_model_index = None
@@ -4240,6 +4541,7 @@ class SettingsWindow(QWidget):
         self._enter_model_selection()
 
     def _remove_model_list_item(self, character: str):
+        self._activate_char_page_for_model_list()
         self._configured_models = [item for item in self._configured_models if item["character"] != character]
         self._editing_list_character = ""
         self._editing_model_index = None
@@ -4518,15 +4820,27 @@ class SettingsWindow(QWidget):
         self.launch_requested.connect(lambda: send_line("LAUNCH"))
 
 
+def _responses_api_url(api_url: str) -> str:
+    url = (api_url or "").rstrip("/")
+    if url.endswith("/responses"):
+        return url
+    if url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")] + "/responses"
+    if url.endswith("/v1"):
+        return url + "/responses"
+    return url + "/responses"
+
+
 class TestConnectionWorker(QThread):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, api_url: str, api_key: str, model_id: str, parent=None):
+    def __init__(self, api_url: str, api_key: str, model_id: str, api_mode: str = "chat_completions", parent=None):
         super().__init__(parent)
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
         self._model_id = model_id
+        self._api_mode = api_mode
 
     def run(self):
         try:
@@ -4536,11 +4850,20 @@ class TestConnectionWorker(QThread):
 
             ctx = ssl.create_default_context()
 
-            body = json.dumps({
-                "model": self._model_id,
-                "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": 5,
-            }).encode("utf-8")
+            if self._api_mode == "responses":
+                url = _responses_api_url(self._api_url)
+                body = json.dumps({
+                    "model": self._model_id,
+                    "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]}],
+                    "max_output_tokens": 16,
+                }).encode("utf-8")
+            else:
+                url = self._api_url
+                body = json.dumps({
+                    "model": self._model_id,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "max_tokens": 5,
+                }).encode("utf-8")
 
             headers = {
                 "Content-Type": "application/json",
@@ -4548,13 +4871,14 @@ class TestConnectionWorker(QThread):
             }
 
             req = urllib.request.Request(
-                self._api_url, data=body, headers=headers, method="POST"
+                url, data=body, headers=headers, method="POST"
             )
 
             with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                choices = data.get("choices", [])
-                if choices:
+                if self._api_mode == "responses" and data.get("id"):
+                    self.finished.emit()
+                elif data.get("choices", []):
                     self.finished.emit()
                 else:
                     self.error.emit("Unexpected response format")

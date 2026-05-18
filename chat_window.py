@@ -27,9 +27,12 @@ from app_theme import (
 )
 
 import ctypes
+import base64
+import mimetypes
 import os
 import shutil
 import sys
+import uuid
 from datetime import datetime
 import json
 import re
@@ -44,7 +47,7 @@ else:
     macos_patch = None
 
 from llm_manager import (
-    build_system_prompt, LLMStreamWorker, NonStreamWorker,
+    build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags,
 )
 from relationship_memory import (
@@ -66,6 +69,7 @@ _ASSIST_BUBBLE_DARK = "#1b1f29"
 _TEAMS_ACCENT = "#6264a7"
 _TELEGRAM_ACCENT = BANDORI_PRIMARY
 _AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_CHAT_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _AVATAR_PIXMAP_CACHE = {}
 _AVATAR_PIXMAP_CACHE_LIMIT = 96
 _HISTORY_ROW_WIDTH = 368
@@ -1171,6 +1175,7 @@ class ChatWindow(QWidget):
         self._close_animating = False
         self._window_anim = None
         self._pending_history_menu_action = None
+        self._pending_attachments: list[dict] = []
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -1745,6 +1750,12 @@ class ChatWindow(QWidget):
         layout.setContentsMargins(12, 8, 8, 8)
         layout.setSpacing(8)
 
+        self._attach_btn = IconButton(FluentIcon.PHOTO, self._composer)
+        self._attach_btn.setFixedSize(42, 42)
+        self._attach_btn.setToolTip(_tr("ChatWindow.attach_image_tooltip", default="添加图片"))
+        self._attach_btn.clicked.connect(self._choose_chat_images)
+        layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._input = FluentContextTextEdit()
         self._input.setPlaceholderText(_tr("ChatWindow.input_placeholder"))
         self._input.setAcceptRichText(False)
@@ -1762,7 +1773,7 @@ class ChatWindow(QWidget):
         self._send_btn.setFixedSize(42, 42)
         self._send_btn.setToolTip(_tr("ChatWindow.send_tooltip"))
         self._send_btn.clicked.connect(self._send_message)
-        layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         outer.addWidget(self._composer)
 
@@ -1901,6 +1912,7 @@ class ChatWindow(QWidget):
         self._new_btn.apply_theme()
         self._close_btn.apply_theme()
         self._send_btn.apply_theme()
+        self._attach_btn.apply_theme()
         if getattr(self, "_resize_grip", None):
             self._resize_grip.update()
         self._update_title_avatar()
@@ -2540,7 +2552,7 @@ class ChatWindow(QWidget):
                     self._message_character(m["content"], m["role"])
                 )
             bubble = MessageBubble(
-                self._message_content(m["content"], m["role"]),
+                self._message_content(m["content"], m["role"]) + (self._attachment_summary(m.get("attachments_json")) if m["role"] == "user" else ""),
                 m["role"],
                 author,
                 m.get("created_at", ""),
@@ -2711,6 +2723,129 @@ class ChatWindow(QWidget):
             prompt += "\n你是在" + "、".join(spoken_names) + "之后发言，请自然承接前面角色的内容。"
         return prompt
 
+    def _chat_attachment_dir(self) -> Path:
+        path = app_base_dir() / "chat_attachments"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _choose_chat_images(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            _tr("ChatWindow.attach_image_title", default="选择图片"),
+            "",
+            _tr("ChatWindow.attach_image_filter", default="Images (*.png *.jpg *.jpeg *.webp *.gif)"),
+        )
+        if not paths:
+            return
+        added = 0
+        target_dir = self._chat_attachment_dir()
+        for path in paths:
+            source = Path(path)
+            suffix = source.suffix.lower()
+            if suffix not in _CHAT_IMAGE_EXTENSIONS or not source.exists():
+                continue
+            target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
+            try:
+                shutil.copy2(source, target)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    _tr("ChatWindow.attach_failed_title", default="图片添加失败"),
+                    _tr("ChatWindow.attach_failed_content", default="无法添加图片：{error}", error=str(exc)),
+                )
+                continue
+            mime = mimetypes.guess_type(str(target))[0] or "image/png"
+            self._pending_attachments.append({
+                "type": "image",
+                "path": str(target),
+                "name": source.name,
+                "mime": mime,
+            })
+            added += 1
+        if added:
+            self._update_attachment_hint()
+
+    def _update_attachment_hint(self):
+        if self._pending_attachments:
+            count = len(self._pending_attachments)
+            self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 张图片，发送时会一起交给模型。", count=count))
+        else:
+            self._composer_hint.setText(self._idle_status_text())
+
+    def _attachment_summary(self, attachments) -> str:
+        items = self._normalize_attachments(attachments)
+        if not items:
+            return ""
+        names = [item.get("name") or Path(item.get("path", "")).name or "image" for item in items]
+        return "\n\n" + _tr("ChatWindow.attachment_summary", default="图片附件：{names}", names="、".join(names))
+
+    def _normalize_attachments(self, attachments) -> list[dict]:
+        if not attachments:
+            return []
+        if isinstance(attachments, str):
+            try:
+                attachments = json.loads(attachments)
+            except (TypeError, ValueError):
+                return []
+        if not isinstance(attachments, list):
+            return []
+        result = []
+        for item in attachments:
+            if not isinstance(item, dict) or item.get("type") != "image":
+                continue
+            path = str(item.get("path", ""))
+            if path and os.path.exists(path):
+                result.append(dict(item))
+        return result
+
+    def _image_data_url(self, attachment: dict) -> str:
+        path = str(attachment.get("path", ""))
+        if not path or not os.path.exists(path):
+            return ""
+        mime = attachment.get("mime") or mimetypes.guess_type(path)[0] or "image/png"
+        try:
+            with open(path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("ascii")
+        except OSError:
+            return ""
+        return f"data:{mime};base64,{encoded}"
+
+    def _chat_message_content(self, text: str, attachments=None):
+        items = self._normalize_attachments(attachments)
+        if not items:
+            return text
+        parts = [{"type": "text", "text": text or ""}]
+        for item in items:
+            data_url = self._image_data_url(item)
+            if data_url:
+                parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        return parts if len(parts) > 1 else text
+
+    def _supports_openai_responses_api(self, api_url: str) -> bool:
+        url = (api_url or "").lower()
+        return "api.openai.com" in url
+
+    def _use_responses_api(self, api_url: str = "") -> bool:
+        if not self._cfg or self._cfg.get("llm_api_mode", "chat_completions") != "responses":
+            return False
+        return self._supports_openai_responses_api(api_url or self._cfg.get("llm_api_url", ""))
+
+    def _chat_completions_api_url(self, api_url: str) -> str:
+        url = (api_url or "").rstrip("/")
+        if url.endswith("/responses"):
+            return url[: -len("/responses")] + "/chat/completions"
+        if url.endswith("/v1"):
+            return url + "/chat/completions"
+        return url
+
+    def _reload_runtime_config(self):
+        if self._cfg and hasattr(self._cfg, "load"):
+            try:
+                self._cfg.load()
+            except Exception:
+                pass
+            self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True))
+
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
         system_prompt += "\n\n" + build_relationship_context(
@@ -2724,29 +2859,46 @@ class ChatWindow(QWidget):
             history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
             max_history = 20
             for m in history[-(max_history * 2):]:
-                messages.append({"role": m["role"], "content": m["content"]})
+                messages.append({
+                    "role": m["role"],
+                    "content": self._chat_message_content(m["content"], m.get("attachments_json")),
+                })
         elif self._conv_id:
             history = self._db.get_messages(self._conv_id)
             max_history = 20
             for m in history[-(max_history * 2):]:
-                messages.append({"role": m["role"], "content": m["content"]})
+                messages.append({
+                    "role": m["role"],
+                    "content": self._chat_message_content(m["content"], m.get("attachments_json")),
+                })
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %I:%M %p")
         time_suffix = f"\n\n【后置提示词】\n当前时间：{time_str}"
         for i in range(len(messages) - 1, -1, -1):
             if messages[i]["role"] == "user":
-                messages[i]["content"] += time_suffix
+                content = messages[i]["content"]
+                if isinstance(content, list) and content:
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            part["text"] = str(part.get("text", "")) + time_suffix
+                            break
+                else:
+                    messages[i]["content"] = str(content) + time_suffix
                 break
         return messages
 
     def _send_message(self):
         text = self._input.toPlainText().strip()
+        attachments = list(self._pending_attachments)
+        if not text and attachments:
+            text = _tr("ChatWindow.image_only_prompt", default="请看这张图片。")
         if not text:
             return
 
-        if self._handle_local_memory_command(text):
+        if not attachments and self._handle_local_memory_command(text):
             return
 
+        self._reload_runtime_config()
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         model_id = self._cfg.get("llm_model_id", "")
@@ -2768,13 +2920,15 @@ class ChatWindow(QWidget):
             return
 
         self._input.clear()
+        self._pending_attachments = []
+        self._update_attachment_hint()
         self._set_busy(True, planning=self._is_group_chat)
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
 
         user_bubble = MessageBubble(
-            text,
+            text + self._attachment_summary(attachments),
             "user",
             self._user_name or _tr("ChatWindow.you"),
             avatar_color=self._user_avatar_color,
@@ -2784,12 +2938,12 @@ class ChatWindow(QWidget):
         self._relayout_message_bubbles()
 
         if self._is_group_chat:
-            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text)
+            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments)
             self._last_user_message_id = None
         else:
             if self._conv_id is None:
                 self._conv_id = self._db.create_conversation(self._conversation_key)
-            self._last_user_message_id = self._db.add_message(self._conv_id, "user", text)
+            self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
             self._last_group_user_message_id = None
         self._last_user_text = text
         self._refresh_group_list()
@@ -2804,6 +2958,8 @@ class ChatWindow(QWidget):
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         aux_model_id = self._cfg.get("llm_aux_model_id", "").strip() or self._cfg.get("llm_model_id", "")
+        if self._use_responses_api(api_url):
+            api_url = self._chat_completions_api_url(api_url)
         if not aux_model_id:
             self._hide_plan_divider()
             self._use_fallback_group_plan()
@@ -2913,7 +3069,17 @@ class ChatWindow(QWidget):
 
         messages = self._build_messages_for_character(character, spoken_names)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
-        self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
+        if self._use_responses_api(api_url):
+            self._worker = ResponsesStreamWorker(
+                api_url,
+                api_key,
+                model_id,
+                messages,
+                enable_thinking,
+                bool(self._cfg.get("llm_web_search_enabled", False)),
+            )
+        else:
+            self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)

@@ -35,6 +35,10 @@ DEFAULTS = {
     "llm_api_key": "",
     "llm_model_id": "",
     "llm_aux_model_id": "",
+    "llm_api_mode": "chat_completions",
+    "llm_web_search_enabled": False,
+    "llm_api_profiles": [],
+    "llm_active_api_profile": "",
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
     "chat_avatar_paths": {},
@@ -128,8 +132,43 @@ class ConfigManager:
             self._seed_model_action_settings_from_models()
         if not isinstance(self._data.get("chat_avatar_paths"), dict):
             self._data["chat_avatar_paths"] = {}
+        self._normalize_llm_api_profiles()
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
+
+    def _normalize_llm_api_profiles(self):
+        profiles = self._data.get("llm_api_profiles", [])
+        if not isinstance(profiles, list):
+            self._data["llm_api_profiles"] = []
+            return
+        normalized = []
+        seen = set()
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name", "") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            api_mode = str(profile.get("llm_api_mode", "chat_completions") or "chat_completions")
+            if api_mode not in ("chat_completions", "responses"):
+                api_mode = "chat_completions"
+            normalized.append({
+                "name": name,
+                "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
+                "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
+                "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
+                "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+                "llm_api_mode": api_mode,
+                "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+                "llm_enable_thinking": profile.get("llm_enable_thinking", None)
+                if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
+                "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
+            })
+        self._data["llm_api_profiles"] = normalized
+        active = str(self._data.get("llm_active_api_profile", "") or "").strip()
+        names = {profile["name"] for profile in normalized}
+        self._data["llm_active_api_profile"] = active if active in names else ""
 
     def _normalize_model_action_settings(self):
         profiles = self._data.get("model_action_settings", {})

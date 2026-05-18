@@ -2,6 +2,7 @@ import sqlite3
 import os
 import shutil
 import tempfile
+import json
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,17 @@ def _db_int(value) -> int | None:
         return None
 
 
+def _json_text(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+
+
 def _message_row_dict(row, grouped: bool = False) -> dict | None:
     role = _db_text(row[3] if grouped else row[2]).strip()
     if role not in _VALID_MESSAGE_ROLES:
@@ -51,7 +63,9 @@ def _message_row_dict(row, grouped: bool = False) -> dict | None:
             "role": role,
             "content": _db_text(row[4]),
             "reasoning_content": _db_text(row[5]),
-            "created_at": _db_text(row[6]),
+            "attachments_json": _db_text(row[6]),
+            "tool_trace_json": _db_text(row[7]),
+            "created_at": _db_text(row[8]),
         }
 
     msg_id = _db_int(row[0])
@@ -64,7 +78,9 @@ def _message_row_dict(row, grouped: bool = False) -> dict | None:
         "role": role,
         "content": _db_text(row[3]),
         "reasoning_content": _db_text(row[4]),
-        "created_at": _db_text(row[5]),
+        "attachments_json": _db_text(row[5]),
+        "tool_trace_json": _db_text(row[6]),
+        "created_at": _db_text(row[7]),
     }
 
 
@@ -254,6 +270,8 @@ class DatabaseManager:
                 role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
                 reasoning_content TEXT NOT NULL DEFAULT '',
+                attachments_json TEXT NOT NULL DEFAULT '',
+                tool_trace_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             )
@@ -266,6 +284,8 @@ class DatabaseManager:
                 role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
                 reasoning_content TEXT NOT NULL DEFAULT '',
+                attachments_json TEXT NOT NULL DEFAULT '',
+                tool_trace_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
@@ -327,11 +347,19 @@ class DatabaseManager:
         columns = [r[1] for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()]
         if "reasoning_content" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
+        if "attachments_json" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT ''")
+        if "tool_trace_json" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN tool_trace_json TEXT NOT NULL DEFAULT ''")
         group_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(group_messages)").fetchall()]
         if "conversation_id" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN conversation_id TEXT NOT NULL DEFAULT 'default'")
         if "reasoning_content" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
+        if "attachments_json" not in group_columns:
+            self._conn.execute("ALTER TABLE group_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT ''")
+        if "tool_trace_json" not in group_columns:
+            self._conn.execute("ALTER TABLE group_messages ADD COLUMN tool_trace_json TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
 
     def _normalize_user_key(self, user_key: str) -> str:
@@ -662,18 +690,21 @@ class DatabaseManager:
         )
         self._conn.commit()
 
-    def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "") -> int:
+    def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        attachments_json = _json_text(attachments)
+        tool_trace_json = _json_text(tool_trace)
         cur = self._conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, reasoning_content, created_at) VALUES (?, ?, ?, ?, ?)",
-            (conversation_id, role, content, reasoning_content, now)
+            "INSERT INTO messages (conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, now)
         )
         self._conn.commit()
         return cur.lastrowid
 
     def get_messages(self, conversation_id: int) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT id, conversation_id, role, content, reasoning_content, created_at FROM messages "
+            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
             "WHERE conversation_id=? ORDER BY id ASC",
             (conversation_id,)
         ).fetchall()
@@ -684,11 +715,14 @@ class DatabaseManager:
                 result.append(message)
         return result
 
-    def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "") -> int:
+    def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        attachments_json = _json_text(attachments)
+        tool_trace_json = _json_text(tool_trace)
         cur = self._conn.execute(
-            "INSERT INTO group_messages (group_key, conversation_id, role, content, reasoning_content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (group_key, conversation_id or "default", role, content, reasoning_content, now)
+            "INSERT INTO group_messages (group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (group_key, conversation_id or "default", role, content, reasoning_content, attachments_json, tool_trace_json, now)
         )
         self._conn.commit()
         return cur.lastrowid
@@ -696,7 +730,7 @@ class DatabaseManager:
     def get_group_messages(self, group_key: str, conversation_id: str) -> list[dict]:
         conversation_id = conversation_id or "default"
         rows = self._conn.execute(
-            "SELECT id, group_key, conversation_id, role, content, reasoning_content, created_at FROM group_messages "
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
             "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id ASC",
             (group_key, conversation_id, conversation_id)
         ).fetchall()

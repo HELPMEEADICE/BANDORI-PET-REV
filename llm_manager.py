@@ -2,6 +2,7 @@ import json
 import re
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit, urlunsplit
 from PySide6.QtCore import QThread, Signal
 
 
@@ -548,6 +549,112 @@ class LLMStreamWorker(QThread):
             pass
 
 
+class ResponsesStreamWorker(QThread):
+    chunk_received = Signal(str, str)
+    finished = Signal(str, str, list)
+    error = Signal(str)
+
+    def __init__(self, api_url: str, api_key: str, model_id: str,
+                 messages: list[dict], enable_thinking=None, web_search=False, parent=None):
+        super().__init__(parent)
+        self._api_url = _responses_api_url(api_url)
+        self._api_key = api_key
+        self._model_id = model_id
+        self._messages = messages
+        self._enable_thinking = enable_thinking
+        self._web_search = web_search
+        self._cancelled = False
+        self._full_text = ""
+        self._reasoning_text = ""
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            instructions, input_items = _messages_to_responses_input(self._messages)
+            body = {
+                "model": self._model_id,
+                "input": input_items,
+                "stream": True,
+            }
+            if instructions:
+                body["instructions"] = instructions
+            if self._web_search:
+                body["tools"] = [{"type": "web_search"}]
+                body["include"] = ["web_search_call.action.sources"]
+            _apply_responses_thinking_options(body, self._enable_thinking)
+            data = json.dumps(body).encode("utf-8")
+
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            }
+
+            req = urllib.request.Request(
+                self._api_url, data=data, headers=headers, method="POST"
+            )
+
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                buffer = b""
+                for chunk in iter(lambda: resp.read(4096), b""):
+                    if self._cancelled:
+                        break
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        self._process_line(line.decode("utf-8", errors="replace"))
+                if not self._cancelled and buffer.strip():
+                    self._process_line(buffer.decode("utf-8", errors="replace"))
+
+            if self._cancelled:
+                return
+            content, reasoning = split_thinking_text(
+                self._full_text,
+                self._reasoning_text,
+            )
+            self.finished.emit(content, reasoning, [])
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            try:
+                err_json = json.loads(err_body)
+                msg = err_json.get("error", {}).get("message", str(e))
+            except Exception:
+                msg = err_body[:300] or str(e)
+            self.error.emit(f"HTTP {e.code}: {msg}")
+        except Exception as e:
+            self.error.emit(str(e))
+
+    def _process_line(self, line: str):
+        line = line.strip()
+        if not line.startswith("data:"):
+            return
+        data_str = line[5:].strip()
+        if data_str == "[DONE]":
+            return
+        try:
+            data = json.loads(data_str)
+        except json.JSONDecodeError:
+            return
+        event_type = data.get("type", "")
+        if event_type in ("response.output_text.delta", "response.text.delta"):
+            content = data.get("delta", "")
+            if content:
+                self._full_text += content
+                self.chunk_received.emit(content, "")
+            return
+        if event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+            reasoning = data.get("delta", "")
+            if reasoning:
+                self._reasoning_text += reasoning
+                self.chunk_received.emit("", reasoning)
+            return
+        if event_type in ("response.completed", "response.done"):
+            output_text = _extract_response_output_text(data.get("response", {}))
+            if output_text and not self._full_text:
+                self._full_text = output_text
+
+
 class NonStreamWorker(QThread):
     finished = Signal(str, str, list)
     error = Signal(str)
@@ -646,6 +753,91 @@ def _apply_thinking_options(body: dict, enable_thinking):
     body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
     if enable_thinking:
         body["reasoning_effort"] = "medium"
+
+
+def _apply_responses_thinking_options(body: dict, enable_thinking):
+    if enable_thinking is None:
+        return
+    body["reasoning"] = {"effort": "medium" if enable_thinking else "none"}
+
+
+def _responses_api_url(api_url: str) -> str:
+    url = (api_url or "").rstrip("/")
+    if not url:
+        return url
+    if url.endswith("/responses"):
+        return url
+    if url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")] + "/responses"
+    parts = urlsplit(url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/v1"):
+        return urlunsplit((parts.scheme, parts.netloc, path + "/responses", parts.query, parts.fragment))
+    return url + "/responses"
+
+
+def _messages_to_responses_input(messages: list[dict]) -> tuple[str, list[dict]]:
+    instructions = ""
+    input_items = []
+    for message in messages:
+        role = message.get("role", "user")
+        content = _responses_content(message.get("content", ""))
+        if role == "system":
+            text = _content_to_text(content)
+            instructions = (instructions + "\n\n" + text).strip() if instructions else text
+            continue
+        if role not in ("user", "assistant", "developer"):
+            role = "user"
+        input_items.append({"role": role, "content": content})
+    return instructions, input_items
+
+
+def _responses_content(content):
+    if isinstance(content, list):
+        result = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            part_type = part.get("type")
+            if part_type in ("text", "input_text"):
+                text = part.get("text", "")
+                if text:
+                    result.append({"type": "input_text", "text": text})
+            elif part_type in ("image_url", "input_image"):
+                image_url = part.get("image_url", "")
+                if isinstance(image_url, dict):
+                    image_url = image_url.get("url", "")
+                if image_url:
+                    result.append({"type": "input_image", "image_url": image_url})
+        return result or [{"type": "input_text", "text": ""}]
+    return [{"type": "input_text", "text": str(content or "")}]
+
+
+def _content_to_text(content) -> str:
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
+                parts.append(str(part.get("text", "")))
+        return "\n".join(p for p in parts if p).strip()
+    return str(content or "").strip()
+
+
+def _extract_response_output_text(response: dict) -> str:
+    if not isinstance(response, dict):
+        return ""
+    if isinstance(response.get("output_text"), str):
+        return response["output_text"]
+    texts = []
+    for item in response.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for part in item.get("content", []) or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in ("output_text", "text") and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+    return "".join(texts)
 
 
 def split_thinking_text(content: str, reasoning: str = "") -> tuple[str, str]:
