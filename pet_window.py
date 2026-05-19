@@ -257,7 +257,7 @@ class PetWindow(QWidget):
         self._passthrough_timer.setInterval(50)
         self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
         self._topmost_timer = QTimer(self)
-        self._topmost_timer.setInterval(1000)
+        self._topmost_timer.setInterval(3000)
         self._topmost_timer.timeout.connect(self._enforce_game_topmost)
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
@@ -407,7 +407,8 @@ class PetWindow(QWidget):
 
     def _update_game_topmost_timer(self):
         if os.name == "nt":
-            if self._game_topmost:
+            self._topmost_timer.setInterval(750 if self._game_topmost else 3000)
+            if self.isVisible():
                 self._topmost_timer.start()
                 self._enforce_game_topmost()
             else:
@@ -422,7 +423,7 @@ class PetWindow(QWidget):
                 macos_patch.set_window_level_status_bar(self)
 
     def _enforce_game_topmost(self):
-        if os.name != "nt" or not self._game_topmost or not self.isVisible():
+        if os.name != "nt" or not self.isVisible():
             return
         hwnd = int(self.winId())
         if not hwnd:
@@ -434,7 +435,7 @@ class PetWindow(QWidget):
             0,
             0,
             0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
 
     def _apply_macos_window_polish(self):

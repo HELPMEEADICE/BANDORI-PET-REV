@@ -4,6 +4,7 @@ from i18n_manager import tr as _tr
 
 
 DEFAULT_USER_KEY = "__default__"
+ROLE_USER_KEY_PREFIX = "__role__:"
 
 MOOD_LABELS = {
     "calm": "平静",
@@ -100,12 +101,29 @@ _ACTION_MOOD = {
 def user_key_from_config(config_manager) -> str:
     if not config_manager:
         return DEFAULT_USER_KEY
+    pov_mode = str(config_manager.get("pov_mode", "off") or "off")
+    if pov_mode == "role":
+        role_character = str(config_manager.get("pov_role_character", "") or "").strip()
+        if role_character:
+            return ROLE_USER_KEY_PREFIX + role_character
     user_name = str(config_manager.get("user_name", "") or "").strip()
     return user_name or DEFAULT_USER_KEY
 
 
+def role_character_from_user_key(user_key: str) -> str:
+    key = str(user_key or "")
+    if key.startswith(ROLE_USER_KEY_PREFIX):
+        return key[len(ROLE_USER_KEY_PREFIX):]
+    return ""
+
+
 def display_user_name(user_key: str) -> str:
-    return "" if not user_key or user_key == DEFAULT_USER_KEY else user_key
+    if not user_key or user_key == DEFAULT_USER_KEY:
+        return ""
+    role_character = role_character_from_user_key(user_key)
+    if role_character:
+        return _tr("Relationship.role_user_display", "皮上角色：{role}", role=role_character)
+    return user_key
 
 
 def mood_label(mood: str) -> str:
