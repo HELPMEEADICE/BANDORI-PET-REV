@@ -51,13 +51,6 @@ def main():
 
     app = QApplication(sys.argv)
 
-    if sys.platform == "darwin":
-        import macos_patch
-        macos_patch.hide_dock_icon()
-
-    if sys.platform == "darwin":
-        import macos_patch
-        macos_patch.hide_dock_icon()
     app.setApplicationName("BandoriPetSettings")
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(True)

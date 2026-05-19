@@ -1,7 +1,10 @@
 from pathlib import Path
 import sys
 
-from lupa.luajit21 import LuaRuntime
+try:
+    from lupa.luajit21 import LuaRuntime
+except ModuleNotFoundError:
+    from lupa.lua import LuaRuntime
 
 
 _LUA = LuaRuntime(unpack_returned_tuples=True)

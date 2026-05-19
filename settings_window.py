@@ -6,7 +6,7 @@ from PySide6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon, QCursor, QPai
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QSpacerItem, QScrollArea,
-    QLineEdit, QGraphicsOpacityEffect, QGraphicsColorizeEffect, QApplication,
+    QLineEdit, QGraphicsOpacityEffect, QApplication,
     QTextEdit, QToolButton, QFileDialog, QMessageBox,
 )
 
@@ -602,37 +602,6 @@ class NavButton(QPushButton):
         self._update_stylesheet()
         qconfig.themeChanged.connect(self._update_stylesheet)
         self.clicked.connect(lambda: self.nav_activated.emit(self._nav_key))
-
-    def enterEvent(self, event):
-        if not self._checking_hover_effect():
-            self._apply_hover_effect(True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._apply_hover_effect(False)
-        super().leaveEvent(event)
-
-    def _checking_hover_effect(self):
-        eff = self.graphicsEffect()
-        return isinstance(eff, QGraphicsColorizeEffect) and eff.strength() > 0.0
-
-    def _apply_hover_effect(self, entering: bool):
-        eff = self.graphicsEffect()
-        if not isinstance(eff, QGraphicsColorizeEffect):
-            eff = QGraphicsColorizeEffect(self)
-            eff.setColor(QColor(BANDORI_PRIMARY_DARK))
-            eff.setStrength(0.0)
-            self.setGraphicsEffect(eff)
-        if hasattr(self, '_hover_anim'):
-            self._hover_anim.stop()
-        self._hover_anim = QPropertyAnimation(eff, b"strength")
-        self._hover_anim.setDuration(180)
-        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._hover_anim.setStartValue(eff.strength())
-        self._hover_anim.setEndValue(0.35 if entering else 0.0)
-        if not entering:
-            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
-        self._hover_anim.start()
 
     def _update_stylesheet(self):
         dark = isDarkTheme()
@@ -2172,21 +2141,6 @@ class SettingsWindow(QWidget):
             b.setChecked(False)
         btn.setChecked(True)
         self._style_avatar_buttons()
-        self._pulse_button(btn)
-
-    @staticmethod
-    def _pulse_button(btn):
-        effect = QGraphicsColorizeEffect(btn)
-        effect.setColor(QColor(255, 255, 255))
-        effect.setStrength(0.0)
-        btn.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"strength", btn)
-        anim.setDuration(120)
-        anim.setStartValue(0.7)
-        anim.setEndValue(0.0)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: btn.setGraphicsEffect(None))
-        anim.start()
 
     def _load_llm_config(self):
         if self._cfg and self._llm_config_widgets_ready():

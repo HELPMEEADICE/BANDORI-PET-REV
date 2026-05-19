@@ -7,6 +7,10 @@ build/
 BandoriPet.egg-info/
 third_party/
 venv/
+.venv/
+.claude/
+*.app/
+*.command
 config.json
 data.*
 *.zip

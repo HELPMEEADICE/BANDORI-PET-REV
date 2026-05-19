@@ -2,6 +2,7 @@ import ctypes
 import json
 import os
 import random
+import sys
 import re
 import time
 
@@ -30,7 +31,7 @@ from pixel_pet_widget import PixelPetWidget, load_pixel_frames, pixel_path_for_c
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 from radial_menu import RadialMenu
 
-if os.name == "darwin":
+if sys.platform == "darwin":
     import macos_patch
 else:
     macos_patch = None
@@ -203,12 +204,16 @@ class PetWindow(QWidget):
         self.setWindowOpacity(self._opacity)
 
     def _init_ui(self):
-        self.setWindowFlags(
+        window_flags = (
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
             | Qt.WindowType.NoDropShadowWindowHint
         )
+        if sys.platform == "darwin":
+            window_flags |= Qt.WindowType.Window
+        else:
+            window_flags |= Qt.WindowType.Tool
+        self.setWindowFlags(window_flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
@@ -326,7 +331,7 @@ class PetWindow(QWidget):
             return
         if os.name == "nt":
             self._apply_passthrough_to_hwnd(int(self.winId()), enabled)
-        elif os.name == "darwin" and macos_patch is not None:
+        elif sys.platform == "darwin" and macos_patch is not None:
             macos_patch.set_ignores_mouse_events(self, enabled)
         else:
             return
@@ -1461,7 +1466,7 @@ class PetWindow(QWidget):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
         self._update_game_topmost_timer()
-        if os.name == "darwin" and macos_patch is not None:
+        if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, lambda: (
                 macos_patch.set_window_no_shadow(self),
                 macos_patch.set_window_level_floating(self)
