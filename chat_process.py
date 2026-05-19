@@ -49,6 +49,10 @@ def main():
         return 0
 
     mgr = ModelManager()
+    if not mgr.characters:
+        prompt_download_model_resources()
+        return 0
+
     models = cfg.get("models", [])
     characters = []
     seen = set()

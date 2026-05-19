@@ -90,6 +90,10 @@ def main():
         return 0
 
     mgr = SingleModelManager(args.character, args.costume, args.model_path) if args.model_path else ModelManager()
+    if not args.model_path and not mgr.characters:
+        prompt_download_model_resources()
+        return 0
+
     pet = PetWindow(
         live2d,
         model_manager=mgr,
