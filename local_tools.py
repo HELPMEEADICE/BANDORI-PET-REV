@@ -1,12 +1,14 @@
 import base64
 import json
-import json
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from html import unescape
+
+from computer_tools import computer_tools, is_computer_tool_name, run_computer_tool
+from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_proxy_tools
 
 
 WEB_SEARCH_TOOL_NAME = "web_search"
@@ -121,8 +123,62 @@ _SEARCH_INTENT_TERMS = (
 )
 
 
-def chat_completion_tools(web_search_enabled: bool) -> list[dict]:
-    return [CHAT_COMPLETIONS_WEB_SEARCH_TOOL] if web_search_enabled else []
+def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
+    tools = [CHAT_COMPLETIONS_WEB_SEARCH_TOOL] if web_search_enabled else []
+    config = tool_config or {}
+    tools.extend(mcp_proxy_tools(config))
+    tools.extend(computer_tools(config))
+    return tools
+
+
+def responses_native_tools(tool_config: dict | None = None) -> list[dict]:
+    return mcp_native_tools(tool_config or {})
+
+
+def local_tool_system_hint(tool_config: dict | None = None) -> str:
+    config = tool_config or {}
+    hints = []
+    if config.get("llm_hide_tool_call_details", True):
+        hints.append(
+            "最终回复请保持角色口吻，不要主动提到 MCP、tool_calls、function calling、Computer Use、工具调用、JSON schema 等实现细节；"
+            "如果工具失败，也用自然语言轻描淡写地说明做不到或信息不足。"
+        )
+    if config.get("llm_mcp_enabled", False):
+        hints.append(
+            "可用外部能力时，优先根据用户意图谨慎调用；不要编造工具执行结果。"
+        )
+    if config.get("computer_use_enabled", False):
+        if config.get("computer_use_auto_detect", True):
+            hints.append(
+                "当用户用自然语言表达与当前屏幕、窗口、光标、按钮、输入框、复制粘贴、打开/关闭/切换窗口、"
+                "移动到某处、点一下、看一下这里/那边/这个界面等相关意图时，可以自行判断是否需要使用 Computer Use；"
+                "不要求用户说出“工具”“操作鼠标”“查看屏幕”等精确词。"
+            )
+        else:
+            hints.append(
+                "只有当用户明确要求查看屏幕或操作电脑时才使用 Computer Use。"
+            )
+        hints.append(
+            "使用 Computer Use 前优先截图确认界面；如果坐标不确定，先截图再行动。"
+            "鼠标移动/点击/滚动请使用最近一次截图图片上的像素坐标，程序会自动映射到真实桌面坐标。"
+            "不要执行购买、支付、删除、发送消息、发布内容、登录、修改安全设置等高风险操作。"
+        )
+    if not hints:
+        return ""
+    return "【工具使用边界】\n" + "\n".join(hints)
+
+
+def with_local_tool_system_hint(messages: list[dict], tool_config: dict | None = None) -> list[dict]:
+    hint_text = local_tool_system_hint(tool_config)
+    if not hint_text:
+        return [dict(item) for item in messages]
+    copied = [dict(item) for item in messages]
+    hint = {"role": "system", "content": hint_text}
+    if copied and copied[0].get("role") == "system":
+        copied.insert(1, hint)
+    else:
+        copied.insert(0, hint)
+    return copied
 
 
 def with_web_search_system_hint(messages: list[dict], include_sources: bool = True) -> list[dict]:
@@ -168,9 +224,13 @@ def maybe_add_prefetched_web_search(
     return copied
 
 
-def run_local_tool(name: str, arguments) -> str:
+def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
     if name != WEB_SEARCH_TOOL_NAME:
-        return f"Unsupported tool: {name}"
+        if is_mcp_tool_name(name):
+            return {"content": call_mcp_tool(name, arguments), "extra_messages": []}
+        if is_computer_tool_name(name):
+            return run_computer_tool(name, arguments, tool_config or {})
+        return {"content": f"Unsupported tool: {name}", "extra_messages": []}
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments or "{}")
@@ -184,7 +244,11 @@ def run_local_tool(name: str, arguments) -> str:
     except (TypeError, ValueError):
         max_results = 5
     max_results = max(1, min(8, max_results))
-    return web_search(query, max_results=max_results)
+    return {"content": web_search(query, max_results=max_results), "extra_messages": []}
+
+
+def run_local_tool(name: str, arguments) -> str:
+    return str(run_local_tool_call(name, arguments).get("content", ""))
 
 
 def web_search(query: str, max_results: int = 5) -> str:

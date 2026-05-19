@@ -8,7 +8,9 @@ from PySide6.QtCore import QThread, Signal
 from local_tools import (
     chat_completion_tools,
     maybe_add_prefetched_web_search,
-    run_local_tool,
+    responses_native_tools,
+    run_local_tool_call,
+    with_local_tool_system_hint,
     with_web_search_system_hint,
 )
 
@@ -484,7 +486,7 @@ class LLMStreamWorker(QThread):
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
                  messages: list[dict], enable_thinking=None, parent=None,
-                 web_search=False, show_search_sources=True):
+                 web_search=False, show_search_sources=True, tool_config=None):
         super().__init__(parent)
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
@@ -493,6 +495,7 @@ class LLMStreamWorker(QThread):
         self._enable_thinking = enable_thinking
         self._web_search = bool(web_search)
         self._show_search_sources = bool(show_search_sources)
+        self._tool_config = dict(tool_config or {})
         self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
@@ -505,31 +508,37 @@ class LLMStreamWorker(QThread):
     def run(self):
         try:
             messages = [dict(message) for message in self._messages]
-            use_tools = self._web_search
+            use_tools = self._web_search or bool(self._tool_config.get("llm_mcp_enabled", False)) or bool(self._tool_config.get("computer_use_enabled", False))
             if use_tools:
-                messages = with_web_search_system_hint(messages, self._show_search_sources)
-                messages = maybe_add_prefetched_web_search(
-                    messages,
-                    include_sources=self._show_search_sources,
-                )
-                self._remember_search_sources_from_messages(messages)
-            for round_index in range(3):
+                messages = with_local_tool_system_hint(messages, self._tool_config)
+            if use_tools:
+                if self._web_search:
+                    messages = with_web_search_system_hint(messages, self._show_search_sources)
+                    messages = maybe_add_prefetched_web_search(
+                        messages,
+                        include_sources=self._show_search_sources,
+                    )
+                    self._remember_search_sources_from_messages(messages)
+            max_tool_rounds = 8 if self._tool_config.get("computer_use_enabled", False) else 3
+            for round_index in range(max_tool_rounds):
                 self._stream_tool_calls = []
                 try:
                     self._stream_once(messages, use_tools)
                 except urllib.error.HTTPError as e:
                     err_msg = _http_error_message(e)
                     if use_tools and e.code in (400, 404, 422):
-                        messages = with_web_search_system_hint(
-                            [dict(message) for message in self._messages],
-                            self._show_search_sources,
-                        )
-                        messages = maybe_add_prefetched_web_search(
-                            messages,
-                            force=True,
-                            include_sources=self._show_search_sources,
-                        )
-                        self._remember_search_sources_from_messages(messages)
+                        messages = [dict(message) for message in self._messages]
+                        if self._web_search:
+                            messages = with_web_search_system_hint(
+                                messages,
+                                self._show_search_sources,
+                            )
+                            messages = maybe_add_prefetched_web_search(
+                                messages,
+                                force=True,
+                                include_sources=self._show_search_sources,
+                            )
+                            self._remember_search_sources_from_messages(messages)
                         use_tools = False
                         continue
                     self.error.emit(f"HTTP {e.code}: {err_msg}")
@@ -546,16 +555,21 @@ class LLMStreamWorker(QThread):
                 })
                 for tool_call in tool_calls:
                     function = tool_call.get("function", {})
-                    tool_result = run_local_tool(
+                    tool_result = run_local_tool_call(
                         function.get("name", ""),
                         function.get("arguments", "{}"),
+                        self._tool_config,
                     )
-                    self._remember_search_sources(tool_result)
+                    tool_content = str(tool_result.get("content", "") or "")
+                    self._remember_search_sources(tool_content)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.get("id") or f"call_{round_index}",
-                        "content": tool_result,
+                        "content": tool_content,
                     })
+                    for extra_message in tool_result.get("extra_messages", []) or []:
+                        if isinstance(extra_message, dict):
+                            messages.append(extra_message)
             if self._cancelled:
                 return
             content, reasoning = split_thinking_text(
@@ -576,7 +590,7 @@ class LLMStreamWorker(QThread):
             "messages": messages,
             "stream": True,
         }
-        tools = chat_completion_tools(use_tools)
+        tools = chat_completion_tools(self._web_search if use_tools else False, self._tool_config if use_tools else {})
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -686,7 +700,7 @@ class ResponsesStreamWorker(QThread):
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
                  messages: list[dict], enable_thinking=None, web_search=False,
-                 parent=None, show_search_sources=True):
+                 parent=None, show_search_sources=True, tool_config=None):
         super().__init__(parent)
         self._api_url = _responses_api_url(api_url)
         self._api_key = api_key
@@ -695,6 +709,7 @@ class ResponsesStreamWorker(QThread):
         self._enable_thinking = enable_thinking
         self._web_search = web_search
         self._show_search_sources = bool(show_search_sources)
+        self._tool_config = dict(tool_config or {})
         self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
@@ -705,6 +720,8 @@ class ResponsesStreamWorker(QThread):
     def run(self):
         try:
             messages = [dict(message) for message in self._messages]
+            if self._web_search or self._tool_config.get("llm_mcp_enabled", False) or self._tool_config.get("computer_use_enabled", False):
+                messages = with_local_tool_system_hint(messages, self._tool_config)
             if self._web_search:
                 messages = with_web_search_system_hint(messages, self._show_search_sources)
             instructions, input_items = _messages_to_responses_input(messages)
@@ -715,9 +732,13 @@ class ResponsesStreamWorker(QThread):
             }
             if instructions:
                 body["instructions"] = instructions
+            tools = []
             if self._web_search:
-                body["tools"] = [{"type": "web_search"}]
+                tools.append({"type": "web_search"})
                 body["include"] = ["web_search_call.action.sources"]
+            tools.extend(responses_native_tools(self._tool_config))
+            if tools:
+                body["tools"] = tools
             _apply_responses_thinking_options(body, self._enable_thinking)
             data = json.dumps(body).encode("utf-8")
 
