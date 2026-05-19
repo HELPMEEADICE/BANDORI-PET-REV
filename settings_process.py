@@ -65,11 +65,6 @@ def main():
         prompt_download_model_resources()
         return 0
 
-    mgr = ModelManager()
-    if not mgr.characters:
-        prompt_download_model_resources()
-        return 0
-
     ipc_socket = QLocalSocket(app)
     ipc_socket.connectToServer(ipc_server_name())
 
@@ -85,6 +80,7 @@ def main():
             ipc_socket.flush()
             ipc_socket.waitForBytesWritten(200)
 
+    mgr = ModelManager()
     window = SettingsWindow(
         mgr,
         current_char=args.character,

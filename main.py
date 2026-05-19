@@ -64,10 +64,6 @@ def main():
         return 0
 
     mgr = ModelManager()
-    if not mgr.characters:
-        prompt_download_model_resources()
-        return 0
-
     pet_window_ref = {"processes": []}
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
