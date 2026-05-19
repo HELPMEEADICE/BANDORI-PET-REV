@@ -5,6 +5,13 @@ import urllib.error
 from urllib.parse import urlsplit, urlunsplit
 from PySide6.QtCore import QThread, Signal
 
+from local_tools import (
+    chat_completion_tools,
+    maybe_add_prefetched_web_search,
+    run_local_tool,
+    with_web_search_system_hint,
+)
+
 
 CHARACTER_PROMPTS = {
     "kasumi": (
@@ -453,7 +460,19 @@ def build_system_prompt(character: str, config_manager=None) -> str:
             if not role_prompt:
                 role_prompt = CHARACTER_PROMPTS.get(role_character, "")
             if role_prompt:
-                prompt += "\n\n【用户视角设定】\n用户正在扮演以下角色，请根据该角色身份与用户互动：\n" + role_prompt
+                role_name = _get_user_display_name(config_manager, pov_mode) or role_character
+                prompt += (
+                    "\n\n【用户视角设定】\n"
+                    "用户正在皮上代入角色“" + role_name + "”。"
+                    "以下档案只描述用户扮演的角色，不会覆盖你的身份；档案里的“你/你是”都指用户侧角色。"
+                    "你仍然只扮演本次聊天设定的角色，不要代替用户侧角色说话。"
+                )
+                if role_character == character:
+                    prompt += (
+                        "\n用户选择了与你同名的角色 POV；请把它当作同角色或镜像式互动，"
+                        "不要把用户发言当成你自己的台词、经历或长期记忆。"
+                    )
+                prompt += "\n\n【用户扮演角色档案】\n" + role_prompt
 
     return prompt
 
@@ -464,68 +483,126 @@ class LLMStreamWorker(QThread):
     error = Signal(str)
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
-                 messages: list[dict], enable_thinking=None, parent=None):
+                 messages: list[dict], enable_thinking=None, parent=None,
+                 web_search=False, show_search_sources=True):
         super().__init__(parent)
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
         self._enable_thinking = enable_thinking
+        self._web_search = bool(web_search)
+        self._show_search_sources = bool(show_search_sources)
         self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
+        self._stream_tool_calls = []
+        self._search_sources = []
 
     def cancel(self):
         self._cancelled = True
 
     def run(self):
         try:
-            body = {
-                "model": self._model_id,
-                "messages": self._messages,
-                "stream": True,
-            }
-            _apply_thinking_options(body, self._enable_thinking)
-            data = json.dumps(body).encode("utf-8")
-
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            }
-
-            req = urllib.request.Request(
-                self._api_url, data=data, headers=headers, method="POST"
-            )
-
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                buffer = b""
-                for chunk in iter(lambda: resp.read(4096), b""):
-                    if self._cancelled:
-                        break
-                    buffer += chunk
-                    while b"\n" in buffer:
-                        line, buffer = buffer.split(b"\n", 1)
-                        self._process_line(line.decode("utf-8", errors="replace"))
-                if not self._cancelled and buffer.strip():
-                    self._process_line(buffer.decode("utf-8", errors="replace"))
-
+            messages = [dict(message) for message in self._messages]
+            use_tools = self._web_search
+            if use_tools:
+                messages = with_web_search_system_hint(messages, self._show_search_sources)
+                messages = maybe_add_prefetched_web_search(
+                    messages,
+                    include_sources=self._show_search_sources,
+                )
+                self._remember_search_sources_from_messages(messages)
+            for round_index in range(3):
+                self._stream_tool_calls = []
+                try:
+                    self._stream_once(messages, use_tools)
+                except urllib.error.HTTPError as e:
+                    err_msg = _http_error_message(e)
+                    if use_tools and e.code in (400, 404, 422):
+                        messages = with_web_search_system_hint(
+                            [dict(message) for message in self._messages],
+                            self._show_search_sources,
+                        )
+                        messages = maybe_add_prefetched_web_search(
+                            messages,
+                            force=True,
+                            include_sources=self._show_search_sources,
+                        )
+                        self._remember_search_sources_from_messages(messages)
+                        use_tools = False
+                        continue
+                    self.error.emit(f"HTTP {e.code}: {err_msg}")
+                    return
+                if self._cancelled:
+                    return
+                tool_calls = _normalize_stream_tool_calls(self._stream_tool_calls)
+                if not use_tools or not tool_calls:
+                    break
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": tool_calls,
+                })
+                for tool_call in tool_calls:
+                    function = tool_call.get("function", {})
+                    tool_result = run_local_tool(
+                        function.get("name", ""),
+                        function.get("arguments", "{}"),
+                    )
+                    self._remember_search_sources(tool_result)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id") or f"call_{round_index}",
+                        "content": tool_result,
+                    })
             if self._cancelled:
                 return
             content, reasoning = split_thinking_text(
                 self._full_text,
                 self._reasoning_text,
             )
+            if self._show_search_sources:
+                content = _append_search_sources(content, self._search_sources)
             self.finished.emit(content, reasoning, [])
         except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="replace")
-            try:
-                err_json = json.loads(err_body)
-                msg = err_json.get("error", {}).get("message", str(e))
-            except Exception:
-                msg = err_body[:300] or str(e)
-            self.error.emit(f"HTTP {e.code}: {msg}")
+            self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _stream_once(self, messages: list[dict], use_tools: bool):
+        body = {
+            "model": self._model_id,
+            "messages": messages,
+            "stream": True,
+        }
+        tools = chat_completion_tools(use_tools)
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        _apply_thinking_options(body, self._enable_thinking)
+        data = json.dumps(body).encode("utf-8")
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+
+        req = urllib.request.Request(
+            self._api_url, data=data, headers=headers, method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            buffer = b""
+            for chunk in iter(lambda: resp.read(4096), b""):
+                if self._cancelled:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    self._process_line(line.decode("utf-8", errors="replace"))
+            if not self._cancelled and buffer.strip():
+                self._process_line(buffer.decode("utf-8", errors="replace"))
 
     def _process_line(self, line: str):
         line = line.strip()
@@ -537,6 +614,7 @@ class LLMStreamWorker(QThread):
         try:
             data = json.loads(data_str)
             delta = data.get("choices", [{}])[0].get("delta", {})
+            self._collect_tool_call_delta(delta)
             reasoning = _extract_reasoning(delta)
             if reasoning:
                 self._reasoning_text += reasoning
@@ -548,6 +626,58 @@ class LLMStreamWorker(QThread):
         except (json.JSONDecodeError, KeyError, IndexError):
             pass
 
+    def _collect_tool_call_delta(self, delta: dict):
+        for call_delta in delta.get("tool_calls") or []:
+            try:
+                index = int(call_delta.get("index", len(self._stream_tool_calls)))
+            except (TypeError, ValueError):
+                index = len(self._stream_tool_calls)
+            while len(self._stream_tool_calls) <= index:
+                self._stream_tool_calls.append({
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                })
+            target = self._stream_tool_calls[index]
+            if call_delta.get("id"):
+                target["id"] = call_delta["id"]
+            if call_delta.get("type"):
+                target["type"] = call_delta["type"]
+            function_delta = call_delta.get("function") or {}
+            if function_delta.get("name"):
+                if target["function"]["name"]:
+                    target["function"]["name"] += function_delta["name"]
+                else:
+                    target["function"]["name"] = function_delta["name"]
+            if "arguments" in function_delta:
+                target["function"]["arguments"] += function_delta.get("arguments") or ""
+        function_call = delta.get("function_call")
+        if isinstance(function_call, dict):
+            if not self._stream_tool_calls:
+                self._stream_tool_calls.append({
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                })
+            target = self._stream_tool_calls[0]
+            if function_call.get("name"):
+                target["function"]["name"] = function_call["name"]
+            if "arguments" in function_call:
+                target["function"]["arguments"] += function_call.get("arguments") or ""
+
+    def _remember_search_sources_from_messages(self, messages: list[dict]):
+        for message in messages:
+            if message.get("role") != "system":
+                continue
+            content = str(message.get("content", "") or "")
+            if "【自动联网搜索结果】" in content:
+                self._remember_search_sources(content)
+
+    def _remember_search_sources(self, text: str):
+        for source in _extract_search_sources(text):
+            if source["url"] and all(item["url"] != source["url"] for item in self._search_sources):
+                self._search_sources.append(source)
+
 
 class ResponsesStreamWorker(QThread):
     chunk_received = Signal(str, str)
@@ -555,7 +685,8 @@ class ResponsesStreamWorker(QThread):
     error = Signal(str)
 
     def __init__(self, api_url: str, api_key: str, model_id: str,
-                 messages: list[dict], enable_thinking=None, web_search=False, parent=None):
+                 messages: list[dict], enable_thinking=None, web_search=False,
+                 parent=None, show_search_sources=True):
         super().__init__(parent)
         self._api_url = _responses_api_url(api_url)
         self._api_key = api_key
@@ -563,6 +694,7 @@ class ResponsesStreamWorker(QThread):
         self._messages = messages
         self._enable_thinking = enable_thinking
         self._web_search = web_search
+        self._show_search_sources = bool(show_search_sources)
         self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
@@ -572,7 +704,10 @@ class ResponsesStreamWorker(QThread):
 
     def run(self):
         try:
-            instructions, input_items = _messages_to_responses_input(self._messages)
+            messages = [dict(message) for message in self._messages]
+            if self._web_search:
+                messages = with_web_search_system_hint(messages, self._show_search_sources)
+            instructions, input_items = _messages_to_responses_input(messages)
             body = {
                 "model": self._model_id,
                 "input": input_items,
@@ -741,6 +876,69 @@ def _extract_reasoning(data: dict) -> str:
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def _http_error_message(error: urllib.error.HTTPError) -> str:
+    err_body = error.read().decode("utf-8", errors="replace")
+    try:
+        err_json = json.loads(err_body)
+        return err_json.get("error", {}).get("message", str(error))
+    except Exception:
+        return err_body[:300] or str(error)
+
+
+def _normalize_stream_tool_calls(tool_calls: list[dict]) -> list[dict]:
+    normalized = []
+    for index, call in enumerate(tool_calls or []):
+        function = call.get("function") or {}
+        name = str(function.get("name", "") or "").strip()
+        if not name:
+            continue
+        arguments = str(function.get("arguments", "") or "").strip() or "{}"
+        call_id = str(call.get("id", "") or "").strip() or f"call_{index}"
+        normalized.append({
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": arguments,
+            },
+        })
+    return normalized
+
+
+def _extract_search_sources(text: str) -> list[dict]:
+    sources = []
+    current_title = ""
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        title_match = re.match(r"^\d+\.\s+(.+)$", stripped)
+        if title_match:
+            current_title = title_match.group(1).strip()
+            continue
+        if stripped.startswith("URL:"):
+            url = stripped[4:].strip()
+            if url:
+                sources.append({"title": current_title or url, "url": url})
+            current_title = ""
+    return sources
+
+
+def _append_search_sources(content: str, sources: list[dict]) -> str:
+    if not sources:
+        return content
+    content = str(content or "").rstrip()
+    existing = content.lower()
+    visible_sources = sources[:5]
+    if any(source["url"].lower() in existing for source in visible_sources):
+        return content
+    lines = ["", "", "联网搜索来源："]
+    for source in visible_sources:
+        title = source.get("title", "").strip() or source.get("url", "").strip()
+        url = source.get("url", "").strip()
+        if title and url:
+            lines.append(f"- {title}: {url}")
+    return content + "\n".join(lines)
 
 
 _THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)

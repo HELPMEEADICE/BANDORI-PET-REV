@@ -2061,10 +2061,10 @@ class ChatWindow(QWidget):
     def _build_input_area(self):
         area = RoundedPanel()
         area.setObjectName("InputArea")
-        area.setFixedHeight(108)
+        area.setFixedHeight(110)
         outer = QVBoxLayout(area)
-        outer.setContentsMargins(12, 8, 12, 12)
-        outer.setSpacing(6)
+        outer.setContentsMargins(20, 8, 20, 14)
+        outer.setSpacing(8)
 
         hint_row = QHBoxLayout()
         hint_row.setContentsMargins(6, 0, 6, 0)
@@ -2082,12 +2082,15 @@ class ChatWindow(QWidget):
 
         self._composer = RoundedPanel(area)
         self._composer.setObjectName("Composer")
+        self._composer.setFixedHeight(66)
         layout = QHBoxLayout(self._composer)
-        layout.setContentsMargins(12, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 10, 12, 10)
+        layout.setSpacing(10)
+        self._composer_layout = layout
 
         self._attach_btn = IconButton(FluentIcon.PHOTO, self._composer)
-        self._attach_btn.setFixedSize(42, 42)
+        self._attach_btn.setFixedSize(46, 46)
+        self._attach_btn.setIconSize(QSize(22, 22))
         self._attach_btn.setToolTip(_tr("ChatWindow.attach_image_tooltip", default="添加图片"))
         self._attach_btn.clicked.connect(self._choose_chat_images)
         layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -2095,7 +2098,7 @@ class ChatWindow(QWidget):
         self._input = FluentContextTextEdit()
         self._input.setPlaceholderText(_tr("ChatWindow.input_placeholder"))
         self._input.setAcceptRichText(False)
-        self._input.setFixedHeight(58)
+        self._input.setFixedHeight(46)
         self._input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         font = QFont()
         font.setPointSize(10)
@@ -2106,7 +2109,8 @@ class ChatWindow(QWidget):
         layout.addWidget(self._input)
 
         self._send_btn = IconButton(FluentIcon.SEND, self._composer, primary=True)
-        self._send_btn.setFixedSize(42, 42)
+        self._send_btn.setFixedSize(46, 46)
+        self._send_btn.setIconSize(QSize(22, 22))
         self._send_btn.setToolTip(_tr("ChatWindow.send_tooltip"))
         self._send_btn.clicked.connect(self._send_message)
         layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -2244,7 +2248,7 @@ class ChatWindow(QWidget):
                 background: transparent;
                 color: {text_color};
                 border: none;
-                padding: 4px 2px;
+                padding: 9px 4px 5px 4px;
                 font-size: 13px;
                 selection-background-color: {_TEAMS_ACCENT};
             }}
@@ -2820,7 +2824,7 @@ class ChatWindow(QWidget):
         current_width = getattr(self, '_composer_border_width', 1.0)
         if abs(current_width - target_width) < 0.01:
             self._composer_border_width = target_width
-            self._composer.set_panel_style(self._composer_colors["bg"], border, 18, int(target_width))
+            self._composer.set_panel_style(self._composer_colors["bg"], border, 22, int(target_width))
             return
         self._composer_border_width = target_width
         if hasattr(self, '_composer_focus_anim'):
@@ -2833,7 +2837,7 @@ class ChatWindow(QWidget):
         anim.valueChanged.connect(lambda v: self._composer.set_panel_style(
             self._composer_colors["bg"],
             self._composer_colors["focus_border"] if focused else self._composer_colors["border"],
-            18,
+            22,
             int(round(v))
         ))
         self._composer_focus_anim = anim
@@ -2841,13 +2845,15 @@ class ChatWindow(QWidget):
 
     def _sync_input_height(self):
         doc_height = int(self._input.document().size().height()) + 10
-        input_height = max(42, min(92, doc_height))
-        area_height = input_height + 50
+        input_height = max(42, min(86, doc_height))
+        composer_height = max(66, input_height + 20)
+        area_height = composer_height + 44
         self._input.setFixedHeight(input_height)
+        self._composer.setFixedHeight(composer_height)
         self._input_area.setFixedHeight(area_height)
         scrollbar_policy = (
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            if doc_height > 92 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            if doc_height > 86 else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self._input.setVerticalScrollBarPolicy(scrollbar_policy)
 
@@ -3493,9 +3499,18 @@ class ChatWindow(QWidget):
                 messages,
                 enable_thinking,
                 bool(self._cfg.get("llm_web_search_enabled", False)),
+                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
             )
         else:
-            self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
+            self._worker = LLMStreamWorker(
+                api_url,
+                api_key,
+                model_id,
+                messages,
+                enable_thinking,
+                web_search=bool(self._cfg.get("llm_web_search_enabled", False)),
+                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+            )
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)

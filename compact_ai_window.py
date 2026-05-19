@@ -586,7 +586,16 @@ class CompactAIWindow(QWidget):
 
         messages = self._build_messages()
         enable_thinking = self._cfg.get("llm_enable_thinking", None) if self._cfg else None
-        self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking, self)
+        self._worker = LLMStreamWorker(
+            api_url,
+            api_key,
+            model_id,
+            messages,
+            enable_thinking,
+            self,
+            web_search=bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False,
+            show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True,
+        )
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)
