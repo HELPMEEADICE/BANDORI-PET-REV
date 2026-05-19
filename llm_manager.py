@@ -1,5 +1,8 @@
 import json
 import re
+import os
+import subprocess
+import shutil
 import urllib.request
 import urllib.error
 from PySide6.QtCore import QThread, Signal
@@ -600,6 +603,199 @@ class NonStreamWorker(QThread):
             self.error.emit(f"HTTP {e.code}: {msg}")
         except Exception as e:
             self.error.emit(str(e))
+
+
+def _compact_codex_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_compact_codex_text(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in (
+            "text",
+            "content",
+            "message",
+            "delta",
+            "summary",
+            "answer",
+            "response",
+            "output",
+        ):
+            text = _compact_codex_text(value.get(key))
+            if text:
+                return text
+        if value.get("type") == "output_text":
+            return _compact_codex_text(value.get("text"))
+    return ""
+
+
+def _codex_event_text(event: dict) -> str:
+    text = _compact_codex_text(event)
+    if text:
+        return text
+    for key in ("item", "data", "payload"):
+        text = _compact_codex_text(event.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _codex_agent_message_text(event: dict) -> str:
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return ""
+    if item.get("type") != "agent_message":
+        return ""
+    return _compact_codex_text(item.get("text"))
+
+
+def _messages_to_codex_prompt(messages: list[dict]) -> str:
+    parts = []
+    for message in messages:
+        role = str(message.get("role", "user")).upper()
+        content = str(message.get("content", "")).strip()
+        if content:
+            parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts).strip()
+
+
+def _resolve_codex_command(codex_command: str) -> list[str]:
+    command = (codex_command or "codex.cmd").strip().strip('"') or "codex.cmd"
+    if command.lower().endswith(".cmd"):
+        resolved_command = command if os.path.isabs(command) else (shutil.which(command) or command)
+        npm_dir = os.path.dirname(resolved_command)
+        codex_js = os.path.join(npm_dir, "node_modules", "@openai", "codex", "bin", "codex.js")
+        node_exe = shutil.which("node") or os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs", "node.exe")
+        if os.path.exists(codex_js):
+            return [node_exe, codex_js]
+    return [command]
+
+
+class CodexCLIWorker(QThread):
+    chunk_received = Signal(str, str)
+    finished = Signal(str, str, list)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        codex_command: str,
+        model_id: str,
+        messages: list[dict],
+        reasoning_effort: str = "medium",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._codex_command = (codex_command or "codex.cmd").strip() or "codex.cmd"
+        self._model_id = (model_id or "").strip().lower()
+        self._reasoning_effort = (reasoning_effort or "medium").strip()
+        self._messages = messages
+        self._cancelled = False
+        self._process = None
+        self._full_text = ""
+        self._last_event_text = ""
+        self._error_text = ""
+
+    def cancel(self):
+        self._cancelled = True
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+
+    def run(self):
+        prompt = _messages_to_codex_prompt(self._messages)
+        if not prompt:
+            self.error.emit("Empty Codex prompt")
+            return
+
+        command = [*_resolve_codex_command(self._codex_command), "exec", "--json", "--sandbox", "read-only"]
+        if self._model_id:
+            command.extend(["-m", self._model_id])
+        if self._reasoning_effort in {"low", "medium", "high", "xhigh"}:
+            command.extend(["-c", f'model_reasoning_effort="{self._reasoning_effort}"'])
+        command.append(prompt)
+
+        try:
+            self._process = subprocess.Popen(
+                command,
+                cwd=os.getcwd(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError as exc:
+            self.error.emit(
+                f"Could not start Codex CLI: {exc}. Run `codex login` in a terminal first, "
+                "or set the full codex.cmd path in settings."
+            )
+            return
+
+        assert self._process.stdout is not None
+        for line in self._process.stdout:
+            if self._cancelled:
+                return
+            self._process_output_line(line)
+
+        return_code = self._process.wait()
+        if self._cancelled:
+            return
+        if return_code != 0:
+            detail = self._error_text or self._last_event_text or f"exit code {return_code}"
+            self.error.emit(f"Codex CLI failed: {detail}")
+            return
+
+        text = self._full_text.strip() or self._last_event_text.strip()
+        if not text:
+            self.error.emit("Codex CLI finished without a response")
+            return
+        self.finished.emit(text, "", [])
+
+    def _process_output_line(self, line: str):
+        stripped = line.strip()
+        if not stripped:
+            return
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            if not self._last_event_text and not stripped.lstrip().startswith("<"):
+                self._last_event_text = stripped
+            return
+        if not isinstance(event, dict):
+            return
+
+        kind = " ".join(
+            str(event.get(key, "")).lower()
+            for key in ("type", "event", "kind", "name", "status")
+            if event.get(key)
+        )
+        text = _codex_event_text(event)
+        agent_text = _codex_agent_message_text(event)
+        if agent_text:
+            self._full_text = agent_text
+            self._last_event_text = agent_text
+            self.chunk_received.emit(agent_text, "")
+            return
+        if text:
+            self._last_event_text = text
+        if "error" in kind and text:
+            self._error_text = text
+
+        if any(token in kind for token in ("delta", "stream")) and text:
+            self._full_text += text
+            self.chunk_received.emit(text, "")
+            return
+        if any(token in kind for token in ("message", "output", "response", "complete", "finished")) and text:
+            self._full_text = text
 
 
 ACTION_PATTERN = re.compile(r"\[([^\]]+)\]")

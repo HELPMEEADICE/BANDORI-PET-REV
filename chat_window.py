@@ -44,7 +44,7 @@ else:
     macos_patch = None
 
 from llm_manager import (
-    build_system_prompt, LLMStreamWorker, NonStreamWorker,
+    build_system_prompt, CodexCLIWorker, LLMStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags,
 )
 from action_bus import publish_action
@@ -2411,6 +2411,9 @@ class ChatWindow(QWidget):
         self._input.setFocus()
 
     def _has_llm_config(self) -> bool:
+        backend = self._cfg.get("llm_backend", "openai") if self._cfg else "openai"
+        if backend == "codex":
+            return bool(self._cfg.get("codex_command", "codex.cmd").strip())
         return bool(
             self._cfg
             and self._cfg.get("llm_api_url", "").strip()
@@ -2612,11 +2615,7 @@ class ChatWindow(QWidget):
         if not text:
             return
 
-        api_url = self._cfg.get("llm_api_url", "")
-        api_key = self._cfg.get("llm_api_key", "")
-        model_id = self._cfg.get("llm_model_id", "")
-
-        if not api_url or not api_key or not model_id:
+        if not self._has_llm_config():
             self._composer_hint.setText(_tr("ChatWindow.not_configured"))
             avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(self._character)
             bubble = MessageBubble(
@@ -2663,6 +2662,10 @@ class ChatWindow(QWidget):
 
     def _start_group_plan(self, user_text: str):
         self._show_plan_divider()
+        if self._cfg.get("llm_backend", "openai") == "codex":
+            self._hide_plan_divider()
+            self._use_fallback_group_plan()
+            return
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         aux_model_id = self._cfg.get("llm_aux_model_id", "").strip() or self._cfg.get("llm_model_id", "")
@@ -2753,9 +2756,6 @@ class ChatWindow(QWidget):
 
     def _start_response_for_character(self, character: str, spoken_names: list[str]):
         self._set_busy(True, planning=False)
-        api_url = self._cfg.get("llm_api_url", "")
-        api_key = self._cfg.get("llm_api_key", "")
-        model_id = self._cfg.get("llm_model_id", "")
         self._active_response_character = character
         self._pending_action_character = character
         avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(character)
@@ -2774,8 +2774,19 @@ class ChatWindow(QWidget):
         self._scroll_to_bottom()
 
         messages = self._build_messages_for_character(character, spoken_names)
-        enable_thinking = self._cfg.get("llm_enable_thinking", None)
-        self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
+        if self._cfg.get("llm_backend", "openai") == "codex":
+            self._worker = CodexCLIWorker(
+                self._cfg.get("codex_command", "codex.cmd"),
+                self._cfg.get("codex_model_id", ""),
+                messages,
+                self._cfg.get("codex_reasoning_effort", "medium"),
+            )
+        else:
+            api_url = self._cfg.get("llm_api_url", "")
+            api_key = self._cfg.get("llm_api_key", "")
+            model_id = self._cfg.get("llm_model_id", "")
+            enable_thinking = self._cfg.get("llm_enable_thinking", None)
+            self._worker = LLMStreamWorker(api_url, api_key, model_id, messages, enable_thinking)
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)

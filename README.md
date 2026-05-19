@@ -107,6 +107,28 @@ git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-
 python main.py
 ```
 
+### 6. AI 聊天后端配置
+
+打开设置面板中的 **LLM 配置**，可以选择两种聊天后端：
+
+- **兼容 OpenAI API**：填写 API 地址、API Key 和模型 ID。
+- **Codex CLI 登录**：使用本机已登录的 Codex CLI 进行对话，无需在应用内填写 API Key。
+
+使用 Codex CLI 前，请先安装并登录：
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+然后在设置里选择 **Codex CLI 登录**，并填写 `codex.cmd` 路径。Windows npm 全局安装的常见路径示例：
+
+```text
+C:\Users\username\AppData\Roaming\npm\codex.cmd
+```
+
+如果 `codex.cmd` 已经在 `PATH` 中，也可以直接填写 `codex.cmd`。Codex 模型和推理强度可在同一页下拉选择。
+
 ---
 
 ## 🧸 支持的乐队 & 角色

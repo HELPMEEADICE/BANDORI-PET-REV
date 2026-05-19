@@ -2286,8 +2286,44 @@ class SettingsWindow(QWidget):
         subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.llm_subtitle"), page))
         layout.addWidget(subtitle)
 
-        api_url_label = BodyLabel(_tr("SettingsWindow.llm_api_url"), page)
-        layout.addWidget(api_url_label)
+        backend_label = BodyLabel(_tr("SettingsWindow.llm_backend"), page)
+        layout.addWidget(backend_label)
+        self._llm_backend = ComboBox(page)
+        self._llm_backend.addItem(_tr("SettingsWindow.llm_backend_openai"), userData="openai")
+        self._llm_backend.addItem(_tr("SettingsWindow.llm_backend_codex"), userData="codex")
+        self._llm_backend.setFixedHeight(36)
+        self._llm_backend.currentIndexChanged.connect(lambda _index: self._update_llm_backend_visibility())
+        layout.addWidget(self._llm_backend)
+
+        self._codex_command_label = BodyLabel(_tr("SettingsWindow.codex_command"), page)
+        layout.addWidget(self._codex_command_label)
+        self._codex_command = FluentContextLineEdit(page)
+        self._codex_command.setPlaceholderText(_tr("SettingsWindow.codex_command_placeholder"))
+        self._codex_command.setFixedHeight(36)
+        layout.addWidget(self._codex_command)
+        self._codex_command_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.codex_command_hint"), page))
+        layout.addWidget(self._codex_command_hint)
+
+        self._codex_model_label = BodyLabel(_tr("SettingsWindow.codex_model_id"), page)
+        layout.addWidget(self._codex_model_label)
+        self._codex_model_id = ComboBox(page)
+        self._codex_model_id.setFixedHeight(36)
+        layout.addWidget(self._codex_model_id)
+        self._populate_codex_models()
+
+        self._codex_reasoning_effort_label = BodyLabel(_tr("SettingsWindow.codex_reasoning_effort"), page)
+        layout.addWidget(self._codex_reasoning_effort_label)
+        self._codex_reasoning_effort = ComboBox(page)
+        self._codex_reasoning_effort.addItem(_tr("SettingsWindow.codex_reasoning_low"), userData="low")
+        self._codex_reasoning_effort.addItem(_tr("SettingsWindow.codex_reasoning_medium"), userData="medium")
+        self._codex_reasoning_effort.addItem(_tr("SettingsWindow.codex_reasoning_high"), userData="high")
+        self._codex_reasoning_effort.addItem(_tr("SettingsWindow.codex_reasoning_xhigh"), userData="xhigh")
+        self._codex_reasoning_effort.setFixedHeight(36)
+        self._codex_reasoning_effort.setCurrentIndex(1)
+        layout.addWidget(self._codex_reasoning_effort)
+
+        self._llm_api_url_label = BodyLabel(_tr("SettingsWindow.llm_api_url"), page)
+        layout.addWidget(self._llm_api_url_label)
         self._llm_api_url = FluentContextLineEdit(page)
         self._llm_api_url.setPlaceholderText(_tr("SettingsWindow.llm_api_url_placeholder"))
         self._llm_api_url.setFixedHeight(36)
@@ -2299,16 +2335,16 @@ class SettingsWindow(QWidget):
         api_url_input_col.addWidget(self._llm_api_url_hint)
         layout.addLayout(api_url_input_col)
 
-        api_key_label = BodyLabel(_tr("SettingsWindow.llm_api_key"), page)
-        layout.addWidget(api_key_label)
+        self._llm_api_key_label = BodyLabel(_tr("SettingsWindow.llm_api_key"), page)
+        layout.addWidget(self._llm_api_key_label)
         self._llm_api_key = FluentContextLineEdit(page)
         self._llm_api_key.setPlaceholderText(_tr("SettingsWindow.llm_api_key_placeholder"))
         self._llm_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self._llm_api_key.setFixedHeight(36)
         layout.addWidget(self._llm_api_key)
 
-        model_label = BodyLabel(_tr("SettingsWindow.llm_primary_model_id"), page)
-        layout.addWidget(model_label)
+        self._llm_model_label = BodyLabel(_tr("SettingsWindow.llm_primary_model_id"), page)
+        layout.addWidget(self._llm_model_label)
 
         model_row = QHBoxLayout()
         model_row.setSpacing(8)
@@ -2317,24 +2353,24 @@ class SettingsWindow(QWidget):
         self._llm_model_id.setFixedHeight(36)
         model_row.addWidget(self._llm_model_id, 1)
 
-        fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
-        fetch_btn.setFixedHeight(36)
-        fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_model_id))
-        model_row.addWidget(fetch_btn)
+        self._llm_model_fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
+        self._llm_model_fetch_btn.setFixedHeight(36)
+        self._llm_model_fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_model_id))
+        model_row.addWidget(self._llm_model_fetch_btn)
         layout.addLayout(model_row)
 
-        aux_model_label = BodyLabel(_tr("SettingsWindow.llm_aux_model_id"), page)
-        layout.addWidget(aux_model_label)
+        self._llm_aux_model_label = BodyLabel(_tr("SettingsWindow.llm_aux_model_id"), page)
+        layout.addWidget(self._llm_aux_model_label)
         self._llm_aux_model_id = FluentContextLineEdit(page)
         self._llm_aux_model_id.setPlaceholderText(_tr("SettingsWindow.llm_aux_model_id_placeholder"))
         self._llm_aux_model_id.setFixedHeight(36)
         aux_model_row = QHBoxLayout()
         aux_model_row.setSpacing(8)
         aux_model_row.addWidget(self._llm_aux_model_id, 1)
-        aux_fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
-        aux_fetch_btn.setFixedHeight(36)
-        aux_fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_aux_model_id))
-        aux_model_row.addWidget(aux_fetch_btn)
+        self._llm_aux_model_fetch_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.llm_fetch"), page)
+        self._llm_aux_model_fetch_btn.setFixedHeight(36)
+        self._llm_aux_model_fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_aux_model_id))
+        aux_model_row.addWidget(self._llm_aux_model_fetch_btn)
         layout.addLayout(aux_model_row)
 
         thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
@@ -3094,8 +3130,15 @@ class SettingsWindow(QWidget):
                 "_llm_api_url",
                 "_llm_api_url_hint",
                 "_llm_api_key",
+                "_llm_backend",
+                "_codex_command",
+                "_codex_command_hint",
+                "_codex_model_id",
+                "_codex_reasoning_effort",
                 "_llm_model_id",
+                "_llm_model_fetch_btn",
                 "_llm_aux_model_id",
+                "_llm_aux_model_fetch_btn",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
                 "_user_name",
@@ -3153,12 +3196,14 @@ class SettingsWindow(QWidget):
         """
         self._llm_api_url.setStyleSheet(style)
         self._llm_api_key.setStyleSheet(style)
+        self._codex_command.setStyleSheet(style)
         self._llm_model_id.setStyleSheet(style)
         self._llm_aux_model_id.setStyleSheet(style)
         self._user_name.setStyleSheet(style)
         self._pov_custom_prompt.setStyleSheet(style)
         hint_color = "#a7b0bf" if dark else "#687385"
         self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
+        self._codex_command_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
 
     def _style_avatar_buttons(self):
@@ -3205,6 +3250,18 @@ class SettingsWindow(QWidget):
         if self._cfg and self._llm_config_widgets_ready():
             self._llm_api_url.setText(self._cfg.get("llm_api_url", ""))
             self._llm_api_key.setText(self._cfg.get("llm_api_key", ""))
+            backend = self._cfg.get("llm_backend", "openai")
+            for i in range(self._llm_backend.count()):
+                if self._llm_backend.itemData(i) == backend:
+                    self._llm_backend.setCurrentIndex(i)
+                    break
+            self._codex_command.setText(self._cfg.get("codex_command", "codex.cmd"))
+            self._select_codex_model(self._cfg.get("codex_model_id", ""))
+            effort = self._cfg.get("codex_reasoning_effort", "medium")
+            for i in range(self._codex_reasoning_effort.count()):
+                if self._codex_reasoning_effort.itemData(i) == effort:
+                    self._codex_reasoning_effort.setCurrentIndex(i)
+                    break
             self._llm_model_id.setText(self._cfg.get("llm_model_id", ""))
             self._llm_aux_model_id.setText(self._cfg.get("llm_aux_model_id", ""))
             self._saved_user_name = self._cfg.get("user_name", "")
@@ -3233,6 +3290,87 @@ class SettingsWindow(QWidget):
                     self._pov_role_character.setCurrentIndex(i)
                     break
             self._on_pov_mode_changed(self._pov_mode.currentIndex())
+            self._update_llm_backend_visibility()
+
+    def _codex_model_cache_path(self) -> str:
+        return os.path.join(os.path.expanduser("~"), ".codex", "models_cache.json")
+
+    def _load_codex_model_options(self) -> list[tuple[str, str]]:
+        models = []
+        cache_path = self._codex_model_cache_path()
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for item in data.get("models", []):
+                slug = str(item.get("slug", "")).strip()
+                if not slug:
+                    continue
+                display = str(item.get("display_name", "")).strip() or slug
+                models.append((display, slug))
+        except Exception:
+            models = []
+        fallback = [
+            ("GPT-5.5", "gpt-5.5"),
+            ("GPT-5.4", "gpt-5.4"),
+            ("GPT-5.4 Mini", "gpt-5.4-mini"),
+            ("GPT-5.3 Codex", "gpt-5.3-codex"),
+            ("GPT-5.2", "gpt-5.2"),
+        ]
+        seen = {slug for _display, slug in models}
+        models.extend((display, slug) for display, slug in fallback if slug not in seen)
+        return models
+
+    def _populate_codex_models(self):
+        if not hasattr(self, "_codex_model_id"):
+            return
+        self._codex_model_id.clear()
+        for display, slug in self._load_codex_model_options():
+            label = display if display == slug else f"{display} ({slug})"
+            self._codex_model_id.addItem(label, userData=slug)
+
+    def _select_codex_model(self, model_id: str):
+        model_id = (model_id or "").strip()
+        if not model_id:
+            model_id = "gpt-5.5"
+        normalized = model_id.lower()
+        for i in range(self._codex_model_id.count()):
+            if str(self._codex_model_id.itemData(i) or "").lower() == normalized:
+                self._codex_model_id.setCurrentIndex(i)
+                return
+        self._codex_model_id.addItem(model_id, userData=normalized)
+        self._codex_model_id.setCurrentIndex(self._codex_model_id.count() - 1)
+
+    def _update_llm_backend_visibility(self):
+        if not self._llm_config_widgets_ready():
+            return
+        backend = self._llm_backend.itemData(self._llm_backend.currentIndex()) or "openai"
+        use_codex = backend == "codex"
+        for widget in (
+            self._codex_command_label,
+            self._codex_command,
+            self._codex_command_hint,
+            self._codex_model_label,
+            self._codex_model_id,
+            self._codex_reasoning_effort_label,
+            self._codex_reasoning_effort,
+        ):
+            widget.setVisible(use_codex)
+        for widget in (
+            self._llm_api_url_label,
+            self._llm_api_url,
+            self._llm_api_url_hint,
+            self._llm_api_key_label,
+            self._llm_api_key,
+            self._llm_model_label,
+            self._llm_model_id,
+            self._llm_model_fetch_btn,
+            self._llm_aux_model_label,
+            self._llm_aux_model_id,
+            self._llm_aux_model_fetch_btn,
+            self._llm_model_combo_label,
+            self._llm_model_scroll,
+        ):
+            widget.setVisible(not use_codex)
 
     def _on_pov_mode_changed(self, index: int):
         mode = self._pov_mode.itemData(index) or "off"
@@ -3357,6 +3495,10 @@ class SettingsWindow(QWidget):
         if self._cfg and self._llm_config_widgets_ready():
             self._cfg.set("llm_api_url", self._llm_api_url.text().strip())
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
+            self._cfg.set("llm_backend", self._llm_backend.itemData(self._llm_backend.currentIndex()) or "openai")
+            self._cfg.set("codex_command", self._codex_command.text().strip() or "codex.cmd")
+            self._cfg.set("codex_model_id", self._codex_model_id.itemData(self._codex_model_id.currentIndex()) or "")
+            self._cfg.set("codex_reasoning_effort", self._codex_reasoning_effort.itemData(self._codex_reasoning_effort.currentIndex()) or "medium")
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
@@ -3477,6 +3619,21 @@ class SettingsWindow(QWidget):
         )
 
     def _test_connection(self):
+        backend = self._llm_backend.itemData(self._llm_backend.currentIndex()) or "openai"
+        if backend == "codex":
+            command = self._codex_command.text().strip() or "codex.cmd"
+            model_id = self._codex_model_id.itemData(self._codex_model_id.currentIndex()) or ""
+            effort = self._codex_reasoning_effort.itemData(self._codex_reasoning_effort.currentIndex()) or "medium"
+            if hasattr(self, '_test_worker') and self._test_worker is not None:
+                if self._test_worker.isRunning():
+                    self._test_worker.quit()
+                    self._test_worker.wait(2000)
+            self._test_worker = TestCodexWorker(command, model_id, effort, parent=self)
+            self._test_worker.finished.connect(self._on_test_finished)
+            self._test_worker.error.connect(self._on_test_error)
+            self._test_worker.start()
+            return
+
         api_url = self._llm_api_url.text().strip()
         api_key = self._llm_api_key.text().strip()
         model_id = self._llm_model_id.text().strip()
@@ -4125,6 +4282,66 @@ class TestConnectionWorker(QThread):
             self.error.emit(f"HTTP {e.code}: {msg}")
         except urllib.error.URLError as e:
             self.error.emit(f"Network error: {e.reason}")
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class TestCodexWorker(QThread):
+    finished = Signal()
+    error = Signal(str)
+
+    def __init__(self, codex_command: str, model_id: str = "", reasoning_effort: str = "medium", parent=None):
+        super().__init__(parent)
+        self._codex_command = (codex_command or "codex.cmd").strip() or "codex.cmd"
+        self._model_id = (model_id or "").strip().lower()
+        self._reasoning_effort = (reasoning_effort or "medium").strip()
+
+    def run(self):
+        try:
+            import subprocess
+            import json
+            from llm_manager import _resolve_codex_command
+
+            command = [
+                *_resolve_codex_command(self._codex_command),
+                "exec",
+                "--json",
+                "--sandbox",
+                "read-only",
+                "-c",
+                f'model_reasoning_effort="{self._reasoning_effort}"',
+            ]
+            if self._model_id:
+                command.extend(["-m", self._model_id])
+            command.append("Reply with exactly: ok")
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=45,
+            )
+            if result.returncode == 0:
+                self.finished.emit()
+            else:
+                message = ""
+                for line in (result.stdout or "").splitlines():
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "error":
+                        message = str(event.get("message", "")).strip()
+                        break
+                    error = event.get("error") if isinstance(event, dict) else None
+                    if isinstance(error, dict):
+                        message = str(error.get("message", "")).strip()
+                        if message:
+                            break
+                self.error.emit(message or f"Codex exec failed with exit code {result.returncode}")
         except Exception as e:
             self.error.emit(str(e))
 
