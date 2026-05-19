@@ -50,6 +50,16 @@ def include_package_subdir(package_name: str, subdir: str, dest_path: str | None
     return str(package_subdir), dest_path or f"lib/{package_name}/{subdir}"
 
 
+def include_package_dir(package_name: str, dest_path: str | None = None) -> tuple[str, str] | None:
+    spec = importlib.util.find_spec(package_name)
+    if spec is None or spec.origin is None:
+        return None
+    package_dir = Path(spec.origin).resolve().parent
+    if not package_dir.exists():
+        return None
+    return str(package_dir), dest_path or f"lib/{package_name}"
+
+
 def _luajit_executable() -> str:
     luajit = shutil.which("luajit")
     if luajit:
@@ -138,6 +148,7 @@ include_files = [
     include_if_exists("pixels"),
     include_if_exists("audio_reference"),
     include_package_subdir("_sounddevice_data", "portaudio-binaries"),
+    include_package_dir("_soundfile_data"),
 ]
 
 include_files.extend(_live2d_lua_include_files())
@@ -146,6 +157,7 @@ include_files = [item for item in include_files if item is not None]
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
+    "includes": ["tts_manager"],
     "packages": [
         "OpenGL",
         "PIL",
@@ -155,14 +167,18 @@ build_exe_options = {
         "PySide6.QtWidgets",
         "darkdetect",
         "lupa.luajit21",
+        "numpy",
         "qfluentwidgets",
+        "requests",
+        "sounddevice",
+        "soundfile",
         "sqlite3",
     ],
     "excludes": ["PyQt5", "PyQt6", "PySide2", "tkinter"],
     "include_msvcr": sys.platform == "win32",
     
     "zip_include_packages": ["*"], 
-    "zip_exclude_packages": ["_sounddevice_data"],
+    "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data"],
 }
 
 build_msi_options = {
