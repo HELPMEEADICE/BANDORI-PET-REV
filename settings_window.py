@@ -1,8 +1,9 @@
 import os
+import shutil
 from datetime import datetime
 
 import fluent_bootstrap  # noqa: F401
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl, QRectF
 from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
@@ -68,6 +69,7 @@ from live2d_quality import normalize_live2d_quality
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
+_AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 LIVE2D_SCALE_MIN = 25
 LIVE2D_SCALE_MAX = 500
@@ -106,6 +108,38 @@ def _app_icon_path() -> str:
         if os.path.exists(path):
             return path
     return ""
+
+
+def _rounded_avatar_pixmap(path: str, size: int) -> QPixmap:
+    if not path or not os.path.exists(path):
+        return QPixmap()
+    source = QPixmap(path)
+    if source.isNull():
+        return QPixmap()
+
+    side = min(source.width(), source.height())
+    crop = source.copy(
+        max(0, (source.width() - side) // 2),
+        max(0, (source.height() - side) // 2),
+        side,
+        side,
+    )
+    scaled = crop.scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    rounded = QPixmap(size, size)
+    rounded.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(rounded)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    path_shape = QPainterPath()
+    path_shape.addEllipse(QRectF(0, 0, size, size))
+    painter.setClipPath(path_shape)
+    painter.drawPixmap(0, 0, scaled)
+    painter.end()
+    return rounded
 
 
 class FluentContextLineEdit(QLineEdit):
@@ -830,6 +864,7 @@ class SettingsWindow(QWidget):
             self._cfg.get("live2d_scale", 0) if self._cfg else 0
         )
         self._saved_user_name = ""
+        self._user_avatar_path_pending = ""
         self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
 
@@ -2683,7 +2718,27 @@ class SettingsWindow(QWidget):
         self._user_name = FluentContextLineEdit(page)
         self._user_name.setPlaceholderText(_tr("SettingsWindow.llm_display_name_placeholder"))
         self._user_name.setFixedHeight(36)
+        self._user_name.textChanged.connect(lambda _text: self._update_user_avatar_preview())
         layout.addWidget(self._user_name)
+
+        image_label = BodyLabel(_tr("SettingsWindow.llm_avatar_image"), page)
+        layout.addWidget(image_label)
+        avatar_row = QHBoxLayout()
+        avatar_row.setSpacing(10)
+        self._user_avatar_preview = QLabel(page)
+        self._user_avatar_preview.setFixedSize(44, 44)
+        self._user_avatar_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar_row.addWidget(self._user_avatar_preview)
+        choose_avatar_btn = PushButton(FluentIcon.PHOTO, _tr("SettingsWindow.llm_avatar_choose"), page)
+        choose_avatar_btn.setFixedHeight(36)
+        choose_avatar_btn.clicked.connect(self._choose_user_avatar)
+        avatar_row.addWidget(choose_avatar_btn)
+        self._user_avatar_reset_btn = PushButton(FluentIcon.RETURN, _tr("SettingsWindow.llm_avatar_reset"), page)
+        self._user_avatar_reset_btn.setFixedHeight(36)
+        self._user_avatar_reset_btn.clicked.connect(self._reset_user_avatar)
+        avatar_row.addWidget(self._user_avatar_reset_btn)
+        avatar_row.addStretch()
+        layout.addLayout(avatar_row)
 
         avatar_label = BodyLabel(_tr("SettingsWindow.llm_avatar_color"), page)
         layout.addWidget(avatar_label)
@@ -2764,7 +2819,7 @@ class SettingsWindow(QWidget):
 
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
         save_btn.setFixedHeight(36)
-        save_btn.clicked.connect(self._save_llm_config)
+        save_btn.clicked.connect(lambda: self._save_llm_config("pov"))
         btn_row = QHBoxLayout()
         btn_row.addWidget(save_btn)
         btn_row.addStretch()
@@ -3750,6 +3805,8 @@ class SettingsWindow(QWidget):
                 "_pov_custom_prompt",
                 "_pov_persona_combo",
                 "_pov_role_character",
+                "_user_avatar_preview",
+                "_user_avatar_reset_btn",
                 "_avatar_color_btns",
             )
         )
@@ -3823,6 +3880,7 @@ class SettingsWindow(QWidget):
         hint_color = "#a7b0bf" if dark else "#687385"
         self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
+        self._update_user_avatar_preview()
 
     def _style_tts_inputs(self):
         if not self._tts_config_widgets_ready():
@@ -3866,11 +3924,87 @@ class SettingsWindow(QWidget):
                 }}
             """)
 
+    def _selected_avatar_color(self) -> str:
+        for btn in self._avatar_color_btns:
+            if btn.isChecked():
+                return btn.property("avatar_color")
+        return BANDORI_PRIMARY
+
+    def _avatar_storage_dir(self):
+        return app_base_dir() / ".runtime" / "chat_avatars"
+
+    def _choose_user_avatar(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            _tr("SettingsWindow.llm_avatar_choose_title"),
+            "",
+            _tr("SettingsWindow.llm_avatar_image_filter"),
+        )
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in _AVATAR_EXTENSIONS:
+            return
+        try:
+            target_dir = self._avatar_storage_dir()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / f"user_avatar{ext}"
+            if os.path.abspath(path) != os.path.abspath(str(target)):
+                shutil.copyfile(path, target)
+            self._user_avatar_path_pending = str(target)
+            self._update_user_avatar_preview()
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                _tr("SettingsWindow.llm_avatar_save_failed_title"),
+                _tr("SettingsWindow.llm_avatar_save_failed_content", error=str(exc)),
+            )
+
+    def _reset_user_avatar(self):
+        self._user_avatar_path_pending = ""
+        self._update_user_avatar_preview()
+
+    def _update_user_avatar_preview(self):
+        if not hasattr(self, "_user_avatar_preview"):
+            return
+        color = self._selected_avatar_color() if hasattr(self, "_avatar_color_btns") else BANDORI_PRIMARY
+        dark = isDarkTheme()
+        border = "#4a4a4a" if dark else "#d8d8d8"
+        pixmap = _rounded_avatar_pixmap(self._user_avatar_path_pending, 44)
+        if pixmap.isNull():
+            name = self._user_name.text().strip() if hasattr(self, "_user_name") else ""
+            self._user_avatar_preview.setPixmap(QPixmap())
+            fallback_name = name or _tr("ChatWindow.you")
+            self._user_avatar_preview.setText(fallback_name[:1].upper() if fallback_name else "U")
+            self._user_avatar_preview.setStyleSheet(f"""
+                QLabel {{
+                    background: {color};
+                    color: #ffffff;
+                    border: 1px solid {border};
+                    border-radius: 22px;
+                    font-size: 17px;
+                    font-weight: 800;
+                }}
+            """)
+        else:
+            self._user_avatar_preview.setText("")
+            self._user_avatar_preview.setPixmap(pixmap)
+            self._user_avatar_preview.setStyleSheet(f"""
+                QLabel {{
+                    background: transparent;
+                    border: 1px solid {border};
+                    border-radius: 22px;
+                }}
+            """)
+        if hasattr(self, "_user_avatar_reset_btn"):
+            self._user_avatar_reset_btn.setEnabled(bool(self._user_avatar_path_pending))
+
     def _on_avatar_color_clicked(self, btn: QPushButton):
         for b in self._avatar_color_btns:
             b.setChecked(False)
         btn.setChecked(True)
         self._style_avatar_buttons()
+        self._update_user_avatar_preview()
         self._pulse_button(btn)
 
     @staticmethod
@@ -3902,9 +4036,11 @@ class SettingsWindow(QWidget):
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
             self._saved_user_name = self._cfg.get("user_name", "")
             self._user_name.setText(self._saved_user_name)
+            self._user_avatar_path_pending = str(self._cfg.get("user_avatar_path", "") or "").strip()
             saved_color = self._cfg.get("user_avatar_color", BANDORI_PRIMARY)
             for btn in self._avatar_color_btns:
                 btn.setChecked(btn.property("avatar_color") == saved_color)
+            self._update_user_avatar_preview()
             thinking_val = self._cfg.get("llm_enable_thinking", None)
             if thinking_val is True:
                 self._llm_enable_thinking.setCurrentIndex(1)
@@ -4286,7 +4422,7 @@ class SettingsWindow(QWidget):
             return
         self._user_name.setText(self._pov_role_character.currentText())
 
-    def _save_llm_config(self):
+    def _save_llm_config(self, source: str = "llm", show_info: bool = True):
         if self._cfg and self._llm_config_widgets_ready():
             self._cfg.set("llm_api_url", self._llm_api_url.text().strip())
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
@@ -4304,6 +4440,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("pov_mode", pov_mode)
             self._cfg.set("pov_custom_prompt", self._pov_custom_prompt.toPlainText().strip())
             self._cfg.set("pov_role_character", self._pov_role_character.itemData(self._pov_role_character.currentIndex()) or "")
+            self._cfg.set("user_avatar_path", self._user_avatar_path_pending)
             for btn in self._avatar_color_btns:
                 if btn.isChecked():
                     self._cfg.set("user_avatar_color", btn.property("avatar_color"))
@@ -4321,13 +4458,16 @@ class SettingsWindow(QWidget):
             try:
                 self._cfg.save()
                 self._reload_llm_api_profiles(active_profile)
-                InfoBar.success(
-                    _tr("SettingsWindow.llm_saved_title"),
-                    _tr("SettingsWindow.llm_saved_content"),
-                    duration=2000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
+                if show_info:
+                    title_key = "SettingsWindow.pov_saved_title" if source == "pov" else "SettingsWindow.llm_saved_title"
+                    content_key = "SettingsWindow.pov_saved_content" if source == "pov" else "SettingsWindow.llm_saved_content"
+                    InfoBar.success(
+                        _tr(title_key),
+                        _tr(content_key),
+                        duration=2000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
             except Exception:
                 pass
 
@@ -4348,8 +4488,8 @@ class SettingsWindow(QWidget):
             try:
                 self._cfg.save()
                 InfoBar.success(
-                    _tr("SettingsWindow.llm_saved_title"),
-                    _tr("SettingsWindow.llm_saved_content"),
+                    _tr("SettingsWindow.tts_saved_title"),
+                    _tr("SettingsWindow.tts_saved_content"),
                     duration=2000,
                     position=InfoBarPosition.TOP,
                     parent=self,
@@ -5042,7 +5182,7 @@ class SettingsWindow(QWidget):
         if not self._apply_auto_start_setting():
             self._launched = False
             return
-        self._save_llm_config()
+        self._save_llm_config(show_info=False)
         self._save_compact_window_config(show_info=False, emit_update=False)
         self._save_configured_models()
         settings = {
@@ -5067,6 +5207,7 @@ class SettingsWindow(QWidget):
             "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)) if self._cfg else 38472,
             "ai_status_token": self._cfg.get("ai_status_token", "") if self._cfg else "",
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
+            "user_avatar_path": self._cfg.get("user_avatar_path", "") if self._cfg else "",
             "models": [dict(item) for item in self._configured_models],
             "model_action_settings": self._cfg.get("model_action_settings", {}) if self._cfg else {},
         }

@@ -952,6 +952,7 @@ class PetWindow(QWidget):
             "compact_ai_window_text_color",
             "ai_event_overlay_enabled",
             "user_avatar_color",
+            "user_avatar_path",
             "language",
             "hide_live2d_model",
             "live2d_idle_actions_enabled",
@@ -976,6 +977,8 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_idle_actions_enabled", bool(data["live2d_idle_actions_enabled"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
+            if "user_avatar_path" in data:
+                self._cfg.set("user_avatar_path", data["user_avatar_path"])
             if data.get("language"):
                 self._cfg.set("language", str(data["language"]))
             self._cfg.save()
