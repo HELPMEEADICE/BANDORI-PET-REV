@@ -55,10 +55,11 @@ from llm_manager import (
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
     _TTS_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     _TTS_AVAILABLE = False
 
     class TTSPlayer(QObject):
+        error = Signal(str)
         level_changed = Signal(float)
         playback_finished = Signal()
         def enqueue(self, audio, media_type): pass
@@ -3995,7 +3996,7 @@ class ChatWindow(QWidget):
         self._pending_actions.clear()
 
     def _tts_enabled(self) -> bool:
-        return bool(self._cfg and self._cfg.get("tts_enabled", False))
+        return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
 
     def _tts_config_snapshot(self) -> dict:
         keys = (

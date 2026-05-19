@@ -1,3 +1,4 @@
+import importlib.util
 import platform
 import shutil
 import subprocess
@@ -37,6 +38,16 @@ def include_if_exists(path: str) -> tuple[str, str] | None:
     if not src.exists():
         return None
     return str(src), path
+
+
+def include_package_subdir(package_name: str, subdir: str, dest_path: str | None = None) -> tuple[str, str] | None:
+    spec = importlib.util.find_spec(package_name)
+    if spec is None or spec.origin is None:
+        return None
+    package_subdir = Path(spec.origin).resolve().parent / subdir
+    if not package_subdir.exists():
+        return None
+    return str(package_subdir), dest_path or f"lib/{package_name}/{subdir}"
 
 
 def _luajit_executable() -> str:
@@ -126,6 +137,7 @@ include_files = [
     include_if_exists("characters"),
     include_if_exists("pixels"),
     include_if_exists("audio_reference"),
+    include_package_subdir("_sounddevice_data", "portaudio-binaries"),
 ]
 
 include_files.extend(_live2d_lua_include_files())
@@ -150,7 +162,7 @@ build_exe_options = {
     "include_msvcr": sys.platform == "win32",
     
     "zip_include_packages": ["*"], 
-    "zip_exclude_packages": [],
+    "zip_exclude_packages": ["_sounddevice_data"],
 }
 
 build_msi_options = {
