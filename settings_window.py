@@ -49,6 +49,7 @@ from relationship_memory import (
     affection_label,
     display_user_name,
     mood_label,
+    role_character_from_user_key,
     user_key_from_config,
 )
 
@@ -837,6 +838,7 @@ class SettingsWindow(QWidget):
         self._tts_page = None
         self._pov_page = None
         self._memory_page = None
+        self._relationship_guide_page = None
         self._memory_db = None
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
@@ -1151,6 +1153,12 @@ class SettingsWindow(QWidget):
         if key == "memory":
             self._memory_page = self._add_lazy_page("memory", self._build_memory_page())
             return self._memory_page
+        if key == "relationship_guide":
+            self._relationship_guide_page = self._add_lazy_page(
+                "relationship_guide",
+                self._build_relationship_guide_page(),
+            )
+            return self._relationship_guide_page
         if key == "compact_window":
             self._compact_window_page = self._add_lazy_page("compact_window", self._build_compact_window_page())
             return self._compact_window_page
@@ -1227,6 +1235,16 @@ class SettingsWindow(QWidget):
         btn_memory.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["memory"] = btn_memory
         layout.addWidget(btn_memory)
+
+        btn_relationship_guide = NavButton(
+            "relationship_guide",
+            FluentIcon.INFO,
+            _tr("SettingsWindow.nav_relationship_guide"),
+            sidebar,
+        )
+        btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["relationship_guide"] = btn_relationship_guide
+        layout.addWidget(btn_relationship_guide)
 
         btn_compact = NavButton("compact_window", FluentIcon.ROBOT, _tr("SettingsWindow.nav_compact_window"), sidebar)
         btn_compact.nav_activated.connect(self._on_nav_selected)
@@ -2501,10 +2519,21 @@ class SettingsWindow(QWidget):
         web_search_row.setContentsMargins(0, 0, 0, 0)
         web_search_label = BodyLabel(_tr("SettingsWindow.llm_web_search_enabled", default="联网搜索"), page)
         self._llm_web_search_enabled = SwitchButton(page)
+        self._llm_web_search_enabled.checkedChanged.connect(self._on_llm_web_search_enabled_changed)
         web_search_row.addWidget(web_search_label)
         web_search_row.addStretch()
         web_search_row.addWidget(self._llm_web_search_enabled)
         layout.addLayout(web_search_row)
+
+        web_search_sources_row = QHBoxLayout()
+        web_search_sources_row.setContentsMargins(0, 0, 0, 0)
+        sources_label = BodyLabel(_tr("SettingsWindow.llm_web_search_show_sources", default="显示联网来源"), page)
+        self._llm_web_search_show_sources = SwitchButton(page)
+        web_search_sources_row.addSpacing(16)
+        web_search_sources_row.addWidget(sources_label)
+        web_search_sources_row.addStretch()
+        web_search_sources_row.addWidget(self._llm_web_search_show_sources)
+        layout.addLayout(web_search_sources_row)
 
         thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
         layout.addWidget(thinking_label)
@@ -2817,6 +2846,18 @@ class SettingsWindow(QWidget):
         self._pov_role_character.currentIndexChanged.connect(self._sync_role_display_name)
         layout.addWidget(self._pov_role_character)
 
+        pov_hint_panel = QWidget(page)
+        pov_hint_panel.setObjectName("povHintPanel")
+        pov_hint_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        pov_hint_layout = QVBoxLayout(pov_hint_panel)
+        pov_hint_layout.setContentsMargins(14, 12, 14, 12)
+        pov_hint_layout.setSpacing(0)
+        pov_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.pov_hint"), pov_hint_panel))
+        pov_hint.setObjectName("povHintText")
+        pov_hint.setMinimumHeight(52)
+        pov_hint_layout.addWidget(pov_hint)
+        layout.addWidget(pov_hint_panel)
+
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
         save_btn.setFixedHeight(36)
         save_btn.clicked.connect(lambda: self._save_llm_config("pov"))
@@ -2824,8 +2865,95 @@ class SettingsWindow(QWidget):
         btn_row.addWidget(save_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
+        self._style_pov_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_pov_page(page))
 
         return page
+
+    def _style_pov_page(self, page: QWidget):
+        dark = isDarkTheme()
+        panel_bg = "#252525" if dark else "#ffffff"
+        panel_border = "#3b3b3b" if dark else "#e4d9df"
+        text = "#d5dae5" if dark else "#4b5565"
+        page.setStyleSheet(f"""
+            QWidget#povHintPanel {{
+                background: {panel_bg};
+                border: 1px solid {panel_border};
+                border-radius: 8px;
+            }}
+            BodyLabel#povHintText {{
+                color: {text};
+                font-size: 13px;
+                line-height: 1.35em;
+            }}
+        """)
+
+    def _build_relationship_guide_page(self):
+        page = self._make_theme_widget(QWidget())
+        page.setObjectName("relationshipGuidePage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        title = TitleLabel(_tr("SettingsWindow.relationship_guide_title"), page)
+        layout.addWidget(title)
+        subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.relationship_guide_subtitle"), page))
+        layout.addWidget(subtitle)
+
+        for title_key, body_key in (
+            ("SettingsWindow.relationship_guide_affection_title", "SettingsWindow.relationship_guide_affection_body"),
+            ("SettingsWindow.relationship_guide_trust_title", "SettingsWindow.relationship_guide_trust_body"),
+            ("SettingsWindow.relationship_guide_familiarity_title", "SettingsWindow.relationship_guide_familiarity_body"),
+            ("SettingsWindow.relationship_guide_mood_title", "SettingsWindow.relationship_guide_mood_body"),
+            ("SettingsWindow.relationship_guide_memory_title", "SettingsWindow.relationship_guide_memory_body"),
+            ("SettingsWindow.relationship_guide_pov_title", "SettingsWindow.relationship_guide_pov_body"),
+            ("SettingsWindow.relationship_guide_commands_title", "SettingsWindow.relationship_guide_commands_body"),
+        ):
+            panel = QWidget(page)
+            panel.setObjectName("relationshipGuidePanel")
+            panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            panel_layout = QVBoxLayout(panel)
+            panel_layout.setContentsMargins(16, 14, 16, 14)
+            panel_layout.setSpacing(6)
+            section_title = StrongBodyLabel(_tr(title_key), panel)
+            section_body = BodyLabel(_tr(body_key), panel)
+            section_body.setWordWrap(True)
+            section_body.setObjectName("relationshipGuideText")
+            panel_layout.addWidget(section_title)
+            panel_layout.addWidget(section_body)
+            layout.addWidget(panel)
+
+        layout.addStretch()
+        self._style_relationship_guide_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_relationship_guide_page(page))
+        return page
+
+    def _style_relationship_guide_page(self, page: QWidget):
+        dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
+        panel_bg = "#252525" if dark else "#ffffff"
+        panel_border = "#3b3b3b" if dark else "#e4d9df"
+        muted = "#a7b0bf" if dark else "#687385"
+        text = "#f3f3f6" if dark else "#202126"
+        page.setStyleSheet(f"""
+            QWidget#relationshipGuidePage {{
+                background: {page_bg};
+            }}
+            QWidget#relationshipGuidePanel {{
+                background: {panel_bg};
+                border: 1px solid {panel_border};
+                border-radius: 10px;
+            }}
+            BodyLabel#relationshipGuideText {{
+                color: {text};
+                font-size: 13px;
+                line-height: 1.35em;
+            }}
+            SubtitleLabel {{
+                color: {muted};
+            }}
+        """)
 
     def _build_memory_page(self):
         page = self._make_theme_widget(QWidget())
@@ -3024,6 +3152,13 @@ class SettingsWindow(QWidget):
             content = content[:56].rstrip() + "..."
         return f"{kind} - {content or _tr('SettingsWindow.memory_empty_content')}"
 
+    def _memory_user_display(self, user_key: str) -> str:
+        role_character = role_character_from_user_key(user_key)
+        if role_character:
+            role_name = self._model_manager.get_display_name(role_character)
+            return _tr("Relationship.role_user_display", role=role_name)
+        return display_user_name(user_key)
+
     def _set_memory_kind(self, kind: str):
         for index in range(self._memory_kind_combo.count()):
             if self._memory_kind_combo.itemData(index) == kind:
@@ -3039,7 +3174,7 @@ class SettingsWindow(QWidget):
             return
         db = self._memory_database()
         user_key = user_key_from_config(self._cfg)
-        user_display = display_user_name(user_key) or _tr("SettingsWindow.memory_default_user")
+        user_display = self._memory_user_display(user_key) or _tr("SettingsWindow.memory_default_user")
         self._memory_user_label.setText(_tr("SettingsWindow.memory_current_user", display=user_display))
 
         state = db.get_relationship_state(character, user_key)
@@ -3798,6 +3933,7 @@ class SettingsWindow(QWidget):
                 "_llm_api_profile_name",
                 "_llm_api_mode",
                 "_llm_web_search_enabled",
+                "_llm_web_search_show_sources",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
                 "_user_name",
@@ -4033,6 +4169,8 @@ class SettingsWindow(QWidget):
                     self._llm_api_mode.setCurrentIndex(i)
                     break
             self._llm_web_search_enabled.setChecked(bool(self._cfg.get("llm_web_search_enabled", False)))
+            self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
+            self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
             self._saved_user_name = self._cfg.get("user_name", "")
             self._user_name.setText(self._saved_user_name)
@@ -4092,6 +4230,7 @@ class SettingsWindow(QWidget):
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+                "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
                 "llm_enable_thinking": profile.get("llm_enable_thinking", None)
                 if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
                 "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
@@ -4109,6 +4248,7 @@ class SettingsWindow(QWidget):
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
             "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
+            "llm_web_search_show_sources": self._llm_web_search_show_sources.isChecked(),
             "llm_enable_thinking": thinking,
             "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
         }
@@ -4121,6 +4261,7 @@ class SettingsWindow(QWidget):
             "llm_aux_model_id",
             "llm_api_mode",
             "llm_web_search_enabled",
+            "llm_web_search_show_sources",
             "llm_enable_thinking",
             "llm_show_reasoning",
         )
@@ -4178,6 +4319,8 @@ class SettingsWindow(QWidget):
                 self._llm_api_mode.setCurrentIndex(i)
                 break
         self._llm_web_search_enabled.setChecked(bool(profile.get("llm_web_search_enabled", False)))
+        self._llm_web_search_show_sources.setChecked(bool(profile.get("llm_web_search_show_sources", True)))
+        self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
         thinking = profile.get("llm_enable_thinking", None)
         self._llm_enable_thinking.setCurrentIndex(1 if thinking is True else 2 if thinking is False else 0)
         self._llm_show_reasoning.setChecked(bool(profile.get("llm_show_reasoning", True)))
@@ -4258,15 +4401,18 @@ class SettingsWindow(QWidget):
         mode = self._llm_api_mode.itemData(index) if hasattr(self, "_llm_api_mode") else "chat_completions"
         responses = mode == "responses"
         api_url = self._llm_api_url.text().strip() if hasattr(self, "_llm_api_url") else ""
-        hosted_tools_available = responses and (not api_url or self._supports_openai_responses_api(api_url))
         if hasattr(self, "_llm_web_search_enabled"):
-            self._llm_web_search_enabled.setEnabled(hosted_tools_available)
+            self._llm_web_search_enabled.setEnabled(True)
+        if hasattr(self, "_llm_web_search_show_sources"):
+            self._llm_web_search_show_sources.setEnabled(
+                bool(self._llm_web_search_enabled.isChecked()) if hasattr(self, "_llm_web_search_enabled") else True
+            )
         if hasattr(self, "_llm_api_url_hint"):
             if responses:
                 if api_url and not self._supports_openai_responses_api(api_url):
                     self._llm_api_url_hint.setText(_tr(
                         "SettingsWindow.llm_api_url_hint_responses_fallback",
-                        default="此服务商不支持 OpenAI Responses，运行时会自动使用 Chat Completions 兼容模式；OpenAI 内置联网搜索不可用。",
+                        default="此服务商不支持 OpenAI Responses，运行时会自动使用 Chat Completions 兼容模式；联网搜索会改用本地 web_search 工具。",
                     ))
                 else:
                     self._llm_api_url_hint.setText(_tr(
@@ -4274,7 +4420,14 @@ class SettingsWindow(QWidget):
                         default="Responses 模式可填写 https://api.openai.com/v1/responses；如果仍填写 /chat/completions，程序会自动换成 /responses。",
                     ))
             else:
-                self._llm_api_url_hint.setText(_tr("SettingsWindow.llm_api_url_hint"))
+                self._llm_api_url_hint.setText(_tr(
+                    "SettingsWindow.llm_api_url_hint_chat_tools",
+                    default="Chat Completions 模式支持 OpenRouter、DeepSeek、Gemini 等兼容接口；联网搜索会通过本地 web_search 工具和 tool_calls 接入。",
+                ))
+
+    def _on_llm_web_search_enabled_changed(self, enabled: bool):
+        if hasattr(self, "_llm_web_search_show_sources"):
+            self._llm_web_search_show_sources.setEnabled(bool(enabled))
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         return "api.openai.com" in (api_url or "").lower()
@@ -4430,6 +4583,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
             self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
+            self._cfg.set("llm_web_search_show_sources", self._llm_web_search_show_sources.isChecked())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
             if pov_mode == "role":
                 user_name = self._pov_role_character.currentText().strip()
