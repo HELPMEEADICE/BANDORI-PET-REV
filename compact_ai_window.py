@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from llm_manager import (
+    CodexCLIWorker,
     LLMStreamWorker,
     build_system_prompt,
     parse_action_tags,
@@ -568,10 +569,15 @@ class CompactAIWindow(QWidget):
         if self._worker is not None:
             return
 
-        api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
-        api_key = self._cfg.get("llm_api_key", "") if self._cfg else ""
-        model_id = self._cfg.get("llm_model_id", "") if self._cfg else ""
-        if not api_url or not api_key or not model_id:
+        backend = self._cfg.get("llm_backend", "openai") if self._cfg else "openai"
+        if backend == "codex":
+            has_config = bool(self._cfg.get("codex_command", "codex.cmd").strip()) if self._cfg else False
+        else:
+            api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
+            api_key = self._cfg.get("llm_api_key", "") if self._cfg else ""
+            model_id = self._cfg.get("llm_model_id", "") if self._cfg else ""
+            has_config = bool(api_url and api_key and model_id)
+        if not has_config:
             self._set_output_text(_tr("CompactAIWindow.llm_not_configured"))
             return
 
@@ -585,17 +591,26 @@ class CompactAIWindow(QWidget):
         self._set_busy(True)
 
         messages = self._build_messages()
-        enable_thinking = self._cfg.get("llm_enable_thinking", None) if self._cfg else None
-        self._worker = LLMStreamWorker(
-            api_url,
-            api_key,
-            model_id,
-            messages,
-            enable_thinking,
-            self,
-            web_search=bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False,
-            show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True,
-        )
+        if backend == "codex":
+            self._worker = CodexCLIWorker(
+                self._cfg.get("codex_command", "codex.cmd"),
+                self._cfg.get("codex_model_id", ""),
+                messages,
+                self._cfg.get("codex_reasoning_effort", "medium"),
+                self,
+            )
+        else:
+            enable_thinking = self._cfg.get("llm_enable_thinking", None) if self._cfg else None
+            self._worker = LLMStreamWorker(
+                api_url,
+                api_key,
+                model_id,
+                messages,
+                enable_thinking,
+                self,
+                web_search=bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False,
+                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True,
+            )
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)
