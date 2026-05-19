@@ -26,7 +26,7 @@ MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Li
 
 
 def models_dir_exists() -> bool:
-    return MODELS_DIR.is_dir()
+    return MODELS_DIR.is_dir() and any(MODELS_DIR.iterdir())
 
 
 def prompt_download_model_resources(parent=None) -> None:
