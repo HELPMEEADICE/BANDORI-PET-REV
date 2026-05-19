@@ -43,6 +43,7 @@ DEFAULTS = {
     "llm_active_api_profile": "",
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
+    "user_avatar_path": "",
     "chat_avatar_paths": {},
     "group_chat_sidebar_ratio": 0.28,
     "group_chat_sidebar_collapsed": False,
@@ -143,6 +144,7 @@ class ConfigManager:
             self._seed_model_action_settings_from_models()
         if not isinstance(self._data.get("chat_avatar_paths"), dict):
             self._data["chat_avatar_paths"] = {}
+        self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "") or "").strip()
         self._normalize_llm_api_profiles()
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY

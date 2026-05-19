@@ -367,6 +367,8 @@ def main():
         cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
         if "user_avatar_color" in data:
             cfg.set("user_avatar_color", data["user_avatar_color"])
+        if "user_avatar_path" in data:
+            cfg.set("user_avatar_path", data["user_avatar_path"])
         if "model_action_settings" in data:
             cfg.set("model_action_settings", data["model_action_settings"])
         if "models" in data:

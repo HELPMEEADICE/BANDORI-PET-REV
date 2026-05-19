@@ -1379,6 +1379,7 @@ class ChatWindow(QWidget):
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
+        self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip() if self._cfg else ""
         avatar_paths = self._cfg.get("chat_avatar_paths", {}) if self._cfg else {}
         self._chat_avatar_paths = avatar_paths if isinstance(avatar_paths, dict) else {}
         self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True)) if self._cfg else True
@@ -2901,6 +2902,8 @@ class ChatWindow(QWidget):
             avatar_path = ""
             avatar_data = b""
             avatar_focus = "center"
+            if m["role"] == "user":
+                avatar_path = self._user_avatar_path
             if m["role"] == "assistant":
                 avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(
                     self._message_character(m["content"], m["role"])
@@ -3252,6 +3255,9 @@ class ChatWindow(QWidget):
                 self._cfg.load()
             except Exception:
                 pass
+            self._user_name = self._cfg.get("user_name", "").strip()
+            self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT)
+            self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip()
             self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True))
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
@@ -3341,6 +3347,7 @@ class ChatWindow(QWidget):
             "user",
             self._user_name or _tr("ChatWindow.you"),
             avatar_color=self._user_avatar_color,
+            avatar_path=self._user_avatar_path,
             show_reasoning=self._show_reasoning,
         )
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
