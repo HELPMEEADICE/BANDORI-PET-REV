@@ -125,6 +125,7 @@ include_files = [
     include_if_exists("band_logo"),
     include_if_exists("characters"),
     include_if_exists("pixels"),
+    include_if_exists("audio_reference"),
 ]
 
 include_files.extend(_live2d_lua_include_files())
