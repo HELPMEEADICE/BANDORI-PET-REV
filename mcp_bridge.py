@@ -417,10 +417,8 @@ class StdioMcpClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             cwd=cwd,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
+            text=False,
+            bufsize=0,
         )
         self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
         self._reader.start()
@@ -454,15 +452,18 @@ class StdioMcpClient:
         stdout = self._process.stdout
         if stdout is None:
             return
-        for line in stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            self._responses.put(message)
+        reader = getattr(stdout, "read1", stdout.read)
+        buffer = b""
+        while True:
+            chunk = reader(4096)
+            if not chunk:
+                break
+            buffer += chunk
+            while True:
+                message, buffer = _extract_stdio_message(buffer)
+                if message is None:
+                    break
+                self._responses.put(message)
 
     def _request(self, method: str, params: dict | None = None) -> dict:
         with self._lock:
@@ -497,5 +498,47 @@ class StdioMcpClient:
         stdin = self._process.stdin
         if stdin is None:
             raise RuntimeError("MCP server stdin is closed")
-        stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+        payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+        stdin.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
+        stdin.write(payload)
         stdin.flush()
+
+
+def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:
+    buffer = buffer.lstrip(b"\r\n")
+    if not buffer:
+        return None, buffer
+    if buffer.startswith(b"Content-Length:"):
+        header_end = buffer.find(b"\r\n\r\n")
+        if header_end < 0:
+            return None, buffer
+        headers = buffer[:header_end].decode("utf-8", errors="replace").split("\r\n")
+        content_length = None
+        for line in headers:
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            if name.strip().lower() == "content-length":
+                content_length = int(value.strip())
+                break
+        if content_length is None:
+            raise RuntimeError("MCP server response missing Content-Length")
+        body_start = header_end + 4
+        body_end = body_start + content_length
+        if len(buffer) < body_end:
+            return None, buffer
+        try:
+            message = json.loads(buffer[body_start:body_end].decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            return None, buffer[body_end:]
+        return message, buffer[body_end:]
+    line_end = buffer.find(b"\n")
+    if line_end < 0:
+        return None, buffer
+    line = buffer[:line_end].decode("utf-8", errors="replace").strip()
+    if not line:
+        return None, buffer[line_end + 1:]
+    try:
+        return json.loads(line), buffer[line_end + 1:]
+    except json.JSONDecodeError:
+        return None, buffer[line_end + 1:]

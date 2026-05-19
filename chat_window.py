@@ -3464,12 +3464,21 @@ class ChatWindow(QWidget):
         if not isinstance(attachments, list):
             return []
         result = []
+        safe_root = self._chat_attachment_dir().resolve()
         for item in attachments:
             if not isinstance(item, dict) or item.get("type") != "image":
                 continue
             path = str(item.get("path", ""))
-            if path and os.path.exists(path):
-                result.append(dict(item))
+            if not path:
+                continue
+            try:
+                resolved = Path(path).resolve()
+                resolved.relative_to(safe_root)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS or not resolved.exists():
+                continue
+            result.append(dict(item, path=str(resolved)))
         return result
 
     def _image_data_url(self, attachment: dict) -> str:

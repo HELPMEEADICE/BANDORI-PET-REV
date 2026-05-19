@@ -19,6 +19,7 @@ _REQUIRED_COLUMNS = {
 }
 
 _VALID_MESSAGE_ROLES = {"user", "assistant", "system"}
+_SAFE_CHAT_ATTACHMENT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 def _db_text(value, default: str = "") -> str:
@@ -45,6 +46,62 @@ def _json_text(value) -> str:
         return json.dumps(value, ensure_ascii=False)
     except (TypeError, ValueError):
         return ""
+
+
+def _chat_attachment_dir() -> Path:
+    return BASE_DIR / "chat_attachments"
+
+
+def _is_safe_chat_attachment_path(path: str) -> bool:
+    text = str(path or "").strip()
+    if not text:
+        return False
+    try:
+        resolved = Path(text).resolve()
+        resolved.relative_to(_chat_attachment_dir().resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return resolved.suffix.lower() in _SAFE_CHAT_ATTACHMENT_EXTENSIONS
+
+
+def _sanitize_attachments_payload(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(value, list):
+        return []
+
+    cleaned = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type", "") or "") != "image":
+            continue
+        path = str(item.get("path", "") or "").strip()
+        if not _is_safe_chat_attachment_path(path):
+            continue
+        cleaned.append({
+            "type": "image",
+            "path": path,
+            "name": str(item.get("name", "") or Path(path).name),
+            "mime": str(item.get("mime", "") or "image/png"),
+        })
+    return cleaned
+
+
+def _sanitize_database_attachments(conn: sqlite3.Connection):
+    for table in ("messages", "group_messages"):
+        rows = conn.execute(
+            f"SELECT id, attachments_json FROM {table} WHERE attachments_json != ''"
+        ).fetchall()
+        for row_id, attachments_json in rows:
+            cleaned = _sanitize_attachments_payload(attachments_json)
+            conn.execute(
+                f"UPDATE {table} SET attachments_json=? WHERE id=?",
+                (_json_text(cleaned), row_id),
+            )
 
 
 def _message_row_dict(row, grouped: bool = False) -> dict | None:
@@ -240,6 +297,7 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
             _validate_chat_database(src)
             with closing(sqlite3.connect(str(target), timeout=10)) as dst:
                 src.backup(dst)
+                _sanitize_database_attachments(dst)
                 dst.commit()
 
     _ensure_database(str(target))
@@ -692,7 +750,7 @@ class DatabaseManager:
 
     def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        attachments_json = _json_text(attachments)
+        attachments_json = _json_text(_sanitize_attachments_payload(attachments))
         tool_trace_json = _json_text(tool_trace)
         cur = self._conn.execute(
             "INSERT INTO messages (conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
@@ -717,7 +775,7 @@ class DatabaseManager:
 
     def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        attachments_json = _json_text(attachments)
+        attachments_json = _json_text(_sanitize_attachments_payload(attachments))
         tool_trace_json = _json_text(tool_trace)
         cur = self._conn.execute(
             "INSERT INTO group_messages (group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "

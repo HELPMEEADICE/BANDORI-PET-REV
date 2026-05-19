@@ -63,10 +63,7 @@ TOOLS = [
 
 
 def main() -> int:
-    for raw in sys.stdin:
-        raw = raw.strip()
-        if not raw:
-            continue
+    for raw in _iter_input_messages():
         try:
             message = json.loads(raw)
             response = handle_message(message)
@@ -75,6 +72,55 @@ def main() -> int:
         if response is not None:
             _write(response)
     return 0
+
+
+def _iter_input_messages():
+    stream = sys.stdin.buffer
+    reader = getattr(stream, "read1", stream.read)
+    buffer = b""
+    while True:
+        chunk = reader(4096)
+        if not chunk:
+            break
+        buffer += chunk
+        while True:
+            message, buffer = _extract_message_from_buffer(buffer)
+            if message is None:
+                break
+            if message.strip():
+                yield message
+
+
+def _extract_message_from_buffer(buffer: bytes) -> tuple[str | None, bytes]:
+    buffer = buffer.lstrip(b"\r\n")
+    if not buffer:
+        return None, buffer
+    if buffer.startswith(b"Content-Length:"):
+        header_end = buffer.find(b"\r\n\r\n")
+        if header_end < 0:
+            return None, buffer
+        headers = buffer[:header_end].decode("utf-8", errors="replace").split("\r\n")
+        content_length = None
+        for line in headers:
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            if name.strip().lower() == "content-length":
+                content_length = int(value.strip())
+                break
+        if content_length is None:
+            raise ValueError("Missing Content-Length header")
+        body_start = header_end + 4
+        body_end = body_start + content_length
+        if len(buffer) < body_end:
+            return None, buffer
+        body = buffer[body_start:body_end].decode("utf-8", errors="replace")
+        return body, buffer[body_end:]
+    line_end = buffer.find(b"\n")
+    if line_end < 0:
+        return None, buffer
+    line = buffer[:line_end].decode("utf-8", errors="replace")
+    return line, buffer[line_end + 1:]
 
 
 def handle_message(message: dict):
@@ -168,8 +214,10 @@ def _error(request_id, code: int, message: str) -> dict:
 
 
 def _write(message: dict):
-    sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
 
 
 if __name__ == "__main__":
