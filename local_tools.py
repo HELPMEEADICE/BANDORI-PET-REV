@@ -257,7 +257,7 @@ def web_search(query: str, max_results: int = 5) -> str:
         return "搜索失败：query 不能为空。"
 
     errors = []
-    for searcher in (_search_duckduckgo_html, _search_bing_html, _search_duckduckgo_instant_answer):
+    for searcher in (_search_bing_html, _search_duckduckgo_html, _search_duckduckgo_instant_answer):
         try:
             results = searcher(query, max_results=max_results)
         except Exception as exc:
