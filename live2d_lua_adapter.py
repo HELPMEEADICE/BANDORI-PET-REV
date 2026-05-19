@@ -19,8 +19,6 @@ from zst_model_archive import is_virtual_path, load_virtual_bytes
 BASE_DIR = Path(app_base_dir())
 LIVE2D_LUA_DIR = BASE_DIR / "third_party" / "Live2D-v2-Lua"
 MODELS_DIR = BASE_DIR / "models"
-_TEXTURE_DATA_CACHE = {}
-_TEXTURE_DATA_CACHE_LIMIT = 64
 
 
 def _normalize_lua_path(path) -> str:
@@ -104,17 +102,6 @@ def _texture_options(profile: str) -> tuple[float, bool, int]:
     return 1.0, False, 0
 
 
-def _texture_cache_key(path: str, profile: str):
-    if is_virtual_path(path):
-        return profile, path
-    fs_path = Path(path)
-    try:
-        stat = fs_path.stat()
-        return profile, str(fs_path.resolve()), stat.st_mtime_ns, stat.st_size
-    except OSError:
-        return profile, str(fs_path)
-
-
 def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
     if passes <= 0:
         return image
@@ -166,13 +153,8 @@ def _resize_for_quality(image: Image.Image, scale: float) -> Image.Image:
 
 
 def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
-    cache_key = _texture_cache_key(path, profile)
-    cached = _TEXTURE_DATA_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-
     scale, use_mipmap, bleed_passes = _texture_options(profile)
-    source = io.BytesIO(load_virtual_bytes(path)) if is_virtual_path(path) else Path(path)
+    source = io.BytesIO(load_virtual_bytes(path, cache=False)) if is_virtual_path(path) else Path(path)
     with Image.open(source) as image:
         if image.mode != "RGBA":
             image = image.convert("RGBA")
@@ -181,11 +163,7 @@ def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
         try:
             image = _resize_for_quality(image, scale)
             image = _bleed_transparent_edges(image, bleed_passes)
-            result = image.width, image.height, image.tobytes(), use_mipmap
-            _TEXTURE_DATA_CACHE[cache_key] = result
-            if len(_TEXTURE_DATA_CACHE) > _TEXTURE_DATA_CACHE_LIMIT:
-                _TEXTURE_DATA_CACHE.pop(next(iter(_TEXTURE_DATA_CACHE)))
-            return result
+            return image.width, image.height, image.tobytes(), use_mipmap
         finally:
             image.close()
 

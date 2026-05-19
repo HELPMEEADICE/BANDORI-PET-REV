@@ -206,7 +206,13 @@ class Live2DWidget(QOpenGLWidget):
             disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             
             self._model = self._live2d.LAppModel()
-            self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+            if is_virtual_path(model_json_path):
+                try:
+                    self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                finally:
+                    clear_virtual_byte_cache()
+            else:
+                self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
             self._update_custom_hit_area_projection()

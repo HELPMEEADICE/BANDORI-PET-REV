@@ -25,13 +25,14 @@ def split_virtual_path(path: str) -> tuple[str, str]:
     return archive_path, _normalize_member(member_path)
 
 
-def load_virtual_bytes(path: str) -> bytes:
+def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
     archive_path, member_path = split_virtual_path(path)
     cache_key = make_virtual_path(archive_path, member_path)
-    with _CACHE_LOCK:
-        cached = _VIRTUAL_BYTE_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+    if cache:
+        with _CACHE_LOCK:
+            cached = _VIRTUAL_BYTE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
     with _open_tar_zst(archive_path) as archive:
         for member in archive:
@@ -41,8 +42,9 @@ def load_virtual_bytes(path: str) -> bytes:
             if extracted is None:
                 break
             data = extracted.read()
-            with _CACHE_LOCK:
-                _VIRTUAL_BYTE_CACHE[cache_key] = data
+            if cache:
+                with _CACHE_LOCK:
+                    _VIRTUAL_BYTE_CACHE[cache_key] = data
             return data
     raise KeyError(path)
 
@@ -114,8 +116,8 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
             members.add(_join_member(base_dir, path))
 
     add(model_json.get("model"))
-    for texture in model_json.get("textures", []) or []:
-        add(texture)
+    # Textures are large and are decoded directly into GL upload buffers; keeping
+    # their compressed bytes in the virtual cache doubles peak resident memory.
     add(model_json.get("physics"))
     add(model_json.get("pose"))
 
@@ -124,15 +126,6 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
         for expression in expressions:
             if isinstance(expression, dict):
                 add(expression.get("file"))
-
-    motions = model_json.get("motions", {}) or {}
-    if isinstance(motions, dict):
-        for motion_group in motions.values():
-            if not isinstance(motion_group, list):
-                continue
-            for motion in motion_group:
-                if isinstance(motion, dict):
-                    add(motion.get("sound"))
 
     return members
 

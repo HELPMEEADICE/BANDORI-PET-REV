@@ -256,9 +256,6 @@ class PetWindow(QWidget):
         self._passthrough_timer = QTimer(self)
         self._passthrough_timer.setInterval(50)
         self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
-        self._topmost_timer = QTimer(self)
-        self._topmost_timer.setInterval(3000)
-        self._topmost_timer.timeout.connect(self._enforce_game_topmost)
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
         self._context_idle_timer.timeout.connect(self._tick_context_idle_behavior)
@@ -282,7 +279,7 @@ class PetWindow(QWidget):
         self._load_initial_model()
         self._passthrough_timer.start()
         self._context_idle_timer.start()
-        self._update_game_topmost_timer()
+        self._apply_game_topmost_state()
         self._connect_ipc_socket()
         QApplication.instance().installEventFilter(self)
 
@@ -405,14 +402,12 @@ class PetWindow(QWidget):
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
 
-    def _update_game_topmost_timer(self):
+    def _apply_game_topmost_state(self):
         if os.name == "nt":
-            self._topmost_timer.setInterval(750 if self._game_topmost else 3000)
-            if self.isVisible():
-                self._topmost_timer.start()
-                self._enforce_game_topmost()
-            else:
-                self._topmost_timer.stop()
+            # Re-applying HWND_TOPMOST periodically pushes the pet to the front
+            # of the topmost z-order, covering menus and system overlays. Apply
+            # it only when the window appears or the setting changes.
+            self._enforce_game_topmost()
         elif sys.platform == "darwin" and macos_patch is not None and self.isVisible():
             # macOS: bump to pop-up-menu level (above almost everything) when
             # game_topmost is on; otherwise sit at status-bar level so the
@@ -562,7 +557,7 @@ class PetWindow(QWidget):
 
     def set_game_topmost(self, enabled: bool):
         self._game_topmost = bool(enabled)
-        self._update_game_topmost_timer()
+        self._apply_game_topmost_state()
 
     def set_hide_live2d_model(self, enabled: bool):
         self._hide_live2d_model = bool(enabled)
@@ -2134,10 +2129,10 @@ class PetWindow(QWidget):
         self._apply_windows_frameless_fix()
         if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, self._apply_macos_window_polish)
-        # _update_game_topmost_timer reads isVisible(), so call it after show
+        # _apply_game_topmost_state reads isVisible(), so call it after show
         # — and on macOS it depends on the NSWindow already existing, so defer
         # to the next event loop tick alongside the polish call above.
-        QTimer.singleShot(0, self._update_game_topmost_timer)
+        QTimer.singleShot(0, self._apply_game_topmost_state)
         QTimer.singleShot(0, self._prewarm_radial_menu)
         if self._show_pos_set and self._is_position_on_screen():
             self._sync_compact_ai_window(allow_create=True)

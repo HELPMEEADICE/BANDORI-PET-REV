@@ -14,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QMouseEvent,
-    QRadialGradient, QFontMetrics, QPixmap,
+    QRadialGradient, QFontMetrics, QPixmap, QCursor, QGuiApplication,
 )
 from PySide6.QtWidgets import (
     QWidget, QGraphicsOpacityEffect,
@@ -45,6 +45,9 @@ if os.name == "nt":
         ctypes.c_uint,
     ]
     _set_window_pos.restype = ctypes.wintypes.BOOL
+    _get_async_key_state = _user32.GetAsyncKeyState
+    _get_async_key_state.argtypes = [ctypes.c_int]
+    _get_async_key_state.restype = ctypes.c_short
     _dwmapi = ctypes.windll.dwmapi
     _dwm_set_window_attribute = _dwmapi.DwmSetWindowAttribute
     _dwm_set_window_attribute.argtypes = [
@@ -56,7 +59,12 @@ if os.name == "nt":
     _dwm_set_window_attribute.restype = ctypes.c_long
 else:
     _set_window_pos = None
+    _get_async_key_state = None
     _dwm_set_window_attribute = None
+
+VK_LBUTTON = 0x01
+VK_RBUTTON = 0x02
+VK_MBUTTON = 0x04
 
 if sys.platform == "darwin":
     import macos_patch
@@ -206,6 +214,10 @@ class RadialMenu(QWidget):
         self._center_anim_value = 1.0
         self._lock_anim = None
         self._paint_prewarmed = False
+        self._ignore_outside_click_until_release = False
+        self._outside_click_timer = QTimer(self)
+        self._outside_click_timer.setInterval(25)
+        self._outside_click_timer.timeout.connect(self._check_outside_click)
 
         self.setMouseTracking(True)
 
@@ -396,6 +408,7 @@ class RadialMenu(QWidget):
 
         self._center = center
         self._is_showing = True
+        self._ignore_outside_click_until_release = self._mouse_buttons_pressed()
         self._set_center_reveal_value(0.0)
 
         total_w = self._radius * 2 + 80 * 2
@@ -428,6 +441,29 @@ class RadialMenu(QWidget):
         else:
             self.setFocus()
         self._play_show_animation()
+        self._outside_click_timer.start()
+
+    @staticmethod
+    def _mouse_buttons_pressed() -> bool:
+        if _get_async_key_state is not None:
+            return any(
+                bool(_get_async_key_state(button) & 0x8000)
+                for button in (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON)
+            )
+        return bool(QGuiApplication.mouseButtons())
+
+    def _check_outside_click(self):
+        if not self._is_showing or not self.isVisible():
+            self._outside_click_timer.stop()
+            return
+        buttons_pressed = self._mouse_buttons_pressed()
+        if not buttons_pressed:
+            self._ignore_outside_click_until_release = False
+            return
+        if self._ignore_outside_click_until_release:
+            return
+        if not self.geometry().contains(QCursor.pos()):
+            self.dismiss()
 
     def _play_show_animation(self):
         group = QParallelAnimationGroup(self)
@@ -489,6 +525,7 @@ class RadialMenu(QWidget):
         group.start()
 
     def _on_hide_finished(self):
+        self._outside_click_timer.stop()
         self._is_showing = False
         self.hide()
         self.closed.emit()
@@ -497,6 +534,7 @@ class RadialMenu(QWidget):
         self.dismiss()
 
     def dismiss(self):
+        self._outside_click_timer.stop()
         if self._is_showing:
             if self._anim_group and self._anim_group.state() == QPropertyAnimation.State.Running:
                 self._anim_group.stop()
