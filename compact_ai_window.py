@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from llm_manager import (
     LLMStreamWorker,
+    ResponsesStreamWorker,
     build_system_prompt,
     parse_action_tags,
     strip_action_tags,
@@ -35,6 +36,7 @@ DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
 DWMWCP_DONOTROUND = 1
 DWMWA_COLOR_NONE = 0xFFFFFFFE
+_INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
 
 if os.name == "nt":
     _dwmapi = ctypes.windll.dwmapi
@@ -106,6 +108,7 @@ class CompactAIWindow(QWidget):
         self._cfg = config_manager
         self._db = DatabaseManager()
         self._worker = None
+        self._cancelled_workers = []
         self._history = []
         self._last_user_text = ""
         self._stream_text = ""
@@ -555,6 +558,9 @@ class CompactAIWindow(QWidget):
         text = self._input.toPlainText().strip()
         if not text:
             return
+        if self._is_interrupt_command(text):
+            self._interrupt_generation()
+            return
         if text.lower() == "@clear":
             self._input.clear()
             self._clear_timer.stop()
@@ -566,6 +572,7 @@ class CompactAIWindow(QWidget):
         if self._handle_local_memory_command(text):
             return
         if self._worker is not None:
+            self._input.setPlaceholderText(_tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断"))
             return
 
         api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
@@ -586,16 +593,35 @@ class CompactAIWindow(QWidget):
 
         messages = self._build_messages()
         enable_thinking = self._cfg.get("llm_enable_thinking", None) if self._cfg else None
-        self._worker = LLMStreamWorker(
-            api_url,
-            api_key,
-            model_id,
-            messages,
-            enable_thinking,
-            self,
-            web_search=bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False,
-            show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True,
-        )
+        tool_config = self._tool_config_snapshot()
+        web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
+        show_sources = bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
+        if self._use_responses_api(api_url):
+            self._worker = ResponsesStreamWorker(
+                api_url,
+                api_key,
+                model_id,
+                messages,
+                enable_thinking,
+                web_search,
+                self,
+                show_search_sources=show_sources,
+                tool_config=tool_config,
+            )
+        else:
+            if self._cfg and self._cfg.get("llm_api_mode", "chat_completions") == "responses":
+                api_url = self._chat_completions_api_url(api_url)
+            self._worker = LLMStreamWorker(
+                api_url,
+                api_key,
+                model_id,
+                messages,
+                enable_thinking,
+                self,
+                web_search=web_search,
+                show_search_sources=show_sources,
+                tool_config=tool_config,
+            )
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
         self._worker.error.connect(self._on_response_error)
@@ -619,7 +645,45 @@ class CompactAIWindow(QWidget):
         messages.extend(history)
         return messages
 
+    def _tool_config_snapshot(self) -> dict:
+        if not self._cfg:
+            return {}
+        keys = (
+            "llm_hide_tool_call_details",
+            "llm_mcp_enabled",
+            "llm_mcp_use_native",
+            "llm_mcp_servers",
+            "computer_use_enabled",
+            "computer_use_auto_detect",
+            "computer_use_send_screenshots",
+            "computer_use_max_screenshot_width",
+            "computer_use_allow_screenshot",
+            "computer_use_allow_mouse",
+            "computer_use_allow_keyboard",
+            "computer_use_allow_clipboard",
+            "computer_use_allow_wait",
+        )
+        return {key: self._cfg.get(key) for key in keys}
+
+    def _supports_openai_responses_api(self, api_url: str) -> bool:
+        return "api.openai.com" in (api_url or "").lower()
+
+    def _use_responses_api(self, api_url: str = "") -> bool:
+        if not self._cfg or self._cfg.get("llm_api_mode", "chat_completions") != "responses":
+            return False
+        return self._supports_openai_responses_api(api_url or self._cfg.get("llm_api_url", ""))
+
+    def _chat_completions_api_url(self, api_url: str) -> str:
+        url = (api_url or "").rstrip("/")
+        if url.endswith("/responses"):
+            return url[: -len("/responses")] + "/chat/completions"
+        if url.endswith("/v1"):
+            return url + "/chat/completions"
+        return url
+
     def _on_chunk_received(self, text: str, reasoning: str):
+        if self.sender() is not self._worker:
+            return
         if reasoning:
             self._thinking_text += reasoning
         clean = strip_action_tags(text)
@@ -630,6 +694,8 @@ class CompactAIWindow(QWidget):
         self._scroll_output_to_bottom()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
+        if self.sender() is not self._worker:
+            return
         del reasoning_text, actions
         acts = parse_action_tags(full_text)
         clean = strip_action_tags(full_text)
@@ -782,14 +848,49 @@ class CompactAIWindow(QWidget):
             )
 
     def _on_response_error(self, error_msg: str):
+        if self.sender() is not self._worker:
+            return
         self._set_output_text(f"Error: {error_msg}")
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
 
     def _set_busy(self, busy: bool):
-        self._send_button.setEnabled(not busy)
-        self._input.setEnabled(not busy)
+        self._send_button.setEnabled(True)
+        self._input.setEnabled(True)
+        self._input.setPlaceholderText(
+            _tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断")
+            if busy else _tr("CompactAIWindow.input_placeholder")
+        )
+
+    @staticmethod
+    def _is_interrupt_command(text: str) -> bool:
+        return text.strip().lower() in _INTERRUPT_COMMANDS
+
+    def _interrupt_generation(self):
+        worker = self._worker
+        if worker is not None:
+            try:
+                worker.cancel()
+            except Exception:
+                worker.requestInterruption()
+            self._park_cancelled_worker(worker)
+        self._worker = None
+        self._thinking_text = ""
+        if not self._stream_text.strip():
+            self._set_output_text(_tr("CompactAIWindow.response_interrupted", default="已中断当前回复。"))
+        self._set_busy(False)
+        self._input.clear()
+        self._input.setFocus()
+
+    def _park_cancelled_worker(self, worker):
+        if worker is None:
+            return
+        self._cancelled_workers.append(worker)
+        QTimer.singleShot(1000, self._prune_cancelled_workers)
+
+    def _prune_cancelled_workers(self):
+        self._cancelled_workers = [worker for worker in self._cancelled_workers if worker is not None and worker.isRunning()]
 
     def _scroll_output_to_bottom(self):
         bar = self._output.verticalScrollBar()
@@ -798,6 +899,11 @@ class CompactAIWindow(QWidget):
     def closeEvent(self, event):
         if self._worker is not None:
             self._worker.cancel()
+            self._park_cancelled_worker(self._worker)
             self._worker = None
+        for worker in list(self._cancelled_workers):
+            if worker is not None and worker.isRunning():
+                worker.wait(1000)
+        self._cancelled_workers.clear()
         self._db.close()
         super().closeEvent(event)

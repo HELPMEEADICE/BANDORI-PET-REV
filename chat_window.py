@@ -111,6 +111,7 @@ _HISTORY_SCROLL_WIDTH = _HISTORY_ROW_WIDTH + 24
 _GROUP_SIDEBAR_DEFAULT_RATIO = 0.28
 _GROUP_SIDEBAR_MIN_RATIO = 0.18
 _GROUP_SIDEBAR_MAX_RATIO = 0.46
+_INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -1313,6 +1314,7 @@ class ChatWindow(QWidget):
         self._conv_id: int | None = None
         self._group_conv_id = ""
         self._worker = None
+        self._cancelled_workers = []
         self._current_bubble: MessageBubble | None = None
         self._pending_actions: list[str] = []
         self._pending_action_character = character
@@ -2802,13 +2804,13 @@ class ChatWindow(QWidget):
         return _tr("ChatWindow.ready") if self._has_llm_config() else _tr("ChatWindow.not_configured")
 
     def _set_busy(self, busy: bool, planning: bool = False):
-        self._input.setEnabled(not busy)
-        self._send_btn.setEnabled(not busy)
+        self._input.setEnabled(True)
+        self._send_btn.setEnabled(True)
         self._new_btn.setEnabled(not busy)
         if planning:
             status = _tr("ChatWindow.planning_group_response")
         elif busy:
-            status = _tr("ChatWindow.streaming_response")
+            status = _tr("ChatWindow.streaming_response_with_stop", default="正在回复，输入 @stop 或 @停止 可中断")
         else:
             status = self._idle_status_text()
         self._composer_hint.setText(status)
@@ -2981,6 +2983,63 @@ class ChatWindow(QWidget):
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
         self._relayout_message_bubbles()
         self._scroll_to_bottom()
+
+    @staticmethod
+    def _is_interrupt_command(text: str) -> bool:
+        return text.strip().lower() in _INTERRUPT_COMMANDS
+
+    def _generation_busy(self) -> bool:
+        return bool(
+            (self._worker is not None and self._worker.isRunning())
+            or (self._group_plan_worker is not None and self._group_plan_worker.isRunning())
+            or self._group_queue
+        )
+
+    def _interrupt_generation(self):
+        interrupted = False
+        worker = self._worker
+        if worker is not None:
+            try:
+                worker.cancel()
+            except Exception:
+                worker.requestInterruption()
+            self._park_cancelled_worker(worker)
+            interrupted = True
+        self._worker = None
+
+        planner = self._group_plan_worker
+        if planner is not None:
+            planner.requestInterruption()
+            planner.quit()
+            self._park_cancelled_worker(planner)
+            interrupted = True
+        self._group_plan_worker = None
+        self._group_queue = []
+        self._hide_plan_divider()
+
+        self._stream_flush_timer.stop()
+        current_text = (self._visible_stream_text + self._stream_buffer).strip()
+        self._stream_buffer = ""
+        self._visible_stream_text = current_text
+        if self._current_bubble:
+            self._current_bubble.set_streaming(False)
+            self._current_bubble.set_text(current_text or _tr("ChatWindow.response_interrupted", default="已中断当前回复。"))
+        elif interrupted:
+            self._composer_hint.setText(_tr("ChatWindow.response_interrupted", default="已中断当前回复。"))
+        self._current_bubble = None
+        self._reset_tts_stream()
+        self._set_busy(False)
+        self._input.clear()
+        self._input.setFocus()
+
+    def _park_cancelled_worker(self, worker):
+        if worker is None:
+            return
+        self._cancelled_workers.append(worker)
+        QTimer.singleShot(1000, self._prune_cancelled_workers)
+
+    def _prune_cancelled_workers(self):
+        self._cancelled_workers = [worker for worker in self._cancelled_workers if worker is not None and worker.isRunning()]
 
     def _relationship_status_text(self) -> str:
         user_key = self._user_memory_key()
@@ -3247,6 +3306,26 @@ class ChatWindow(QWidget):
             return False
         return self._supports_openai_responses_api(api_url or self._cfg.get("llm_api_url", ""))
 
+    def _tool_config_snapshot(self) -> dict:
+        if not self._cfg:
+            return {}
+        keys = (
+            "llm_hide_tool_call_details",
+            "llm_mcp_enabled",
+            "llm_mcp_use_native",
+            "llm_mcp_servers",
+            "computer_use_enabled",
+            "computer_use_auto_detect",
+            "computer_use_send_screenshots",
+            "computer_use_max_screenshot_width",
+            "computer_use_allow_screenshot",
+            "computer_use_allow_mouse",
+            "computer_use_allow_keyboard",
+            "computer_use_allow_clipboard",
+            "computer_use_allow_wait",
+        )
+        return {key: self._cfg.get(key) for key in keys}
+
     def _chat_completions_api_url(self, api_url: str) -> str:
         url = (api_url or "").rstrip("/")
         if url.endswith("/responses"):
@@ -3313,6 +3392,14 @@ class ChatWindow(QWidget):
         if not text and attachments:
             text = _tr("ChatWindow.image_only_prompt", default="请看这张图片。")
         if not text:
+            return
+
+        if self._is_interrupt_command(text):
+            self._interrupt_generation()
+            return
+
+        if self._generation_busy():
+            self._composer_hint.setText(_tr("ChatWindow.busy_interrupt_hint", default="当前回复还在进行中；输入 @stop 或 @停止 可以中断。"))
             return
 
         if not attachments and self._handle_local_memory_command(text):
@@ -3427,6 +3514,8 @@ class ChatWindow(QWidget):
             self._plan_divider = None
 
     def _on_group_plan_finished(self, full_text: str, reasoning_text: str, actions: list):
+        if self.sender() is not self._group_plan_worker:
+            return
         del reasoning_text, actions
         self._group_plan_worker = None
         self._hide_plan_divider()
@@ -3437,6 +3526,8 @@ class ChatWindow(QWidget):
         self._start_next_group_response()
 
     def _on_group_plan_error(self, error_msg: str):
+        if self.sender() is not self._group_plan_worker:
+            return
         del error_msg
         self._group_plan_worker = None
         self._hide_plan_divider()
@@ -3491,6 +3582,7 @@ class ChatWindow(QWidget):
 
         messages = self._build_messages_for_character(character, spoken_names)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
+        tool_config = self._tool_config_snapshot()
         if self._use_responses_api(api_url):
             self._worker = ResponsesStreamWorker(
                 api_url,
@@ -3500,6 +3592,7 @@ class ChatWindow(QWidget):
                 enable_thinking,
                 bool(self._cfg.get("llm_web_search_enabled", False)),
                 show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                tool_config=tool_config,
             )
         else:
             self._worker = LLMStreamWorker(
@@ -3510,6 +3603,7 @@ class ChatWindow(QWidget):
                 enable_thinking,
                 web_search=bool(self._cfg.get("llm_web_search_enabled", False)),
                 show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                tool_config=tool_config,
             )
         self._worker.chunk_received.connect(self._on_chunk_received)
         self._worker.finished.connect(self._on_response_finished)
@@ -3532,6 +3626,8 @@ class ChatWindow(QWidget):
         self._start_response_for_character(character, list(self._group_spoken))
 
     def _on_chunk_received(self, text: str, reasoning: str):
+        if self.sender() is not self._worker:
+            return
         if reasoning:
             self._reasoning_stream_text += reasoning
             if self._current_bubble:
@@ -3567,6 +3663,8 @@ class ChatWindow(QWidget):
         self._scroll_to_bottom()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
+        if self.sender() is not self._worker:
+            return
         acts = parse_action_tags(full_text)
         self._pending_action_character = self._active_response_character
         self._pending_actions.extend(acts)
@@ -3607,6 +3705,8 @@ class ChatWindow(QWidget):
             self._scroll_to_bottom()
 
     def _on_response_finished_nonstream(self, full_text: str, reasoning_text: str, actions: list):
+        if self.sender() is not self._worker:
+            return
         del actions
         acts = parse_action_tags(full_text)
         self._pending_action_character = self._active_response_character
@@ -3647,6 +3747,8 @@ class ChatWindow(QWidget):
             self._scroll_to_bottom()
 
     def _on_response_error(self, error_msg: str):
+        if self.sender() is not self._worker:
+            return
         if self._current_bubble:
             self._current_bubble.set_streaming(False)
             self._current_bubble.set_text(f"Error: {error_msg}")
@@ -3926,6 +4028,10 @@ class ChatWindow(QWidget):
         if self._group_plan_worker and self._group_plan_worker.isRunning():
             self._group_plan_worker.quit()
             self._group_plan_worker.wait(2000)
+        for worker in list(getattr(self, "_cancelled_workers", [])):
+            if worker is not None and worker.isRunning():
+                worker.wait(1000)
+        self._cancelled_workers.clear()
         for worker in list(self._tts_active_workers.values()):
             if worker.isRunning():
                 worker.requestInterruption()

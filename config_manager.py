@@ -40,6 +40,19 @@ DEFAULTS = {
     "llm_api_mode": "chat_completions",
     "llm_web_search_enabled": False,
     "llm_web_search_show_sources": True,
+    "llm_hide_tool_call_details": True,
+    "llm_mcp_enabled": False,
+    "llm_mcp_use_native": True,
+    "llm_mcp_servers": [],
+    "computer_use_enabled": False,
+    "computer_use_auto_detect": True,
+    "computer_use_send_screenshots": True,
+    "computer_use_max_screenshot_width": 1280,
+    "computer_use_allow_screenshot": True,
+    "computer_use_allow_mouse": False,
+    "computer_use_allow_keyboard": False,
+    "computer_use_allow_clipboard": False,
+    "computer_use_allow_wait": True,
     "llm_api_profiles": [],
     "llm_active_api_profile": "",
     "user_name": "",
@@ -115,6 +128,13 @@ def normalize_model_action_profile(profile) -> dict:
     return normalized
 
 
+def _int_value(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
@@ -147,6 +167,8 @@ class ConfigManager:
             self._data["chat_avatar_paths"] = {}
         self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "") or "").strip()
         self._normalize_llm_api_profiles()
+        self._normalize_mcp_servers()
+        self._normalize_computer_use_settings()
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
 
@@ -184,6 +206,77 @@ class ConfigManager:
         active = str(self._data.get("llm_active_api_profile", "") or "").strip()
         names = {profile["name"] for profile in normalized}
         self._data["llm_active_api_profile"] = active if active in names else ""
+
+    def _normalize_mcp_servers(self):
+        servers = self._data.get("llm_mcp_servers", [])
+        if not isinstance(servers, list):
+            self._data["llm_mcp_servers"] = []
+            return
+        normalized = []
+        seen = set()
+        for item in servers:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "") or item.get("server_label", "") or "").strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            transport = str(item.get("transport", "stdio") or "stdio").strip().lower()
+            if transport not in ("stdio", "http", "native"):
+                transport = "stdio"
+            allowed_tools = item.get("allowed_tools", [])
+            if isinstance(allowed_tools, str):
+                allowed_tools = [part.strip() for part in allowed_tools.split(",") if part.strip()]
+            elif isinstance(allowed_tools, list):
+                allowed_tools = [str(part or "").strip() for part in allowed_tools if str(part or "").strip()]
+            else:
+                allowed_tools = []
+            args = item.get("args", [])
+            if isinstance(args, str):
+                args = [part for part in args.split(" ") if part]
+            elif isinstance(args, list):
+                args = [str(part or "") for part in args if str(part or "")]
+            else:
+                args = []
+            require_approval = str(item.get("require_approval", "always") or "always").strip().lower()
+            if require_approval not in ("always", "never"):
+                require_approval = "always"
+            normalized.append({
+                "enabled": bool(item.get("enabled", True)),
+                "label": label,
+                "description": str(item.get("description", "") or "").strip(),
+                "transport": transport,
+                "command": str(item.get("command", "") or "").strip(),
+                "args": args,
+                "cwd": str(item.get("cwd", "") or "").strip(),
+                "url": str(item.get("url", "") or item.get("server_url", "") or "").strip(),
+                "connector_id": str(item.get("connector_id", "") or "").strip(),
+                "authorization": str(item.get("authorization", "") or "").strip(),
+                "allowed_tools": allowed_tools,
+                "require_approval": require_approval,
+                "timeout_seconds": max(3, min(120, _int_value(item.get("timeout_seconds", 30), 30))),
+            })
+        self._data["llm_mcp_servers"] = normalized
+
+    def _normalize_computer_use_settings(self):
+        self._data["computer_use_max_screenshot_width"] = max(
+            640,
+            min(1920, _int_value(self._data.get("computer_use_max_screenshot_width", 1280), 1280)),
+        )
+        for key in (
+            "llm_hide_tool_call_details",
+            "llm_mcp_enabled",
+            "llm_mcp_use_native",
+            "computer_use_enabled",
+            "computer_use_auto_detect",
+            "computer_use_send_screenshots",
+            "computer_use_allow_screenshot",
+            "computer_use_allow_mouse",
+            "computer_use_allow_keyboard",
+            "computer_use_allow_clipboard",
+            "computer_use_allow_wait",
+        ):
+            self._data[key] = bool(self._data.get(key, DEFAULTS.get(key, False)))
 
     def _normalize_model_action_settings(self):
         profiles = self._data.get("model_action_settings", {})

@@ -1,0 +1,501 @@
+import json
+import os
+import queue
+import re
+import shutil
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+
+
+_PROTOCOL_VERSION = "2025-06-18"
+_TOOL_PREFIX = "mcp__"
+_TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
+_CLIENTS: dict[str, "StdioMcpClient"] = {}
+_LOCK = threading.RLock()
+
+
+@dataclass
+class McpTool:
+    public_name: str
+    tool_name: str
+    server: dict
+    description: str
+    input_schema: dict
+
+
+def mcp_proxy_tools(config: dict) -> list[dict]:
+    if not _mcp_enabled(config):
+        return []
+    tools = []
+    for server in _enabled_servers(config):
+        if _is_native_only(server):
+            continue
+        try:
+            for item in _list_server_tools(server):
+                public_name = _public_tool_name(server.get("label", ""), item.get("name", ""))
+                _TOOL_NAME_MAP[public_name] = (server, item.get("name", ""))
+                schema = item.get("inputSchema") or item.get("input_schema") or {"type": "object", "properties": {}}
+                if not isinstance(schema, dict):
+                    schema = {"type": "object", "properties": {}}
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": public_name,
+                        "description": _tool_description(server, item),
+                        "parameters": schema,
+                    },
+                })
+        except Exception as exc:
+            tools.append(_mcp_error_tool(server, exc))
+    return tools
+
+
+def mcp_native_tools(config: dict) -> list[dict]:
+    if not (_mcp_enabled(config) and bool(config.get("llm_mcp_use_native", True))):
+        return []
+    native_tools = []
+    for server in _enabled_servers(config):
+        if server.get("transport") == "stdio":
+            continue
+        url = str(server.get("url", "") or "").strip()
+        connector_id = str(server.get("connector_id", "") or "").strip()
+        if not url and not connector_id:
+            continue
+        require_approval = str(server.get("require_approval", "always") or "always").lower()
+        if require_approval != "never":
+            # This app does not yet provide an interactive mcp_approval_response
+            # UI loop for native provider calls. Skip instead of returning an
+            # approval request that the chat renderer cannot complete.
+            continue
+        item = {
+            "type": "mcp",
+            "server_label": str(server.get("label", "") or "mcp"),
+            "require_approval": "never",
+        }
+        description = str(server.get("description", "") or "").strip()
+        if description:
+            item["server_description"] = description
+        if connector_id:
+            item["connector_id"] = connector_id
+        else:
+            item["server_url"] = url
+        authorization = str(server.get("authorization", "") or "").strip()
+        if authorization:
+            item["authorization"] = authorization
+        allowed = server.get("allowed_tools", [])
+        if isinstance(allowed, str):
+            allowed = [part.strip() for part in allowed.split(",") if part.strip()]
+        if isinstance(allowed, list) and allowed:
+            item["allowed_tools"] = [str(name) for name in allowed if str(name)]
+        native_tools.append(item)
+    return native_tools
+
+
+def test_mcp_servers(config: dict) -> tuple[bool, str]:
+    if not _mcp_enabled(config):
+        return False, "MCP is disabled in settings."
+    servers = _enabled_servers(config)
+    if not servers:
+        return False, "No enabled MCP servers were found."
+
+    lines = []
+    ok_count = 0
+    warning_count = 0
+    for server in servers:
+        label = str(server.get("label", "") or "mcp")
+        transport = str(server.get("transport", "stdio") or "stdio").lower()
+        try:
+            if transport == "native" and server.get("connector_id"):
+                warning_count += 1
+                lines.append(f"[WARN] {label}: connector_id native MCP can only be verified by the provider at request time.")
+                continue
+            if transport == "native":
+                url = str(server.get("url", "") or "").strip()
+                if not url:
+                    warning_count += 1
+                    lines.append(f"[WARN] {label}: native MCP has no server URL or connector_id.")
+                    continue
+                tools = _list_http_tools(server)
+            else:
+                tools = _list_server_tools(server)
+            names = [str(tool.get("name", "") or "") for tool in tools if isinstance(tool, dict)]
+            ok_count += 1
+            preview = ", ".join(name for name in names[:6] if name)
+            suffix = f" ({preview})" if preview else ""
+            lines.append(f"[OK] {label}: discovered {len(names)} tool(s){suffix}.")
+        except Exception as exc:
+            lines.append(f"[FAIL] {label}: {_format_mcp_exception(server, exc)}")
+
+    success = ok_count > 0 and not any(line.startswith("[FAIL]") for line in lines)
+    if success and warning_count:
+        lines.append(f"[WARN] {warning_count} native connector item(s) require provider-side verification.")
+    return success, "\n".join(lines)
+
+
+def is_mcp_tool_name(name: str) -> bool:
+    return str(name or "").startswith(_TOOL_PREFIX)
+
+
+def call_mcp_tool(public_name: str, arguments) -> str:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
+    if not server or not tool_name:
+        # The process may be fresh; rebuild maps from configured clients is not
+        # possible here, so return a clear error instead of guessing.
+        return f"MCP tool is not available in this request: {public_name}"
+    if server.get("transport") == "error":
+        return str(server.get("error", "MCP server is not available."))
+    if str(server.get("require_approval", "always")).lower() == "always":
+        # Approval is represented as a settings-level permission in this app.
+        # If a server requires per-call approval, keep the call blocked until
+        # the user switches that server to never/auto in settings.
+        return f"MCP tool blocked by approval setting: {server.get('label', '')}/{tool_name}"
+    try:
+        if server.get("transport") == "http":
+            return _call_http_tool(server, tool_name, arguments)
+        return _stdio_client(server).call_tool(tool_name, arguments)
+    except Exception as exc:
+        return f"MCP tool failed: {exc}"
+
+
+def _mcp_enabled(config: dict) -> bool:
+    return bool(config and config.get("llm_mcp_enabled", False))
+
+
+def _enabled_servers(config: dict) -> list[dict]:
+    servers = config.get("llm_mcp_servers", []) if isinstance(config, dict) else []
+    if not isinstance(servers, list):
+        return []
+    return [server for server in servers if isinstance(server, dict) and server.get("enabled", True)]
+
+
+def _is_native_only(server: dict) -> bool:
+    return server.get("transport") == "native"
+
+
+def _public_tool_name(label: str, tool_name: str) -> str:
+    return f"{_TOOL_PREFIX}{_safe_name(label)}__{_safe_name(tool_name)}"[:64]
+
+
+def _safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value or "").strip())
+    cleaned = cleaned.strip("_")
+    return cleaned or "tool"
+
+
+def _tool_description(server: dict, item: dict) -> str:
+    label = str(server.get("label", "") or "mcp")
+    desc = str(item.get("description", "") or "").strip()
+    if desc:
+        return f"[MCP:{label}] {desc}"
+    return f"Call MCP tool {item.get('name', '')} on server {label}."
+
+
+def _mcp_error_tool(server: dict, exc: Exception) -> dict:
+    label = _safe_name(server.get("label", "mcp"))
+    name = f"{_TOOL_PREFIX}{label}__status"[:64]
+    error = _format_mcp_exception(server, exc)
+    _TOOL_NAME_MAP[name] = ({
+        "transport": "error",
+        "label": label,
+        "require_approval": "never",
+        "error": error,
+    }, "status")
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": error,
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+
+def _format_mcp_exception(server: dict, exc: Exception) -> str:
+    label = _safe_name(server.get("label", "mcp"))
+    command = str(server.get("command", "") or "").strip()
+    cwd = str(server.get("cwd", "") or os.getcwd())
+    detail = str(exc)
+    if isinstance(exc, FileNotFoundError) or getattr(exc, "winerror", None) == 2:
+        hint = "MCP server process could not be started."
+        if command:
+            hint += f" Command: {command}."
+        if cwd:
+            hint += f" Working directory: {cwd}."
+        if os.name == "nt" and command.lower() in {"npx", "npm", "pnpm", "yarn"}:
+            hint += " On Windows, install Node.js/npm and restart the app; if needed, set command to npx.cmd/npm.cmd or the full .cmd path."
+        return f"MCP server {label} is not available: {hint} ({detail})"
+    return f"MCP server {label} is not available: {detail}"
+
+
+def _list_server_tools(server: dict) -> list[dict]:
+    allowed = server.get("allowed_tools", [])
+    if isinstance(allowed, str):
+        allowed = [part.strip() for part in allowed.split(",") if part.strip()]
+    if server.get("transport") == "http":
+        tools = _list_http_tools(server)
+    else:
+        tools = _stdio_client(server).list_tools()
+    if isinstance(allowed, list) and allowed:
+        allowed_set = {str(name) for name in allowed}
+        tools = [tool for tool in tools if str(tool.get("name", "")) in allowed_set]
+    return tools
+
+
+def _client_key(server: dict) -> str:
+    args = " ".join(_server_args(server))
+    return f"{server.get('label','')}|{server.get('command','')}|{args}|{server.get('cwd','')}"
+
+
+def _server_args(server: dict) -> list[str]:
+    args = server.get("args", []) or []
+    if isinstance(args, str):
+        return [part for part in args.split(" ") if part]
+    if isinstance(args, list):
+        return [str(arg) for arg in args if str(arg)]
+    return []
+
+
+def _resolve_command(command: str) -> str:
+    command = str(command or "").strip()
+    if not command:
+        return command
+    has_path_part = any(sep in command for sep in ("/", "\\"))
+    if has_path_part or os.path.isabs(command):
+        if os.path.exists(command):
+            return command
+        if os.name == "nt" and not os.path.splitext(command)[1]:
+            for suffix in (".cmd", ".exe", ".bat"):
+                candidate = command + suffix
+                if os.path.exists(candidate):
+                    return candidate
+        return command
+    found = shutil.which(command)
+    if found:
+        return found
+    if os.name == "nt":
+        for suffix in (".cmd", ".exe", ".bat"):
+            found = shutil.which(command + suffix)
+            if found:
+                return found
+    return command
+
+
+def _stdio_client(server: dict) -> "StdioMcpClient":
+    key = _client_key(server)
+    with _LOCK:
+        client = _CLIENTS.get(key)
+        if client is None or not client.alive:
+            client = StdioMcpClient(server)
+            _CLIENTS[key] = client
+        return client
+
+
+def _request_http_json(server: dict, payload: dict) -> dict:
+    url = str(server.get("url", "") or "").strip()
+    if not url:
+        raise ValueError("HTTP MCP server url is empty")
+    timeout = int(server.get("timeout_seconds", 30) or 30)
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    auth = str(server.get("authorization", "") or "").strip()
+    if auth:
+        headers["Authorization"] = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    raw = raw.strip()
+    if raw.startswith("event:") or "\ndata:" in raw or raw.startswith("data:"):
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data and data != "[DONE]":
+                return json.loads(data)
+        raise ValueError("HTTP MCP server returned empty event stream")
+    return json.loads(raw)
+
+
+def _http_request_with_init(server: dict, method: str, params: dict | None = None) -> dict:
+    req_id = int(time.time() * 1000) % 1_000_000_000
+    payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    try:
+        return _request_http_json(server, payload)
+    except urllib.error.HTTPError:
+        raise
+    except Exception:
+        init = {
+            "jsonrpc": "2.0",
+            "id": req_id + 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": _PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "BandoriPet", "version": "1.0"},
+            },
+        }
+        _request_http_json(server, init)
+        return _request_http_json(server, payload)
+
+
+def _list_http_tools(server: dict) -> list[dict]:
+    response = _http_request_with_init(server, "tools/list", {})
+    if response.get("error"):
+        raise RuntimeError(response["error"])
+    result = response.get("result", {})
+    tools = result.get("tools", []) if isinstance(result, dict) else []
+    return tools if isinstance(tools, list) else []
+
+
+def _call_http_tool(server: dict, name: str, arguments: dict) -> str:
+    response = _http_request_with_init(server, "tools/call", {"name": name, "arguments": arguments})
+    if response.get("error"):
+        raise RuntimeError(response["error"])
+    return _mcp_result_text(response.get("result", {}))
+
+
+def _mcp_result_text(result) -> str:
+    if not isinstance(result, dict):
+        return json.dumps(result, ensure_ascii=False)
+    if result.get("isError"):
+        prefix = "MCP tool returned an error: "
+    else:
+        prefix = ""
+    parts = []
+    for item in result.get("content", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text":
+            parts.append(str(item.get("text", "")))
+        elif item.get("type") == "image":
+            parts.append("[MCP image output omitted]")
+        elif item:
+            parts.append(json.dumps(item, ensure_ascii=False))
+    if result.get("structuredContent") is not None:
+        parts.append(json.dumps(result.get("structuredContent"), ensure_ascii=False))
+    return prefix + ("\n".join(part for part in parts if part).strip() or json.dumps(result, ensure_ascii=False))
+
+
+class StdioMcpClient:
+    def __init__(self, server: dict):
+        self._server = dict(server)
+        self._lock = threading.RLock()
+        self._responses: queue.Queue[dict] = queue.Queue()
+        self._next_id = 1
+        self._initialized = False
+        command = str(server.get("command", "") or "").strip()
+        if not command:
+            raise ValueError("stdio MCP command is empty")
+        command = _resolve_command(command)
+        args = _server_args(server)
+        cwd = str(server.get("cwd", "") or os.getcwd())
+        if cwd and not os.path.isdir(cwd):
+            raise FileNotFoundError(f"stdio MCP cwd does not exist: {cwd}")
+        self._process = subprocess.Popen(
+            [command, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=cwd,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
+        self._reader.start()
+        self._initialize()
+
+    @property
+    def alive(self) -> bool:
+        return self._process.poll() is None
+
+    def list_tools(self) -> list[dict]:
+        result = self._request("tools/list", {})
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        return tools if isinstance(tools, list) else []
+
+    def call_tool(self, name: str, arguments: dict) -> str:
+        result = self._request("tools/call", {"name": name, "arguments": arguments})
+        return _mcp_result_text(result)
+
+    def _initialize(self):
+        if self._initialized:
+            return
+        self._request("initialize", {
+            "protocolVersion": _PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "BandoriPet", "version": "1.0"},
+        })
+        self._notify("notifications/initialized", {})
+        self._initialized = True
+
+    def _read_stdout(self):
+        stdout = self._process.stdout
+        if stdout is None:
+            return
+        for line in stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            self._responses.put(message)
+
+    def _request(self, method: str, params: dict | None = None) -> dict:
+        with self._lock:
+            if not self.alive:
+                raise RuntimeError("MCP server process is not running")
+            req_id = self._next_id
+            self._next_id += 1
+            message = {"jsonrpc": "2.0", "id": req_id, "method": method}
+            if params is not None:
+                message["params"] = params
+            self._write(message)
+            deadline = time.monotonic() + int(self._server.get("timeout_seconds", 30) or 30)
+            while time.monotonic() < deadline:
+                try:
+                    response = self._responses.get(timeout=max(0.1, min(1.0, deadline - time.monotonic())))
+                except queue.Empty:
+                    continue
+                if response.get("id") != req_id:
+                    continue
+                if response.get("error"):
+                    raise RuntimeError(response["error"])
+                return response.get("result", {})
+            raise TimeoutError(f"MCP request timed out: {method}")
+
+    def _notify(self, method: str, params: dict | None = None):
+        message = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            message["params"] = params
+        self._write(message)
+
+    def _write(self, message: dict):
+        stdin = self._process.stdin
+        if stdin is None:
+            raise RuntimeError("MCP server stdin is closed")
+        stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+        stdin.flush()
