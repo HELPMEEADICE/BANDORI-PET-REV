@@ -13,6 +13,14 @@ from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_pr
 
 WEB_SEARCH_TOOL_NAME = "web_search"
 
+WEB_SEARCH_ENGINE_LABELS = {
+    "bing": "Bing",
+    "bing_cn": "Bing CN",
+    "google": "Google",
+    "duckduckgo": "DuckDuckGo",
+    "baidu": "Baidu",
+}
+
 
 CHAT_COMPLETIONS_WEB_SEARCH_TOOL = {
     "type": "function",
@@ -43,7 +51,9 @@ CHAT_COMPLETIONS_WEB_SEARCH_TOOL = {
 
 def web_search_system_hint(include_sources: bool = True) -> str:
     source_rule = (
-        "工具返回搜索结果后，请基于结果作答，并在回复末尾列出来源链接。"
+        "工具返回搜索结果后，请基于结果作答，并在回复末尾输出严格 JSON 来源块，"
+        "格式为 {\"web_search_sources\":[{\"title\":\"网页标题\",\"url\":\"https://...\"}]}；"
+        "不要用 Markdown 列表展示来源。"
         if include_sources
         else "工具返回搜索结果后，请自然消化资料并保持角色口吻；除非用户明确要求来源，不要列出 URL 或引用列表。"
     )
@@ -51,6 +61,7 @@ def web_search_system_hint(include_sources: bool = True) -> str:
         "【联网搜索工具】\n"
         "如果用户询问最新、实时、新闻、价格、日程、版本、API 文档、外部事实，"
         "或任何可能随时间变化的信息，你可以调用 web_search 工具。"
+        "调用 web_search 时，query 必须是用户真正想查询的关键词，不要使用“你/我/它/这个”等代词。"
         f"{source_rule}"
         "如果没有收到真实工具结果，不要声称自己已经联网搜索。"
     )
@@ -196,14 +207,16 @@ def maybe_add_prefetched_web_search(
     *,
     force: bool = False,
     include_sources: bool = True,
+    tool_config: dict | None = None,
 ) -> list[dict]:
     copied = [dict(item) for item in messages]
-    query = _latest_user_text(copied)
-    if not force and not _looks_like_search_intent(query):
+    user_text = _latest_user_text(copied)
+    query = _normalize_web_search_query(user_text, user_text)
+    if not force and not _looks_like_search_intent(user_text):
         return copied
     if not query.strip():
         return copied
-    result = run_local_tool(WEB_SEARCH_TOOL_NAME, {"query": query, "max_results": 4})
+    result = run_local_tool(WEB_SEARCH_TOOL_NAME, {"query": query, "max_results": 4}, tool_config)
     if include_sources:
         source_rule = "只要使用了这些结果，回复末尾必须列出来源 URL；"
     else:
@@ -238,36 +251,65 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
             arguments = {"query": arguments}
     if not isinstance(arguments, dict):
         arguments = {}
-    query = str(arguments.get("query", "") or "").strip()
+    query = _normalize_web_search_query(
+        arguments.get("query", ""),
+        (tool_config or {}).get("_latest_user_text", ""),
+    )
     try:
         max_results = int(arguments.get("max_results", 5) or 5)
     except (TypeError, ValueError):
         max_results = 5
     max_results = max(1, min(8, max_results))
-    return {"content": web_search(query, max_results=max_results), "extra_messages": []}
+    engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
+    return {"content": web_search(query, max_results=max_results, engine=engine), "extra_messages": []}
 
 
-def run_local_tool(name: str, arguments) -> str:
-    return str(run_local_tool_call(name, arguments).get("content", ""))
+def run_local_tool(name: str, arguments, tool_config: dict | None = None) -> str:
+    return str(run_local_tool_call(name, arguments, tool_config).get("content", ""))
 
 
-def web_search(query: str, max_results: int = 5) -> str:
+def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str:
     query = str(query or "").strip()
     if not query:
         return "搜索失败：query 不能为空。"
 
     errors = []
-    for searcher in (_search_bing_html, _search_duckduckgo_html, _search_duckduckgo_instant_answer):
+    searcher = _searcher_for_engine(engine)
+    try:
+        results = searcher(query, max_results=max_results)
+    except Exception as exc:
+        errors.append(str(exc))
+        results = []
+    if results:
+        return _format_search_results(query, results[:max_results], engine)
+    for fallback in (_search_duckduckgo_html, _search_duckduckgo_instant_answer):
+        if fallback is searcher:
+            continue
         try:
-            results = searcher(query, max_results=max_results)
+            results = fallback(query, max_results=max_results)
         except Exception as exc:
             errors.append(str(exc))
             results = []
         if results:
-            return _format_search_results(query, results[:max_results])
+            return _format_search_results(query, results[:max_results], "duckduckgo")
     if errors:
         return "搜索失败：" + "；".join(errors[:2])
     return f"没有找到与 “{query}” 相关的搜索结果。"
+
+
+def _normalize_search_engine(engine: str) -> str:
+    engine = str(engine or "").strip().lower()
+    return engine if engine in WEB_SEARCH_ENGINE_LABELS else "bing_cn"
+
+
+def _searcher_for_engine(engine: str):
+    return {
+        "bing": _search_bing_html,
+        "bing_cn": _search_bing_cn_html,
+        "google": _search_google_html,
+        "duckduckgo": _search_duckduckgo_html,
+        "baidu": _search_baidu_html,
+    }.get(_normalize_search_engine(engine), _search_bing_cn_html)
 
 
 def _latest_user_text(messages: list[dict]) -> str:
@@ -292,7 +334,75 @@ def _looks_like_search_intent(text: str) -> bool:
     lowered = str(text or "").lower()
     if any(term.lower() in lowered for term in _SEARCH_INTENT_TERMS):
         return True
+    query = _extract_search_query(text)
+    if query and query.strip().lower() != lowered.strip() and re.search(r"[A-Za-z0-9]", query):
+        return True
     return bool(re.search(r"\b20[0-9]{2}\b", lowered))
+
+
+_BAD_SEARCH_QUERIES = {
+    "你", "我", "他", "她", "它", "这", "那", "这个", "那个", "这里", "那里",
+    "啥", "什么", "吗", "么", "呢", "知道", "搜索", "查", "搜",
+}
+
+
+def _normalize_web_search_query(query, fallback_text: str = "") -> str:
+    raw = _strip_prompt_suffix(str(query or ""))
+    fallback = _extract_search_query(fallback_text)
+    extracted = _extract_search_query(raw)
+    candidate = extracted or raw.strip()
+    if _is_bad_search_query(candidate) and fallback:
+        candidate = fallback
+    return _clean_search_query(candidate)
+
+
+def _strip_prompt_suffix(text: str) -> str:
+    text = str(text or "").strip()
+    marker = "【后置提示词】"
+    if marker in text:
+        text = text.split(marker, 1)[0].strip()
+    return text
+
+
+def _extract_search_query(text: str) -> str:
+    text = _strip_prompt_suffix(text)
+    if not text:
+        return ""
+    quoted = re.search(r"[\"'“”‘’]([^\"'“”‘’]{2,80})[\"'“”‘’]", text)
+    if quoted:
+        return _clean_search_query(quoted.group(1))
+
+    patterns = (
+        r"(?:什么是|啥是|何为)\s*([^？?。！!，,\n]{2,80})",
+        r"(?:知道|了解|听说过)\s*(?:什么是|啥是)?\s*([^？?。！!，,\n]{2,80})",
+        r"(?:查一下|查找|搜索|搜一下|帮我查|帮我搜|找一下|查|搜)\s*([^？?。！!，,\n]{2,80})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return _clean_search_query(match.group(1))
+
+    latin_tokens = re.findall(r"[A-Za-z][A-Za-z0-9_.+\-]{1,80}", text)
+    if latin_tokens:
+        return max(latin_tokens, key=len)
+    return ""
+
+
+def _clean_search_query(query: str) -> str:
+    query = _strip_prompt_suffix(query)
+    query = re.sub(r"^[\s，,。？?！!：:;；]+|[\s，,。？?！!：:;；]+$", "", query)
+    query = re.sub(r"^(?:你知道|知道|请问|问一下|这个|那个|啥是|什么是)\s*", "", query)
+    query = re.sub(r"(?:是什么|是啥|吗|么|呢)$", "", query).strip()
+    return query
+
+
+def _is_bad_search_query(query: str) -> bool:
+    query = _clean_search_query(query)
+    if not query:
+        return True
+    if query in _BAD_SEARCH_QUERIES:
+        return True
+    return len(query) <= 1 and not re.search(r"[A-Za-z0-9]", query)
 
 
 def _request_text(url: str, timeout: int = 12) -> str:
@@ -340,7 +450,19 @@ def _search_duckduckgo_html(query: str, max_results: int = 5) -> list[dict]:
 
 def _search_bing_html(query: str, max_results: int = 5) -> list[dict]:
     url = "https://www.bing.com/search?" + urllib.parse.urlencode({"q": query})
-    html = _request_text(url)
+    return _parse_bing_html(_request_text(url), max_results)
+
+
+def _search_bing_cn_html(query: str, max_results: int = 5) -> list[dict]:
+    url = "https://cn.bing.com/search?" + urllib.parse.urlencode({
+        "q": query,
+        "mkt": "zh-CN",
+        "setlang": "zh-CN",
+    })
+    return _parse_bing_html(_request_text(url), max_results)
+
+
+def _parse_bing_html(html: str, max_results: int = 5) -> list[dict]:
     blocks = re.findall(r'<li\s+class="b_algo"[^>]*>.*?</li>', html, re.IGNORECASE | re.DOTALL)
     results = []
     for block in blocks:
@@ -359,6 +481,48 @@ def _search_bing_html(query: str, max_results: int = 5) -> list[dict]:
         if not title or not link:
             continue
         results.append({"title": title, "url": link, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _search_google_html(query: str, max_results: int = 5) -> list[dict]:
+    url = "https://www.google.com/search?" + urllib.parse.urlencode({"q": query, "hl": "zh-CN"})
+    html = _request_text(url)
+    blocks = re.findall(r'<div\s+class="g"[^>]*>.*?</div>\s*</div>\s*</div>', html, re.IGNORECASE | re.DOTALL)
+    results = []
+    for block in blocks:
+        title_match = re.search(r'<a[^>]+href="([^"]+)"[^>]*>.*?<h3[^>]*>(.*?)</h3>', block, re.IGNORECASE | re.DOTALL)
+        if not title_match:
+            continue
+        raw_url, raw_title = title_match.groups()
+        title = _clean_html(raw_title)
+        link = _clean_google_url(raw_url)
+        snippet_match = re.search(r'<div[^>]+(?:class="[^"]*VwiC3b[^"]*"|data-sncf="[^"]*")[^>]*>(.*?)</div>', block, re.IGNORECASE | re.DOTALL)
+        snippet = _clean_html(snippet_match.group(1)) if snippet_match else ""
+        if title and link and not _is_google_internal_url(link):
+            results.append({"title": title, "url": link, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _search_baidu_html(query: str, max_results: int = 5) -> list[dict]:
+    url = "https://www.baidu.com/s?" + urllib.parse.urlencode({"wd": query})
+    html = _request_text(url)
+    blocks = re.findall(r'<div[^>]+class="[^"]*(?:result|c-container)[^"]*"[^>]*>.*?</div>\s*</div>', html, re.IGNORECASE | re.DOTALL)
+    results = []
+    for block in blocks:
+        title_match = re.search(r'<h3[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', block, re.IGNORECASE | re.DOTALL)
+        if not title_match:
+            continue
+        raw_url, raw_title = title_match.groups()
+        title = _clean_html(raw_title)
+        snippet_match = re.search(r'<span[^>]+class="[^"]*content-right[^"]*"[^>]*>(.*?)</span>|<div[^>]+class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</div>', block, re.IGNORECASE | re.DOTALL)
+        snippet = _clean_html(next((part for part in snippet_match.groups() if part), "")) if snippet_match else ""
+        link = unescape(raw_url or "").strip()
+        if title and link:
+            results.append({"title": title, "url": link, "snippet": snippet})
         if len(results) >= max_results:
             break
     return results
@@ -434,9 +598,25 @@ def _clean_bing_url(raw_url: str) -> str:
     return link
 
 
-def _format_search_results(query: str, results: list[dict]) -> str:
+def _clean_google_url(raw_url: str) -> str:
+    link = unescape(raw_url or "").strip()
+    parsed = urllib.parse.urlsplit(link)
+    if parsed.path == "/url":
+        target = urllib.parse.parse_qs(parsed.query).get("q", [""])[0]
+        if target:
+            return target
+    return link
+
+
+def _is_google_internal_url(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    return parsed.netloc.endswith("google.com") and parsed.path.startswith(("/search", "/preferences", "/settings"))
+
+
+def _format_search_results(query: str, results: list[dict], engine: str = "bing_cn") -> str:
     lines = [
         f"查询：{query}",
+        f"搜索引擎：{WEB_SEARCH_ENGINE_LABELS.get(_normalize_search_engine(engine), 'Bing CN')}",
         "检索时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     ]
     for index, result in enumerate(results, 1):

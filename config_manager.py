@@ -39,6 +39,7 @@ DEFAULTS = {
     "llm_aux_model_id": "",
     "llm_api_mode": "chat_completions",
     "llm_web_search_enabled": False,
+    "llm_web_search_engine": "bing_cn",
     "llm_web_search_show_sources": True,
     "llm_hide_tool_call_details": True,
     "llm_mcp_enabled": False,
@@ -135,6 +136,11 @@ def _int_value(value, default: int) -> int:
         return default
 
 
+def _normalize_web_search_engine(value) -> str:
+    engine = str(value or "").strip().lower()
+    return engine if engine in {"bing", "bing_cn", "google", "duckduckgo", "baidu"} else "bing_cn"
+
+
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
@@ -169,6 +175,9 @@ class ConfigManager:
         self._normalize_llm_api_profiles()
         self._normalize_mcp_servers()
         self._normalize_computer_use_settings()
+        self._data["llm_web_search_engine"] = _normalize_web_search_engine(
+            self._data.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
+        )
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
 
@@ -197,6 +206,9 @@ class ConfigManager:
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+                "llm_web_search_engine": _normalize_web_search_engine(
+                    profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
+                ),
                 "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
                 "llm_enable_thinking": profile.get("llm_enable_thinking", None)
                 if profile.get("llm_enable_thinking", None) in (True, False, None) else None,

@@ -50,7 +50,7 @@ else:
 
 from llm_manager import (
     build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
-    parse_action_tags, strip_action_tags,
+    parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
@@ -941,6 +941,105 @@ class PlanDivider(QWidget):
         self.update()
 
 
+class SearchSourcePopup(QFrame):
+    def __init__(self, title: str, url: str, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip)
+        self.setObjectName("SearchSourcePopup")
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
+
+        title_label = QLabel(title or url, self)
+        title_label.setWordWrap(True)
+        title_label.setMaximumWidth(300)
+        title_font = QFont()
+        title_font.setPointSize(9)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+
+        url_label = QLabel(url, self)
+        url_label.setObjectName("SearchSourceUrl")
+        url_label.setWordWrap(True)
+        url_label.setMaximumWidth(300)
+        url_font = QFont()
+        url_font.setPointSize(8)
+        url_label.setFont(url_font)
+
+        layout.addWidget(title_label)
+        layout.addWidget(url_label)
+
+        dark = isDarkTheme()
+        bg = "#242a38" if dark else "#ffffff"
+        border = "#3b4356" if dark else "#dce2ee"
+        text = "#f7f7fb" if dark else "#1f2328"
+        muted = "#b8c0d4" if dark else "#657089"
+        self.setStyleSheet(f"""
+            QFrame#SearchSourcePopup {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 10px;
+            }}
+            QFrame#SearchSourcePopup QLabel {{ color: {text}; background: transparent; }}
+            QFrame#SearchSourcePopup QLabel#SearchSourceUrl {{ color: {muted}; }}
+        """)
+
+
+class SearchSourceBadge(QLabel):
+    _CIRCLED_NUMBERS = "123456789"
+
+    def __init__(self, index: int, source: dict, parent=None):
+        label = self._CIRCLED_NUMBERS[index - 1] if 1 <= index <= len(self._CIRCLED_NUMBERS) else str(index)
+        super().__init__(label, parent)
+        self._source = source
+        self._popup = None
+        self.setFixedSize(20, 20)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        font = QFont()
+        font.setPointSize(11)
+        font.setBold(True)
+        self.setFont(font)
+
+    def enterEvent(self, event):
+        title = str(self._source.get("title", "") or "").strip()
+        url = str(self._source.get("url", "") or "").strip()
+        if url:
+            self._popup = SearchSourcePopup(title, url, self)
+            pos = self.mapToGlobal(self.rect().bottomLeft())
+            self._popup.move(pos.x(), pos.y() + 6)
+            self._popup.show()
+        return super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self._popup is not None:
+            self._popup.close()
+            self._popup.deleteLater()
+            self._popup = None
+        return super().leaveEvent(event)
+
+    def apply_theme(self):
+        dark = isDarkTheme()
+        bg = "rgba(255, 105, 165, 0.14)" if dark else "rgba(255, 105, 165, 0.10)"
+        border = "rgba(255, 135, 185, 0.48)" if dark else "rgba(220, 78, 140, 0.36)"
+        text = "#ff8fbd" if dark else "#bf3f79"
+        hover_bg = "rgba(255, 105, 165, 0.28)" if dark else "rgba(255, 105, 165, 0.20)"
+        hover_border = "#ff8fbd" if dark else "#d94e8b"
+        self.setStyleSheet(f"""
+            QLabel {{
+                background: {bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: 10px;
+                padding-bottom: 1px;
+            }}
+            QLabel:hover {{
+                background: {hover_bg};
+                border-color: {hover_border};
+            }}
+        """)
+
+
 class MessageBubble(QWidget):
     def __init__(
         self,
@@ -955,12 +1054,14 @@ class MessageBubble(QWidget):
         avatar_focus: str = "center",
         reasoning: str = "",
         show_reasoning: bool = True,
+        search_sources: list[dict] | None = None,
     ):
         super().__init__(parent)
         self._text = text
         self._role = role
         self._reasoning = reasoning
         self._show_reasoning = show_reasoning
+        self._search_sources = self._normalize_search_sources(search_sources)
         self._author = author or (_tr("ChatWindow.you") if role == "user" else _tr("ChatWindow.you"))
         self._created_at = created_at
         self._avatar_color = avatar_color
@@ -1044,12 +1145,21 @@ class MessageBubble(QWidget):
         self._stream_label.setFont(stream_font)
         self._stream_label.hide()
 
+        self._sources_row = QWidget(self)
+        self._sources_row.setStyleSheet("background: transparent;")
+        self._sources_layout = QHBoxLayout(self._sources_row)
+        self._sources_layout.setContentsMargins(0, 4, 0, 0)
+        self._sources_layout.setSpacing(4)
+        self._sources_layout.addStretch()
+        self._rebuild_source_badges()
+
         self._container = self._make_container(user=self._role == "user")
         bubble_layout = QVBoxLayout(self._container)
         bubble_layout.setContentsMargins(12, 9, 12, 9)
         bubble_layout.setSpacing(4)
         bubble_layout.addWidget(self._reasoning_panel)
         bubble_layout.addWidget(self._label)
+        bubble_layout.addWidget(self._sources_row)
         bubble_layout.addWidget(self._stream_label)
 
         stack = QVBoxLayout()
@@ -1110,6 +1220,8 @@ class MessageBubble(QWidget):
                 self._widest_plain_line(self._reasoning_label),
             )
             content_width = max(content_width, reasoning_width + 28)
+        if self._sources_row.isVisible():
+            content_width = max(content_width, len(self._search_sources) * 24)
         return max(36, content_width + 24)
 
     def update_bubble_width(self, viewport_width: int = 0):
@@ -1191,6 +1303,11 @@ class MessageBubble(QWidget):
         self._meta.setAlignment(Qt.AlignmentFlag.AlignRight if user else Qt.AlignmentFlag.AlignLeft)
         self._meta.setStyleSheet(f"color: {meta}; background: transparent; padding: 0 2px;")
         self._stream_label.setStyleSheet(f"color: {stream}; background: transparent;")
+        for index in range(self._sources_layout.count()):
+            item = self._sources_layout.itemAt(index)
+            widget = item.widget() if item else None
+            if isinstance(widget, SearchSourceBadge):
+                widget.apply_theme()
         self._reasoning_title.setStyleSheet(f"color: {reasoning_title}; background: transparent;")
         self._reasoning_label.setStyleSheet(f"color: {reasoning_text}; background: transparent;")
         self._reasoning_bar.setStyleSheet(f"background: {_TEAMS_ACCENT}; border-radius: 1px;")
@@ -1205,6 +1322,43 @@ class MessageBubble(QWidget):
         """)
         radii = (18, 6, 18, 18) if user else (6, 18, 18, 18)
         self._container.set_panel_style(bubble_bg, border, radii, 1)
+
+    @staticmethod
+    def _normalize_search_sources(sources) -> list[dict]:
+        result = []
+        if not isinstance(sources, list):
+            return result
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url", "") or "").strip()
+            if not url or any(item["url"] == url for item in result):
+                continue
+            title = str(source.get("title", "") or "").strip() or url
+            result.append({"title": title, "url": url})
+            if len(result) >= 9:
+                break
+        return result
+
+    def _rebuild_source_badges(self):
+        while self._sources_layout.count() > 1:
+            item = self._sources_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self._sources_row.setVisible(bool(self._search_sources) and self._role != "user")
+        for index, source in enumerate(self._search_sources, 1):
+            badge = SearchSourceBadge(index, source, self._sources_row)
+            badge.apply_theme()
+            self._sources_layout.insertWidget(index - 1, badge)
+
+    def set_search_sources(self, sources: list[dict]):
+        normalized = self._normalize_search_sources(sources)
+        if normalized == self._search_sources:
+            return
+        self._search_sources = normalized
+        self._rebuild_source_badges()
+        self.update_bubble_width()
 
     def set_text(self, text: str):
         if text == self._label.text():
@@ -1322,6 +1476,8 @@ class ChatWindow(QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._stream_search_sources: list[dict] = []
+        self._pending_source_json = ""
         self._tts_text_buffer = ""
         self._tts_tag_buffer = ""
         self._tts_queue: list[tuple[int, str, str]] = []
@@ -2927,6 +3083,7 @@ class ChatWindow(QWidget):
                 avatar_focus=avatar_focus,
                 reasoning=m.get("reasoning_content", ""),
                 show_reasoning=self._show_reasoning,
+                search_sources=self._message_search_sources(m.get("tool_trace_json")),
             )
             self._msg_layout.addWidget(bubble)
         self._msg_layout.addStretch()
@@ -3255,6 +3412,47 @@ class ChatWindow(QWidget):
         names = [item.get("name") or Path(item.get("path", "")).name or "image" for item in items]
         return "\n\n" + _tr("ChatWindow.attachment_summary", default="图片附件：{names}", names="、".join(names))
 
+    def _message_search_sources(self, tool_trace) -> list[dict]:
+        if not tool_trace:
+            return []
+        if isinstance(tool_trace, str):
+            try:
+                tool_trace = json.loads(tool_trace)
+            except (TypeError, ValueError):
+                return []
+        if not isinstance(tool_trace, dict):
+            return []
+        sources = tool_trace.get("web_search_sources", [])
+        return MessageBubble._normalize_search_sources(sources)
+
+    def _merge_search_sources(self, sources: list[dict]):
+        current = list(self._stream_search_sources)
+        for source in MessageBubble._normalize_search_sources(sources):
+            if all(item["url"] != source["url"] for item in current):
+                current.append(source)
+        self._stream_search_sources = current[:9]
+        if self._current_bubble:
+            self._current_bubble.set_search_sources(self._stream_search_sources)
+
+    def _extract_stream_search_sources(self, text: str) -> str:
+        source = self._pending_source_json + text
+        self._pending_source_json = ""
+        cleaned, sources = extract_inline_search_sources(source)
+        if sources:
+            self._merge_search_sources(sources)
+            return cleaned
+
+        markers = (
+            '{"web_search_sources"', '{"search_sources"', '{"sources"',
+            '{ "web_search_sources"', '{ "search_sources"', '{ "sources"',
+        )
+        positions = [source.find(marker) for marker in markers if source.find(marker) >= 0]
+        if positions:
+            start = min(positions)
+            self._pending_source_json = source[start:]
+            return source[:start]
+        return source
+
     def _normalize_attachments(self, attachments) -> list[dict]:
         if not attachments:
             return []
@@ -3311,6 +3509,7 @@ class ChatWindow(QWidget):
             return {}
         keys = (
             "llm_hide_tool_call_details",
+            "llm_web_search_engine",
             "llm_mcp_enabled",
             "llm_mcp_use_native",
             "llm_mcp_servers",
@@ -3324,7 +3523,9 @@ class ChatWindow(QWidget):
             "computer_use_allow_clipboard",
             "computer_use_allow_wait",
         )
-        return {key: self._cfg.get(key) for key in keys}
+        snapshot = {key: self._cfg.get(key) for key in keys}
+        snapshot["_latest_user_text"] = self._last_user_text
+        return snapshot
 
     def _chat_completions_api_url(self, api_url: str) -> str:
         url = (api_url or "").rstrip("/")
@@ -3565,6 +3766,8 @@ class ChatWindow(QWidget):
         model_id = self._cfg.get("llm_model_id", "")
         self._active_response_character = character
         self._pending_action_character = character
+        self._stream_search_sources = []
+        self._pending_source_json = ""
         avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(character)
         self._current_bubble = MessageBubble(
             "",
@@ -3635,6 +3838,7 @@ class ChatWindow(QWidget):
                 self._current_bubble.set_streaming(True)
                 self._scroll_to_bottom()
 
+        text = self._extract_stream_search_sources(text)
         tts_clean = self._clean_tts_stream_text(text)
         if tts_clean:
             self._enqueue_tts_text(tts_clean, self._active_response_character)
@@ -3665,12 +3869,15 @@ class ChatWindow(QWidget):
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
             return
+        self._merge_search_sources(actions)
         acts = parse_action_tags(full_text)
         self._pending_action_character = self._active_response_character
         self._pending_actions.extend(acts)
         self._flush_actions()
 
-        clean = strip_action_tags(full_text)
+        clean, inline_sources = extract_inline_search_sources(full_text)
+        self._merge_search_sources(inline_sources)
+        clean = strip_action_tags(clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
@@ -3680,14 +3887,16 @@ class ChatWindow(QWidget):
             self._reasoning_stream_text = reasoning_clean
             self._current_bubble.set_streaming(False)
             self._current_bubble.set_reasoning(reasoning_clean)
+            self._current_bubble.set_search_sources(self._stream_search_sources)
             self._current_bubble.set_text(clean)
 
         stored = self._assistant_content(self._active_response_character, clean)
+        tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean)
+            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
             self._refresh_group_list()
         elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean)
+            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
             self._refresh_group_list()
         self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
 
@@ -3707,13 +3916,15 @@ class ChatWindow(QWidget):
     def _on_response_finished_nonstream(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
             return
-        del actions
+        self._merge_search_sources(actions)
         acts = parse_action_tags(full_text)
         self._pending_action_character = self._active_response_character
         self._pending_actions.extend(acts)
         self._flush_actions()
 
-        clean = strip_action_tags(full_text)
+        clean, inline_sources = extract_inline_search_sources(full_text)
+        self._merge_search_sources(inline_sources)
+        clean = strip_action_tags(clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         if self._current_bubble:
             self._stream_flush_timer.stop()
@@ -3722,14 +3933,16 @@ class ChatWindow(QWidget):
             self._reasoning_stream_text = reasoning_clean
             self._current_bubble.set_streaming(False)
             self._current_bubble.set_reasoning(reasoning_clean)
+            self._current_bubble.set_search_sources(self._stream_search_sources)
             self._current_bubble.set_text(clean)
 
         stored = self._assistant_content(self._active_response_character, clean)
+        tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean)
+            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
             self._refresh_group_list()
         elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean)
+            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
             self._refresh_group_list()
         self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
 
@@ -3817,7 +4030,7 @@ class ChatWindow(QWidget):
     def _enqueue_tts_text(self, text: str, character: str):
         if not self._tts_enabled():
             return
-        text = strip_tts_action_tags(text)
+        text = self._clean_tts_payload(text)
         if not text:
             return
         self._tts_text_buffer += text
@@ -3826,7 +4039,7 @@ class ChatWindow(QWidget):
         if not self._tts_enabled():
             return
         self._tts_tag_buffer = ""
-        text = flush_tts_sentence(self._tts_text_buffer)
+        text = self._clean_tts_payload(flush_tts_sentence(self._tts_text_buffer))
         self._tts_text_buffer = ""
         if text:
             sequence = self._tts_next_sequence
@@ -3846,6 +4059,9 @@ class ChatWindow(QWidget):
             bubble.set_tts_playing(sequence is not None and seq == sequence)
 
     def _queue_tts_request(self, sequence: int, text: str, character: str):
+        text = self._clean_tts_payload(text)
+        if not text:
+            return
         if self._tts_should_translate():
             worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, self._tts_config_snapshot(), self)
             self._tts_translation_workers[sequence] = worker
@@ -3855,6 +4071,11 @@ class ChatWindow(QWidget):
             worker.start()
             return
         self._tts_queue.append((sequence, text, character))
+
+    def _clean_tts_payload(self, text: str) -> str:
+        text, _ = extract_inline_search_sources(text)
+        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
+        return strip_tts_action_tags(text).strip()
 
     def _tts_should_translate(self) -> bool:
         if not self._cfg or not self._cfg.get("tts_translate_to_selected_language", True):

@@ -2711,6 +2711,17 @@ class SettingsWindow(QWidget):
         web_search_row.addWidget(self._llm_web_search_enabled)
         layout.addLayout(web_search_row)
 
+        web_search_engine_label = BodyLabel(_tr("SettingsWindow.llm_web_search_engine", default="搜索引擎"), page)
+        layout.addWidget(web_search_engine_label)
+        self._llm_web_search_engine = OpaqueDropDownComboBox(page)
+        self._llm_web_search_engine.addItem(_tr("SettingsWindow.search_engine_bing", default="Bing"), userData="bing")
+        self._llm_web_search_engine.addItem(_tr("SettingsWindow.search_engine_bing_cn", default="Bing CN"), userData="bing_cn")
+        self._llm_web_search_engine.addItem(_tr("SettingsWindow.search_engine_google", default="Google"), userData="google")
+        self._llm_web_search_engine.addItem(_tr("SettingsWindow.search_engine_duckduckgo", default="DuckDuckGo"), userData="duckduckgo")
+        self._llm_web_search_engine.addItem(_tr("SettingsWindow.search_engine_baidu", default="Baidu"), userData="baidu")
+        self._llm_web_search_engine.setFixedHeight(36)
+        layout.addWidget(self._llm_web_search_engine)
+
         web_search_sources_row = QHBoxLayout()
         web_search_sources_row.setContentsMargins(0, 0, 0, 0)
         sources_label = BodyLabel(_tr("SettingsWindow.llm_web_search_show_sources", default="显示联网来源"), page)
@@ -4494,6 +4505,7 @@ class SettingsWindow(QWidget):
                 "_llm_api_profile_name",
                 "_llm_api_mode",
                 "_llm_web_search_enabled",
+                "_llm_web_search_engine",
                 "_llm_web_search_show_sources",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
@@ -4730,6 +4742,11 @@ class SettingsWindow(QWidget):
                     self._llm_api_mode.setCurrentIndex(i)
                     break
             self._llm_web_search_enabled.setChecked(bool(self._cfg.get("llm_web_search_enabled", False)))
+            web_search_engine = self._cfg.get("llm_web_search_engine", "bing_cn")
+            for i in range(self._llm_web_search_engine.count()):
+                if self._llm_web_search_engine.itemData(i) == web_search_engine:
+                    self._llm_web_search_engine.setCurrentIndex(i)
+                    break
             self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
             self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
@@ -4791,6 +4808,7 @@ class SettingsWindow(QWidget):
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+                "llm_web_search_engine": str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn"),
                 "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
                 "llm_enable_thinking": profile.get("llm_enable_thinking", None)
                 if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
@@ -4809,6 +4827,7 @@ class SettingsWindow(QWidget):
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
             "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
+            "llm_web_search_engine": self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn",
             "llm_web_search_show_sources": self._llm_web_search_show_sources.isChecked(),
             "llm_enable_thinking": thinking,
             "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
@@ -4822,6 +4841,7 @@ class SettingsWindow(QWidget):
             "llm_aux_model_id",
             "llm_api_mode",
             "llm_web_search_enabled",
+            "llm_web_search_engine",
             "llm_web_search_show_sources",
             "llm_enable_thinking",
             "llm_show_reasoning",
@@ -4880,6 +4900,11 @@ class SettingsWindow(QWidget):
                 self._llm_api_mode.setCurrentIndex(i)
                 break
         self._llm_web_search_enabled.setChecked(bool(profile.get("llm_web_search_enabled", False)))
+        web_search_engine = str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn")
+        for i in range(self._llm_web_search_engine.count()):
+            if self._llm_web_search_engine.itemData(i) == web_search_engine:
+                self._llm_web_search_engine.setCurrentIndex(i)
+                break
         self._llm_web_search_show_sources.setChecked(bool(profile.get("llm_web_search_show_sources", True)))
         self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
         thinking = profile.get("llm_enable_thinking", None)
@@ -4964,6 +4989,10 @@ class SettingsWindow(QWidget):
         api_url = self._llm_api_url.text().strip() if hasattr(self, "_llm_api_url") else ""
         if hasattr(self, "_llm_web_search_enabled"):
             self._llm_web_search_enabled.setEnabled(True)
+        if hasattr(self, "_llm_web_search_engine"):
+            self._llm_web_search_engine.setEnabled(
+                bool(self._llm_web_search_enabled.isChecked()) if hasattr(self, "_llm_web_search_enabled") else True
+            )
         if hasattr(self, "_llm_web_search_show_sources"):
             self._llm_web_search_show_sources.setEnabled(
                 bool(self._llm_web_search_enabled.isChecked()) if hasattr(self, "_llm_web_search_enabled") else True
@@ -4987,6 +5016,8 @@ class SettingsWindow(QWidget):
                 ))
 
     def _on_llm_web_search_enabled_changed(self, enabled: bool):
+        if hasattr(self, "_llm_web_search_engine"):
+            self._llm_web_search_engine.setEnabled(bool(enabled))
         if hasattr(self, "_llm_web_search_show_sources"):
             self._llm_web_search_show_sources.setEnabled(bool(enabled))
 
@@ -5144,6 +5175,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
             self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
+            self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
             self._cfg.set("llm_web_search_show_sources", self._llm_web_search_show_sources.isChecked())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
             if pov_mode == "role":
