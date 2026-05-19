@@ -58,8 +58,8 @@ cd BANDORI-PET-REV
 > | 下载渠道 | 链接 |
 > |----------|------|
 > | 🚀 **ModelScope** | [models.zip](https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip) |
-> | ☁️ **Google Drive** | [下载](https://drive.google.com/file/d/1t0TNRSV5gv2fTnFh-oWi70XNU1Xvfpub) |
-> | 🐌 **百度网盘** | [下载](https://pan.baidu.com/s/1fn7DfgFQLbM6ScS-qCJLYQ?pwd=3724) 提取码：`3724` |
+> | ☁️ **Google Drive** | [下载](https://drive.google.com/file/d/1rSwE6oHIyESYmbF7B_GtogAVbjASyBb9) |
+> | 🐌 **百度网盘** | [下载](https://pan.baidu.com/s/1oapb5rxt1Qz5nRkyb3XZtw?pwd=3724) 提取码：`3724` |
 
 > 🚨 **传统 7z 模型包**（~4GB，需解压到磁盘）
 >

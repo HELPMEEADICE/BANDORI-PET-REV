@@ -5,7 +5,10 @@ import random
 import time
 from pathlib import Path
 
-from lupa.luajit21 import LuaRuntime
+try:
+    from lupa.luajit21 import LuaRuntime
+except ModuleNotFoundError:
+    from lupa.lua import LuaRuntime
 from PIL import Image
 
 from platform_patch import get_live2d_texture_quality
