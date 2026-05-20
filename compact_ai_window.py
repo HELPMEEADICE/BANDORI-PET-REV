@@ -650,6 +650,7 @@ class CompactAIWindow(QWidget):
             return {}
         keys = (
             "llm_hide_tool_call_details",
+            "llm_web_search_engine",
             "llm_mcp_enabled",
             "llm_mcp_use_native",
             "llm_mcp_servers",

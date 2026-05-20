@@ -517,6 +517,7 @@ class LLMStreamWorker(QThread):
                     messages = maybe_add_prefetched_web_search(
                         messages,
                         include_sources=self._show_search_sources,
+                        tool_config=self._tool_config,
                     )
                     self._remember_search_sources_from_messages(messages)
             max_tool_rounds = 8 if self._tool_config.get("computer_use_enabled", False) else 3
@@ -537,6 +538,7 @@ class LLMStreamWorker(QThread):
                                 messages,
                                 force=True,
                                 include_sources=self._show_search_sources,
+                                tool_config=self._tool_config,
                             )
                             self._remember_search_sources_from_messages(messages)
                         use_tools = False
@@ -576,9 +578,11 @@ class LLMStreamWorker(QThread):
                 self._full_text,
                 self._reasoning_text,
             )
+            parsed_content, inline_sources = extract_inline_search_sources(content)
             if self._show_search_sources:
-                content = _append_search_sources(content, self._search_sources)
-            self.finished.emit(content, reasoning, [])
+                self._remember_search_source_items(inline_sources)
+                content = parsed_content
+            self.finished.emit(content, reasoning, list(self._search_sources))
         except urllib.error.HTTPError as e:
             self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
         except Exception as e:
@@ -692,6 +696,15 @@ class LLMStreamWorker(QThread):
             if source["url"] and all(item["url"] != source["url"] for item in self._search_sources):
                 self._search_sources.append(source)
 
+    def _remember_search_source_items(self, sources: list[dict]):
+        for source in sources or []:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url", "") or "").strip()
+            if url and all(item["url"] != url for item in self._search_sources):
+                title = str(source.get("title", "") or "").strip() or url
+                self._search_sources.append({"title": title, "url": url})
+
 
 class ResponsesStreamWorker(QThread):
     chunk_received = Signal(str, str)
@@ -724,6 +737,11 @@ class ResponsesStreamWorker(QThread):
                 messages = with_local_tool_system_hint(messages, self._tool_config)
             if self._web_search:
                 messages = with_web_search_system_hint(messages, self._show_search_sources)
+                messages = maybe_add_prefetched_web_search(
+                    messages,
+                    include_sources=self._show_search_sources,
+                    tool_config=self._tool_config,
+                )
             instructions, input_items = _messages_to_responses_input(messages)
             body = {
                 "model": self._model_id,
@@ -733,9 +751,6 @@ class ResponsesStreamWorker(QThread):
             if instructions:
                 body["instructions"] = instructions
             tools = []
-            if self._web_search:
-                tools.append({"type": "web_search"})
-                body["include"] = ["web_search_call.action.sources"]
             tools.extend(responses_native_tools(self._tool_config))
             if tools:
                 body["tools"] = tools
@@ -769,7 +784,8 @@ class ResponsesStreamWorker(QThread):
                 self._full_text,
                 self._reasoning_text,
             )
-            self.finished.emit(content, reasoning, [])
+            content, sources = extract_inline_search_sources(content)
+            self.finished.emit(content, reasoning, sources if self._show_search_sources else [])
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
             try:
@@ -945,21 +961,36 @@ def _extract_search_sources(text: str) -> list[dict]:
     return sources
 
 
-def _append_search_sources(content: str, sources: list[dict]) -> str:
-    if not sources:
-        return content
-    content = str(content or "").rstrip()
-    existing = content.lower()
-    visible_sources = sources[:5]
-    if any(source["url"].lower() in existing for source in visible_sources):
-        return content
-    lines = ["", "", "联网搜索来源："]
-    for source in visible_sources:
-        title = source.get("title", "").strip() or source.get("url", "").strip()
-        url = source.get("url", "").strip()
-        if title and url:
-            lines.append(f"- {title}: {url}")
-    return content + "\n".join(lines)
+def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
+    text = str(content or "")
+    sources = []
+
+    def collect(value):
+        if not isinstance(value, dict):
+            return
+        raw_sources = value.get("web_search_sources") or value.get("search_sources") or value.get("sources")
+        if not isinstance(raw_sources, list):
+            return
+        for item in raw_sources:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url", "") or "").strip()
+            if not url:
+                continue
+            title = str(item.get("title", "") or "").strip() or url
+            if all(source["url"] != url for source in sources):
+                sources.append({"title": title, "url": url})
+
+    def replace_json(match):
+        try:
+            collect(json.loads(match.group(0)))
+            return ""
+        except (TypeError, ValueError):
+            return match.group(0)
+
+    pattern = re.compile(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.S)
+    cleaned = pattern.sub(replace_json, text)
+    return cleaned.rstrip(), sources
 
 
 _THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
