@@ -335,6 +335,8 @@
     "SettingsWindow.launch_missing_model_content": "Choose a character and costume before the first launch.",
     "Language.en_US": "English",
     "Language.zh_CN": "中文",
+    "Language.ja": "日本語",
+    "Language.zh_TW": "繁體中文",
     "color.blue": "Blue",
     "color.pink": "Pink",
     "color.purple": "Purple",
