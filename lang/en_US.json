@@ -384,6 +384,8 @@
     "SettingsWindow.about_open_repo": "Open GitHub",
     "SettingsWindow.about_open_license": "View License",
     "SettingsWindow.about_tech": "Tech stack: PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Live2D-v2-Lua, and PyOpenGL.",
+    "SettingsWindow.about_qq_group": "QQ Group: {qq_group}",
+    "SettingsWindow.about_open_qq_group": "Join QQ Group",
     "SettingsWindow.side_settings": "Settings",
     "SettingsWindow.side_fps": "Refresh Rate (FPS)",
     "SettingsWindow.fps_value": "{v} FPS",

@@ -19,6 +19,8 @@
 
 BandoriPet 是一个基于 Live2D Cubism SDK 和 PySide6 的开源桌面宠物项目，支持 **51+ 位** BanG Dream! 角色、**305+ 套**服装，让你的桌面一秒变成 CiRCLE 排练室！
 
+QQ群：1046229865
+
 ![Example](example.png)
 
 ---

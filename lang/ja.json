@@ -384,6 +384,8 @@
     "SettingsWindow.about_open_repo": "GitHub を開く",
     "SettingsWindow.about_open_license": "ライセンスを表示",
     "SettingsWindow.about_tech": "技術スタック：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Live2D-v2-Lua、PyOpenGL。",
+    "SettingsWindow.about_qq_group": "QQグループ: {qq_group}",
+    "SettingsWindow.about_open_qq_group": "QQグループに参加",
     "SettingsWindow.side_settings": "設定",
     "SettingsWindow.side_fps": "リフレッシュレート（FPS）",
     "SettingsWindow.fps_value": "{v} FPS",

@@ -384,6 +384,8 @@
     "SettingsWindow.about_open_repo": "打开 GitHub",
     "SettingsWindow.about_open_license": "查看许可证",
     "SettingsWindow.about_tech": "技术栈：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Live2D-v2-Lua、PyOpenGL。",
+    "SettingsWindow.about_qq_group": "交流QQ群：{qq_group}",
+    "SettingsWindow.about_open_qq_group": "加入QQ群",
     "SettingsWindow.side_settings": "设置",
     "SettingsWindow.side_fps": "刷新率（FPS）",
     "SettingsWindow.fps_value": "{v}帧",
