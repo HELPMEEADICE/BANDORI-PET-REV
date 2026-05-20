@@ -2011,14 +2011,13 @@ class PetWindow(QWidget):
             from qfluentwidgets import isDarkTheme
             self._cfg.load()
             models = self._cfg.get("models", [])
-            model_exists = (
-                not isinstance(models, list)
-                or not models
-                or any(
+            if isinstance(models, list):
+                model_exists = any(
                     isinstance(item, dict) and item.get("character") == self._current_char
                     for item in models
                 )
-            )
+            else:
+                model_exists = True
             self._cfg.set("language", current_language())
             path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
             if model_exists:

@@ -5687,6 +5687,9 @@ class SettingsWindow(QWidget):
                 self._select_model_list_item(self._configured_models[0]["character"])
             else:
                 self._selected_list_character = ""
+                self._current_char = ""
+                self._current_costume = ""
+                self._selected_costume = ""
         self._refresh_model_list()
         if self._selected_list_character:
             self._show_model_detail()
@@ -5916,6 +5919,16 @@ class SettingsWindow(QWidget):
         if selected:
             self._current_char = selected["character"]
             self._selected_costume = selected["costume"]
+            self._current_costume = selected["costume"]
+        elif self._configured_models:
+            fallback = self._configured_models[0]
+            self._current_char = fallback["character"]
+            self._selected_costume = fallback["costume"]
+            self._current_costume = fallback["costume"]
+        else:
+            self._current_char = ""
+            self._selected_costume = ""
+            self._current_costume = ""
         if self._show_launch and not (self._current_char and self._selected_costume):
             self._launched = False
             InfoBar.warning(
@@ -5974,8 +5987,12 @@ class SettingsWindow(QWidget):
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()
-        if self._current_char and self._selected_costume:
+        if self._configured_models:
             self.model_selected.emit(self._current_char, self._selected_costume)
+        else:
+            # Explicitly tell the main process there is no active model so it
+            # can relaunch with zero pet windows.
+            self.model_selected.emit("", "")
         self.settings_changed.emit(settings)
         if self._show_launch:
             self.launch_requested.emit()
