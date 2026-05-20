@@ -889,78 +889,132 @@ class Live2DPreviewBubble(QWidget):
 class NavButton(QPushButton):
     nav_activated = Signal(str)
 
-    def __init__(self, nav_key: str, icon, text: str, parent=None):
+    def __init__(self, nav_key: str, icon, text: str, parent=None, accent: str = BANDORI_PRIMARY):
         super().__init__(parent)
         self._nav_key = nav_key
+        self._custom_icon = icon if isinstance(icon, str) else ""
+        self._fluent_icon = icon if hasattr(icon, "icon") else None
+        self._fallback_icon = icon if isinstance(icon, QIcon) else QIcon()
+        self._accent = QColor(accent if QColor(accent).isValid() else BANDORI_PRIMARY)
+        self._hovered = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(44)
-        if hasattr(icon, 'icon'):
-            self.setIcon(icon.icon())
-        else:
-            self.setIcon(icon)
-        self.setText(f"  {text}")
+        self.setFixedHeight(46)
+        self.setText(text)
         self.setCheckable(True)
+        self.setIconSize(QSize(18, 18))
         self._update_stylesheet()
         qconfig.themeChanged.connect(self._update_stylesheet)
         self.clicked.connect(lambda: self.nav_activated.emit(self._nav_key))
 
     def enterEvent(self, event):
-        if not self._checking_hover_effect():
-            self._apply_hover_effect(True)
+        self._hovered = True
+        self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._apply_hover_effect(False)
+        self._hovered = False
+        self.update()
         super().leaveEvent(event)
 
-    def _checking_hover_effect(self):
-        eff = self.graphicsEffect()
-        return isinstance(eff, QGraphicsColorizeEffect) and eff.strength() > 0.0
-
-    def _apply_hover_effect(self, entering: bool):
-        eff = self.graphicsEffect()
-        if not isinstance(eff, QGraphicsColorizeEffect):
-            eff = QGraphicsColorizeEffect(self)
-            eff.setColor(QColor(BANDORI_PRIMARY_DARK))
-            eff.setStrength(0.0)
-            self.setGraphicsEffect(eff)
-        if hasattr(self, '_hover_anim'):
-            self._hover_anim.stop()
-        self._hover_anim = QPropertyAnimation(eff, b"strength")
-        self._hover_anim.setDuration(180)
-        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._hover_anim.setStartValue(eff.strength())
-        self._hover_anim.setEndValue(0.35 if entering else 0.0)
-        if not entering:
-            self._hover_anim.finished.connect(lambda: self.setGraphicsEffect(None))
-        self._hover_anim.start()
-
     def _update_stylesheet(self):
+        self.setStyleSheet("QPushButton { border: none; background: transparent; }")
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
         dark = isDarkTheme()
-        bg = "#2a2a2a" if dark else "#fafafa"
-        hover_bg = "#3a3a3a" if dark else "#f3e3e9"
-        checked_bg = BANDORI_PRIMARY_SOFT_DARK if dark else BANDORI_PRIMARY_SOFT
-        text_color = "#e0e0e0" if dark else "#2a2a2a"
-        checked_text = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
-        border = "1px solid transparent" if dark else "1px solid #e0e0e0"
-        self.setStyleSheet(f"""
-            QPushButton {{
-                text-align: left;
-                padding: 8px 14px;
-                border: {border};
-                border-radius: 8px;
-                background: {bg};
-                font-size: 14px;
-                color: {text_color};
-            }}
-            QPushButton:hover {{
-                background: {hover_bg};
-            }}
-            QPushButton:checked {{
-                background: {checked_bg};
-                color: {checked_text};
-            }}
-        """)
+        checked = self.isChecked()
+        accent = QColor(self._accent)
+        if dark:
+            accent = accent.lighter(118)
+
+        bg = QColor("#2a272b" if dark else "#ffffff")
+        hover_bg = QColor("#332b31" if dark else "#fff6f9")
+        checked_bg = QColor(accent)
+        checked_bg.setAlpha(48 if dark else 28)
+        border = QColor("#40373f" if dark else "#ece5ea")
+        checked_border = QColor(accent)
+        checked_border.setAlpha(170)
+        text = QColor("#ece7ee" if dark else "#242832")
+        checked_text = QColor(accent)
+        muted_text = QColor("#cfc6d0" if dark else "#4f5968")
+
+        rect = QRectF(self.rect()).adjusted(2, 1, -2, -1)
+        painter.setPen(QPen(checked_border if checked else border, 1))
+        painter.setBrush(QBrush(checked_bg if checked else hover_bg if self._hovered else bg))
+        painter.drawRoundedRect(rect, 9, 9)
+
+        plate_rect = QRectF(12, (self.height() - 28) / 2, 28, 28)
+        plate = QColor(accent)
+        plate.setAlpha(236 if checked else 38 if not dark else 52)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(plate))
+        painter.drawRoundedRect(plate_rect, 8, 8)
+
+        icon_color = QColor("#ffffff") if checked else QColor(accent)
+        icon_rect = QRect(
+            int(plate_rect.x() + 5),
+            int(plate_rect.y() + 5),
+            18,
+            18,
+        )
+        if self._custom_icon == "avatar":
+            self._paint_avatar_icon(painter, QRectF(icon_rect), icon_color)
+        elif self._fluent_icon is not None:
+            self._fluent_icon.icon(color=icon_color).paint(painter, icon_rect)
+        else:
+            self._fallback_icon.paint(painter, icon_rect)
+
+        font = QFont(self.font())
+        font.setPointSize(10)
+        font.setWeight(QFont.Weight.DemiBold if checked else QFont.Weight.Medium)
+        painter.setFont(font)
+        painter.setPen(checked_text if checked else muted_text if self._hovered else text)
+        text_rect = QRect(50, 0, max(1, self.width() - 58), self.height())
+        label = painter.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, text_rect.width())
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
+
+    @staticmethod
+    def _paint_avatar_icon(painter: QPainter, rect: QRectF, color: QColor):
+        painter.save()
+        pen = QPen(color, max(2, int(round(rect.width() * 0.12))))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        head_size = rect.width() * 0.38
+        head = QRectF(
+            rect.center().x() - head_size / 2,
+            rect.top() + rect.height() * 0.13,
+            head_size,
+            head_size,
+        )
+        painter.drawEllipse(head)
+
+        shoulders = QPainterPath()
+        shoulders.moveTo(rect.left() + rect.width() * 0.18, rect.bottom() - rect.height() * 0.12)
+        shoulders.cubicTo(
+            rect.left() + rect.width() * 0.26,
+            rect.top() + rect.height() * 0.62,
+            rect.left() + rect.width() * 0.38,
+            rect.top() + rect.height() * 0.57,
+            rect.center().x(),
+            rect.top() + rect.height() * 0.57,
+        )
+        shoulders.cubicTo(
+            rect.left() + rect.width() * 0.62,
+            rect.top() + rect.height() * 0.57,
+            rect.left() + rect.width() * 0.74,
+            rect.top() + rect.height() * 0.62,
+            rect.right() - rect.width() * 0.18,
+            rect.bottom() - rect.height() * 0.12,
+        )
+        painter.drawPath(shoulders)
+        painter.restore()
 
 
 class SettingsWindow(QWidget):
@@ -1391,51 +1445,53 @@ class SettingsWindow(QWidget):
         brand_row.addWidget(title, 1)
         layout.addLayout(brand_row)
 
-        btn_chars = NavButton("characters", FluentIcon.EMOJI_TAB_SYMBOLS, _tr("SettingsWindow.nav_chars"), sidebar)
+        btn_chars = NavButton("characters", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_chars"), sidebar, "#e4004f")
         btn_chars.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["characters"] = btn_chars
         layout.addWidget(btn_chars)
 
-        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), sidebar)
+        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), sidebar, "#8b5cf6")
         btn_llm.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["llm"] = btn_llm
         layout.addWidget(btn_llm)
 
-        btn_tts = NavButton("tts", FluentIcon.ROBOT, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar)
+        btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar, "#f59e0b")
         btn_tts.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["tts"] = btn_tts
         layout.addWidget(btn_tts)
 
-        btn_pov = NavButton("pov", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_pov"), sidebar)
+        btn_pov = NavButton("pov", "avatar", _tr("SettingsWindow.nav_pov"), sidebar, "#ec4899")
         btn_pov.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["pov"] = btn_pov
         layout.addWidget(btn_pov)
 
-        btn_memory = NavButton("memory", FluentIcon.HISTORY, _tr("SettingsWindow.nav_memory"), sidebar)
+        btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), sidebar, "#10b981")
         btn_memory.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["memory"] = btn_memory
         layout.addWidget(btn_memory)
 
         btn_relationship_guide = NavButton(
             "relationship_guide",
-            FluentIcon.INFO,
+            FluentIcon.QUICK_NOTE,
             _tr("SettingsWindow.nav_relationship_guide"),
             sidebar,
+            "#06b6d4",
         )
         btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["relationship_guide"] = btn_relationship_guide
         layout.addWidget(btn_relationship_guide)
 
-        btn_compact = NavButton("compact_window", FluentIcon.ROBOT, _tr("SettingsWindow.nav_compact_window"), sidebar)
+        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), sidebar, "#3b82f6")
         btn_compact.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["compact_window"] = btn_compact
         layout.addWidget(btn_compact)
 
         btn_chat_integration = NavButton(
             "chat_integration",
-            FluentIcon.ROBOT,
+            FluentIcon.MESSAGE,
             _tr("SettingsWindow.nav_chat_integration", default="聊天接入"),
             sidebar,
+            "#14b8a6",
         )
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
@@ -1443,22 +1499,23 @@ class SettingsWindow(QWidget):
 
         btn_mcp_computer = NavButton(
             "mcp_computer",
-            FluentIcon.ROBOT,
+            FluentIcon.DEVELOPER_TOOLS,
             _tr("SettingsWindow.nav_mcp_computer", default="工具与电脑控制"),
             sidebar,
+            "#64748b",
         )
         btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["mcp_computer"] = btn_mcp_computer
         layout.addWidget(btn_mcp_computer)
 
-        btn_quality = NavButton("quality", FluentIcon.PHOTO, _tr("SettingsWindow.nav_quality"), sidebar)
+        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_quality"), sidebar, "#22c55e")
         btn_quality.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["quality"] = btn_quality
         layout.addWidget(btn_quality)
 
         layout.addStretch()
 
-        btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar)
+        btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar, "#94a3b8")
         btn_about.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["about"] = btn_about
         layout.addWidget(btn_about)

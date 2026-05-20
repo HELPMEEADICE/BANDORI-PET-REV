@@ -4,8 +4,8 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect
-from PySide6.QtGui import QColor, QKeyEvent
+from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect, QRectF
+from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -69,6 +69,11 @@ def _rgba(color: QColor) -> str:
     return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
 
 
+def _contrast_text(color: QColor) -> str:
+    luminance = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000
+    return "#24121a" if luminance > 170 else "#ffffff"
+
+
 def _opacity_alpha(value) -> int:
     try:
         pct = int(round(float(value)))
@@ -98,6 +103,57 @@ class CompactPromptEdit(QTextEdit):
         super().keyPressEvent(event)
 
 
+class CompactSendButton(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._bg = QColor("#e4004f")
+        self._hover_bg = QColor("#f02466")
+        self._pressed_bg = QColor("#b8003f")
+        self._fg = QColor("#ffffff")
+
+    def set_colors(self, bg: QColor, hover_bg: QColor, pressed_bg: QColor, fg: QColor):
+        self._bg = QColor(bg)
+        self._hover_bg = QColor(hover_bg)
+        self._pressed_bg = QColor(pressed_bg)
+        self._fg = QColor(fg)
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        bg = self._pressed_bg if self.isDown() else self._hover_bg if self.underMouse() else self._bg
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg))
+        painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+
+        center = rect.center()
+        size = max(8.0, min(rect.width(), rect.height()) * 0.32)
+        pen = QPen(self._fg, max(2, int(round(size * 0.22))))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(
+            int(round(center.x())),
+            int(round(center.y() + size * 0.65)),
+            int(round(center.x())),
+            int(round(center.y() - size * 0.65)),
+        )
+        painter.drawLine(
+            int(round(center.x())),
+            int(round(center.y() - size * 0.65)),
+            int(round(center.x() - size * 0.48)),
+            int(round(center.y() - size * 0.12)),
+        )
+        painter.drawLine(
+            int(round(center.x())),
+            int(round(center.y() - size * 0.65)),
+            int(round(center.x() + size * 0.48)),
+            int(round(center.y() - size * 0.12)),
+        )
+
+
 class CompactAIWindow(QWidget):
     action_triggered = Signal(str)
 
@@ -124,6 +180,9 @@ class CompactAIWindow(QWidget):
         self._drag_window_start = QPoint()
         self._geometry_anim = None
         self._output_scroll_needed = False
+        self._panel_color = QColor(255, 255, 255, 210)
+        self._panel_border_color = QColor(255, 255, 255, 160)
+        self._shadow_color = QColor(0, 0, 0, 42)
 
         self._init_ui()
         self.refresh_theme()
@@ -139,12 +198,12 @@ class CompactAIWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
-        self.setMinimumSize(240, 82)
-        self.resize(300, 88)
+        self.setMinimumSize(260, 96)
+        self.resize(320, 108)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(7)
 
         self._output = QTextEdit(self)
         self._output.setObjectName("compactOutput")
@@ -156,10 +215,12 @@ class CompactAIWindow(QWidget):
         self._output.viewport().installEventFilter(self)
         layout.addWidget(self._output, 1)
 
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        layout.addLayout(row)
+        self._input_shell = QFrame(self)
+        self._input_shell.setObjectName("compactComposer")
+        row = QHBoxLayout(self._input_shell)
+        row.setContentsMargins(9, 4, 4, 4)
+        row.setSpacing(6)
+        layout.addWidget(self._input_shell)
 
         self._input = CompactPromptEdit(self)
         self._input.setObjectName("compactInput")
@@ -170,13 +231,13 @@ class CompactAIWindow(QWidget):
         self._input.setPlaceholderText(_tr("CompactAIWindow.input_placeholder"))
         self._input.send_requested.connect(self.send_message)
         self._input.textChanged.connect(self._sync_scrollbar_policies)
-        row.addWidget(self._input, 1)
+        row.addWidget(self._input, 1, Qt.AlignmentFlag.AlignVCenter)
 
-        self._send_button = QPushButton("\u2191", self)
+        self._send_button = CompactSendButton(self)
         self._send_button.setObjectName("compactSendButton")
         self._send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_button.clicked.connect(self.send_message)
-        row.addWidget(self._send_button)
+        row.addWidget(self._send_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self._sync_scaled_controls()
 
     def refresh_theme(self):
@@ -199,53 +260,99 @@ class CompactAIWindow(QWidget):
         )
         hover = QColor(accent)
         hover.setAlpha(min(240, accent.alpha() + 38))
-        pressed = QColor(accent)
-        pressed.setAlpha(min(255, accent.alpha() + 73))
         if not QColor(text_color).isValid():
             text_color = "#24242a"
         radius = self._control_radius()
         button_radius = self._send_button.width() // 2 if hasattr(self, "_send_button") else 18
+        solid_accent = QColor(background_color)
+        if not solid_accent.isValid():
+            solid_accent = QColor("#e4004f")
+        panel = QColor(solid_accent)
+        panel.setAlpha(max(92, min(226, accent.alpha() + 56)))
+        self._panel_color = panel
+        self._panel_border_color = QColor(solid_accent)
+        self._panel_border_color.setAlpha(max(86, min(218, accent.alpha() + 72)))
+        self._shadow_color = QColor(0, 0, 0, 55 if panel.alpha() > 170 else 38)
+        output_bg = QColor(255, 255, 255, 42) if _contrast_text(solid_accent) == "#24121a" else QColor(0, 0, 0, 34)
+        input_bg = QColor(255, 255, 255, 56) if _contrast_text(solid_accent) == "#24121a" else QColor(0, 0, 0, 42)
+        subtle_border = QColor(255, 255, 255, 86) if _contrast_text(solid_accent) == "#24121a" else QColor(255, 255, 255, 44)
+        send_bg = QColor(solid_accent)
+        send_bg.setAlpha(236)
+        send_hover = QColor(solid_accent)
+        send_hover.setAlpha(255)
+        send_pressed = QColor(solid_accent.darker(116))
+        send_pressed.setAlpha(255)
+        send_text = _contrast_text(solid_accent)
+        if hasattr(self, "_send_button") and isinstance(self._send_button, CompactSendButton):
+            self._send_button.set_colors(send_bg, send_hover, send_pressed, QColor(send_text))
 
         self.setStyleSheet(f"""
             CompactAIWindow {{
                 background: transparent;
                 border: none;
             }}
-            QTextEdit#compactOutput,
-            QTextEdit#compactInput {{
-                background: {_rgba(accent)};
-                border: 1px solid {_rgba(border)};
+            QTextEdit#compactOutput {{
+                background: {_rgba(output_bg)};
+                border: 1px solid {_rgba(subtle_border)};
                 border-radius: {radius}px;
                 color: {text_color};
-                padding: 7px 9px;
+                padding: 8px 10px;
                 font-size: {self._font_size()}px;
                 selection-background-color: rgba(255, 255, 255, 96);
             }}
-            QTextEdit#compactOutput:focus,
-            QTextEdit#compactInput:focus {{
+            QFrame#compactComposer {{
+                background: {_rgba(input_bg)};
+                border: 1px solid {_rgba(subtle_border)};
+                border-radius: {radius}px;
+            }}
+            QTextEdit#compactInput {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                color: {text_color};
+                padding: 4px 2px;
+                font-size: {self._font_size()}px;
+                selection-background-color: rgba(255, 255, 255, 96);
+            }}
+            QTextEdit#compactOutput:focus {{
                 border: 1px solid {_rgba(border)};
+            }}
+            QTextEdit#compactInput:focus {{
+                border: none;
             }}
             QPushButton#compactSendButton {{
-                background: {_rgba(accent)};
-                border: 1px solid {_rgba(border)};
+                background: transparent;
+                border: none;
                 border-radius: {button_radius}px;
-                color: {text_color};
-                font-size: {max(18, self._font_size() + 8)}px;
-                font-weight: 600;
+                color: {send_text};
             }}
             QPushButton#compactSendButton:hover {{
-                background: {_rgba(hover)};
+                background: transparent;
             }}
             QPushButton#compactSendButton:pressed {{
-                background: {_rgba(pressed)};
+                background: transparent;
             }}
             QPushButton#compactSendButton:disabled {{
                 background: {_rgba(hover)};
-                color: rgba(36, 36, 42, 120);
+                color: rgba(255, 255, 255, 120);
+            }}
+            QScrollBar:vertical {{
+                width: 4px;
+                margin: 4px 1px 4px 0;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255, 255, 255, 96);
+                border-radius: 2px;
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
             }}
         """)
         if hasattr(self, "_input"):
             self._sync_scaled_controls()
+        self.update()
 
     def _font_size(self) -> int:
         if self._cfg:
@@ -253,16 +360,18 @@ class CompactAIWindow(QWidget):
         return 12
 
     def _control_radius(self) -> int:
-        return max(9, min(14, self.width() // 25))
+        return max(10, min(13, self.width() // 28))
 
     def _sync_scaled_controls(self):
-        row_h = max(self._font_size() + 22, min(48, round(self.width() * 0.12)))
-        self._input.setFixedHeight(row_h)
-        self._send_button.setFixedSize(row_h, row_h)
+        row_h = max(self._font_size() + 24, min(48, round(self.width() * 0.12)))
+        button_size = max(28, row_h - 8)
+        self._input_shell.setFixedHeight(row_h)
+        self._input.setFixedHeight(max(26, row_h - 8))
+        self._send_button.setFixedSize(button_size, button_size)
         self._update_output_height(animated=False)
 
     def fit_to_width(self, target_width: int):
-        width = max(240, min(430, int(round(target_width))))
+        width = max(260, min(440, int(round(target_width))))
         if self.width() != width:
             self.resize(width, self.height())
             self._sync_scaled_controls()
@@ -311,7 +420,7 @@ class CompactAIWindow(QWidget):
         self._manual_offset = None
 
     def _base_output_height(self) -> int:
-        return self._input.height() if self._input.height() > 0 else max(34, self._font_size() + 22)
+        return self._input_shell.height() if self._input_shell.height() > 0 else max(36, self._font_size() + 24)
 
     def _max_output_height(self) -> int:
         return max(self._base_output_height(), min(240, int(round(self.width() * 0.78))))
@@ -329,7 +438,9 @@ class CompactAIWindow(QWidget):
         return max(self._base_output_height(), min(max_height, content_height))
 
     def _target_window_height(self) -> int:
-        return self._target_output_height() + self._input.height() + 8
+        margins = self.layout().contentsMargins()
+        spacing = self.layout().spacing()
+        return self._target_output_height() + self._input_shell.height() + spacing + margins.top() + margins.bottom()
 
     def _set_output_text(self, text: str, animated: bool = True):
         self._output.setPlainText(text)
@@ -410,6 +521,22 @@ class CompactAIWindow(QWidget):
                     self._manual_offset = self.pos() - self._pet_geo.topLeft()
                 return True
         return super().eventFilter(obj, event)
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = QRectF(self.rect()).adjusted(4, 4, -4, -4)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 16, 16)
+
+        shadow = QPainterPath(path)
+        shadow.translate(0, 3)
+        painter.fillPath(shadow, QBrush(self._shadow_color))
+        painter.fillPath(path, QBrush(self._panel_color))
+        painter.setPen(QPen(self._panel_border_color, 1))
+        painter.drawPath(path)
 
     def showEvent(self, event):
         super().showEvent(event)
