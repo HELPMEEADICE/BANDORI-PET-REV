@@ -79,7 +79,11 @@ def detect_system_language() -> str:
         if lang_code:
             lang_code = lang_code.replace("-", "_")
             if lang_code.startswith("zh"):
+                if "tw" in lang_code.lower() or "hk" in lang_code.lower() or "hant" in lang_code.lower():
+                    return "zh_TW"
                 return "zh_CN"
+            if lang_code.startswith("ja"):
+                return "ja"
             return "en_US"
     except Exception:
         pass
