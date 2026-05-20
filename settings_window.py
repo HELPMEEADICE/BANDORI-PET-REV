@@ -5570,10 +5570,42 @@ class SettingsWindow(QWidget):
         )
         return all(left.get(key) == right.get(key) for key in keys)
 
+    def _llm_profile_api_identity_equal(self, left: dict, right: dict) -> bool:
+        keys = (
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+            "llm_api_mode",
+        )
+        return all(left.get(key) == right.get(key) for key in keys)
+
     def _matching_llm_api_profile_name(self) -> str:
         current = self._current_llm_api_profile("__current__")
-        for profile in self._normalized_llm_api_profiles():
+        profiles = self._normalized_llm_api_profiles()
+        for profile in profiles:
             if self._llm_profiles_equal(current, profile):
+                return profile["name"]
+
+        preferred_names = []
+        combo_index = self._llm_api_profile_combo.currentIndex()
+        combo_name = ""
+        if combo_index >= 0:
+            combo_name = self._llm_api_profile_combo.itemData(combo_index) or ""
+        if combo_name:
+            preferred_names.append(combo_name)
+        if self._cfg:
+            active_name = str(self._cfg.get("llm_active_api_profile", "") or "").strip()
+            if active_name and active_name not in preferred_names:
+                preferred_names.append(active_name)
+
+        for name in preferred_names:
+            for profile in profiles:
+                if profile["name"] == name and self._llm_profile_api_identity_equal(current, profile):
+                    return profile["name"]
+
+        for profile in profiles:
+            if self._llm_profile_api_identity_equal(current, profile):
                 return profile["name"]
         return ""
 
