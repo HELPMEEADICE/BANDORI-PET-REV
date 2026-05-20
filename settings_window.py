@@ -32,6 +32,8 @@ from qfluentwidgets.common.config import qconfig
 
 from i18n_manager import tr as _tr, set_language, available_languages, current_language
 from process_utils import app_base_dir
+from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
+from app_update import detect_update_channel
 from app_theme import (
     BANDORI_PRIMARY,
     BANDORI_PRIMARY_HOVER,
@@ -90,9 +92,9 @@ _ROLEPLAY_STATUS_TIPS = {
     "red": "SettingsWindow.roleplay_status_red",
 }
 
-PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
-PROJECT_LICENSE_URL = f"{PROJECT_REPO_URL}/blob/main/LICENSE"
-PROJECT_QQ_GROUP_URL = "https://qm.qq.com/q/VJMrn5EkWQ"
+PROJECT_REPO_URL = APP_REPO_URL
+PROJECT_LICENSE_URL = APP_LICENSE_URL
+PROJECT_QQ_GROUP_URL = APP_QQ_GROUP_URL
 CLICK_MOTION_CONFIG_FORMAT = "bandori-click-motion-actions"
 CLICK_MOTION_CONFIG_VERSION = 1
 CLICK_MOTION_SCOPE_ALL = "all_models"
@@ -1301,7 +1303,7 @@ class SettingsWindow(QWidget):
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.quit()
@@ -4884,9 +4886,12 @@ class SettingsWindow(QWidget):
         subtitle.setWordWrap(True)
         desc = BodyLabel(_tr("SettingsWindow.about_desc"), hero)
         desc.setWordWrap(True)
+        version = BodyLabel(_tr("SettingsWindow.about_version", version=APP_VERSION), hero)
+        version.setObjectName("aboutVersion")
         hero_text.addWidget(title)
         hero_text.addWidget(subtitle)
         hero_text.addWidget(desc)
+        hero_text.addWidget(version)
         hero_layout.addLayout(hero_text, 1)
         layout.addWidget(hero)
 
@@ -4947,6 +4952,45 @@ class SettingsWindow(QWidget):
         qq_row.addStretch()
         info_layout.addLayout(qq_row)
 
+        update_card = QWidget(page)
+        update_card.setObjectName("aboutUpdateCard")
+        update_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        update_layout = QVBoxLayout(update_card)
+        update_layout.setContentsMargins(18, 16, 18, 16)
+        update_layout.setSpacing(10)
+
+        update_title = StrongBodyLabel(_tr("SettingsWindow.update_title"), update_card)
+        update_layout.addWidget(update_title)
+
+        self._update_status_label = BodyLabel(
+            _tr(
+                "SettingsWindow.update_idle",
+                channel=self._update_channel_label(detect_update_channel()),
+            ),
+            update_card,
+        )
+        self._update_status_label.setWordWrap(True)
+        update_layout.addWidget(self._update_status_label)
+
+        self._update_detail_label = BodyLabel(_tr("SettingsWindow.update_hint"), update_card)
+        self._update_detail_label.setObjectName("aboutUpdateDetail")
+        self._update_detail_label.setWordWrap(True)
+        update_layout.addWidget(self._update_detail_label)
+
+        update_btn_row = QHBoxLayout()
+        update_btn_row.setContentsMargins(0, 2, 0, 0)
+        update_btn_row.setSpacing(10)
+        self._check_update_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.update_check"), update_card)
+        self._check_update_btn.clicked.connect(self._check_for_app_updates)
+        self._apply_update_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.update_apply"), update_card)
+        self._apply_update_btn.setEnabled(False)
+        self._apply_update_btn.clicked.connect(self._apply_pending_app_update)
+        update_btn_row.addWidget(self._check_update_btn)
+        update_btn_row.addWidget(self._apply_update_btn)
+        update_btn_row.addStretch()
+        update_layout.addLayout(update_btn_row)
+        layout.addWidget(update_card)
+
         tech = BodyLabel(_tr("SettingsWindow.about_tech"), page)
         tech.setObjectName("aboutTech")
         tech.setWordWrap(True)
@@ -4987,10 +5031,18 @@ class SettingsWindow(QWidget):
                 border: 1px solid {card_border};
                 border-radius: 14px;
             }}
+            QWidget#aboutUpdateCard {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+            }}
             QWidget#aboutHero TitleLabel {{ color: {text}; }}
             QWidget#aboutHero SubtitleLabel {{ color: {text}; font-weight: 700; }}
             QWidget#aboutHero BodyLabel {{ color: {muted}; font-size: 13px; line-height: 1.5; }}
+            BodyLabel#aboutVersion {{ color: {text}; font-weight: 700; }}
             QWidget#aboutInfoCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            QWidget#aboutUpdateCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            QWidget#aboutUpdateCard BodyLabel#aboutUpdateDetail {{ color: {muted}; }}
             BodyLabel#aboutTech {{ color: {muted}; font-size: 13px; padding: 2px 4px; }}
         """)
 
@@ -4999,6 +5051,163 @@ class SettingsWindow(QWidget):
         color = BANDORI_PRIMARY_DARK if isDarkTheme() else BANDORI_PRIMARY
         text = "#dcdcdc" if isDarkTheme() else "#303030"
         label.setStyleSheet(f"QLabel {{ color: {text}; font-size: 13px; }} QLabel a {{ color: {color}; }}")
+
+    def _update_channel_label(self, channel: str) -> str:
+        return _tr(
+            f"SettingsWindow.update_channel_{channel}",
+            default=_tr("SettingsWindow.update_channel_unknown"),
+        )
+
+    def _check_for_app_updates(self):
+        worker = getattr(self, "_update_check_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        self._pending_update_info = None
+        self._check_update_btn.setEnabled(False)
+        self._apply_update_btn.setEnabled(False)
+        self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+        self._update_status_label.setText(_tr("SettingsWindow.update_checking"))
+        self._update_detail_label.setText("")
+
+        self._update_check_worker = UpdateCheckWorker(parent=self)
+        self._update_check_worker.finished.connect(self._on_app_update_checked)
+        self._update_check_worker.error.connect(self._on_app_update_check_error)
+        self._update_check_worker.start()
+
+    def _on_app_update_checked(self, info):
+        self._update_check_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._pending_update_info = info if info.can_update else None
+
+        if info.update_available:
+            latest = info.latest_version or info.summary
+            self._update_status_label.setText(
+                _tr("SettingsWindow.update_available", version=latest)
+            )
+            if info.can_update:
+                self._apply_update_btn.setEnabled(True)
+                self._apply_update_btn.setText(
+                    _tr("SettingsWindow.update_apply_version", version=latest)
+                )
+            else:
+                self._apply_update_btn.setEnabled(False)
+                self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+        else:
+            self._update_status_label.setText(_tr("SettingsWindow.update_none"))
+            self._apply_update_btn.setEnabled(False)
+            self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+
+        self._update_detail_label.setText(self._format_update_detail(info))
+
+    def _on_app_update_check_error(self, message: str):
+        self._update_check_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_failed"))
+        self._update_detail_label.setText(message)
+        InfoBar.error(
+            _tr("SettingsWindow.update_failed"),
+            message,
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _format_update_detail(self, info) -> str:
+        parts = []
+        if info.channel:
+            parts.append(
+                _tr(
+                    "SettingsWindow.update_channel_line",
+                    channel=self._update_channel_label(info.channel),
+                )
+            )
+        if info.asset_name:
+            size = self._format_update_size(info.asset_size)
+            parts.append(
+                _tr(
+                    "SettingsWindow.update_asset_line",
+                    asset=info.asset_name,
+                    size=size,
+                )
+            )
+        detail = (info.detail or info.summary or "").strip()
+        if detail:
+            if len(detail) > 420:
+                detail = detail[:420].rstrip() + "..."
+            parts.append(detail)
+        return "\n".join(parts) if parts else _tr("SettingsWindow.update_hint")
+
+    @staticmethod
+    def _format_update_size(size: int) -> str:
+        if not size:
+            return "-"
+        value = float(size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+            value /= 1024
+        return f"{size} B"
+
+    def _apply_pending_app_update(self):
+        info = getattr(self, "_pending_update_info", None)
+        if info is None or not info.can_update:
+            return
+        worker = getattr(self, "_update_apply_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            _tr("SettingsWindow.update_confirm_title"),
+            _tr("SettingsWindow.update_confirm_content"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._check_update_btn.setEnabled(False)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_applying"))
+        self._update_detail_label.setText("")
+
+        self._update_apply_worker = UpdateApplyWorker(info, parent=self)
+        self._update_apply_worker.finished.connect(self._on_app_update_applied)
+        self._update_apply_worker.error.connect(self._on_app_update_apply_error)
+        self._update_apply_worker.start()
+
+    def _on_app_update_applied(self, result):
+        self._update_apply_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_apply_success"))
+        self._update_detail_label.setText(result.message)
+        InfoBar.success(
+            _tr("SettingsWindow.update_apply_success"),
+            result.message,
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+        if result.exits_app:
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(800, app.quit)
+
+    def _on_app_update_apply_error(self, message: str):
+        self._update_apply_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(getattr(self, "_pending_update_info", None) is not None)
+        self._update_status_label.setText(_tr("SettingsWindow.update_apply_failed"))
+        self._update_detail_label.setText(message)
+        InfoBar.error(
+            _tr("SettingsWindow.update_apply_failed"),
+            message,
+            duration=7000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _on_quality_changed(self, index: int):
         profile = self._quality_combo.itemData(index)
@@ -6524,6 +6733,36 @@ def _responses_api_url(api_url: str) -> str:
     if url.endswith("/v1"):
         return url + "/responses"
     return url + "/responses"
+
+
+class UpdateCheckWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def run(self):
+        try:
+            from app_update import check_for_updates
+
+            self.finished.emit(check_for_updates())
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class UpdateApplyWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, update_info, parent=None):
+        super().__init__(parent)
+        self._update_info = update_info
+
+    def run(self):
+        try:
+            from app_update import apply_update
+
+            self.finished.emit(apply_update(self._update_info))
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class McpConnectionTestWorker(QThread):

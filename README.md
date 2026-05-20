@@ -224,6 +224,31 @@ python setup.py build
 
 构建产物在 `BUILD/` 下。注意打包时模型文件不会被打包进去，用户需自行下载放入 `models/`。
 
+如需生成 Windows 安装包：
+
+```bash
+python setup.py build_msi
+```
+
+### 自动更新发布约定
+
+设置页的「关于」中带有检查更新入口。三种运行方式会自动走不同更新路径：
+
+| 运行方式 | 更新方式 |
+|----------|----------|
+| `git clone` 后运行源码 | `git fetch` 检查上游，点击更新后执行 `git pull --ff-only`，并用当前 Python 安装 `requirements.txt` |
+| 便携版 exe | 从 GitHub Release 下载最新 `.zip`，关闭程序后覆盖当前目录并重启 |
+| MSI 安装包 | 从 GitHub Release 下载最新 `.msi`，启动安装器完成升级 |
+
+发布新版本时请同步修改 `app_info.py` 中的 `APP_VERSION`，并在 GitHub Release 上传匹配当前平台的资产，例如：
+
+```text
+BandoriPet-3.0.1-WIN-AMD64.zip
+BandoriPet-3.0.1-WIN-AMD64.msi
+```
+
+如果你要从自己的仓库发布更新，请把 `app_info.py` 里的 `APP_REPOSITORY` 改成发布 Release 的仓库名。
+
 ---
 
 ## 🛠️ 技术栈
