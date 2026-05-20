@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import threading
 
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 
@@ -19,6 +20,8 @@ from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
+from chat_integration_server import ChatIntegrationHttpServer
+from database_manager import DatabaseManager
 
 
 class AiEventBridge(QObject):
@@ -67,6 +70,7 @@ def main():
     pet_window_ref = {"processes": []}
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
+    chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     ai_event_bridge = AiEventBridge()
 
     char = cfg.get("character", "")
@@ -97,6 +101,7 @@ def main():
     def quit_all():
         notify_chat_processes_shutdown()
         stop_ai_status_server()
+        stop_chat_integration_server()
         close_pet_processes(force=True)
         close_settings_process(force=True)
         if tray_icon is not None:
@@ -146,6 +151,18 @@ def main():
             server.stop()
         ai_status_ref["server"] = None
 
+    def stop_chat_integration_server():
+        server = chat_integration_ref.get("server")
+        if server is not None:
+            server.stop()
+        chat_integration_ref["server"] = None
+
+    def close_chat_integration_db():
+        db = chat_integration_ref.get("db")
+        if db is not None:
+            db.close()
+        chat_integration_ref["db"] = None
+
     def init_ai_status_server():
         stop_ai_status_server()
         if not cfg.get("ai_status_port_enabled", False):
@@ -165,6 +182,91 @@ def main():
             return
         ai_status_ref["server"] = server
 
+    def chat_integration_db():
+        db = chat_integration_ref.get("db")
+        if db is None:
+            db = DatabaseManager()
+            chat_integration_ref["db"] = db
+        return db
+
+    def format_chat_overlay(summary: dict) -> str:
+        threads = summary.get("threads", []) if isinstance(summary, dict) else []
+        lines = []
+        for thread in threads[:5]:
+            label = thread.get("thread_name") or thread.get("thread_id") or "default"
+            platform = thread.get("platform") or "chat"
+            unread = int(thread.get("unread_count") or 0)
+            lines.append(f"[{platform}] {label}（{unread}）")
+            for message in (thread.get("messages") or [])[-3:]:
+                sender = message.get("sender_name") or message.get("sender_id") or "unknown"
+                content = str(message.get("content", "") or "").replace("\r", " ").replace("\n", " ").strip()
+                if len(content) > 80:
+                    content = content[:80] + "..."
+                lines.append(f"{sender}: {content}")
+        return "\n".join(lines)
+
+    def broadcast_chat_overlay(event: dict, stored: dict):
+        summary = stored.get("unread", {}) if isinstance(stored, dict) else {}
+        total = int(summary.get("total_unread") or 0)
+        if total <= 0:
+            return
+        overlay = {
+            "source": str(event.get("platform") or event.get("source") or "chat"),
+            "state": "stream",
+            "mode": "replace",
+            "title": _tr("ChatIntegration.overlay_title", default="{count} 条未读消息", count=total),
+            "text": format_chat_overlay(summary),
+            "action": str(event.get("action") or "surprised"),
+            "ttl_ms": int(event.get("ttl_ms") or 9000),
+            "anchor_to_pet": True,
+        }
+        character = str(event.get("character") or event.get("target_character") or "").strip()
+        if character:
+            overlay["character"] = character
+        broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+
+    def handle_chat_integration_message(event: dict) -> dict:
+        with chat_integration_ref["lock"]:
+            stored = chat_integration_db().add_external_chat_message(event)
+        if not stored.get("duplicate"):
+            broadcast_chat_overlay(event, stored)
+        return stored
+
+    def handle_chat_integration_read(data: dict) -> dict:
+        with chat_integration_ref["lock"]:
+            result = chat_integration_db().mark_external_chat_read(
+                str(data.get("platform", "") or ""),
+                str(data.get("thread_id", "") or data.get("conversation_id", "") or ""),
+            )
+        overlay = {
+            "source": "chat",
+            "state": "clear",
+            "mode": "replace_raw",
+            "text": "",
+            "ttl_ms": 1,
+        }
+        broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+        return result
+
+    def init_chat_integration_server():
+        stop_chat_integration_server()
+        if not cfg.get("chat_integration_enabled", False):
+            return
+        port = _clamp_ai_status_port(cfg.get("chat_integration_port", 38473))
+        token = str(cfg.get("chat_integration_token", "") or "")
+        try:
+            server = ChatIntegrationHttpServer(
+                port,
+                token,
+                handle_chat_integration_message,
+                handle_chat_integration_read,
+            )
+            server.start()
+        except OSError as exc:
+            print(f"Chat integration port failed to start on 127.0.0.1:{port}: {exc}")
+            return
+        chat_integration_ref["server"] = server
+
     def read_ipc_client(socket):
         if not isValid(socket):
             return
@@ -183,6 +285,8 @@ def main():
         if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
         elif line.startswith("AI_EVENT\t"):
+            broadcast_ipc_line(line)
+        elif line.startswith("CHAT_EVENT\t"):
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
@@ -344,6 +448,25 @@ def main():
             "ai_status_token",
             pet_window_ref.get("ai_status_token", cfg.get("ai_status_token", "")),
         )
+        pet_window_ref["chat_integration_enabled"] = data.get(
+            "chat_integration_enabled",
+            pet_window_ref.get("chat_integration_enabled", cfg.get("chat_integration_enabled", False)),
+        )
+        pet_window_ref["chat_integration_overlay_enabled"] = data.get(
+            "chat_integration_overlay_enabled",
+            pet_window_ref.get("chat_integration_overlay_enabled", cfg.get("chat_integration_overlay_enabled", True)),
+        )
+        pet_window_ref["chat_integration_include_context"] = data.get(
+            "chat_integration_include_context",
+            pet_window_ref.get("chat_integration_include_context", cfg.get("chat_integration_include_context", True)),
+        )
+        pet_window_ref["chat_integration_port"] = _clamp_ai_status_port(
+            data.get("chat_integration_port", pet_window_ref.get("chat_integration_port", cfg.get("chat_integration_port", 38473)))
+        )
+        pet_window_ref["chat_integration_token"] = data.get(
+            "chat_integration_token",
+            pet_window_ref.get("chat_integration_token", cfg.get("chat_integration_token", "")),
+        )
         cfg.load()
         if language:
             cfg.set("language", language)
@@ -365,6 +488,11 @@ def main():
         cfg.set("ai_status_port_enabled", pet_window_ref["ai_status_port_enabled"])
         cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
         cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
+        cfg.set("chat_integration_enabled", pet_window_ref["chat_integration_enabled"])
+        cfg.set("chat_integration_overlay_enabled", pet_window_ref["chat_integration_overlay_enabled"])
+        cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
+        cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
+        cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
         if "user_avatar_color" in data:
             cfg.set("user_avatar_color", data["user_avatar_color"])
         if "user_avatar_path" in data:
@@ -375,6 +503,7 @@ def main():
             cfg.set("models", data["models"])
         cfg.save()
         init_ai_status_server()
+        init_chat_integration_server()
 
     def launch_pet():
         cfg.load()
@@ -418,6 +547,16 @@ def main():
             cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
         if "ai_status_token" in pet_window_ref:
             cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
+        if "chat_integration_enabled" in pet_window_ref:
+            cfg.set("chat_integration_enabled", pet_window_ref["chat_integration_enabled"])
+        if "chat_integration_overlay_enabled" in pet_window_ref:
+            cfg.set("chat_integration_overlay_enabled", pet_window_ref["chat_integration_overlay_enabled"])
+        if "chat_integration_include_context" in pet_window_ref:
+            cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
+        if "chat_integration_port" in pet_window_ref:
+            cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
+        if "chat_integration_token" in pet_window_ref:
+            cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")
@@ -528,9 +667,12 @@ def main():
     init_tray()
     init_ipc_server()
     init_ai_status_server()
+    init_chat_integration_server()
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
+    app.aboutToQuit.connect(stop_chat_integration_server)
+    app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(close_settings_process)
     app.aboutToQuit.connect(close_pet_processes)
 

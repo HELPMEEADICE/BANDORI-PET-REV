@@ -3564,6 +3564,10 @@ class ChatWindow(QWidget):
             self._user_memory_key(),
             self._user_name or _tr("ChatWindow.you"),
         )
+        if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
+            external_context = self._db.external_chat_context_text()
+            if external_context:
+                system_prompt += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         if self._is_group_chat:
             history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []

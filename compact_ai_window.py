@@ -635,6 +635,10 @@ class CompactAIWindow(QWidget):
             self._user_memory_key(),
             self._display_user_name(),
         )
+        if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
+            external_context = self._db.external_chat_context_text()
+            if external_context:
+                system_prompt += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         now = datetime.now().strftime("%Y-%m-%d %I:%M %p")

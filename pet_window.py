@@ -232,6 +232,7 @@ class PetWindow(QWidget):
         self._suppress_compact_ai_sync = False
         self._compact_ai_window_enabled = bool(self._cfg.get("compact_ai_window_enabled", False)) if self._cfg else False
         self._ai_event_overlay_enabled = bool(self._cfg.get("ai_event_overlay_enabled", False)) if self._cfg else False
+        self._chat_integration_overlay_enabled = bool(self._cfg.get("chat_integration_overlay_enabled", True)) if self._cfg else True
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
@@ -947,6 +948,11 @@ class PetWindow(QWidget):
             "compact_ai_window_background_color",
             "compact_ai_window_text_color",
             "ai_event_overlay_enabled",
+            "chat_integration_enabled",
+            "chat_integration_overlay_enabled",
+            "chat_integration_include_context",
+            "chat_integration_port",
+            "chat_integration_token",
             "user_avatar_color",
             "user_avatar_path",
             "language",
@@ -967,6 +973,16 @@ class PetWindow(QWidget):
                 self._cfg.set("compact_ai_window_text_color", data["compact_ai_window_text_color"])
             if "ai_event_overlay_enabled" in data:
                 self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
+            if "chat_integration_overlay_enabled" in data:
+                self._cfg.set("chat_integration_overlay_enabled", bool(data["chat_integration_overlay_enabled"]))
+            if "chat_integration_enabled" in data:
+                self._cfg.set("chat_integration_enabled", bool(data["chat_integration_enabled"]))
+            if "chat_integration_include_context" in data:
+                self._cfg.set("chat_integration_include_context", bool(data["chat_integration_include_context"]))
+            if "chat_integration_port" in data:
+                self._cfg.set("chat_integration_port", data["chat_integration_port"])
+            if "chat_integration_token" in data:
+                self._cfg.set("chat_integration_token", data["chat_integration_token"])
             if "hide_live2d_model" in data:
                 self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
             if "live2d_idle_actions_enabled" in data:
@@ -982,6 +998,8 @@ class PetWindow(QWidget):
             self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
         if "ai_event_overlay_enabled" in data:
             self._ai_event_overlay_enabled = bool(data["ai_event_overlay_enabled"])
+        if "chat_integration_overlay_enabled" in data:
+            self._chat_integration_overlay_enabled = bool(data["chat_integration_overlay_enabled"])
         if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
             self._compact_ai_window.reset_position_offset()
         if "fps" in data:
@@ -1397,6 +1415,11 @@ class PetWindow(QWidget):
                 self._handle_ai_event(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
+        elif line.startswith("CHAT_EVENT\t"):
+            try:
+                self._handle_chat_event(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
         elif line == "SHUTDOWN":
             self._quit()
 
@@ -1426,6 +1449,39 @@ class PetWindow(QWidget):
 
         if not self._compact_ai_window_enabled:
             return
+        if not self.isVisible():
+            return
+        should_position = (
+            self._compact_ai_window is None
+            or not self._compact_ai_window.isVisible()
+            or bool(event.get("anchor_to_pet"))
+        )
+        self._sync_compact_ai_window(
+            allow_create=True,
+            force_visible=True,
+            reposition=should_position,
+        )
+        if self._compact_ai_window is None:
+            return
+        self._compact_ai_window.apply_ai_event(event)
+
+    def _handle_chat_event(self, event: dict):
+        if not isinstance(event, dict):
+            return
+        if not self._chat_integration_overlay_enabled:
+            return
+        target = str(
+            event.get("character")
+            or event.get("target_character")
+            or ""
+        ).strip()
+        if target and target != self._current_char:
+            return
+
+        action = str(event.get("action", "") or "").strip()
+        if action:
+            self._on_chat_action(action)
+
         if not self.isVisible():
             return
         should_position = (
