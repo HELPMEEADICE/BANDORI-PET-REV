@@ -1,5 +1,8 @@
 import os
+import secrets
 import shutil
+import urllib.error
+import urllib.request
 from datetime import datetime
 
 import fluent_bootstrap  # noqa: F401
@@ -29,6 +32,8 @@ from qfluentwidgets.common.config import qconfig
 
 from i18n_manager import tr as _tr, set_language, available_languages, current_language
 from process_utils import app_base_dir
+from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
+from app_update import detect_update_channel
 from app_theme import (
     BANDORI_PRIMARY,
     BANDORI_PRIMARY_HOVER,
@@ -87,9 +92,9 @@ _ROLEPLAY_STATUS_TIPS = {
     "red": "SettingsWindow.roleplay_status_red",
 }
 
-PROJECT_REPO_URL = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
-PROJECT_LICENSE_URL = f"{PROJECT_REPO_URL}/blob/main/LICENSE"
-PROJECT_QQ_GROUP_URL = "https://qm.qq.com/q/VJMrn5EkWQ"
+PROJECT_REPO_URL = APP_REPO_URL
+PROJECT_LICENSE_URL = APP_LICENSE_URL
+PROJECT_QQ_GROUP_URL = APP_QQ_GROUP_URL
 CLICK_MOTION_CONFIG_FORMAT = "bandori-click-motion-actions"
 CLICK_MOTION_CONFIG_VERSION = 1
 CLICK_MOTION_SCOPE_ALL = "all_models"
@@ -1298,7 +1303,7 @@ class SettingsWindow(QWidget):
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.quit()
@@ -4042,9 +4047,33 @@ class SettingsWindow(QWidget):
             self._chat_integration_include_context,
         )
 
+        layout.addWidget(SubtitleLabel(_tr(
+            "SettingsWindow.chat_integration_quick_setup",
+            default="快速配置",
+        ), page))
+
         endpoint_row = QHBoxLayout()
         endpoint_row.setContentsMargins(0, 0, 0, 0)
         endpoint_row.setSpacing(8)
+        self._chat_integration_endpoint_input = FluentContextLineEdit(page)
+        self._chat_integration_endpoint_input.setReadOnly(True)
+        self._chat_integration_endpoint_input.setFixedHeight(36)
+        copy_endpoint_btn = PushButton(FluentIcon.COPY, _tr(
+            "SettingsWindow.chat_integration_copy_endpoint",
+            default="复制地址",
+        ), page)
+        copy_endpoint_btn.clicked.connect(self._copy_chat_integration_endpoint)
+        endpoint_row.addWidget(BodyLabel(_tr(
+            "SettingsWindow.chat_integration_endpoint",
+            default="接收地址",
+        ), page))
+        endpoint_row.addWidget(self._chat_integration_endpoint_input, 1)
+        endpoint_row.addWidget(copy_endpoint_btn)
+        layout.addLayout(endpoint_row)
+
+        config_row = QHBoxLayout()
+        config_row.setContentsMargins(0, 0, 0, 0)
+        config_row.setSpacing(8)
         self._chat_integration_port_input = LineEdit(page)
         self._chat_integration_port_input.setFixedWidth(120)
         self._chat_integration_port_input.setFixedHeight(36)
@@ -4057,37 +4086,76 @@ class SettingsWindow(QWidget):
             "SettingsWindow.chat_integration_token_placeholder",
             default="可留空；给第三方脚本使用时建议填写",
         ))
-        endpoint_row.addWidget(BodyLabel(_tr("SettingsWindow.chat_integration_port_number", default="端口"), page))
-        endpoint_row.addWidget(self._chat_integration_port_input)
-        endpoint_row.addSpacing(12)
-        endpoint_row.addWidget(token_label)
-        endpoint_row.addWidget(self._chat_integration_token_input, 1)
-        layout.addLayout(endpoint_row)
+        generate_token_btn = PushButton(FluentIcon.SYNC, _tr(
+            "SettingsWindow.chat_integration_generate_token",
+            default="生成 Token",
+        ), page)
+        generate_token_btn.clicked.connect(self._generate_chat_integration_token)
+        copy_token_btn = PushButton(FluentIcon.COPY, _tr(
+            "SettingsWindow.chat_integration_copy_token",
+            default="复制 Token",
+        ), page)
+        copy_token_btn.clicked.connect(self._copy_chat_integration_token)
+        config_row.addWidget(BodyLabel(_tr("SettingsWindow.chat_integration_port_number", default="端口"), page))
+        config_row.addWidget(self._chat_integration_port_input)
+        config_row.addSpacing(12)
+        config_row.addWidget(token_label)
+        config_row.addWidget(self._chat_integration_token_input, 1)
+        config_row.addWidget(generate_token_btn)
+        config_row.addWidget(copy_token_btn)
+        layout.addLayout(config_row)
 
         hint = BodyLabel(_tr(
             "SettingsWindow.chat_integration_hint",
-            default="开启后监听 127.0.0.1，接收 POST /chat-events 的 JSON。外部消息会进入本地数据库；开启上下文后，下一次角色聊天会看到最近消息。",
+            default="开启后监听 127.0.0.1，可接收 JSON、表单、纯文本或 URL 参数。外部消息会进入本地数据库；开启上下文后，下一次角色聊天会看到最近消息。",
         ), page)
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+        self._chat_integration_preview = JsonCodeEdit(page)
+        self._chat_integration_preview.setReadOnly(True)
+        self._chat_integration_preview.setFixedHeight(170)
+        layout.addWidget(self._chat_integration_preview)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 0, 0)
         save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.chat_integration_save", default="保存聊天接入配置"), page)
         save_btn.clicked.connect(lambda: self._save_chat_integration_config(show_info=True, emit_update=True))
+        copy_setup_btn = PushButton(FluentIcon.COPY, _tr(
+            "SettingsWindow.chat_integration_copy_setup",
+            default="复制接入信息",
+        ), page)
+        copy_setup_btn.clicked.connect(self._copy_chat_integration_setup)
+        test_btn = PushButton(FluentIcon.WIFI, _tr(
+            "SettingsWindow.chat_integration_test",
+            default="发送测试消息",
+        ), page)
+        test_btn.clicked.connect(self._test_chat_integration)
+        guide_btn = PushButton(FluentIcon.INFO, _tr(
+            "SettingsWindow.chat_integration_open_guide",
+            default="打开教程",
+        ), page)
+        guide_btn.clicked.connect(self._open_chat_integration_guide)
         btn_row.addWidget(save_btn)
+        btn_row.addWidget(copy_setup_btn)
+        btn_row.addWidget(test_btn)
+        btn_row.addWidget(guide_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
         apply_hint = BodyLabel(_tr(
             "SettingsWindow.chat_integration_apply_hint",
-            default="保存后请点击右侧“应用”或重启桌宠，让端口启动或刷新。",
+            default="保存后会立即通知正在运行的桌宠刷新端口；如果没有启动桌宠，请启动后再测试。",
         ), page)
         apply_hint.setWordWrap(True)
         layout.addWidget(apply_hint)
         layout.addStretch()
 
+        self._chat_integration_port_input.textChanged.connect(self._update_chat_integration_quick_setup)
+        self._chat_integration_token_input.textChanged.connect(self._update_chat_integration_quick_setup)
         self._load_chat_integration_config()
+        self._style_chat_integration_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_chat_integration_page(page))
         return page
 
     def _chat_integration_widgets_ready(self) -> bool:
@@ -4097,9 +4165,199 @@ class SettingsWindow(QWidget):
                 "_chat_integration_enabled",
                 "_chat_integration_overlay_enabled",
                 "_chat_integration_include_context",
+                "_chat_integration_endpoint_input",
                 "_chat_integration_port_input",
                 "_chat_integration_token_input",
+                "_chat_integration_preview",
             )
+        )
+
+    def _style_chat_integration_page(self, page: QWidget):
+        dark = isDarkTheme()
+        text_border = "#4a4a4a" if dark else "#d8d8d8"
+        input_bg = "#2b2b2b" if dark else "#ffffff"
+        text = "#f7f7fb" if dark else "#1f2328"
+        readonly_bg = "#242424" if dark else "#f8f8f8"
+        page.setStyleSheet(f"""
+            QLineEdit {{
+                color: {text};
+                background: {input_bg};
+                border: 1px solid {text_border};
+                border-radius: 6px;
+                padding: 6px;
+            }}
+            QLineEdit[readOnly="true"] {{
+                background: {readonly_bg};
+            }}
+            QPlainTextEdit#JsonCodeEdit {{
+                color: {text};
+                background: {readonly_bg};
+                border: 1px solid {text_border};
+                border-radius: 6px;
+                padding-left: 0px;
+                selection-background-color: {BANDORI_PRIMARY};
+            }}
+        """)
+
+    def _chat_integration_endpoint_url(self) -> str:
+        if self._chat_integration_widgets_ready():
+            port = self._clamp_chat_integration_port(self._chat_integration_port_input.text())
+        elif self._cfg:
+            port = self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))
+        else:
+            port = 38473
+        return f"http://127.0.0.1:{port}/chat-events"
+
+    def _chat_integration_sample_event(self) -> dict:
+        return {
+            "platform": "qq",
+            "thread_id": "default",
+            "thread_name": "接入测试",
+            "sender_name": "测试用户",
+            "text": "这是一条从聊天软件推送到 BandoriPet 的测试消息。",
+        }
+
+    def _chat_integration_setup_text(self) -> str:
+        endpoint = self._chat_integration_endpoint_url()
+        token = self._chat_integration_token_input.text().strip() if self._chat_integration_widgets_ready() else ""
+        headers = "Content-Type: application/json"
+        if token:
+            headers += f"\nAuthorization: Bearer {token}"
+        sample = json.dumps(self._chat_integration_sample_event(), ensure_ascii=False, indent=2)
+        url_sample = (
+            f"{endpoint}?platform=qq&thread_id=default&thread_name=接入测试"
+            f"&sender_name=发送人&text=消息内容"
+        )
+        if token:
+            url_sample += f"&token={token}"
+        return "\n".join([
+            "BandoriPet 聊天接入信息",
+            f"接收地址: {endpoint}",
+            "请求方式: POST（推荐）或 GET URL 参数；支持 JSON、表单和纯文本正文",
+            headers,
+            "",
+            "最小 JSON:",
+            sample,
+            "",
+            "URL 参数模式:",
+            url_sample,
+            "",
+            "字段对应：text=消息内容，sender_name=发送人，thread_name=群聊/私聊名称。",
+        ])
+
+    def _update_chat_integration_quick_setup(self, *_args):
+        if not self._chat_integration_widgets_ready():
+            return
+        self._chat_integration_endpoint_input.setText(self._chat_integration_endpoint_url())
+        self._chat_integration_preview.setPlainText(self._chat_integration_setup_text())
+
+    def _copy_chat_integration_endpoint(self):
+        if not self._chat_integration_widgets_ready():
+            return
+        QApplication.clipboard().setText(self._chat_integration_endpoint_url())
+        InfoBar.success(
+            _tr("SettingsWindow.chat_integration_endpoint_copied_title", default="已复制"),
+            _tr("SettingsWindow.chat_integration_endpoint_copied_content", default="聊天接入地址已复制。"),
+            duration=1600,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _generate_chat_integration_token(self):
+        if not self._chat_integration_widgets_ready():
+            return
+        self._chat_integration_token_input.setText(secrets.token_urlsafe(18))
+        InfoBar.success(
+            _tr("SettingsWindow.chat_integration_token_generated_title", default="已生成 Token"),
+            _tr("SettingsWindow.chat_integration_token_generated_content", default="请保存配置后，把 Token 一起填到聊天软件或转发插件里。"),
+            duration=2200,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _copy_chat_integration_token(self):
+        if not self._chat_integration_widgets_ready():
+            return
+        token = self._chat_integration_token_input.text().strip()
+        if not token:
+            InfoBar.warning(
+                _tr("SettingsWindow.chat_integration_token_empty_title", default="没有 Token"),
+                _tr("SettingsWindow.chat_integration_token_empty_content", default="当前 Token 为空，可以先点击“生成 Token”。"),
+                duration=2200,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        QApplication.clipboard().setText(token)
+        InfoBar.success(
+            _tr("SettingsWindow.chat_integration_token_copied_title", default="已复制"),
+            _tr("SettingsWindow.chat_integration_token_copied_content", default="Token 已复制。"),
+            duration=1600,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _copy_chat_integration_setup(self):
+        if not self._chat_integration_widgets_ready():
+            return
+        QApplication.clipboard().setText(self._chat_integration_setup_text())
+        InfoBar.success(
+            _tr("SettingsWindow.chat_integration_setup_copied_title", default="已复制"),
+            _tr("SettingsWindow.chat_integration_setup_copied_content", default="接入信息已复制，可直接粘贴到聊天软件的 Webhook/HTTP 配置里。"),
+            duration=2200,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _open_chat_integration_guide(self):
+        path = os.path.join(app_base_dir(), "CHAT_INTEGRATION_GUIDE.md")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _test_chat_integration(self):
+        if not self._chat_integration_widgets_ready():
+            return
+        if not self._chat_integration_enabled.isChecked():
+            self._chat_integration_enabled.setChecked(True)
+        self._save_chat_integration_config(show_info=False, emit_update=True)
+        QTimer.singleShot(350, self._send_chat_integration_test_request)
+
+    def _send_chat_integration_test_request(self):
+        endpoint = self._chat_integration_endpoint_url()
+        token = self._chat_integration_token_input.text().strip() if self._chat_integration_widgets_ready() else ""
+        data = json.dumps(self._chat_integration_sample_event(), ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                body = resp.read(4096).decode("utf-8", errors="replace")
+            payload = json.loads(body) if body else {}
+            if isinstance(payload, dict) and payload.get("ok"):
+                InfoBar.success(
+                    _tr("SettingsWindow.chat_integration_test_success_title", default="测试成功"),
+                    _tr("SettingsWindow.chat_integration_test_success_content", default="BandoriPet 已收到测试消息，悬浮摘要和上下文接入可用。"),
+                    duration=2600,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+            raise RuntimeError(body or "empty response")
+        except urllib.error.HTTPError as exc:
+            body = exc.read(4096).decode("utf-8", errors="replace")
+            detail = body or str(exc)
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, RuntimeError) as exc:
+            detail = str(exc)
+        InfoBar.error(
+            _tr("SettingsWindow.chat_integration_test_failed_title", default="测试失败"),
+            _tr(
+                "SettingsWindow.chat_integration_test_failed_content",
+                default="没有连上本地接入口。请确认桌宠正在运行，并已保存/应用聊天接入配置。错误：{error}",
+                error=detail,
+            ),
+            duration=4500,
+            position=InfoBarPosition.TOP,
+            parent=self,
         )
 
     def _load_chat_integration_config(self):
@@ -4110,6 +4368,7 @@ class SettingsWindow(QWidget):
         self._chat_integration_include_context.setChecked(bool(self._cfg.get("chat_integration_include_context", True)))
         self._chat_integration_port_input.setText(str(self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))))
         self._chat_integration_token_input.setText(str(self._cfg.get("chat_integration_token", "") or ""))
+        self._update_chat_integration_quick_setup()
 
     def _chat_integration_settings_data(self) -> dict:
         if not self._cfg:
@@ -4627,9 +4886,12 @@ class SettingsWindow(QWidget):
         subtitle.setWordWrap(True)
         desc = BodyLabel(_tr("SettingsWindow.about_desc"), hero)
         desc.setWordWrap(True)
+        version = BodyLabel(_tr("SettingsWindow.about_version", version=APP_VERSION), hero)
+        version.setObjectName("aboutVersion")
         hero_text.addWidget(title)
         hero_text.addWidget(subtitle)
         hero_text.addWidget(desc)
+        hero_text.addWidget(version)
         hero_layout.addLayout(hero_text, 1)
         layout.addWidget(hero)
 
@@ -4690,6 +4952,45 @@ class SettingsWindow(QWidget):
         qq_row.addStretch()
         info_layout.addLayout(qq_row)
 
+        update_card = QWidget(page)
+        update_card.setObjectName("aboutUpdateCard")
+        update_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        update_layout = QVBoxLayout(update_card)
+        update_layout.setContentsMargins(18, 16, 18, 16)
+        update_layout.setSpacing(10)
+
+        update_title = StrongBodyLabel(_tr("SettingsWindow.update_title"), update_card)
+        update_layout.addWidget(update_title)
+
+        self._update_status_label = BodyLabel(
+            _tr(
+                "SettingsWindow.update_idle",
+                channel=self._update_channel_label(detect_update_channel()),
+            ),
+            update_card,
+        )
+        self._update_status_label.setWordWrap(True)
+        update_layout.addWidget(self._update_status_label)
+
+        self._update_detail_label = BodyLabel(_tr("SettingsWindow.update_hint"), update_card)
+        self._update_detail_label.setObjectName("aboutUpdateDetail")
+        self._update_detail_label.setWordWrap(True)
+        update_layout.addWidget(self._update_detail_label)
+
+        update_btn_row = QHBoxLayout()
+        update_btn_row.setContentsMargins(0, 2, 0, 0)
+        update_btn_row.setSpacing(10)
+        self._check_update_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.update_check"), update_card)
+        self._check_update_btn.clicked.connect(self._check_for_app_updates)
+        self._apply_update_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.update_apply"), update_card)
+        self._apply_update_btn.setEnabled(False)
+        self._apply_update_btn.clicked.connect(self._apply_pending_app_update)
+        update_btn_row.addWidget(self._check_update_btn)
+        update_btn_row.addWidget(self._apply_update_btn)
+        update_btn_row.addStretch()
+        update_layout.addLayout(update_btn_row)
+        layout.addWidget(update_card)
+
         tech = BodyLabel(_tr("SettingsWindow.about_tech"), page)
         tech.setObjectName("aboutTech")
         tech.setWordWrap(True)
@@ -4730,10 +5031,18 @@ class SettingsWindow(QWidget):
                 border: 1px solid {card_border};
                 border-radius: 14px;
             }}
+            QWidget#aboutUpdateCard {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+            }}
             QWidget#aboutHero TitleLabel {{ color: {text}; }}
             QWidget#aboutHero SubtitleLabel {{ color: {text}; font-weight: 700; }}
             QWidget#aboutHero BodyLabel {{ color: {muted}; font-size: 13px; line-height: 1.5; }}
+            BodyLabel#aboutVersion {{ color: {text}; font-weight: 700; }}
             QWidget#aboutInfoCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            QWidget#aboutUpdateCard BodyLabel {{ color: {text}; font-size: 13px; }}
+            QWidget#aboutUpdateCard BodyLabel#aboutUpdateDetail {{ color: {muted}; }}
             BodyLabel#aboutTech {{ color: {muted}; font-size: 13px; padding: 2px 4px; }}
         """)
 
@@ -4742,6 +5051,163 @@ class SettingsWindow(QWidget):
         color = BANDORI_PRIMARY_DARK if isDarkTheme() else BANDORI_PRIMARY
         text = "#dcdcdc" if isDarkTheme() else "#303030"
         label.setStyleSheet(f"QLabel {{ color: {text}; font-size: 13px; }} QLabel a {{ color: {color}; }}")
+
+    def _update_channel_label(self, channel: str) -> str:
+        return _tr(
+            f"SettingsWindow.update_channel_{channel}",
+            default=_tr("SettingsWindow.update_channel_unknown"),
+        )
+
+    def _check_for_app_updates(self):
+        worker = getattr(self, "_update_check_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        self._pending_update_info = None
+        self._check_update_btn.setEnabled(False)
+        self._apply_update_btn.setEnabled(False)
+        self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+        self._update_status_label.setText(_tr("SettingsWindow.update_checking"))
+        self._update_detail_label.setText("")
+
+        self._update_check_worker = UpdateCheckWorker(parent=self)
+        self._update_check_worker.finished.connect(self._on_app_update_checked)
+        self._update_check_worker.error.connect(self._on_app_update_check_error)
+        self._update_check_worker.start()
+
+    def _on_app_update_checked(self, info):
+        self._update_check_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._pending_update_info = info if info.can_update else None
+
+        if info.update_available:
+            latest = info.latest_version or info.summary
+            self._update_status_label.setText(
+                _tr("SettingsWindow.update_available", version=latest)
+            )
+            if info.can_update:
+                self._apply_update_btn.setEnabled(True)
+                self._apply_update_btn.setText(
+                    _tr("SettingsWindow.update_apply_version", version=latest)
+                )
+            else:
+                self._apply_update_btn.setEnabled(False)
+                self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+        else:
+            self._update_status_label.setText(_tr("SettingsWindow.update_none"))
+            self._apply_update_btn.setEnabled(False)
+            self._apply_update_btn.setText(_tr("SettingsWindow.update_apply"))
+
+        self._update_detail_label.setText(self._format_update_detail(info))
+
+    def _on_app_update_check_error(self, message: str):
+        self._update_check_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_failed"))
+        self._update_detail_label.setText(message)
+        InfoBar.error(
+            _tr("SettingsWindow.update_failed"),
+            message,
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _format_update_detail(self, info) -> str:
+        parts = []
+        if info.channel:
+            parts.append(
+                _tr(
+                    "SettingsWindow.update_channel_line",
+                    channel=self._update_channel_label(info.channel),
+                )
+            )
+        if info.asset_name:
+            size = self._format_update_size(info.asset_size)
+            parts.append(
+                _tr(
+                    "SettingsWindow.update_asset_line",
+                    asset=info.asset_name,
+                    size=size,
+                )
+            )
+        detail = (info.detail or info.summary or "").strip()
+        if detail:
+            if len(detail) > 420:
+                detail = detail[:420].rstrip() + "..."
+            parts.append(detail)
+        return "\n".join(parts) if parts else _tr("SettingsWindow.update_hint")
+
+    @staticmethod
+    def _format_update_size(size: int) -> str:
+        if not size:
+            return "-"
+        value = float(size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+            value /= 1024
+        return f"{size} B"
+
+    def _apply_pending_app_update(self):
+        info = getattr(self, "_pending_update_info", None)
+        if info is None or not info.can_update:
+            return
+        worker = getattr(self, "_update_apply_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            _tr("SettingsWindow.update_confirm_title"),
+            _tr("SettingsWindow.update_confirm_content"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._check_update_btn.setEnabled(False)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_applying"))
+        self._update_detail_label.setText("")
+
+        self._update_apply_worker = UpdateApplyWorker(info, parent=self)
+        self._update_apply_worker.finished.connect(self._on_app_update_applied)
+        self._update_apply_worker.error.connect(self._on_app_update_apply_error)
+        self._update_apply_worker.start()
+
+    def _on_app_update_applied(self, result):
+        self._update_apply_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(False)
+        self._update_status_label.setText(_tr("SettingsWindow.update_apply_success"))
+        self._update_detail_label.setText(result.message)
+        InfoBar.success(
+            _tr("SettingsWindow.update_apply_success"),
+            result.message,
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+        if result.exits_app:
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(800, app.quit)
+
+    def _on_app_update_apply_error(self, message: str):
+        self._update_apply_worker = None
+        self._check_update_btn.setEnabled(True)
+        self._apply_update_btn.setEnabled(getattr(self, "_pending_update_info", None) is not None)
+        self._update_status_label.setText(_tr("SettingsWindow.update_apply_failed"))
+        self._update_detail_label.setText(message)
+        InfoBar.error(
+            _tr("SettingsWindow.update_apply_failed"),
+            message,
+            duration=7000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _on_quality_changed(self, index: int):
         profile = self._quality_combo.itemData(index)
@@ -5104,10 +5570,42 @@ class SettingsWindow(QWidget):
         )
         return all(left.get(key) == right.get(key) for key in keys)
 
+    def _llm_profile_api_identity_equal(self, left: dict, right: dict) -> bool:
+        keys = (
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+            "llm_api_mode",
+        )
+        return all(left.get(key) == right.get(key) for key in keys)
+
     def _matching_llm_api_profile_name(self) -> str:
         current = self._current_llm_api_profile("__current__")
-        for profile in self._normalized_llm_api_profiles():
+        profiles = self._normalized_llm_api_profiles()
+        for profile in profiles:
             if self._llm_profiles_equal(current, profile):
+                return profile["name"]
+
+        preferred_names = []
+        combo_index = self._llm_api_profile_combo.currentIndex()
+        combo_name = ""
+        if combo_index >= 0:
+            combo_name = self._llm_api_profile_combo.itemData(combo_index) or ""
+        if combo_name:
+            preferred_names.append(combo_name)
+        if self._cfg:
+            active_name = str(self._cfg.get("llm_active_api_profile", "") or "").strip()
+            if active_name and active_name not in preferred_names:
+                preferred_names.append(active_name)
+
+        for name in preferred_names:
+            for profile in profiles:
+                if profile["name"] == name and self._llm_profile_api_identity_equal(current, profile):
+                    return profile["name"]
+
+        for profile in profiles:
+            if self._llm_profile_api_identity_equal(current, profile):
                 return profile["name"]
         return ""
 
@@ -6267,6 +6765,36 @@ def _responses_api_url(api_url: str) -> str:
     if url.endswith("/v1"):
         return url + "/responses"
     return url + "/responses"
+
+
+class UpdateCheckWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def run(self):
+        try:
+            from app_update import check_for_updates
+
+            self.finished.emit(check_for_updates())
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class UpdateApplyWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, update_info, parent=None):
+        super().__init__(parent)
+        self._update_info = update_info
+
+    def run(self):
+        try:
+            from app_update import apply_update
+
+            self.finished.emit(apply_update(self._update_info))
+        except Exception as exc:
+            self.error.emit(str(exc))
 
 
 class McpConnectionTestWorker(QThread):

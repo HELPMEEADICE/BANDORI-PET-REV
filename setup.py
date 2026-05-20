@@ -19,6 +19,8 @@ import PySide6.QtGui  # noqa: E402,F401
 import PySide6.QtOpenGLWidgets  # noqa: E402,F401
 import PySide6.QtWidgets  # noqa: E402,F401
 
+from app_info import APP_NAME, APP_VERSION  # noqa: E402
+
 
 class BuildExeWithEmptyModels(build_exe):
     def run(self):
@@ -181,17 +183,22 @@ build_exe_options = {
     "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data"],
 }
 
+base = "Win32GUI" if sys.platform == "win32" else None
+icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
+
 build_msi_options = {
     "dist_dir": str(BASE_DIR / "BUILD"),
+    "product_name": APP_NAME,
+    "product_version": APP_VERSION,
+    "upgrade_code": "{A8D4D0D2-3D5F-4F1E-9B26-1BDCBFC6D4A1}",
+    "install_icon": icon,
+    "initial_target_dir": r"[ProgramFilesFolder]\BandoriPet",
     "summary_data": {
         "author": "BandoriPet",
         "comments": "Bandori desktop pet",
         "keywords": "BandoriPet,Live2D,Desktop Pet",
     }
 } if sys.platform == "win32" else {}
-
-base = "Win32GUI" if sys.platform == "win32" else None
-icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
 
 _exec_suffix = ".exe" if sys.platform == "win32" else ""
 
@@ -205,8 +212,8 @@ executables = [
 ]
 
 setup(
-    name="BandoriPet",
-    version="3.0.0",
+    name=APP_NAME,
+    version=APP_VERSION,
     description="Bandori desktop pet",
     options={"build_exe": build_exe_options, "build_msi": build_msi_options, "bdist_msi": build_msi_options},
     executables=executables,

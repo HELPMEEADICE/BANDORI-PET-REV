@@ -34,6 +34,7 @@ QQ群：1046229865
 - 📌 **始终置顶 + 无边框** — 趴在你的窗口上方，赶都赶不走（误）。
 - 🔔 **系统托盘** — 右键一键切角色 / 开设置 / 优雅退场。
 - 🔊 **TTS 语音合成** — 接入 Qwen3TTS 后端，角色说话时自动语音播放 + Live2D 口型同步，支持中日英多语言。
+- 🔗 **聊天软件接入** — 本地 Webhook 端口可接收 QQ/微信/Telegram/Discord 等机器人转发消息，设置页支持复制地址、生成 Token 和一键测试。
 - 👥 **多角色同时显示** — 不止一个！你想放几个就放几个（只要你 GPU 撑得住）。
 - 🤖 **MCP + Computer Use 支持** — 通过 MCP 协议集成文件系统操作、浏览器控制等 AI Agent 扩展能力，让角色拥有"手"和"眼睛"。
 - 🌐 **多 LLM 后端 & 搜索增强** — 支持多组 API 配置切换，多后端同时在线，内置 Bing/Google 等多搜索引擎增强检索。
@@ -45,7 +46,7 @@ QQ群：1046229865
 ### 1. 环境要求
 
 - **Python 3.10+** & **LuaJIT 2.1+**
-- Windows（会在后续陆续支持多平台）
+- Windows, macOS, Linux(部分兼容)
 - 支持 OpenGL 3.3+ 的显卡（核显也能跑）
 
 ### 2. 克隆仓库
@@ -222,6 +223,31 @@ python setup.py build
 ```
 
 构建产物在 `BUILD/` 下。注意打包时模型文件不会被打包进去，用户需自行下载放入 `models/`。
+
+如需生成 Windows 安装包：
+
+```bash
+python setup.py build_msi
+```
+
+### 自动更新发布约定
+
+设置页的「关于」中带有检查更新入口。三种运行方式会自动走不同更新路径：
+
+| 运行方式 | 更新方式 |
+|----------|----------|
+| `git clone` 后运行源码 | `git fetch` 检查上游，点击更新后执行 `git pull --ff-only`，并用当前 Python 安装 `requirements.txt` |
+| 便携版 exe | 从 GitHub Release 下载最新 `.zip`，关闭程序后覆盖当前目录并重启 |
+| MSI 安装包 | 从 GitHub Release 下载最新 `.msi`，启动安装器完成升级 |
+
+发布新版本时请同步修改 `app_info.py` 中的 `APP_VERSION`，并在 GitHub Release 上传匹配当前平台的资产，例如：
+
+```text
+BandoriPet-3.0.1-WIN-AMD64.zip
+BandoriPet-3.0.1-WIN-AMD64.msi
+```
+
+如果你要从自己的仓库发布更新，请把 `app_info.py` 里的 `APP_REPOSITORY` 改成发布 Release 的仓库名。
 
 ---
 
