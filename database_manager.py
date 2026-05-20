@@ -173,6 +173,32 @@ def _state_row_dict(row) -> dict:
     }
 
 
+def _external_message_row_dict(row) -> dict:
+    return {
+        "id": _db_int(row[0]) or 0,
+        "platform": _db_text(row[1], "external") or "external",
+        "thread_id": _db_text(row[2], "default") or "default",
+        "external_message_id": _db_text(row[3]),
+        "sender_id": _db_text(row[4]),
+        "sender_name": _db_text(row[5]),
+        "direction": _db_text(row[6], "inbound") or "inbound",
+        "content": _db_text(row[7]),
+        "unread": bool(_db_int(row[8])),
+        "raw_json": _db_text(row[9]),
+        "created_at": _db_text(row[10]),
+    }
+
+
+def _clean_external_text(value, default: str = "") -> str:
+    text = _db_text(value, default).strip()
+    return text[:500]
+
+
+def _clean_external_content(value) -> str:
+    text = _db_text(value).strip()
+    return text[:20_000]
+
+
 def _clamp_int(value, low: int, high: int, default: int = 0) -> int:
     try:
         number = int(round(float(value)))
@@ -399,9 +425,40 @@ class DatabaseManager:
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS external_chat_threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                thread_name TEXT NOT NULL DEFAULT '',
+                unread_count INTEGER NOT NULL DEFAULT 0,
+                last_message_id INTEGER,
+                last_message_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(platform, thread_id)
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS external_chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                external_message_id TEXT NOT NULL DEFAULT '',
+                sender_id TEXT NOT NULL DEFAULT '',
+                sender_name TEXT NOT NULL DEFAULT '',
+                direction TEXT NOT NULL DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound', 'draft')),
+                content TEXT NOT NULL,
+                unread INTEGER NOT NULL DEFAULT 1,
+                raw_json TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_thread ON external_chat_messages(platform, thread_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_unread ON external_chat_messages(unread, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_external_id ON external_chat_messages(platform, thread_id, external_message_id)")
         columns = [r[1] for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()]
         if "reasoning_content" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
@@ -903,6 +960,250 @@ class DatabaseManager:
                 ")"
             )
         self._conn.commit()
+
+    def add_external_chat_message(self, event: dict) -> dict:
+        if not isinstance(event, dict):
+            raise ValueError("chat event must be an object")
+        platform = _clean_external_text(event.get("platform") or event.get("source") or "external", "external") or "external"
+        thread_id = _clean_external_text(
+            event.get("thread_id")
+            or event.get("conversation_id")
+            or event.get("chat_id")
+            or event.get("room_id")
+            or "default",
+            "default",
+        ) or "default"
+        thread_name = _clean_external_text(
+            event.get("thread_name")
+            or event.get("conversation_name")
+            or event.get("chat_name")
+            or event.get("room_name")
+            or thread_id
+        )
+        external_message_id = _clean_external_text(
+            event.get("message_id")
+            or event.get("external_message_id")
+            or event.get("id")
+            or ""
+        )
+        sender_id = _clean_external_text(event.get("sender_id") or event.get("author_id") or "")
+        sender_name = _clean_external_text(
+            event.get("sender_name")
+            or event.get("author_name")
+            or event.get("sender")
+            or event.get("from")
+            or sender_id
+            or "unknown"
+        )
+        content = _clean_external_content(
+            event.get("text")
+            or event.get("content")
+            or event.get("message")
+            or event.get("body")
+            or ""
+        )
+        if not content:
+            raise ValueError("chat event text/content is required")
+
+        direction = _clean_external_text(event.get("direction") or "inbound", "inbound").lower()
+        if direction not in {"inbound", "outbound", "draft"}:
+            direction = "inbound"
+        unread = 1 if bool(event.get("unread", direction == "inbound")) and direction == "inbound" else 0
+        created_at = _clean_external_text(event.get("timestamp") or event.get("created_at") or _now_text(), _now_text())
+
+        if external_message_id:
+            duplicate = self._conn.execute(
+                "SELECT id FROM external_chat_messages "
+                "WHERE platform=? AND thread_id=? AND external_message_id=? LIMIT 1",
+                (platform, thread_id, external_message_id),
+            ).fetchone()
+            if duplicate:
+                return {
+                    "duplicate": True,
+                    "message_id": _db_int(duplicate[0]) or 0,
+                    "thread": self._external_thread_summary(platform, thread_id),
+                    "unread": self.get_external_chat_unread_summary(),
+                }
+
+        cur = self._conn.execute(
+            "INSERT INTO external_chat_messages "
+            "(platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                platform,
+                thread_id,
+                external_message_id,
+                sender_id,
+                sender_name,
+                direction,
+                content,
+                unread,
+                _json_text(event),
+                created_at,
+            ),
+        )
+        message_id = int(cur.lastrowid or 0)
+        now = _now_text()
+        self._conn.execute(
+            "INSERT INTO external_chat_threads "
+            "(platform, thread_id, thread_name, unread_count, last_message_id, last_message_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(platform, thread_id) DO UPDATE SET "
+            "thread_name=CASE WHEN excluded.thread_name != '' THEN excluded.thread_name ELSE external_chat_threads.thread_name END, "
+            "unread_count=external_chat_threads.unread_count + ?, "
+            "last_message_id=excluded.last_message_id, "
+            "last_message_at=excluded.last_message_at, "
+            "updated_at=excluded.updated_at",
+            (
+                platform,
+                thread_id,
+                thread_name,
+                unread,
+                message_id,
+                created_at,
+                now,
+                unread,
+            ),
+        )
+        self._conn.commit()
+        return {
+            "duplicate": False,
+            "message_id": message_id,
+            "thread": self._external_thread_summary(platform, thread_id),
+            "unread": self.get_external_chat_unread_summary(),
+        }
+
+    def _external_thread_summary(self, platform: str, thread_id: str) -> dict:
+        row = self._conn.execute(
+            "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
+            "FROM external_chat_threads WHERE platform=? AND thread_id=?",
+            (platform, thread_id),
+        ).fetchone()
+        if not row:
+            return {
+                "platform": platform,
+                "thread_id": thread_id,
+                "thread_name": thread_id,
+                "unread_count": 0,
+                "last_message_at": "",
+            }
+        return {
+            "platform": _db_text(row[0], "external") or "external",
+            "thread_id": _db_text(row[1], "default") or "default",
+            "thread_name": _db_text(row[2]) or _db_text(row[1], "default"),
+            "unread_count": _db_int(row[3]) or 0,
+            "last_message_at": _db_text(row[4]),
+        }
+
+    def get_external_chat_unread_summary(self, limit_threads: int = 5, limit_messages: int = 3) -> dict:
+        limit_threads = _clamp_int(limit_threads, 1, 20, 5)
+        limit_messages = _clamp_int(limit_messages, 1, 10, 3)
+        total_row = self._conn.execute(
+            "SELECT COALESCE(SUM(unread_count), 0) FROM external_chat_threads"
+        ).fetchone()
+        total_unread = _db_int(total_row[0] if total_row else 0) or 0
+        rows = self._conn.execute(
+            "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
+            "FROM external_chat_threads WHERE unread_count > 0 "
+            "ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
+            (limit_threads,),
+        ).fetchall()
+        threads = []
+        for row in rows:
+            platform = _db_text(row[0], "external") or "external"
+            thread_id = _db_text(row[1], "default") or "default"
+            msg_rows = self._conn.execute(
+                "SELECT id, platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at "
+                "FROM external_chat_messages WHERE platform=? AND thread_id=? AND unread=1 "
+                "ORDER BY id DESC LIMIT ?",
+                (platform, thread_id, limit_messages),
+            ).fetchall()
+            messages = [_external_message_row_dict(item) for item in reversed(msg_rows)]
+            threads.append({
+                "platform": platform,
+                "thread_id": thread_id,
+                "thread_name": _db_text(row[2]) or thread_id,
+                "unread_count": _db_int(row[3]) or 0,
+                "last_message_at": _db_text(row[4]),
+                "messages": messages,
+            })
+        return {"total_unread": total_unread, "threads": threads}
+
+    def external_chat_context_text(self, limit_threads: int = 4, limit_messages: int = 6) -> str:
+        limit_threads = _clamp_int(limit_threads, 1, 12, 4)
+        limit_messages = _clamp_int(limit_messages, 1, 20, 6)
+        rows = self._conn.execute(
+            "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
+            "FROM external_chat_threads ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
+            (limit_threads,),
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = [
+            "【外部聊天软件上下文】",
+            "以下是 BandoriPet 最近从外部聊天软件收到的消息。可以用于理解用户当前可能在处理的对话；除非用户要求代写或总结，不要主动暴露隐私细节。",
+        ]
+        for row in rows:
+            platform = _db_text(row[0], "external") or "external"
+            thread_id = _db_text(row[1], "default") or "default"
+            thread_name = _db_text(row[2]) or thread_id
+            unread_count = _db_int(row[3]) or 0
+            lines.append(f"[{platform} / {thread_name} / 未读 {unread_count}]")
+            msg_rows = self._conn.execute(
+                "SELECT id, platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at "
+                "FROM external_chat_messages WHERE platform=? AND thread_id=? "
+                "ORDER BY id DESC LIMIT ?",
+                (platform, thread_id, limit_messages),
+            ).fetchall()
+            for message in [_external_message_row_dict(item) for item in reversed(msg_rows)]:
+                sender = message["sender_name"] or message["sender_id"] or "unknown"
+                content = message["content"].replace("\r", " ").replace("\n", " ").strip()
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                marker = "未读" if message["unread"] else "已读"
+                lines.append(f"- {message['created_at']} {sender}（{marker}）：{content}")
+        return "\n".join(lines)
+
+    def mark_external_chat_read(self, platform: str = "", thread_id: str = "") -> dict:
+        platform = _clean_external_text(platform)
+        thread_id = _clean_external_text(thread_id)
+        params: list[str] = []
+        where = "1=1"
+        if platform:
+            where += " AND platform=?"
+            params.append(platform)
+        if thread_id:
+            where += " AND thread_id=?"
+            params.append(thread_id)
+        cur = self._conn.execute(
+            f"UPDATE external_chat_messages SET unread=0 WHERE unread=1 AND {where}",
+            params,
+        )
+        if platform and thread_id:
+            self._conn.execute(
+                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE platform=? AND thread_id=?",
+                (_now_text(), platform, thread_id),
+            )
+        elif platform:
+            self._conn.execute(
+                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE platform=?",
+                (_now_text(), platform),
+            )
+        elif thread_id:
+            self._conn.execute(
+                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE thread_id=?",
+                (_now_text(), thread_id),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE external_chat_threads SET unread_count=0, updated_at=?",
+                (_now_text(),),
+            )
+        self._conn.commit()
+        return {
+            "marked_read": int(cur.rowcount or 0),
+            "unread": self.get_external_chat_unread_summary(),
+        }
 
     def close(self):
         self._conn.close()

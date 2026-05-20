@@ -1015,6 +1015,7 @@ class SettingsWindow(QWidget):
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
         self._compact_window_page = None
+        self._chat_integration_page = None
         self._mcp_computer_page = None
         self._quality_page = None
         self._about_page = None
@@ -1335,6 +1336,9 @@ class SettingsWindow(QWidget):
         if key == "compact_window":
             self._compact_window_page = self._add_lazy_page("compact_window", self._build_compact_window_page())
             return self._compact_window_page
+        if key == "chat_integration":
+            self._chat_integration_page = self._add_lazy_page("chat_integration", self._build_chat_integration_page())
+            return self._chat_integration_page
         if key == "mcp_computer":
             self._mcp_computer_page = self._add_lazy_page("mcp_computer", self._build_mcp_computer_page())
             return self._mcp_computer_page
@@ -1426,6 +1430,16 @@ class SettingsWindow(QWidget):
         btn_compact.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["compact_window"] = btn_compact
         layout.addWidget(btn_compact)
+
+        btn_chat_integration = NavButton(
+            "chat_integration",
+            FluentIcon.ROBOT,
+            _tr("SettingsWindow.nav_chat_integration", default="聊天接入"),
+            sidebar,
+        )
+        btn_chat_integration.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["chat_integration"] = btn_chat_integration
+        layout.addWidget(btn_chat_integration)
 
         btn_mcp_computer = NavButton(
             "mcp_computer",
@@ -3926,12 +3940,168 @@ class SettingsWindow(QWidget):
         self._style_compact_color_buttons(self._compact_text_color_btns)
         self._compact_window_reset_position_pending = True
 
+    def _build_chat_integration_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        title = TitleLabel(_tr("SettingsWindow.chat_integration_title", default="聊天接入"), page)
+        layout.addWidget(title)
+        subtitle = SubtitleLabel(_tr(
+            "SettingsWindow.chat_integration_subtitle",
+            default="接收外部聊天软件或脚本推送的消息，写入本地上下文，并在桌宠悬浮窗显示未读摘要。",
+        ), page)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        self._chat_integration_enabled = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.chat_integration_enabled", default="启用本地聊天接入端口"),
+            self._chat_integration_enabled,
+        )
+
+        self._chat_integration_overlay_enabled = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.chat_integration_overlay_enabled", default="收到消息时显示悬浮窗摘要"),
+            self._chat_integration_overlay_enabled,
+        )
+
+        self._chat_integration_include_context = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.chat_integration_include_context", default="允许模型读取最近外部聊天上下文"),
+            self._chat_integration_include_context,
+        )
+
+        endpoint_row = QHBoxLayout()
+        endpoint_row.setContentsMargins(0, 0, 0, 0)
+        endpoint_row.setSpacing(8)
+        self._chat_integration_port_input = LineEdit(page)
+        self._chat_integration_port_input.setFixedWidth(120)
+        self._chat_integration_port_input.setFixedHeight(36)
+        self._chat_integration_port_input.setValidator(QIntValidator(1024, 65535, self))
+        self._chat_integration_port_input.setPlaceholderText("38473")
+        token_label = BodyLabel(_tr("SettingsWindow.chat_integration_token", default="Token"), page)
+        self._chat_integration_token_input = LineEdit(page)
+        self._chat_integration_token_input.setFixedHeight(36)
+        self._chat_integration_token_input.setPlaceholderText(_tr(
+            "SettingsWindow.chat_integration_token_placeholder",
+            default="可留空；给第三方脚本使用时建议填写",
+        ))
+        endpoint_row.addWidget(BodyLabel(_tr("SettingsWindow.chat_integration_port_number", default="端口"), page))
+        endpoint_row.addWidget(self._chat_integration_port_input)
+        endpoint_row.addSpacing(12)
+        endpoint_row.addWidget(token_label)
+        endpoint_row.addWidget(self._chat_integration_token_input, 1)
+        layout.addLayout(endpoint_row)
+
+        hint = BodyLabel(_tr(
+            "SettingsWindow.chat_integration_hint",
+            default="开启后监听 127.0.0.1，接收 POST /chat-events 的 JSON。外部消息会进入本地数据库；开启上下文后，下一次角色聊天会看到最近消息。",
+        ), page)
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.chat_integration_save", default="保存聊天接入配置"), page)
+        save_btn.clicked.connect(lambda: self._save_chat_integration_config(show_info=True, emit_update=True))
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        apply_hint = BodyLabel(_tr(
+            "SettingsWindow.chat_integration_apply_hint",
+            default="保存后请点击右侧“应用”或重启桌宠，让端口启动或刷新。",
+        ), page)
+        apply_hint.setWordWrap(True)
+        layout.addWidget(apply_hint)
+        layout.addStretch()
+
+        self._load_chat_integration_config()
+        return page
+
+    def _chat_integration_widgets_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_chat_integration_enabled",
+                "_chat_integration_overlay_enabled",
+                "_chat_integration_include_context",
+                "_chat_integration_port_input",
+                "_chat_integration_token_input",
+            )
+        )
+
+    def _load_chat_integration_config(self):
+        if not self._cfg or not self._chat_integration_widgets_ready():
+            return
+        self._chat_integration_enabled.setChecked(bool(self._cfg.get("chat_integration_enabled", False)))
+        self._chat_integration_overlay_enabled.setChecked(bool(self._cfg.get("chat_integration_overlay_enabled", True)))
+        self._chat_integration_include_context.setChecked(bool(self._cfg.get("chat_integration_include_context", True)))
+        self._chat_integration_port_input.setText(str(self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))))
+        self._chat_integration_token_input.setText(str(self._cfg.get("chat_integration_token", "") or ""))
+
+    def _chat_integration_settings_data(self) -> dict:
+        if not self._cfg:
+            return {}
+        return {
+            "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False),
+            "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True),
+            "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True),
+            "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)),
+            "chat_integration_token": self._cfg.get("chat_integration_token", ""),
+        }
+
+    def _save_chat_integration_config(self, show_info: bool = True, emit_update: bool = False):
+        if not self._cfg or not self._chat_integration_widgets_ready():
+            return
+        self._cfg.set("chat_integration_enabled", self._chat_integration_enabled.isChecked())
+        self._cfg.set("chat_integration_overlay_enabled", self._chat_integration_overlay_enabled.isChecked())
+        self._cfg.set("chat_integration_include_context", self._chat_integration_include_context.isChecked())
+        self._cfg.set("chat_integration_port", self._clamp_chat_integration_port(self._chat_integration_port_input.text()))
+        self._cfg.set("chat_integration_token", self._chat_integration_token_input.text().strip())
+        try:
+            self._cfg.save()
+            if emit_update:
+                self.settings_changed.emit(self._chat_integration_settings_data())
+            if show_info:
+                InfoBar.success(
+                    _tr("SettingsWindow.chat_integration_saved_title", default="已保存"),
+                    _tr("SettingsWindow.chat_integration_saved_content", default="聊天接入配置已保存。"),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.chat_integration_failed_title", default="保存失败"),
+                str(exc),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
     @staticmethod
     def _clamp_ai_status_port(value) -> int:
         try:
             port = int(value)
         except (TypeError, ValueError):
             port = 38472
+        return max(1024, min(65535, port))
+
+    @staticmethod
+    def _clamp_chat_integration_port(value) -> int:
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            port = 38473
         return max(1024, min(65535, port))
 
     def _build_mcp_computer_page(self):
@@ -5950,6 +6120,7 @@ class SettingsWindow(QWidget):
             return
         self._save_llm_config(show_info=False)
         self._save_compact_window_config(show_info=False, emit_update=False)
+        self._save_chat_integration_config(show_info=False, emit_update=False)
         self._save_mcp_computer_config(show_info=False)
         self._save_configured_models()
         settings = {
@@ -5973,6 +6144,11 @@ class SettingsWindow(QWidget):
             "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False) if self._cfg else False,
             "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)) if self._cfg else 38472,
             "ai_status_token": self._cfg.get("ai_status_token", "") if self._cfg else "",
+            "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False) if self._cfg else False,
+            "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True) if self._cfg else True,
+            "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True) if self._cfg else True,
+            "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)) if self._cfg else 38473,
+            "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
             "user_avatar_path": self._cfg.get("user_avatar_path", "") if self._cfg else "",
             "models": [dict(item) for item in self._configured_models],
