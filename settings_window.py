@@ -4170,7 +4170,7 @@ class SettingsWindow(QWidget):
         except json.JSONDecodeError as exc:
             InfoBar.error(
                 _tr("SettingsWindow.mcp_json_invalid_title", default="MCP JSON 有误"),
-                _tr("SettingsWindow.mcp_json_invalid_content", default=f"请检查 JSON 格式：{exc}"),
+                _tr("SettingsWindow.mcp_json_invalid_content", default="请检查 JSON 格式：{error}", error=str(exc)),
                 duration=3500,
                 position=InfoBarPosition.TOP,
                 parent=self,

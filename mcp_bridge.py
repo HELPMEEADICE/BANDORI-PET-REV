@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from i18n_manager import tr as _tr
 
 _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
@@ -97,27 +98,36 @@ def mcp_native_tools(config: dict) -> list[dict]:
 
 def test_mcp_servers(config: dict) -> tuple[bool, str]:
     if not _mcp_enabled(config):
-        return False, "MCP is disabled in settings."
+        return False, _tr("McpBridge.disabled", default="MCP is disabled in settings.")
     servers = _enabled_servers(config)
     if not servers:
-        return False, "No enabled MCP servers were found."
+        return False, _tr("McpBridge.no_enabled_servers", default="No enabled MCP servers were found.")
 
     lines = []
     ok_count = 0
     warning_count = 0
+    fail_count = 0
     for server in servers:
         label = str(server.get("label", "") or "mcp")
         transport = str(server.get("transport", "stdio") or "stdio").lower()
         try:
             if transport == "native" and server.get("connector_id"):
                 warning_count += 1
-                lines.append(f"[WARN] {label}: connector_id native MCP can only be verified by the provider at request time.")
+                lines.append(_tr(
+                    "McpBridge.warn_native_connector",
+                    default="[WARN] {label}: connector_id native MCP can only be verified by the provider at request time.",
+                    label=label,
+                ))
                 continue
             if transport == "native":
                 url = str(server.get("url", "") or "").strip()
                 if not url:
                     warning_count += 1
-                    lines.append(f"[WARN] {label}: native MCP has no server URL or connector_id.")
+                    lines.append(_tr(
+                        "McpBridge.warn_native_missing_url",
+                        default="[WARN] {label}: native MCP has no server URL or connector_id.",
+                        label=label,
+                    ))
                     continue
                 tools = _list_http_tools(server)
             else:
@@ -126,13 +136,29 @@ def test_mcp_servers(config: dict) -> tuple[bool, str]:
             ok_count += 1
             preview = ", ".join(name for name in names[:6] if name)
             suffix = f" ({preview})" if preview else ""
-            lines.append(f"[OK] {label}: discovered {len(names)} tool(s){suffix}.")
+            lines.append(_tr(
+                "McpBridge.ok_tools_discovered",
+                default="[OK] {label}: discovered {count} tool(s){suffix}.",
+                label=label,
+                count=len(names),
+                suffix=suffix,
+            ))
         except Exception as exc:
-            lines.append(f"[FAIL] {label}: {_format_mcp_exception(server, exc)}")
+            fail_count += 1
+            lines.append(_tr(
+                "McpBridge.fail_server",
+                default="[FAIL] {label}: {error}",
+                label=label,
+                error=_format_mcp_exception(server, exc),
+            ))
 
-    success = ok_count > 0 and not any(line.startswith("[FAIL]") for line in lines)
+    success = ok_count > 0 and fail_count == 0
     if success and warning_count:
-        lines.append(f"[WARN] {warning_count} native connector item(s) require provider-side verification.")
+        lines.append(_tr(
+            "McpBridge.warn_provider_verification_count",
+            default="[WARN] {count} native connector item(s) require provider-side verification.",
+            count=warning_count,
+        ))
     return success, "\n".join(lines)
 
 
@@ -227,15 +253,29 @@ def _format_mcp_exception(server: dict, exc: Exception) -> str:
     cwd = str(server.get("cwd", "") or os.getcwd())
     detail = str(exc)
     if isinstance(exc, FileNotFoundError) or getattr(exc, "winerror", None) == 2:
-        hint = "MCP server process could not be started."
+        hint = _tr("McpBridge.process_start_hint", default="MCP server process could not be started.")
         if command:
-            hint += f" Command: {command}."
+            hint += " " + _tr("McpBridge.command_hint", default="Command: {command}.", command=command)
         if cwd:
-            hint += f" Working directory: {cwd}."
+            hint += " " + _tr("McpBridge.cwd_hint", default="Working directory: {cwd}.", cwd=cwd)
         if os.name == "nt" and command.lower() in {"npx", "npm", "pnpm", "yarn"}:
-            hint += " On Windows, install Node.js/npm and restart the app; if needed, set command to npx.cmd/npm.cmd or the full .cmd path."
-        return f"MCP server {label} is not available: {hint} ({detail})"
-    return f"MCP server {label} is not available: {detail}"
+            hint += " " + _tr(
+                "McpBridge.windows_node_hint",
+                default="On Windows, install Node.js/npm and restart the app; if needed, set command to npx.cmd/npm.cmd or the full .cmd path.",
+            )
+        return _tr(
+            "McpBridge.server_unavailable_with_hint",
+            default="MCP server {label} is not available: {hint} ({detail})",
+            label=label,
+            hint=hint,
+            detail=detail,
+        )
+    return _tr(
+        "McpBridge.server_unavailable",
+        default="MCP server {label} is not available: {detail}",
+        label=label,
+        detail=detail,
+    )
 
 
 def _list_server_tools(server: dict) -> list[dict]:
@@ -304,7 +344,7 @@ def _stdio_client(server: dict) -> "StdioMcpClient":
 def _request_http_json(server: dict, payload: dict) -> dict:
     url = str(server.get("url", "") or "").strip()
     if not url:
-        raise ValueError("HTTP MCP server url is empty")
+        raise ValueError(_tr("McpBridge.http_url_empty", default="HTTP MCP server url is empty"))
     timeout = int(server.get("timeout_seconds", 30) or 30)
     headers = {
         "Content-Type": "application/json",
@@ -330,7 +370,7 @@ def _request_http_json(server: dict, payload: dict) -> dict:
             data = line[5:].strip()
             if data and data != "[DONE]":
                 return json.loads(data)
-        raise ValueError("HTTP MCP server returned empty event stream")
+        raise ValueError(_tr("McpBridge.http_empty_event_stream", default="HTTP MCP server returned empty event stream"))
     return json.loads(raw)
 
 
@@ -405,12 +445,12 @@ class StdioMcpClient:
         self._initialized = False
         command = str(server.get("command", "") or "").strip()
         if not command:
-            raise ValueError("stdio MCP command is empty")
+            raise ValueError(_tr("McpBridge.stdio_command_empty", default="stdio MCP command is empty"))
         command = _resolve_command(command)
         args = _server_args(server)
         cwd = str(server.get("cwd", "") or os.getcwd())
         if cwd and not os.path.isdir(cwd):
-            raise FileNotFoundError(f"stdio MCP cwd does not exist: {cwd}")
+            raise FileNotFoundError(_tr("McpBridge.stdio_cwd_missing", default="stdio MCP cwd does not exist: {cwd}", cwd=cwd))
         self._process = subprocess.Popen(
             [command, *args],
             stdin=subprocess.PIPE,
@@ -468,7 +508,7 @@ class StdioMcpClient:
     def _request(self, method: str, params: dict | None = None) -> dict:
         with self._lock:
             if not self.alive:
-                raise RuntimeError("MCP server process is not running")
+                raise RuntimeError(_tr("McpBridge.process_not_running", default="MCP server process is not running"))
             req_id = self._next_id
             self._next_id += 1
             message = {"jsonrpc": "2.0", "id": req_id, "method": method}
@@ -486,7 +526,7 @@ class StdioMcpClient:
                 if response.get("error"):
                     raise RuntimeError(response["error"])
                 return response.get("result", {})
-            raise TimeoutError(f"MCP request timed out: {method}")
+            raise TimeoutError(_tr("McpBridge.request_timeout", default="MCP request timed out: {method}", method=method))
 
     def _notify(self, method: str, params: dict | None = None):
         message = {"jsonrpc": "2.0", "method": method}
@@ -497,7 +537,7 @@ class StdioMcpClient:
     def _write(self, message: dict):
         stdin = self._process.stdin
         if stdin is None:
-            raise RuntimeError("MCP server stdin is closed")
+            raise RuntimeError(_tr("McpBridge.stdin_closed", default="MCP server stdin is closed"))
         payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
         stdin.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
         stdin.write(payload)
@@ -522,7 +562,7 @@ def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:
                 content_length = int(value.strip())
                 break
         if content_length is None:
-            raise RuntimeError("MCP server response missing Content-Length")
+            raise RuntimeError(_tr("McpBridge.missing_content_length", default="MCP server response missing Content-Length"))
         body_start = header_end + 4
         body_end = body_start + content_length
         if len(buffer) < body_end:
