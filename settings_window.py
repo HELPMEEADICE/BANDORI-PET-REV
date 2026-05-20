@@ -5688,6 +5688,15 @@ class SettingsWindow(QWidget):
 
     def _remove_model_list_item(self, character: str):
         self._activate_char_page_for_model_list()
+        if len(self._configured_models) <= 1:
+            InfoBar.warning(
+                _tr("SettingsWindow.model_list_keep_one_title"),
+                _tr("SettingsWindow.model_list_keep_one_content"),
+                duration=2500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
         self._configured_models = [item for item in self._configured_models if item["character"] != character]
         self._editing_list_character = ""
         self._editing_model_index = None

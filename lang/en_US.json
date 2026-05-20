@@ -28,6 +28,8 @@
     "SettingsWindow.costume_preview_hint": "Tip: hold Shift and hover a costume to preview the Live2D model.",
     "SettingsWindow.model_list_title": "Live2D Models",
     "SettingsWindow.model_list_add": "+ Add Live2D Model",
+    "SettingsWindow.model_list_keep_one_title": "Cannot remove the last character",
+    "SettingsWindow.model_list_keep_one_content": "Keep at least one character in the Live2D model list.",
     "SettingsWindow.model_switch": "Change\nModel",
     "SettingsWindow.model_detail_title": "Live2D Model Details",
     "SettingsWindow.model_detail_subtitle": "Select a model on the right, or change its character/costume.",

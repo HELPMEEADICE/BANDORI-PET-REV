@@ -28,6 +28,8 @@
     "SettingsWindow.costume_preview_hint": "提示：按住 Shift 并将鼠标悬停在服装上可以预览 Live2D 效果。",
     "SettingsWindow.model_list_title": "Live2D 模型列表",
     "SettingsWindow.model_list_add": "+ 添加 Live2D 模型",
+    "SettingsWindow.model_list_keep_one_title": "不能删除最后一个角色",
+    "SettingsWindow.model_list_keep_one_content": "Live2D 模型列表必须至少保留一个角色。",
     "SettingsWindow.model_switch": "切换\n角色/服装",
     "SettingsWindow.model_detail_title": "Live2D 模型详情",
     "SettingsWindow.model_detail_subtitle": "从右侧列表选择已有模型，或点击切换按钮修改角色/服装。",
