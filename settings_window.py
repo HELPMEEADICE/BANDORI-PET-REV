@@ -2614,6 +2614,11 @@ class SettingsWindow(QWidget):
         layout.addWidget(title)
         subtitle = _wrap_label(SubtitleLabel(_tr("SettingsWindow.llm_subtitle"), page))
         layout.addWidget(subtitle)
+        capability_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_capability_hint",
+            default="提示：图片理解、联网搜索、MCP 和 Computer Use 等能力，只有在当前模型支持多模态输入或工具调用时才会实际生效。",
+        ), page))
+        layout.addWidget(capability_hint)
 
         profile_label = BodyLabel(_tr("SettingsWindow.llm_api_profile", default="API 配置档案"), page)
         layout.addWidget(profile_label)
@@ -3942,6 +3947,11 @@ class SettingsWindow(QWidget):
             default="支持服务商原生 MCP，也支持 Chat Completions 的 tool_calls/function calling，把 MCP 和 Computer Use 转成兼容工具。",
         ), page))
         layout.addWidget(subtitle)
+        capability_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.mcp_capability_hint",
+            default="提示：启用 MCP 或 Computer Use 只是把工具提供给模型；必须使用支持 tool_calls/function calling 的模型才会调用工具，截图理解还需要模型支持多模态输入。",
+        ), page))
+        layout.addWidget(capability_hint)
 
         risk_panel = QWidget(page)
         risk_panel.setObjectName("mcpRiskPanel")
