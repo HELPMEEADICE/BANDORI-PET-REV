@@ -7,6 +7,8 @@ import time
 
 from PIL import ImageGrab
 
+from vision_fallback import analyze_images_with_aux_model
+
 
 _TOOL_PREFIX = "computer_"
 _LAST_SCREENSHOT_METRICS: dict[str, int] = {}
@@ -198,6 +200,21 @@ def _screenshot_result(config: dict, content: str) -> dict:
         f"{desktop_width}x{desktop_height}. When calling mouse tools, use the screenshot image coordinates; "
         "the app maps them to the real desktop."
     )
+    if bool(config.get("llm_aux_vision_fallback_enabled", False)) and str(config.get("llm_aux_model_id", "") or "").strip():
+        try:
+            summary = analyze_images_with_aux_model(
+                str(config.get("llm_api_url", "") or ""),
+                str(config.get("llm_api_key", "") or ""),
+                str(config.get("llm_aux_model_id", "") or "").strip()
+                or str(config.get("llm_model_id", "") or "").strip(),
+                [data_url],
+                "请观察这张桌面截图，提取下一步操作所需的信息。",
+                config.get("llm_aux_enable_thinking", None),
+            )
+            if summary:
+                return _result(f"{content} {coord_hint}\n\nFast vision observation:\n{summary}")
+        except Exception as exc:
+            return _result(f"{content} {coord_hint}\n\nFast vision fallback failed: {exc}")
     message = {
         "role": "user",
         "content": [

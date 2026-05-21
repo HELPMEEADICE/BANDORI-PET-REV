@@ -9,6 +9,84 @@ from process_utils import app_base_dir
 BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
 
+BUILTIN_LLM_API_PROFILES = [
+    {
+        "name": "deepseek",
+        "llm_api_url": "https://api.deepseek.com/v1/chat/completions",
+        "llm_api_key": "",
+        "llm_model_id": "deepseek-v4-pro",
+        "llm_aux_model_id": "deepseek-v4-flash",
+        "llm_aux_enable_thinking": None,
+        "llm_aux_vision_fallback_enabled": False,
+        "llm_api_mode": "chat_completions",
+        "llm_web_search_enabled": True,
+        "llm_web_search_engine": "bing_cn",
+        "llm_web_search_show_sources": False,
+        "llm_enable_thinking": None,
+        "llm_show_reasoning": True,
+    },
+    {
+        "name": "openrouter",
+        "llm_api_url": "https://openrouter.ai/api/v1/chat/completions",
+        "llm_api_key": "",
+        "llm_model_id": "z-ai/glm-5.1",
+        "llm_aux_model_id": "x-ai/grok-4.3",
+        "llm_aux_enable_thinking": None,
+        "llm_aux_vision_fallback_enabled": True,
+        "llm_api_mode": "chat_completions",
+        "llm_web_search_enabled": True,
+        "llm_web_search_engine": "bing_cn",
+        "llm_web_search_show_sources": False,
+        "llm_enable_thinking": None,
+        "llm_show_reasoning": True,
+    },
+    {
+        "name": "claude",
+        "llm_api_url": "https://openrouter.ai/api/v1/chat/completions",
+        "llm_api_key": "",
+        "llm_model_id": "anthropic/claude-sonnet-4.6",
+        "llm_aux_model_id": "anthropic/claude-haiku-4.5",
+        "llm_aux_enable_thinking": None,
+        "llm_aux_vision_fallback_enabled": False,
+        "llm_api_mode": "chat_completions",
+        "llm_web_search_enabled": True,
+        "llm_web_search_engine": "bing_cn",
+        "llm_web_search_show_sources": False,
+        "llm_enable_thinking": None,
+        "llm_show_reasoning": True,
+    },
+    {
+        "name": "openai",
+        "llm_api_url": "https://api.openai.com/v1/responses",
+        "llm_api_key": "",
+        "llm_model_id": "gpt-5.5",
+        "llm_aux_model_id": "gpt-5.4-mini",
+        "llm_aux_enable_thinking": None,
+        "llm_aux_vision_fallback_enabled": False,
+        "llm_api_mode": "responses",
+        "llm_web_search_enabled": True,
+        "llm_web_search_engine": "bing_cn",
+        "llm_web_search_show_sources": False,
+        "llm_enable_thinking": None,
+        "llm_show_reasoning": True,
+    },
+    {
+        "name": "grok",
+        "llm_api_url": "https://api.x.ai/v1/chat/completions",
+        "llm_api_key": "",
+        "llm_model_id": "grok-4.3",
+        "llm_aux_model_id": "grok-4-1-fast",
+        "llm_aux_enable_thinking": None,
+        "llm_aux_vision_fallback_enabled": False,
+        "llm_api_mode": "chat_completions",
+        "llm_web_search_enabled": True,
+        "llm_web_search_engine": "bing_cn",
+        "llm_web_search_show_sources": False,
+        "llm_enable_thinking": None,
+        "llm_show_reasoning": True,
+    },
+]
+
 DEFAULTS = {
     "character": "",
     "costume": "",
@@ -38,6 +116,7 @@ DEFAULTS = {
     "llm_model_id": "",
     "llm_aux_model_id": "",
     "llm_aux_enable_thinking": None,
+    "llm_aux_vision_fallback_enabled": False,
     "llm_api_mode": "chat_completions",
     "llm_web_search_enabled": False,
     "llm_web_search_engine": "bing_cn",
@@ -55,7 +134,7 @@ DEFAULTS = {
     "computer_use_allow_keyboard": False,
     "computer_use_allow_clipboard": False,
     "computer_use_allow_wait": True,
-    "llm_api_profiles": [],
+    "llm_api_profiles": BUILTIN_LLM_API_PROFILES,
     "llm_active_api_profile": "",
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
@@ -147,6 +226,53 @@ def _normalize_web_search_engine(value) -> str:
     return engine if engine in {"bing", "bing_cn", "google", "duckduckgo", "baidu"} else "bing_cn"
 
 
+def _normalize_llm_api_profile(profile) -> dict | None:
+    if not isinstance(profile, dict):
+        return None
+    name = str(profile.get("name", "") or "").strip()
+    if not name:
+        return None
+    api_mode = str(profile.get("llm_api_mode", "chat_completions") or "chat_completions")
+    if api_mode not in ("chat_completions", "responses"):
+        api_mode = "chat_completions"
+    return {
+        "name": name,
+        "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
+        "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
+        "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
+        "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+        "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
+        if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
+        "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
+        "llm_api_mode": api_mode,
+        "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
+        "llm_web_search_engine": _normalize_web_search_engine(
+            profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
+        ),
+        "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
+        "llm_enable_thinking": profile.get("llm_enable_thinking", None)
+        if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
+        "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
+    }
+
+
+def _merge_builtin_llm_api_profiles(profiles: list[dict]) -> list[dict]:
+    by_name = {profile["name"]: idx for idx, profile in enumerate(profiles)}
+    for preset in BUILTIN_LLM_API_PROFILES:
+        normalized = _normalize_llm_api_profile(preset)
+        if not normalized:
+            continue
+        idx = by_name.get(normalized["name"])
+        if idx is None:
+            by_name[normalized["name"]] = len(profiles)
+            profiles.append(normalized)
+            continue
+        api_key = profiles[idx].get("llm_api_key", "")
+        profiles[idx].update(normalized)
+        profiles[idx]["llm_api_key"] = api_key
+    return profiles
+
+
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
@@ -190,38 +316,19 @@ class ConfigManager:
     def _normalize_llm_api_profiles(self):
         profiles = self._data.get("llm_api_profiles", [])
         if not isinstance(profiles, list):
-            self._data["llm_api_profiles"] = []
-            return
+            profiles = []
         normalized = []
         seen = set()
         for profile in profiles:
-            if not isinstance(profile, dict):
+            item = _normalize_llm_api_profile(profile)
+            if not item:
                 continue
-            name = str(profile.get("name", "") or "").strip()
+            name = item["name"]
             if not name or name in seen:
                 continue
             seen.add(name)
-            api_mode = str(profile.get("llm_api_mode", "chat_completions") or "chat_completions")
-            if api_mode not in ("chat_completions", "responses"):
-                api_mode = "chat_completions"
-            normalized.append({
-                "name": name,
-                "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
-                "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
-                "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
-                "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
-                "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
-                if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
-                "llm_api_mode": api_mode,
-                "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
-                "llm_web_search_engine": _normalize_web_search_engine(
-                    profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
-                ),
-                "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
-                "llm_enable_thinking": profile.get("llm_enable_thinking", None)
-                if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
-                "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
-            })
+            normalized.append(item)
+        normalized = _merge_builtin_llm_api_profiles(normalized)
         self._data["llm_api_profiles"] = normalized
         active = str(self._data.get("llm_active_api_profile", "") or "").strip()
         names = {profile["name"] for profile in normalized}
