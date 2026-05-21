@@ -17,6 +17,7 @@ from process_utils import app_base_dir
 
 
 _ACTION_TAG_RE = re.compile(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]")
+_DIALOG_GROUPS_KEY = "__groups"
 
 
 CHARACTER_TRILINGUAL_NAMES = {
@@ -246,6 +247,7 @@ class TTSRequestWorker(QThread):
             prompt_text = self._reference_prompt_text(selected_language)
             if prompt_text:
                 payload["prompt_text"] = prompt_text
+            self._apply_qwen_lora(payload)
 
             response = requests.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
             if response.status_code != 200:
@@ -298,8 +300,11 @@ class TTSRequestWorker(QThread):
         url = str(self._config.get("tts_api_url", "") or "").strip() or "http://127.0.0.1:9880/"
         return url if url.endswith("/") else url + "/"
 
+    def _reference_character(self) -> str:
+        return str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+
     def _reference_audio_path(self) -> str:
-        ref_char = str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+        ref_char = self._reference_character()
         ref_dir = app_base_dir() / "audio_reference"
         for suffix in (".mp3", ".wav", ".flac", ".ogg", ".m4a"):
             path = ref_dir / f"{ref_char}{suffix}"
@@ -310,7 +315,7 @@ class TTSRequestWorker(QThread):
     def _reference_prompt_text(self, text_language: str) -> str:
         if text_language not in {"Japanese", "ja", "日文"}:
             return ""
-        ref_char = str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+        ref_char = self._reference_character()
         path = app_base_dir() / "audio_reference" / "dialog.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -318,6 +323,50 @@ class TTSRequestWorker(QThread):
             return ""
         value = data.get(ref_char, "")
         return value if isinstance(value, str) else ""
+
+    def _apply_qwen_lora(self, payload: dict):
+        loras = self._available_qwen_loras()
+        if loras is None:
+            return
+        lora_id = self._reference_lora_id()
+        if lora_id and lora_id in loras:
+            payload["lora_id"] = lora_id
+            return
+        self._unload_qwen_lora()
+
+    def _available_qwen_loras(self) -> dict | None:
+        try:
+            response = requests.get(self._tts_url() + "lora/list", timeout=5)
+            if response.status_code != 200:
+                return None
+            loras = response.json().get("loras")
+            return loras if isinstance(loras, dict) else None
+        except Exception:
+            return None
+
+    def _unload_qwen_lora(self):
+        try:
+            requests.post(self._tts_url() + "lora/unload", timeout=5)
+        except Exception:
+            pass
+
+    def _reference_lora_id(self) -> str:
+        path = app_base_dir() / "audio_reference" / "dialog.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        groups = data.get(_DIALOG_GROUPS_KEY, {})
+        if not isinstance(groups, dict):
+            return ""
+        ref_char = self._reference_character()
+        for group in groups.values():
+            if not isinstance(group, dict):
+                continue
+            members = group.get("characters", [])
+            if ref_char in members:
+                return str(group.get("lora_id", "") or "").strip()
+        return ""
 
     def _should_translate(self, text_language: str) -> bool:
         if not self._config.get("tts_translate_to_selected_language", True):
