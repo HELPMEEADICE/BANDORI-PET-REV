@@ -187,6 +187,7 @@ LIVE2D_MOUSE_APPROACH_MIN_IDLE_SECONDS = 12
 LIVE2D_MOUSE_APPROACH_DWELL_SECONDS = 4.0
 LIVE2D_MOUSE_APPROACH_RADIUS = 180
 LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
+TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 
 
 def _clamp_live2d_scale(value) -> int:
@@ -250,6 +251,7 @@ class PetWindow(QWidget):
         self._last_user_interaction_at = now
         self._last_context_idle_action_at = 0.0
         self._last_mouse_approach_action_at = 0.0
+        self._last_topmost_interaction_refresh_at = 0.0
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
@@ -437,6 +439,18 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+
+    def _refresh_topmost_for_interaction(self, *, force: bool = False):
+        if os.name != "nt" or not self.isVisible():
+            return
+        now = time.monotonic()
+        if (
+            not force
+            and now - self._last_topmost_interaction_refresh_at < TOPMOST_INTERACTION_REFRESH_SECONDS
+        ):
+            return
+        self._last_topmost_interaction_refresh_at = now
+        self._enforce_game_topmost()
 
     def _apply_macos_window_polish(self):
         if sys.platform != "darwin" or macos_patch is None:
@@ -1108,6 +1122,7 @@ class PetWindow(QWidget):
 
     def _on_drag(self, dx: int, dy: int):
         self._note_user_interaction()
+        self._refresh_topmost_for_interaction()
         self._set_mouse_passthrough(False)
         self._suppress_compact_ai_sync = True
         try:
@@ -1138,6 +1153,7 @@ class PetWindow(QWidget):
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         self._note_user_interaction()
+        self._refresh_topmost_for_interaction(force=True)
         if self._radial_menu and self._radial_menu.isVisible():
             self._radial_menu.dismiss()
             return
@@ -1315,6 +1331,7 @@ class PetWindow(QWidget):
 
     def _on_right_click(self, gx: int, gy: int):
         self._note_user_interaction()
+        self._refresh_topmost_for_interaction(force=True)
         self._set_mouse_passthrough(False)
         radial_menu = self._ensure_radial_menu()
         if radial_menu.isVisible():
