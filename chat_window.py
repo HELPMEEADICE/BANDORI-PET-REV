@@ -2554,7 +2554,7 @@ class ChatWindow(QWidget):
             preview = conv.get("title") or _tr("ChatWindow.empty_conv")
         if len(preview) > 28:
             preview = preview[:28] + "..."
-        created_at = conv.get("created_at", "")
+        created_at = conv.get("last_message_at") or conv.get("created_at", "")
         time_text = created_at[5:16] if len(created_at) >= 16 else created_at
         return f"{time_text}  {preview}".strip()
 
