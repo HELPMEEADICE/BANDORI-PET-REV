@@ -3104,20 +3104,55 @@ class ChatWindow(QWidget):
 
     def _message_content(self, content: str, role: str) -> str:
         if role == "assistant" and self._is_group_chat:
+            character = self._message_character(content, role)
             lines = content.splitlines()
             first_line = lines[0].strip() if lines else ""
             if first_line.startswith("【") and "】" in first_line:
-                return "\n".join(lines[1:]).lstrip()
+                return self._sanitize_group_assistant_reply(character, "\n".join(lines[1:]).lstrip())
             for character in self._group_characters:
                 display = self._model_manager.get_display_name(character)
                 prefix = f"【{display}】"
                 if content.startswith(prefix):
-                    return content[len(prefix):].lstrip()
+                    return self._sanitize_group_assistant_reply(character, content[len(prefix):].lstrip())
         return content
+
+    def _sanitize_group_assistant_reply(self, character: str, text: str) -> str:
+        if not self._is_group_chat or not text:
+            return text
+        names = {
+            self._model_manager.get_display_name(item): item
+            for item in self._group_characters
+        }
+        if not names:
+            return text.strip()
+        name_pattern = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+        label_re = re.compile(
+            rf"(?m)^[ \t]*(?:【(?P<fw>{name_pattern})】|\[(?P<sq>{name_pattern})\]|(?P<plain>{name_pattern})\s*[：:])\s*"
+        )
+        matches = list(label_re.finditer(text))
+        if not matches:
+            return text.strip()
+
+        active_name = self._model_manager.get_display_name(character)
+        active_segments = []
+        for index, match in enumerate(matches):
+            speaker = match.group("fw") or match.group("sq") or match.group("plain") or ""
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            segment = text[start:end].strip()
+            if speaker == active_name and segment:
+                active_segments.append(segment)
+        if active_segments:
+            return "\n\n".join(active_segments).strip()
+
+        # If the model ignored the requested speaker entirely, at least remove
+        # transcript labels so the UI does not display a false nested speaker.
+        return label_re.sub("", text).strip()
 
     def _assistant_content(self, character: str, text: str) -> str:
         if not self._is_group_chat:
             return text
+        text = self._sanitize_group_assistant_reply(character, text)
         return f"【{self._model_manager.get_display_name(character)}】\n{text}"
 
     def _user_memory_key(self) -> str:
@@ -3352,7 +3387,11 @@ class ChatWindow(QWidget):
         prompt = build_system_prompt(character, self._cfg)
         names = [self._model_manager.get_display_name(c) for c in self._group_characters]
         prompt += "\n\n【群聊规则】\n这是一个多人群聊。当前群聊成员：" + "、".join(names) + "。"
-        prompt += "\n你只扮演自己，不要代替其他角色说话。回复时不要添加角色名前缀，程序会自动添加。"
+        prompt += (
+            "\n你只扮演自己，不要代替其他角色说话。"
+            "\n本轮只有你一个角色发言；其他角色如果需要回应，程序会在后续轮次单独生成。"
+            "\n回复时不要添加任何角色名前缀或剧本标签，例如【角色名】、[角色名]、角色名：，程序会自动添加。"
+        )
         if spoken_names:
             prompt += "\n你是在" + "、".join(spoken_names) + "之后发言，请自然承接前面角色的内容。"
         return prompt
@@ -3892,6 +3931,7 @@ class ChatWindow(QWidget):
         clean, inline_sources = extract_inline_search_sources(full_text)
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
+        clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
@@ -3939,6 +3979,7 @@ class ChatWindow(QWidget):
         clean, inline_sources = extract_inline_search_sources(full_text)
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
+        clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         if self._current_bubble:
             self._stream_flush_timer.stop()
