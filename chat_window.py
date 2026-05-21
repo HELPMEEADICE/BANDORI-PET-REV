@@ -1175,6 +1175,7 @@ class MessageBubble(QWidget):
 
         self._label = FluentContextLabel(self._text, self)
         self._label.setWordWrap(True)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._label.setTextFormat(Qt.TextFormat.PlainText)
         self._label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
@@ -1202,6 +1203,7 @@ class MessageBubble(QWidget):
         self._reasoning_title.setFont(title_font)
         self._reasoning_label = FluentContextLabel(self._reasoning, self._reasoning_panel)
         self._reasoning_label.setWordWrap(True)
+        self._reasoning_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._reasoning_label.setTextFormat(Qt.TextFormat.PlainText)
         self._reasoning_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         reasoning_font = QFont()
@@ -1212,6 +1214,7 @@ class MessageBubble(QWidget):
         reasoning_layout.addLayout(reasoning_stack, 1)
 
         self._stream_label = QLabel("", self)
+        self._stream_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         stream_font = QFont()
         stream_font.setPointSize(8)
         self._stream_label.setFont(stream_font)
@@ -1296,6 +1299,31 @@ class MessageBubble(QWidget):
             content_width = max(content_width, len(self._search_sources) * 24)
         return max(36, content_width + 24)
 
+    @staticmethod
+    def _plain_text_height(label: QLabel, width: int, wrap: bool = True) -> int:
+        text = label.text() or " "
+        flags = int(Qt.TextFlag.TextExpandTabs)
+        if wrap:
+            flags |= int(Qt.TextFlag.TextWordWrap)
+        rect = label.fontMetrics().boundingRect(
+            QRect(0, 0, max(1, width), 16777215),
+            flags,
+            text,
+        )
+        return max(label.fontMetrics().lineSpacing(), rect.height()) + 2
+
+    def _sync_text_label_heights(self, text_width: int, reasoning_text_width: int, wrap_main: bool):
+        self._label.setFixedHeight(self._plain_text_height(self._label, text_width, wrap_main))
+        if self._stream_label.isVisible():
+            self._stream_label.setFixedHeight(
+                self._plain_text_height(self._stream_label, text_width, False)
+            )
+        else:
+            self._stream_label.setFixedHeight(0)
+        self._reasoning_label.setFixedHeight(
+            self._plain_text_height(self._reasoning_label, reasoning_text_width, True)
+        )
+
     def update_bubble_width(self, viewport_width: int = 0):
         available_width = self._available_bubble_width(viewport_width)
         natural_width = self._natural_bubble_width()
@@ -1311,6 +1339,11 @@ class MessageBubble(QWidget):
         reasoning_text_width = max(1, target_width - 52)
         self._reasoning_title.setFixedWidth(reasoning_text_width)
         self._reasoning_label.setFixedWidth(reasoning_text_width)
+        self._sync_text_label_heights(text_width, reasoning_text_width, should_wrap)
+        if self.layout():
+            self.layout().invalidate()
+        if self._container.layout():
+            self._container.layout().invalidate()
         self._container.updateGeometry()
         self.updateGeometry()
 
