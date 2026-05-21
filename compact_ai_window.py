@@ -1064,6 +1064,7 @@ class CompactAIWindow(QWidget):
             "llm_api_key",
             "llm_model_id",
             "llm_aux_model_id",
+            "llm_aux_enable_thinking",
         )
         return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
 

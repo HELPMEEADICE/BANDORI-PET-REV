@@ -37,6 +37,7 @@ DEFAULTS = {
     "llm_api_key": "",
     "llm_model_id": "",
     "llm_aux_model_id": "",
+    "llm_aux_enable_thinking": None,
     "llm_api_mode": "chat_completions",
     "llm_web_search_enabled": False,
     "llm_web_search_engine": "bing_cn",
@@ -209,6 +210,8 @@ class ConfigManager:
                 "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
                 "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+                "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
+                if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
                 "llm_web_search_engine": _normalize_web_search_engine(

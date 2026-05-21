@@ -344,11 +344,13 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
         dark = isDarkTheme()
         bg = "#2b2b2b" if dark else "#ffffff"
         border = "#4a4a4a" if dark else "#d8d8d8"
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
-        self.setAutoFillBackground(True)
+        # Keep the popup window transparent so the rounded list widget defines
+        # the visible shape instead of exposing an opaque rectangular backdrop.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(bg))
+        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.transparent)
         self.setPalette(palette)
         self.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.view.setGraphicsEffect(None)
@@ -1320,10 +1322,28 @@ class SettingsWindow(QWidget):
         pal = w.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(bg))
         w.setPalette(pal)
+        w.update()
 
     def _update_all_theme_bgs(self):
         for w in self._theme_widgets:
             self._apply_theme_bg(w)
+
+    @staticmethod
+    def _refresh_theme_widget_styles(widget: QWidget | None):
+        if widget is None:
+            return
+        style = widget.style()
+        if style is not None:
+            style.unpolish(widget)
+            style.polish(widget)
+        widget.update()
+
+    def _refresh_json_code_edit_theme(self, edit: JsonCodeEdit | None):
+        if edit is None:
+            return
+        self._refresh_theme_widget_styles(edit)
+        self._refresh_theme_widget_styles(edit.viewport())
+        self._refresh_theme_widget_styles(edit._line_number_area)
 
     def _init_ui(self):
         self._make_theme_widget(self)
@@ -2774,6 +2794,18 @@ class SettingsWindow(QWidget):
         aux_model_row.addWidget(aux_fetch_btn)
         layout.addLayout(aux_model_row)
 
+        aux_thinking_label = BodyLabel(_tr("SettingsWindow.llm_aux_enable_thinking"), page)
+        layout.addWidget(aux_thinking_label)
+        self._llm_aux_enable_thinking = OpaqueDropDownComboBox(page)
+        self._llm_aux_enable_thinking.addItems([
+            _tr("SettingsWindow.llm_enable_thinking_default"),
+            _tr("SettingsWindow.llm_enable_thinking_on"),
+            _tr("SettingsWindow.llm_enable_thinking_off"),
+        ])
+        self._llm_aux_enable_thinking.setFixedHeight(36)
+        self._llm_aux_enable_thinking.setCurrentIndex(0)
+        layout.addWidget(self._llm_aux_enable_thinking)
+
         api_mode_label = BodyLabel(_tr("SettingsWindow.llm_api_mode", default="API 模式"), page)
         layout.addWidget(api_mode_label)
         self._llm_api_mode = OpaqueDropDownComboBox(page)
@@ -4010,6 +4042,8 @@ class SettingsWindow(QWidget):
 
     def _build_chat_integration_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("chatIntegrationPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -4174,11 +4208,15 @@ class SettingsWindow(QWidget):
 
     def _style_chat_integration_page(self, page: QWidget):
         dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
         readonly_bg = "#242424" if dark else "#f8f8f8"
         page.setStyleSheet(f"""
+            QWidget#chatIntegrationPage {{
+                background: {page_bg};
+            }}
             QLineEdit {{
                 color: {text};
                 background: {input_bg};
@@ -4198,6 +4236,8 @@ class SettingsWindow(QWidget):
                 selection-background-color: {BANDORI_PRIMARY};
             }}
         """)
+        self._refresh_theme_widget_styles(page)
+        self._refresh_json_code_edit_theme(getattr(self, "_chat_integration_preview", None))
 
     def _chat_integration_endpoint_url(self) -> str:
         if self._chat_integration_widgets_ready():
@@ -4428,6 +4468,8 @@ class SettingsWindow(QWidget):
 
     def _build_mcp_computer_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("mcpComputerPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -4564,12 +4606,16 @@ class SettingsWindow(QWidget):
 
     def _style_mcp_computer_page(self, page: QWidget):
         dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
         risk_bg = "#2a2022" if dark else "#fff4e5"
         risk_border = "#8a5b20" if dark else "#ffd599"
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
         page.setStyleSheet(f"""
+            QWidget#mcpComputerPage {{
+                background: {page_bg};
+            }}
             #mcpRiskPanel {{
                 background: {risk_bg};
                 border: 1px solid {risk_border};
@@ -4590,6 +4636,8 @@ class SettingsWindow(QWidget):
                 selection-background-color: {BANDORI_PRIMARY};
             }}
         """)
+        self._refresh_theme_widget_styles(page)
+        self._refresh_json_code_edit_theme(getattr(self, "_llm_mcp_servers_text", None))
 
     def _mcp_computer_widgets_ready(self) -> bool:
         return all(
@@ -5223,6 +5271,7 @@ class SettingsWindow(QWidget):
                 "_llm_api_key",
                 "_llm_model_id",
                 "_llm_aux_model_id",
+                "_llm_aux_enable_thinking",
                 "_llm_api_profile_combo",
                 "_llm_api_profile_name",
                 "_llm_api_mode",
@@ -5458,6 +5507,13 @@ class SettingsWindow(QWidget):
             self._llm_api_key.setText(self._cfg.get("llm_api_key", ""))
             self._llm_model_id.setText(self._cfg.get("llm_model_id", ""))
             self._llm_aux_model_id.setText(self._cfg.get("llm_aux_model_id", ""))
+            aux_thinking_val = self._cfg.get("llm_aux_enable_thinking", None)
+            if aux_thinking_val is True:
+                self._llm_aux_enable_thinking.setCurrentIndex(1)
+            elif aux_thinking_val is False:
+                self._llm_aux_enable_thinking.setCurrentIndex(2)
+            else:
+                self._llm_aux_enable_thinking.setCurrentIndex(0)
             api_mode = self._cfg.get("llm_api_mode", "chat_completions")
             for i in range(self._llm_api_mode.count()):
                 if self._llm_api_mode.itemData(i) == api_mode:
@@ -5528,6 +5584,8 @@ class SettingsWindow(QWidget):
                 "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
                 "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+                "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
+                if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
                 "llm_web_search_engine": str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn"),
@@ -5541,12 +5599,15 @@ class SettingsWindow(QWidget):
     def _current_llm_api_profile(self, name: str) -> dict:
         thinking_idx = self._llm_enable_thinking.currentIndex()
         thinking = True if thinking_idx == 1 else False if thinking_idx == 2 else None
+        aux_thinking_idx = self._llm_aux_enable_thinking.currentIndex()
+        aux_thinking = True if aux_thinking_idx == 1 else False if aux_thinking_idx == 2 else None
         return {
             "name": name.strip(),
             "llm_api_url": self._llm_api_url.text().strip(),
             "llm_api_key": self._llm_api_key.text().strip(),
             "llm_model_id": self._llm_model_id.text().strip(),
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
+            "llm_aux_enable_thinking": aux_thinking,
             "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
             "llm_web_search_engine": self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn",
@@ -5561,6 +5622,7 @@ class SettingsWindow(QWidget):
             "llm_api_key",
             "llm_model_id",
             "llm_aux_model_id",
+            "llm_aux_enable_thinking",
             "llm_api_mode",
             "llm_web_search_enabled",
             "llm_web_search_engine",
@@ -5576,6 +5638,7 @@ class SettingsWindow(QWidget):
             "llm_api_key",
             "llm_model_id",
             "llm_aux_model_id",
+            "llm_aux_enable_thinking",
             "llm_api_mode",
         )
         return all(left.get(key) == right.get(key) for key in keys)
@@ -5648,6 +5711,8 @@ class SettingsWindow(QWidget):
         self._llm_api_key.setText(profile.get("llm_api_key", ""))
         self._llm_model_id.setText(profile.get("llm_model_id", ""))
         self._llm_aux_model_id.setText(profile.get("llm_aux_model_id", ""))
+        aux_thinking = profile.get("llm_aux_enable_thinking", None)
+        self._llm_aux_enable_thinking.setCurrentIndex(1 if aux_thinking is True else 2 if aux_thinking is False else 0)
         api_mode = profile.get("llm_api_mode", "chat_completions")
         for i in range(self._llm_api_mode.count()):
             if self._llm_api_mode.itemData(i) == api_mode:
@@ -5927,6 +5992,13 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
+            aux_thinking_idx = self._llm_aux_enable_thinking.currentIndex()
+            if aux_thinking_idx == 1:
+                self._cfg.set("llm_aux_enable_thinking", True)
+            elif aux_thinking_idx == 2:
+                self._cfg.set("llm_aux_enable_thinking", False)
+            else:
+                self._cfg.set("llm_aux_enable_thinking", None)
             self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
@@ -6767,6 +6839,17 @@ def _responses_api_url(api_url: str) -> str:
     return url + "/responses"
 
 
+def _chat_completions_api_url(api_url: str) -> str:
+    url = (api_url or "").rstrip("/")
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/responses"):
+        return url[: -len("/responses")] + "/chat/completions"
+    if url.endswith("/v1"):
+        return url + "/chat/completions"
+    return url
+
+
 class UpdateCheckWorker(QThread):
     finished = Signal(object)
     error = Signal(str)
@@ -6837,38 +6920,23 @@ class TestConnectionWorker(QThread):
 
             ctx = ssl.create_default_context()
 
-            if self._api_mode == "responses":
-                url = _responses_api_url(self._api_url)
-                body = json.dumps({
-                    "model": self._model_id,
-                    "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]}],
-                    "max_output_tokens": 16,
-                }).encode("utf-8")
-            else:
-                url = self._api_url
-                body = json.dumps({
-                    "model": self._model_id,
-                    "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 5,
-                }).encode("utf-8")
-
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self._api_key}",
             }
 
-            req = urllib.request.Request(
-                url, data=body, headers=headers, method="POST"
-            )
-
-            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                if self._api_mode == "responses" and data.get("id"):
-                    self.finished.emit()
-                elif data.get("choices", []):
-                    self.finished.emit()
+            try:
+                if self._api_mode == "responses":
+                    self._test_responses_request(urllib.request, json, headers, ctx)
                 else:
-                    self.error.emit("Unexpected response format")
+                    self._test_chat_completions_request(urllib.request, json, headers, ctx)
+                self.finished.emit()
+            except urllib.error.HTTPError as e:
+                if self._api_mode == "responses" and e.code in (400, 403, 404, 422):
+                    self._test_chat_completions_request(urllib.request, json, headers, ctx)
+                    self.finished.emit()
+                    return
+                raise
         except urllib.error.HTTPError as e:
             try:
                 err_body = json.loads(e.read().decode("utf-8"))
@@ -6880,6 +6948,30 @@ class TestConnectionWorker(QThread):
             self.error.emit(f"Network error: {e.reason}")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _test_responses_request(self, urllib_request, json_module, headers: dict, ctx):
+        url = _responses_api_url(self._api_url)
+        body = json_module.dumps({
+            "model": self._model_id,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]}],
+        }).encode("utf-8")
+        req = urllib_request.Request(url, data=body, headers=headers, method="POST")
+        with urllib_request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json_module.loads(resp.read().decode("utf-8"))
+            if not data.get("id"):
+                raise ValueError("Unexpected response format")
+
+    def _test_chat_completions_request(self, urllib_request, json_module, headers: dict, ctx):
+        url = _chat_completions_api_url(self._api_url)
+        body = json_module.dumps({
+            "model": self._model_id,
+            "messages": [{"role": "user", "content": "Hi"}],
+        }).encode("utf-8")
+        req = urllib_request.Request(url, data=body, headers=headers, method="POST")
+        with urllib_request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json_module.loads(resp.read().decode("utf-8"))
+            if not data.get("choices", []):
+                raise ValueError("Unexpected response format")
 
 
 class FetchModelsWorker(QThread):

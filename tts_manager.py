@@ -121,6 +121,11 @@ def strip_tts_action_tags(text: str) -> str:
     return _ACTION_TAG_RE.sub("", text).strip()
 
 
+def _aux_model_enable_thinking(config: dict):
+    value = config.get("llm_aux_enable_thinking", None)
+    return value if value in (True, False, None) else None
+
+
 class TTSTranslationWorker(QThread):
     translated = Signal(int, int, str, str)
     error = Signal(str)
@@ -169,6 +174,10 @@ class TTSTranslationWorker(QThread):
             ],
             "stream": False,
         }
+        enable_thinking = _aux_model_enable_thinking(self._config)
+        if enable_thinking is not None:
+            body["enable_thinking"] = enable_thinking
+            body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
         req = urllib.request.Request(
             api_url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -329,6 +338,10 @@ class TTSRequestWorker(QThread):
             ],
             "stream": False,
         }
+        enable_thinking = _aux_model_enable_thinking(self._config)
+        if enable_thinking is not None:
+            body["enable_thinking"] = enable_thinking
+            body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
         req = urllib.request.Request(
             api_url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),

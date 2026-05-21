@@ -1,6 +1,6 @@
 import fluent_bootstrap  # noqa: F401
 from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
@@ -984,6 +984,36 @@ class SearchSourcePopup(QFrame):
             QFrame#SearchSourcePopup QLabel {{ color: {text}; background: transparent; }}
             QFrame#SearchSourcePopup QLabel#SearchSourceUrl {{ color: {muted}; }}
         """)
+
+
+def _enable_translucent_menu(menu: QMenu):
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    menu.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+    menu.setAutoFillBackground(False)
+    menu.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+
+
+def _apply_rounded_menu_mask(menu: QMenu, radius: float):
+    width = menu.width()
+    height = menu.height()
+    if width <= 0 or height <= 0:
+        return
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, width, height), radius, radius)
+    menu.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+
+def _prepare_rounded_menu(menu: QMenu, radius: float = 12):
+    _enable_translucent_menu(menu)
+    menu.setProperty("rounded_menu_radius", float(radius))
+    if menu.property("rounded_menu_prepared"):
+        return
+    menu.setProperty("rounded_menu_prepared", True)
+
+    def _refresh_mask():
+        _apply_rounded_menu_mask(menu, float(menu.property("rounded_menu_radius") or radius))
+
+    menu.aboutToShow.connect(lambda: QTimer.singleShot(0, _refresh_mask))
 
 
 class SearchSourceBadge(QLabel):
@@ -2568,6 +2598,7 @@ class ChatWindow(QWidget):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
             return
         menu = QMenu(self)
+        _prepare_rounded_menu(menu)
         menu.setObjectName("ConversationHistoryMenu")
         dark = isDarkTheme()
         bg = "#1b1f29" if dark else "#ffffff"
@@ -2656,11 +2687,13 @@ class ChatWindow(QWidget):
             menu.addSeparator()
 
             change_menu = QMenu(_tr("ChatWindow.avatar_change_menu"), menu)
+            _prepare_rounded_menu(change_menu)
             change_menu.setObjectName("ConversationHistoryMenu")
             change_menu.setIcon(FluentIcon.PHOTO.icon())
             change_menu.setStyleSheet(menu_style)
             menu.addMenu(change_menu)
             reset_menu = QMenu(_tr("ChatWindow.avatar_reset_menu"), menu)
+            _prepare_rounded_menu(reset_menu)
             reset_menu.setObjectName("ConversationHistoryMenu")
             reset_menu.setIcon(FluentIcon.RETURN.icon())
             reset_menu.setStyleSheet(menu_style)
@@ -2841,6 +2874,7 @@ class ChatWindow(QWidget):
         if not group_key.startswith("__group__:"):
             return
         menu = QMenu(self)
+        _prepare_rounded_menu(menu, 8)
         menu.setObjectName("GroupChatContextMenu")
         dark = isDarkTheme()
         bg = "#1b1f29" if dark else "#ffffff"
@@ -3390,6 +3424,9 @@ class ChatWindow(QWidget):
         prompt += (
             "\n你只扮演自己，不要代替其他角色说话。"
             "\n本轮只有你一个角色发言；其他角色如果需要回应，程序会在后续轮次单独生成。"
+            "\n你的输出必须是一条仅属于你自己的单人回复，不要写成多人连续对话、对手戏脚本或旁白串场。"
+            "\n严禁输出其他角色的直接台词，严禁替其他角色回答，严禁在同一条回复里模拟别人接话。"
+            "\n如果需要提到其他成员的反应，只能用你自己的视角转述，不能写出对方的原话。"
             "\n回复时不要添加任何角色名前缀或剧本标签，例如【角色名】、[角色名]、角色名：，程序会自动添加。"
         )
         if spoken_names:
@@ -3750,7 +3787,7 @@ class ChatWindow(QWidget):
             {"role": "system", "content": planner_prompt},
             {"role": "user", "content": content},
         ]
-        self._group_plan_worker = NonStreamWorker(api_url, api_key, aux_model_id, messages, self._cfg.get("llm_enable_thinking", None))
+        self._group_plan_worker = NonStreamWorker(api_url, api_key, aux_model_id, messages, self._cfg.get("llm_aux_enable_thinking", None))
         self._group_plan_worker.finished.connect(self._on_group_plan_finished)
         self._group_plan_worker.error.connect(self._on_group_plan_error)
         self._group_plan_worker.start()
@@ -4055,6 +4092,7 @@ class ChatWindow(QWidget):
             "llm_api_key",
             "llm_model_id",
             "llm_aux_model_id",
+            "llm_aux_enable_thinking",
         )
         return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
 
