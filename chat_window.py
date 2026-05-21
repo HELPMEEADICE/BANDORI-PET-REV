@@ -1,6 +1,6 @@
 import fluent_bootstrap  # noqa: F401
 from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
@@ -984,6 +984,36 @@ class SearchSourcePopup(QFrame):
             QFrame#SearchSourcePopup QLabel {{ color: {text}; background: transparent; }}
             QFrame#SearchSourcePopup QLabel#SearchSourceUrl {{ color: {muted}; }}
         """)
+
+
+def _enable_translucent_menu(menu: QMenu):
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    menu.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+    menu.setAutoFillBackground(False)
+    menu.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+
+
+def _apply_rounded_menu_mask(menu: QMenu, radius: float):
+    width = menu.width()
+    height = menu.height()
+    if width <= 0 or height <= 0:
+        return
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, width, height), radius, radius)
+    menu.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+
+def _prepare_rounded_menu(menu: QMenu, radius: float = 12):
+    _enable_translucent_menu(menu)
+    menu.setProperty("rounded_menu_radius", float(radius))
+    if menu.property("rounded_menu_prepared"):
+        return
+    menu.setProperty("rounded_menu_prepared", True)
+
+    def _refresh_mask():
+        _apply_rounded_menu_mask(menu, float(menu.property("rounded_menu_radius") or radius))
+
+    menu.aboutToShow.connect(lambda: QTimer.singleShot(0, _refresh_mask))
 
 
 class SearchSourceBadge(QLabel):
@@ -2568,6 +2598,7 @@ class ChatWindow(QWidget):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
             return
         menu = QMenu(self)
+        _prepare_rounded_menu(menu)
         menu.setObjectName("ConversationHistoryMenu")
         dark = isDarkTheme()
         bg = "#1b1f29" if dark else "#ffffff"
@@ -2656,11 +2687,13 @@ class ChatWindow(QWidget):
             menu.addSeparator()
 
             change_menu = QMenu(_tr("ChatWindow.avatar_change_menu"), menu)
+            _prepare_rounded_menu(change_menu)
             change_menu.setObjectName("ConversationHistoryMenu")
             change_menu.setIcon(FluentIcon.PHOTO.icon())
             change_menu.setStyleSheet(menu_style)
             menu.addMenu(change_menu)
             reset_menu = QMenu(_tr("ChatWindow.avatar_reset_menu"), menu)
+            _prepare_rounded_menu(reset_menu)
             reset_menu.setObjectName("ConversationHistoryMenu")
             reset_menu.setIcon(FluentIcon.RETURN.icon())
             reset_menu.setStyleSheet(menu_style)
@@ -2841,6 +2874,7 @@ class ChatWindow(QWidget):
         if not group_key.startswith("__group__:"):
             return
         menu = QMenu(self)
+        _prepare_rounded_menu(menu, 8)
         menu.setObjectName("GroupChatContextMenu")
         dark = isDarkTheme()
         bg = "#1b1f29" if dark else "#ffffff"

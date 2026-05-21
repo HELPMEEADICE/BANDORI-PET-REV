@@ -344,11 +344,13 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
         dark = isDarkTheme()
         bg = "#2b2b2b" if dark else "#ffffff"
         border = "#4a4a4a" if dark else "#d8d8d8"
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
-        self.setAutoFillBackground(True)
+        # Keep the popup window transparent so the rounded list widget defines
+        # the visible shape instead of exposing an opaque rectangular backdrop.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(bg))
+        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.transparent)
         self.setPalette(palette)
         self.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.view.setGraphicsEffect(None)
