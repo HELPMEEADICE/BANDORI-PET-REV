@@ -1,0 +1,73 @@
+{
+  "spriteSheet": {
+    "frameWidth": 128, 
+    "frameHeight": 128,
+    "totalRows": 9,
+    "totalCols": 8
+  },
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 6,
+      "loop": true,
+      "fps": 8,
+      "description": "初始待机状态"
+    },
+    "running_right": {
+      "row": 1,
+      "frames": 8,
+      "loop": true,
+      "fps": 12,
+      "description": "向右奔跑"
+    },
+    "running_left": {
+      "row": 2,
+      "frames": 8,
+      "loop": true,
+      "fps": 12,
+      "description": "向左奔跑"
+    },
+    "waving": {
+      "row": 3,
+      "frames": 4,
+      "loop": false,
+      "fps": 6,
+      "description": "挥手打招呼"
+    },
+    "jumping": {
+      "row": 4,
+      "frames": 5,
+      "loop": false,
+      "fps": 10,
+      "description": "跳跃动画"
+    },
+    "failed": {
+      "row": 5,
+      "frames": 8,
+      "loop": false,
+      "fps": 8,
+      "description": "失败/气馁"
+    },
+    "waiting": {
+      "row": 6,
+      "frames": 6,
+      "loop": true,
+      "fps": 8,
+      "description": "长时等待"
+    },
+    "running_alt": {
+      "row": 7,
+      "frames": 6,
+      "loop": true,
+      "fps": 12,
+      "description": "备用奔跑序列"
+    },
+    "review": {
+      "row": 8,
+      "frames": 6,
+      "loop": true,
+      "fps": 6,
+      "description": "思考/观察状态"
+    }
+  }
+}
