@@ -7,7 +7,6 @@ from PySide6.QtCore import QThread, Signal
 
 from local_tools import (
     chat_completion_tools,
-    maybe_add_prefetched_web_search,
     responses_native_tools,
     run_local_tool_call,
     with_local_tool_system_hint,
@@ -511,15 +510,8 @@ class LLMStreamWorker(QThread):
             use_tools = self._web_search or bool(self._tool_config.get("llm_mcp_enabled", False)) or bool(self._tool_config.get("computer_use_enabled", False))
             if use_tools:
                 messages = with_local_tool_system_hint(messages, self._tool_config)
-            if use_tools:
-                if self._web_search:
-                    messages = with_web_search_system_hint(messages, self._show_search_sources)
-                    messages = maybe_add_prefetched_web_search(
-                        messages,
-                        include_sources=self._show_search_sources,
-                        tool_config=self._tool_config,
-                    )
-                    self._remember_search_sources_from_messages(messages)
+            if use_tools and self._web_search:
+                messages = with_web_search_system_hint(messages, self._show_search_sources)
             max_tool_rounds = 8 if self._tool_config.get("computer_use_enabled", False) else 3
             for round_index in range(max_tool_rounds):
                 self._stream_tool_calls = []
@@ -529,18 +521,14 @@ class LLMStreamWorker(QThread):
                     err_msg = _http_error_message(e)
                     if use_tools and e.code in (400, 404, 422):
                         messages = [dict(message) for message in self._messages]
+                        if self._web_search and not self._tool_config.get("llm_mcp_enabled", False) and not self._tool_config.get("computer_use_enabled", False):
+                            self.error.emit(f"HTTP {e.code}: 当前接口不支持 Chat Completions tool calls，无法让模型自主调用联网搜索。")
+                            return
                         if self._web_search:
                             messages = with_web_search_system_hint(
                                 messages,
                                 self._show_search_sources,
                             )
-                            messages = maybe_add_prefetched_web_search(
-                                messages,
-                                force=True,
-                                include_sources=self._show_search_sources,
-                                tool_config=self._tool_config,
-                            )
-                            self._remember_search_sources_from_messages(messages)
                         use_tools = False
                         continue
                     self.error.emit(f"HTTP {e.code}: {err_msg}")
@@ -683,14 +671,6 @@ class LLMStreamWorker(QThread):
             if "arguments" in function_call:
                 target["function"]["arguments"] += function_call.get("arguments") or ""
 
-    def _remember_search_sources_from_messages(self, messages: list[dict]):
-        for message in messages:
-            if message.get("role") != "system":
-                continue
-            content = str(message.get("content", "") or "")
-            if "【自动联网搜索结果】" in content:
-                self._remember_search_sources(content)
-
     def _remember_search_sources(self, text: str):
         for source in _extract_search_sources(text):
             if source["url"] and all(item["url"] != source["url"] for item in self._search_sources):
@@ -735,13 +715,6 @@ class ResponsesStreamWorker(QThread):
             messages = [dict(message) for message in self._messages]
             if self._web_search or self._tool_config.get("llm_mcp_enabled", False) or self._tool_config.get("computer_use_enabled", False):
                 messages = with_local_tool_system_hint(messages, self._tool_config)
-            if self._web_search:
-                messages = with_web_search_system_hint(messages, self._show_search_sources)
-                messages = maybe_add_prefetched_web_search(
-                    messages,
-                    include_sources=self._show_search_sources,
-                    tool_config=self._tool_config,
-                )
             instructions, input_items = _messages_to_responses_input(messages)
             body = {
                 "model": self._model_id,

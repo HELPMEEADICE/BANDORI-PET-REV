@@ -3876,26 +3876,30 @@ class ChatWindow(QWidget):
         messages = self._build_messages_for_character(character, spoken_names)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
         tool_config = self._tool_config_snapshot()
-        if self._use_responses_api(api_url):
+        web_search = bool(self._cfg.get("llm_web_search_enabled", False))
+        show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
+        if self._use_responses_api(api_url) and not web_search:
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                bool(self._cfg.get("llm_web_search_enabled", False)),
-                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                False,
+                show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
         else:
+            if self._use_responses_api(api_url):
+                api_url = self._chat_completions_api_url(api_url)
             self._worker = LLMStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                web_search=bool(self._cfg.get("llm_web_search_enabled", False)),
-                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                web_search=web_search,
+                show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
         self._worker.chunk_received.connect(self._on_chunk_received)

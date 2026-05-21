@@ -789,20 +789,20 @@ class CompactAIWindow(QWidget):
         tool_config = self._tool_config_snapshot()
         web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
         show_sources = bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
-        if self._use_responses_api(api_url):
+        if self._use_responses_api(api_url) and not web_search:
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                web_search,
+                False,
                 self,
                 show_search_sources=show_sources,
                 tool_config=tool_config,
             )
         else:
-            if self._cfg and self._cfg.get("llm_api_mode", "chat_completions") == "responses":
+            if self._use_responses_api(api_url):
                 api_url = self._chat_completions_api_url(api_url)
             self._worker = LLMStreamWorker(
                 api_url,

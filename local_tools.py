@@ -61,77 +61,12 @@ def web_search_system_hint(include_sources: bool = True) -> str:
         "【联网搜索工具】\n"
         "如果用户询问最新、实时、新闻、价格、日程、版本、API 文档、外部事实，"
         "或任何可能随时间变化的信息，你可以调用 web_search 工具。"
-        "调用 web_search 时，query 必须是用户真正想查询的关键词，不要使用“你/我/它/这个”等代词。"
+        "普通闲聊、角色扮演、情感陪伴、改写润色、总结已有上下文时，不要为了保险起见就去搜索。"
+        "只有当搜索结果会明显提升正确性时才调用。"
+        "调用 web_search 时，query 必须直接包含用户真正想查询的主体、时间或关键词，不要使用“你/我/它/这个”等代词，也不要把整段提示词原样塞进去。"
         f"{source_rule}"
         "如果没有收到真实工具结果，不要声称自己已经联网搜索。"
     )
-
-
-_SEARCH_INTENT_TERMS = (
-    "搜索",
-    "联网",
-    "网上",
-    "查一下",
-    "查",
-    "查找",
-    "搜一下",
-    "搜",
-    "帮我查",
-    "帮我搜",
-    "帮忙查",
-    "帮忙搜",
-    "找一下",
-    "Google",
-    "google",
-    "最新",
-    "最近",
-    "近期",
-    "目前",
-    "当下",
-    "今年",
-    "去年",
-    "明年",
-    "今天",
-    "现在",
-    "新闻",
-    "消息",
-    "资讯",
-    "资料",
-    "发布",
-    "公布",
-    "更新",
-    "路线图",
-    "官方",
-    "价格",
-    "报价",
-    "汇率",
-    "天气",
-    "日程",
-    "赛程",
-    "版本",
-    "文档",
-    "api",
-    "current",
-    "latest",
-    "recent",
-    "today",
-    "news",
-    "price",
-    "weather",
-    "schedule",
-    "version",
-    "docs",
-    "documentation",
-    "release",
-    "released",
-    "update",
-    "roadmap",
-    "official",
-    "search",
-    "web",
-    "internet",
-    "look up",
-)
 
 
 def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
@@ -199,41 +134,6 @@ def with_web_search_system_hint(messages: list[dict], include_sources: bool = Tr
         copied.insert(1, hint)
     else:
         copied.insert(0, hint)
-    return copied
-
-
-def maybe_add_prefetched_web_search(
-    messages: list[dict],
-    *,
-    force: bool = False,
-    include_sources: bool = True,
-    tool_config: dict | None = None,
-) -> list[dict]:
-    copied = [dict(item) for item in messages]
-    user_text = _latest_user_text(copied)
-    query = _normalize_web_search_query(user_text, user_text)
-    if not force and not _looks_like_search_intent(user_text):
-        return copied
-    if not query.strip():
-        return copied
-    result = run_local_tool(WEB_SEARCH_TOOL_NAME, {"query": query, "max_results": 4}, tool_config)
-    if include_sources:
-        source_rule = "只要使用了这些结果，回复末尾必须列出来源 URL；"
-    else:
-        source_rule = "请不要在回复里列出 URL 或引用列表，除非用户明确要求来源；"
-    context = (
-        "【自动联网搜索结果】\n"
-        "以下是程序在发送给模型前预先检索到的资料。请优先使用这些结果回答；"
-        "如果结果不足或不相关，请说明不确定。"
-        f"{source_rule}"
-        "如果没有看到真实搜索结果，不要声称自己已经联网搜索。\n\n"
-        f"{result}"
-    )
-    context_message = {"role": "system", "content": context}
-    if copied and copied[0].get("role") == "system":
-        copied.insert(1, context_message)
-    else:
-        copied.insert(0, context_message)
     return copied
 
 
@@ -312,14 +212,6 @@ def _searcher_for_engine(engine: str):
     }.get(_normalize_search_engine(engine), _search_bing_cn_html)
 
 
-def _latest_user_text(messages: list[dict]) -> str:
-    for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-        return _content_to_text(message.get("content", ""))
-    return ""
-
-
 def _content_to_text(content) -> str:
     if isinstance(content, list):
         parts = []
@@ -328,16 +220,6 @@ def _content_to_text(content) -> str:
                 parts.append(str(item.get("text", "") or ""))
         return "\n".join(parts)
     return str(content or "")
-
-
-def _looks_like_search_intent(text: str) -> bool:
-    lowered = str(text or "").lower()
-    if any(term.lower() in lowered for term in _SEARCH_INTENT_TERMS):
-        return True
-    query = _extract_search_query(text)
-    if query and query.strip().lower() != lowered.strip() and re.search(r"[A-Za-z0-9]", query):
-        return True
-    return bool(re.search(r"\b20[0-9]{2}\b", lowered))
 
 
 _BAD_SEARCH_QUERIES = {
