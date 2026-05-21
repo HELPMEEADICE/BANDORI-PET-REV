@@ -752,18 +752,21 @@ class DatabaseManager:
     def get_conversations(self, character: str = "") -> list[dict]:
         if character:
             rows = self._conn.execute(
-                "SELECT id, character, title, created_at FROM conversations "
-                "WHERE character=? AND EXISTS ("
-                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ") ORDER BY created_at DESC",
+                "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+                "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
+                "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+                "WHERE conversations.character=? "
+                "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
+                "ORDER BY last_message_id DESC",
                 (character,)
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, character, title, created_at FROM conversations "
-                "WHERE EXISTS ("
-                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ") ORDER BY created_at DESC"
+                "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+                "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
+                "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+                "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
+                "ORDER BY last_message_id DESC"
             ).fetchall()
         result = []
         for r in rows:
@@ -775,15 +778,18 @@ class DatabaseManager:
                 "character": _db_text(r[1]),
                 "title": _db_text(r[2]),
                 "created_at": _db_text(r[3]),
+                "last_message_at": _db_text(r[4]) if len(r) > 4 else _db_text(r[3]),
             })
         return result
 
     def get_last_conversation(self, character: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT id, character, title, created_at FROM conversations "
-            "WHERE character=? AND EXISTS ("
-            "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-            ") ORDER BY created_at DESC LIMIT 1",
+            "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+            "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
+            "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+            "WHERE conversations.character=? "
+            "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
+            "ORDER BY last_message_id DESC LIMIT 1",
             (character,)
         ).fetchone()
         if row:
@@ -795,6 +801,7 @@ class DatabaseManager:
                 "character": _db_text(row[1]),
                 "title": _db_text(row[2]),
                 "created_at": _db_text(row[3]),
+                "last_message_at": _db_text(row[4]) if len(row) > 4 else _db_text(row[3]),
             }
         return None
 

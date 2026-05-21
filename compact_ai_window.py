@@ -1,10 +1,11 @@
 import ctypes
 import ctypes.wintypes
 import os
+import re
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect, QRectF
+from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QThread, QTimer, Signal, QRect, QRectF
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,6 +24,32 @@ from llm_manager import (
     parse_action_tags,
     strip_action_tags,
 )
+try:
+    from tts_manager import TTSPlayer, TTSRequestWorker, strip_tts_action_tags
+    _TTS_AVAILABLE = True
+except (ImportError, OSError):
+    _TTS_AVAILABLE = False
+
+    class TTSPlayer(QObject):
+        error = Signal(str)
+        level_changed = Signal(float)
+        playback_finished = Signal()
+        def enqueue(self, audio, media_type): pass
+        def stop(self): pass
+        def is_idle(self): return True
+
+    class TTSRequestWorker(QThread):
+        audio_ready = Signal(int, int, bytes, str)
+        error = Signal(str)
+        finished = Signal()
+        def __init__(self, *args, **kwargs):
+            super().__init__(kwargs.get("parent"))
+            self.sequence = args[0] if args else 0
+            self.generation = args[1] if len(args) > 1 else 0
+        def run(self): pass
+
+    def strip_tts_action_tags(text: str) -> str:
+        return re.sub(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]", "", text).strip()
 from database_manager import DatabaseManager
 from i18n_manager import tr as _tr
 from relationship_memory import (
@@ -31,6 +58,7 @@ from relationship_memory import (
     format_character_status,
     user_key_from_config,
 )
+from action_bus import publish_lip_sync
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -165,10 +193,18 @@ class CompactAIWindow(QWidget):
         self._db = DatabaseManager()
         self._worker = None
         self._cancelled_workers = []
+        self._conv_id: int | None = None
         self._history = []
         self._last_user_text = ""
+        self._last_user_message_id: int | None = None
         self._stream_text = ""
         self._thinking_text = ""
+        self._tts_worker = None
+        self._tts_generation = 0
+        self._tts_playing_character = ""
+        self._tts_player = TTSPlayer(self)
+        self._tts_player.level_changed.connect(self._on_tts_level_changed)
+        self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
         self._external_stream_text = ""
         self._clear_timer = QTimer(self)
         self._clear_timer.setSingleShot(True)
@@ -186,6 +222,7 @@ class CompactAIWindow(QWidget):
 
         self._init_ui()
         self.refresh_theme()
+        self._load_last_conversation()
         self._update_output_height(animated=False)
 
     def _init_ui(self):
@@ -594,10 +631,34 @@ class CompactAIWindow(QWidget):
     def set_character(self, character: str):
         if character == self._character:
             return
+        self._reset_tts()
         self._character = character
+        self._conv_id = None
+        self._last_user_message_id = None
         self._history.clear()
         self._external_stream_text = ""
         self._set_output_text("", animated=False)
+        self._load_last_conversation()
+
+    def _load_last_conversation(self):
+        self._history = []
+        self._conv_id = None
+        last = self._db.get_last_conversation(self._character)
+        if not last:
+            return
+        self._conv_id = last["id"]
+        for message in self._db.get_messages(self._conv_id)[-12:]:
+            role = message.get("role", "")
+            if role not in {"user", "assistant"}:
+                continue
+            content = str(message.get("content", "") or "").strip()
+            if content:
+                self._history.append({"role": role, "content": content})
+
+    def _ensure_conversation(self) -> int:
+        if self._conv_id is None:
+            self._conv_id = self._db.create_conversation(self._character, _tr("CompactAIWindow.history_title", default="悬浮窗聊天"))
+        return self._conv_id
 
     def apply_ai_event(self, event: dict):
         if not isinstance(event, dict):
@@ -702,6 +763,8 @@ class CompactAIWindow(QWidget):
             self._input.setPlaceholderText(_tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断"))
             return
 
+        if self._cfg:
+            self._cfg.load()
         api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
         api_key = self._cfg.get("llm_api_key", "") if self._cfg else ""
         model_id = self._cfg.get("llm_model_id", "") if self._cfg else ""
@@ -710,6 +773,9 @@ class CompactAIWindow(QWidget):
             return
 
         self._input.clear()
+        self._reset_tts()
+        conv_id = self._ensure_conversation()
+        self._last_user_message_id = self._db.add_message(conv_id, "user", text)
         self._history.append({"role": "user", "content": text})
         self._history = self._history[-12:]
         self._last_user_text = text
@@ -828,14 +894,17 @@ class CompactAIWindow(QWidget):
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
             return
-        del reasoning_text, actions
+        del actions
         acts = parse_action_tags(full_text)
         clean = strip_action_tags(full_text)
+        reasoning_clean = strip_action_tags(reasoning_text or self._thinking_text)
         if clean:
             self._stream_text = clean
             self._set_output_text(clean)
             self._history.append({"role": "assistant", "content": clean})
             self._history = self._history[-12:]
+            self._db.add_message(self._ensure_conversation(), "assistant", clean, reasoning_clean)
+            self._speak_tts_text(clean, self._character)
         self._apply_relationship_update(clean, acts)
         for action in acts:
             self.action_triggered.emit(action)
@@ -977,12 +1046,88 @@ class CompactAIWindow(QWidget):
                 memory["kind"],
                 memory["content"],
                 memory["importance"],
+                source_message_id=self._last_user_message_id,
             )
+
+    def _tts_enabled(self) -> bool:
+        return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
+
+    def _tts_config_snapshot(self) -> dict:
+        keys = (
+            "tts_api_url",
+            "tts_language",
+            "tts_reference_character",
+            "tts_streaming",
+            "tts_temperature",
+            "tts_translate_to_selected_language",
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+        )
+        return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
+
+    def _clean_tts_payload(self, text: str) -> str:
+        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
+        return strip_tts_action_tags(text).strip()
+
+    def _reset_tts(self, stop_player: bool = True):
+        self._tts_generation += 1
+        worker = self._tts_worker
+        self._tts_worker = None
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            self._park_cancelled_worker(worker)
+        if stop_player:
+            self._tts_player.stop()
+            if self._tts_playing_character:
+                publish_lip_sync(self._tts_playing_character, 0.0)
+        self._tts_playing_character = ""
+
+    def _speak_tts_text(self, text: str, character: str):
+        if not self._tts_enabled():
+            return
+        payload = self._clean_tts_payload(text)
+        if not payload:
+            return
+        self._reset_tts(stop_player=True)
+        generation = self._tts_generation
+        self._tts_playing_character = character
+        config = self._tts_config_snapshot()
+        worker = TTSRequestWorker(0, generation, payload, character, config, self)
+        self._tts_worker = worker
+        worker.audio_ready.connect(self._on_tts_audio_ready)
+        worker.error.connect(self._on_tts_error)
+        worker.finished.connect(self._on_tts_worker_finished)
+        worker.start()
+
+    def _on_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
+        del sequence
+        if generation != self._tts_generation or self.sender() is not self._tts_worker:
+            return
+        self._tts_player.enqueue(audio, media_type)
+
+    def _on_tts_error(self, error_msg: str):
+        del error_msg
+
+    def _on_tts_worker_finished(self):
+        if self.sender() is self._tts_worker:
+            self._tts_worker = None
+
+    def _on_tts_level_changed(self, level: float):
+        if self._tts_playing_character:
+            publish_lip_sync(self._tts_playing_character, level)
+
+    def _on_tts_playback_finished(self):
+        if self._tts_playing_character:
+            publish_lip_sync(self._tts_playing_character, 0.0)
+        self._tts_playing_character = ""
 
     def _on_response_error(self, error_msg: str):
         if self.sender() is not self._worker:
             return
         self._set_output_text(f"Error: {error_msg}")
+        self._reset_tts(stop_player=False)
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
@@ -1009,6 +1154,7 @@ class CompactAIWindow(QWidget):
             self._park_cancelled_worker(worker)
         self._worker = None
         self._thinking_text = ""
+        self._reset_tts()
         if not self._stream_text.strip():
             self._set_output_text(_tr("CompactAIWindow.response_interrupted", default="已中断当前回复。"))
         self._set_busy(False)
@@ -1033,6 +1179,7 @@ class CompactAIWindow(QWidget):
             self._worker.cancel()
             self._park_cancelled_worker(self._worker)
             self._worker = None
+        self._reset_tts()
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
                 worker.wait(1000)
