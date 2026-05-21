@@ -1112,6 +1112,92 @@ class SearchSourceBadge(QLabel):
         """)
 
 
+class ChatImagePreview(QWidget):
+    _MAX_HEIGHT = 190
+    _DEFAULT_WIDTH = 260
+
+    def __init__(self, attachment: dict, parent=None):
+        super().__init__(parent)
+        self._attachment = dict(attachment or {})
+        self._path = str(self._attachment.get("path", "") or "")
+        self._name = self._attachment.get("name") or Path(self._path).name or "image"
+        self._pixmap = QPixmap(self._path) if self._path else QPixmap()
+        self._bg = QColor("transparent")
+        self._border = QColor("transparent")
+        self._empty_text = QColor("#657089")
+        self.setToolTip(self._name)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.set_preview_width(self._DEFAULT_WIDTH)
+
+    def preferred_width(self) -> int:
+        if self._pixmap.isNull():
+            return 180
+        return self._scaled_outer_size(self._DEFAULT_WIDTH).width()
+
+    def _scaled_outer_size(self, max_width: int) -> QSize:
+        max_width = max(96, int(max_width))
+        if self._pixmap.isNull():
+            return QSize(min(max_width, 220), 52)
+
+        source_w = max(1, self._pixmap.width())
+        source_h = max(1, self._pixmap.height())
+        scale = min(max_width / source_w, self._MAX_HEIGHT / source_h)
+        if max(source_w, source_h) < 96:
+            scale = min(
+                max(96 / source_w, 96 / source_h),
+                max_width / source_w,
+                self._MAX_HEIGHT / source_h,
+            )
+        scale = min(scale, 1.35)
+        display_w = max(1, int(round(source_w * scale)))
+        display_h = max(1, int(round(source_h * scale)))
+        outer_w = max(96, min(max_width, display_w))
+        return QSize(outer_w, display_h)
+
+    def set_preview_width(self, max_width: int):
+        self.setFixedSize(self._scaled_outer_size(max_width))
+        self.update()
+
+    def apply_theme(self):
+        dark = isDarkTheme()
+        self._bg = QColor("#202634" if dark else "#ffffff")
+        self._border = QColor("#39415a" if dark else "#dde4f0")
+        self._empty_text = QColor("#a9b0c3" if dark else "#657089")
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(rect, 10, 10)
+        painter.fillPath(path, self._bg)
+
+        if self._pixmap.isNull():
+            painter.setPen(self._empty_text)
+            text = self.fontMetrics().elidedText(self._name, Qt.TextElideMode.ElideRight, max(24, self.width() - 18))
+            painter.drawText(rect.adjusted(9, 0, -9, 0), Qt.AlignmentFlag.AlignCenter, text)
+        else:
+            clipped = QPainterPath()
+            clipped.addRoundedRect(rect.adjusted(1, 1, -1, -1), 9, 9)
+            painter.setClipPath(clipped)
+            scaled = self._pixmap.scaled(
+                max(1, int(rect.width())),
+                max(1, int(rect.height())),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = int(rect.left() + (rect.width() - scaled.width()) / 2)
+            y = int(rect.top() + (rect.height() - scaled.height()) / 2)
+            painter.drawPixmap(x, y, scaled)
+            painter.setClipping(False)
+
+        painter.setPen(QPen(self._border, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        super().paintEvent(event)
+
+
 class MessageBubble(QWidget):
     def __init__(
         self,
@@ -1127,6 +1213,7 @@ class MessageBubble(QWidget):
         reasoning: str = "",
         show_reasoning: bool = True,
         search_sources: list[dict] | None = None,
+        attachments: list[dict] | str | None = None,
     ):
         super().__init__(parent)
         self._text = text
@@ -1134,6 +1221,7 @@ class MessageBubble(QWidget):
         self._reasoning = reasoning
         self._show_reasoning = show_reasoning
         self._search_sources = self._normalize_search_sources(search_sources)
+        self._attachments = self._normalize_display_attachments(attachments)
         self._author = author or (_tr("ChatWindow.you") if role == "user" else _tr("ChatWindow.you"))
         self._created_at = created_at
         self._avatar_color = avatar_color
@@ -1153,6 +1241,7 @@ class MessageBubble(QWidget):
         self._text_opacity_effect = None
         self._text_fade_anim = None
         self._height_anim = None
+        self._attachment_previews: list[ChatImagePreview] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._init_ui()
         self.apply_theme()
@@ -1228,12 +1317,24 @@ class MessageBubble(QWidget):
         self._sources_layout.addStretch()
         self._rebuild_source_badges()
 
+        self._attachments_panel = QWidget(self)
+        self._attachments_panel.setStyleSheet("background: transparent;")
+        attachments_layout = QVBoxLayout(self._attachments_panel)
+        attachments_layout.setContentsMargins(0, 3, 0, 0)
+        attachments_layout.setSpacing(6)
+        for item in self._attachments:
+            preview = ChatImagePreview(item, self._attachments_panel)
+            self._attachment_previews.append(preview)
+            attachments_layout.addWidget(preview, 0, Qt.AlignmentFlag.AlignLeft)
+        self._attachments_panel.setVisible(bool(self._attachment_previews))
+
         self._container = self._make_container(user=self._role == "user")
         bubble_layout = QVBoxLayout(self._container)
         bubble_layout.setContentsMargins(12, 9, 12, 9)
         bubble_layout.setSpacing(4)
         bubble_layout.addWidget(self._reasoning_panel)
         bubble_layout.addWidget(self._label)
+        bubble_layout.addWidget(self._attachments_panel)
         bubble_layout.addWidget(self._sources_row)
         bubble_layout.addWidget(self._stream_label)
 
@@ -1287,6 +1388,8 @@ class MessageBubble(QWidget):
 
     def _natural_bubble_width(self) -> int:
         content_width = self._widest_plain_line(self._label)
+        for preview in self._attachment_previews:
+            content_width = max(content_width, preview.preferred_width())
         if self._stream_label.isVisible() and self._stream_label.text():
             content_width = max(content_width, self._widest_plain_line(self._stream_label))
         if self._reasoning_panel.isVisible():
@@ -1336,6 +1439,8 @@ class MessageBubble(QWidget):
         text_width = max(1, target_width - 24)
         self._label.setFixedWidth(text_width)
         self._stream_label.setFixedWidth(text_width)
+        for preview in self._attachment_previews:
+            preview.set_preview_width(text_width)
         reasoning_text_width = max(1, target_width - 52)
         self._reasoning_title.setFixedWidth(reasoning_text_width)
         self._reasoning_label.setFixedWidth(reasoning_text_width)
@@ -1405,6 +1510,8 @@ class MessageBubble(QWidget):
             self._avatar.setText("")
             self._avatar.setPixmap(avatar_pixmap)
         self._label.setStyleSheet(f"color: {text}; background: transparent;")
+        for preview in self._attachment_previews:
+            preview.apply_theme()
         self._meta.setAlignment(Qt.AlignmentFlag.AlignRight if user else Qt.AlignmentFlag.AlignLeft)
         self._meta.setStyleSheet(f"color: {meta}; background: transparent; padding: 0 2px;")
         self._stream_label.setStyleSheet(f"color: {stream}; background: transparent;")
@@ -1443,6 +1550,33 @@ class MessageBubble(QWidget):
             result.append({"title": title, "url": url})
             if len(result) >= 9:
                 break
+        return result
+
+    @staticmethod
+    def _normalize_display_attachments(attachments) -> list[dict]:
+        if not attachments:
+            return []
+        if isinstance(attachments, str):
+            try:
+                attachments = json.loads(attachments)
+            except (TypeError, ValueError):
+                return []
+        if not isinstance(attachments, list):
+            return []
+        result = []
+        for item in attachments:
+            if not isinstance(item, dict) or item.get("type") != "image":
+                continue
+            path = str(item.get("path", "") or "")
+            if not path:
+                continue
+            try:
+                resolved = Path(path)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS or not resolved.exists():
+                continue
+            result.append(dict(item, path=str(resolved)))
         return result
 
     def _rebuild_source_badges(self):
@@ -1621,6 +1755,7 @@ class ChatWindow(QWidget):
         self._window_anim = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
+        self._composer_drag_active = False
         self._group_splitter = None
         self._group_toggle_btn = None
         self._group_sidebar_toggle_btn = None
@@ -2348,6 +2483,8 @@ class ChatWindow(QWidget):
         self._composer = RoundedPanel(area)
         self._composer.setObjectName("Composer")
         self._composer.setFixedHeight(66)
+        self._composer.setAcceptDrops(True)
+        self._composer.installEventFilter(self)
         layout = QHBoxLayout(self._composer)
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(10)
@@ -2358,6 +2495,8 @@ class ChatWindow(QWidget):
         self._attach_btn.setIconSize(QSize(22, 22))
         self._attach_btn.setToolTip(_tr("ChatWindow.attach_image_tooltip", default="添加图片"))
         self._attach_btn.clicked.connect(self._choose_chat_images)
+        self._attach_btn.setAcceptDrops(True)
+        self._attach_btn.installEventFilter(self)
         layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._input = FluentContextTextEdit()
@@ -2369,7 +2508,10 @@ class ChatWindow(QWidget):
         font.setPointSize(10)
         self._input.setFont(font)
         self._input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._input.setAcceptDrops(True)
         self._input.installEventFilter(self)
+        self._input.viewport().setAcceptDrops(True)
+        self._input.viewport().installEventFilter(self)
         self._input.textChanged.connect(self._sync_input_height)
         layout.addWidget(self._input)
 
@@ -2378,15 +2520,35 @@ class ChatWindow(QWidget):
         self._send_btn.setIconSize(QSize(22, 22))
         self._send_btn.setToolTip(_tr("ChatWindow.send_tooltip"))
         self._send_btn.clicked.connect(self._send_message)
+        self._send_btn.setAcceptDrops(True)
+        self._send_btn.installEventFilter(self)
         layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         outer.addWidget(self._composer)
 
         self._input_area = area
+        self._input_area.setAcceptDrops(True)
+        self._input_area.installEventFilter(self)
         return area
 
     def eventFilter(self, obj, event):
-        if obj == self._input and event.type() == QKeyEvent.Type.KeyPress:
+        input_widget = getattr(self, "_input", None)
+        if obj in (
+            input_widget,
+            getattr(self, "_composer", None),
+            getattr(self, "_input_area", None),
+            getattr(self, "_attach_btn", None),
+            getattr(self, "_send_btn", None),
+            input_widget.viewport() if input_widget is not None else None,
+        ):
+            if event.type() in (
+                QEvent.Type.DragEnter,
+                QEvent.Type.DragMove,
+                QEvent.Type.DragLeave,
+                QEvent.Type.Drop,
+            ):
+                return self._handle_composer_drag_event(event)
+        if input_widget is not None and obj == input_widget and event.type() == QKeyEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self._send_message()
                 return True
@@ -2395,7 +2557,7 @@ class ChatWindow(QWidget):
                 return True
             if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 return False
-        if obj == self._input and event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+        if input_widget is not None and obj == input_widget and event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
             QTimer.singleShot(0, self._update_composer_focus_style)
         return super().eventFilter(obj, event)
 
@@ -3088,8 +3250,10 @@ class ChatWindow(QWidget):
         if not self._composer_colors:
             return
         focused = self._input.hasFocus()
-        border = self._composer_colors["focus_border"] if focused else self._composer_colors["border"]
-        target_width = 2.0 if focused else 1.0
+        dragging = getattr(self, "_composer_drag_active", False)
+        active = focused or dragging
+        border = self._composer_colors["focus_border"] if active else self._composer_colors["border"]
+        target_width = 3.0 if dragging else 2.0 if focused else 1.0
         current_width = getattr(self, '_composer_border_width', 1.0)
         if abs(current_width - target_width) < 0.01:
             self._composer_border_width = target_width
@@ -3105,7 +3269,7 @@ class ChatWindow(QWidget):
         anim.setEndValue(float(target_width))
         anim.valueChanged.connect(lambda v: self._composer.set_panel_style(
             self._composer_colors["bg"],
-            self._composer_colors["focus_border"] if focused else self._composer_colors["border"],
+            self._composer_colors["focus_border"] if active else self._composer_colors["border"],
             22,
             int(round(v))
         ))
@@ -3184,7 +3348,7 @@ class ChatWindow(QWidget):
                     self._message_character(m["content"], m["role"])
                 )
             bubble = MessageBubble(
-                self._message_content(m["content"], m["role"]) + (self._attachment_summary(m.get("attachments_json")) if m["role"] == "user" else ""),
+                self._message_content(m["content"], m["role"]),
                 m["role"],
                 author,
                 m.get("created_at", ""),
@@ -3195,6 +3359,7 @@ class ChatWindow(QWidget):
                 reasoning=m.get("reasoning_content", ""),
                 show_reasoning=self._show_reasoning,
                 search_sources=self._message_search_sources(m.get("tool_trace_json")),
+                attachments=self._normalize_attachments(m.get("attachments_json")) if m["role"] == "user" else None,
             )
             self._msg_layout.addWidget(bubble)
         self._msg_layout.addStretch()
@@ -3533,12 +3698,62 @@ class ChatWindow(QWidget):
         )
         if not paths:
             return
+        self._add_chat_images(paths)
+
+    def _chat_image_paths_from_mime(self, mime_data) -> list[str]:
+        if not mime_data or not mime_data.hasUrls():
+            return []
+        paths = []
+        for url in mime_data.urls():
+            path = url.toLocalFile() if url.isLocalFile() else ""
+            if not path:
+                continue
+            source = Path(path)
+            if source.suffix.lower() in _CHAT_IMAGE_EXTENSIONS and source.exists():
+                paths.append(path)
+        return paths
+
+    def _mime_has_chat_images(self, mime_data) -> bool:
+        return bool(self._chat_image_paths_from_mime(mime_data))
+
+    def _set_composer_drag_active(self, active: bool):
+        if self._composer_drag_active == active:
+            return
+        self._composer_drag_active = active
+        self._update_composer_focus_style()
+
+    def _handle_composer_drag_event(self, event) -> bool:
+        event_type = event.type()
+        if event_type in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            if self._mime_has_chat_images(event.mimeData()):
+                self._set_composer_drag_active(True)
+                event.acceptProposedAction()
+                return True
+            self._set_composer_drag_active(False)
+            event.ignore()
+            return True
+        if event_type == QEvent.Type.DragLeave:
+            self._set_composer_drag_active(False)
+            event.accept()
+            return True
+        if event_type == QEvent.Type.Drop:
+            paths = self._chat_image_paths_from_mime(event.mimeData())
+            self._set_composer_drag_active(False)
+            if paths:
+                self._add_chat_images(paths, dropped=True)
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return True
+        return False
+
+    def _add_chat_images(self, paths: list[str], dropped: bool = False) -> int:
         added = 0
         target_dir = self._chat_attachment_dir()
         for path in paths:
             source = Path(path)
             suffix = source.suffix.lower()
-            if suffix not in _CHAT_IMAGE_EXTENSIONS or not source.exists():
+            if suffix not in _CHAT_IMAGE_EXTENSIONS or not source.exists() or not source.is_file():
                 continue
             target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
             try:
@@ -3560,6 +3775,10 @@ class ChatWindow(QWidget):
             added += 1
         if added:
             self._update_attachment_hint()
+            self._input.setFocus()
+        elif dropped:
+            self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="目前只能拖入 png、jpg、jpeg、webp 或 gif 图片。"))
+        return added
 
     def _update_attachment_hint(self):
         if self._pending_attachments:
@@ -3567,13 +3786,6 @@ class ChatWindow(QWidget):
             self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 张图片，发送时会一起交给模型。", count=count))
         else:
             self._composer_hint.setText(self._idle_status_text())
-
-    def _attachment_summary(self, attachments) -> str:
-        items = self._normalize_attachments(attachments)
-        if not items:
-            return ""
-        names = [item.get("name") or Path(item.get("path", "")).name or "image" for item in items]
-        return "\n\n" + _tr("ChatWindow.attachment_summary", default="图片附件：{names}", names="、".join(names))
 
     def _message_search_sources(self, tool_trace) -> list[dict]:
         if not tool_trace:
@@ -3849,12 +4061,13 @@ class ChatWindow(QWidget):
         self._reasoning_stream_text = ""
 
         user_bubble = MessageBubble(
-            text + self._attachment_summary(attachments),
+            text,
             "user",
             self._user_name or _tr("ChatWindow.you"),
             avatar_color=self._user_avatar_color,
             avatar_path=self._user_avatar_path,
             show_reasoning=self._show_reasoning,
+            attachments=self._normalize_attachments(attachments),
         )
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
         self._relayout_message_bubbles()

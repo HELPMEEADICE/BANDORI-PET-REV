@@ -5,6 +5,7 @@ models/
 BUILD/
 build/
 BandoriPet.egg-info/
+chat_attachments/
 third_party/
 venv/
 config.json
