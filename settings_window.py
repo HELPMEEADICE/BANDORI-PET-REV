@@ -1320,10 +1320,28 @@ class SettingsWindow(QWidget):
         pal = w.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(bg))
         w.setPalette(pal)
+        w.update()
 
     def _update_all_theme_bgs(self):
         for w in self._theme_widgets:
             self._apply_theme_bg(w)
+
+    @staticmethod
+    def _refresh_theme_widget_styles(widget: QWidget | None):
+        if widget is None:
+            return
+        style = widget.style()
+        if style is not None:
+            style.unpolish(widget)
+            style.polish(widget)
+        widget.update()
+
+    def _refresh_json_code_edit_theme(self, edit: JsonCodeEdit | None):
+        if edit is None:
+            return
+        self._refresh_theme_widget_styles(edit)
+        self._refresh_theme_widget_styles(edit.viewport())
+        self._refresh_theme_widget_styles(edit._line_number_area)
 
     def _init_ui(self):
         self._make_theme_widget(self)
@@ -4010,6 +4028,8 @@ class SettingsWindow(QWidget):
 
     def _build_chat_integration_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("chatIntegrationPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -4174,11 +4194,15 @@ class SettingsWindow(QWidget):
 
     def _style_chat_integration_page(self, page: QWidget):
         dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
         readonly_bg = "#242424" if dark else "#f8f8f8"
         page.setStyleSheet(f"""
+            QWidget#chatIntegrationPage {{
+                background: {page_bg};
+            }}
             QLineEdit {{
                 color: {text};
                 background: {input_bg};
@@ -4198,6 +4222,8 @@ class SettingsWindow(QWidget):
                 selection-background-color: {BANDORI_PRIMARY};
             }}
         """)
+        self._refresh_theme_widget_styles(page)
+        self._refresh_json_code_edit_theme(getattr(self, "_chat_integration_preview", None))
 
     def _chat_integration_endpoint_url(self) -> str:
         if self._chat_integration_widgets_ready():
@@ -4428,6 +4454,8 @@ class SettingsWindow(QWidget):
 
     def _build_mcp_computer_page(self):
         page = self._make_theme_widget(QWidget())
+        page.setObjectName("mcpComputerPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -4564,12 +4592,16 @@ class SettingsWindow(QWidget):
 
     def _style_mcp_computer_page(self, page: QWidget):
         dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
         risk_bg = "#2a2022" if dark else "#fff4e5"
         risk_border = "#8a5b20" if dark else "#ffd599"
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
         page.setStyleSheet(f"""
+            QWidget#mcpComputerPage {{
+                background: {page_bg};
+            }}
             #mcpRiskPanel {{
                 background: {risk_bg};
                 border: 1px solid {risk_border};
@@ -4590,6 +4622,8 @@ class SettingsWindow(QWidget):
                 selection-background-color: {BANDORI_PRIMARY};
             }}
         """)
+        self._refresh_theme_widget_styles(page)
+        self._refresh_json_code_edit_theme(getattr(self, "_llm_mcp_servers_text", None))
 
     def _mcp_computer_widgets_ready(self) -> bool:
         return all(
