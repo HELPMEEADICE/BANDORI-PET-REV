@@ -57,6 +57,13 @@ from relationship_memory import (
     role_character_from_user_key,
     user_key_from_config,
 )
+try:
+    from tts_manager import TTSPlayer, TTSRequestWorker
+    _SETTINGS_TTS_AVAILABLE = True
+except (ImportError, OSError):
+    TTSPlayer = None
+    TTSRequestWorker = None
+    _SETTINGS_TTS_AVAILABLE = False
 
 import json
 
@@ -1305,11 +1312,14 @@ class SettingsWindow(QWidget):
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait(2000)
+        player = getattr(self, '_tts_test_player', None)
+        if player is not None:
+            player.stop()
 
     def _make_theme_widget(self, w: QWidget) -> QWidget:
         w.setAutoFillBackground(True)
@@ -3028,10 +3038,26 @@ class SettingsWindow(QWidget):
         tts_translate_row.addWidget(self._tts_translate_to_selected_language)
         layout.addLayout(tts_translate_row)
 
+        tts_test_label = BodyLabel(_tr("SettingsWindow.tts_test_text", default="测试文本"), page)
+        layout.addWidget(tts_test_label)
+        self._tts_test_text = FluentContextTextEdit(page)
+        self._tts_test_text.setPlaceholderText(_tr(
+            "SettingsWindow.tts_test_text_placeholder",
+            default="留空则使用默认测试文案。",
+        ))
+        self._tts_test_text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._tts_test_text.setFixedHeight(92)
+        layout.addWidget(self._tts_test_text)
+
         layout.addStretch()
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
+        self._tts_test_button = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.tts_test_button", default="测试播放"), page)
+        self._tts_test_button.setFixedHeight(36)
+        self._tts_test_button.setEnabled(_SETTINGS_TTS_AVAILABLE)
+        self._tts_test_button.clicked.connect(self._test_tts)
+        btn_row.addWidget(self._tts_test_button)
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
         save_btn.setFixedHeight(36)
         save_btn.clicked.connect(self._save_tts_config)
@@ -5381,9 +5407,22 @@ class SettingsWindow(QWidget):
             QLineEdit:focus {{
                 border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY};
             }}
+            QTextEdit {{
+                background: {input_bg};
+                color: {text_color};
+                border: 1px solid {input_border};
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }}
+            QTextEdit:focus {{
+                border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY};
+            }}
         """
         self._tts_api_url.setStyleSheet(style)
         self._tts_temperature.setStyleSheet(style)
+        if hasattr(self, "_tts_test_text"):
+            self._tts_test_text.setStyleSheet(style)
 
     def _style_avatar_buttons(self):
         for btn in self._avatar_color_btns:
@@ -6044,31 +6083,161 @@ class SettingsWindow(QWidget):
             except Exception:
                 pass
 
-    def _save_tts_config(self):
+    def _current_tts_config(self, include_llm: bool = False) -> dict:
+        try:
+            temperature = max(0.01, min(2.0, float(self._tts_temperature.text().strip() or "0.9")))
+        except ValueError:
+            temperature = 0.9
+        self._tts_temperature.setText(str(temperature))
+        config = {
+            "tts_enabled": self._tts_enabled.isChecked(),
+            "tts_api_url": self._tts_api_url.text().strip() or "http://127.0.0.1:9880/",
+            "tts_language": self._tts_language.itemData(self._tts_language.currentIndex()) or "Chinese",
+            "tts_reference_character": self._tts_reference_character.itemData(self._tts_reference_character.currentIndex()) or "",
+            "tts_temperature": temperature,
+            "tts_streaming": self._tts_streaming.isChecked(),
+            "tts_translate_to_selected_language": self._tts_translate_to_selected_language.isChecked(),
+        }
+        if include_llm and self._cfg:
+            for key in (
+                "llm_api_url",
+                "llm_api_key",
+                "llm_model_id",
+                "llm_aux_model_id",
+                "llm_aux_enable_thinking",
+            ):
+                config[key] = self._cfg.get(key, None)
+        return config
+
+    def _save_tts_config(self, show_info: bool = True):
         if self._cfg and self._tts_config_widgets_ready():
-            self._cfg.set("tts_enabled", self._tts_enabled.isChecked())
-            self._cfg.set("tts_api_url", self._tts_api_url.text().strip() or "http://127.0.0.1:9880/")
-            self._cfg.set("tts_language", self._tts_language.itemData(self._tts_language.currentIndex()) or "Chinese")
-            self._cfg.set("tts_reference_character", self._tts_reference_character.itemData(self._tts_reference_character.currentIndex()) or "")
-            try:
-                temperature = max(0.01, min(2.0, float(self._tts_temperature.text().strip() or "0.9")))
-            except ValueError:
-                temperature = 0.9
-            self._tts_temperature.setText(str(temperature))
-            self._cfg.set("tts_temperature", temperature)
-            self._cfg.set("tts_streaming", self._tts_streaming.isChecked())
-            self._cfg.set("tts_translate_to_selected_language", self._tts_translate_to_selected_language.isChecked())
+            config = self._current_tts_config()
+            for key, value in config.items():
+                self._cfg.set(key, value)
             try:
                 self._cfg.save()
-                InfoBar.success(
-                    _tr("SettingsWindow.tts_saved_title"),
-                    _tr("SettingsWindow.tts_saved_content"),
-                    duration=2000,
-                    position=InfoBarPosition.TOP,
-                    parent=self,
-                )
+                if show_info:
+                    InfoBar.success(
+                        _tr("SettingsWindow.tts_saved_title"),
+                        _tr("SettingsWindow.tts_saved_content"),
+                        duration=2000,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
             except Exception:
                 pass
+
+    def _test_tts(self):
+        if getattr(self, "_tts_test_running", False):
+            return
+        if not _SETTINGS_TTS_AVAILABLE:
+            InfoBar.warning(
+                _tr("SettingsWindow.tts_test_unavailable_title", default="TTS 不可用"),
+                _tr("SettingsWindow.tts_test_unavailable_content", default="当前环境缺少 TTS 播放依赖，无法进行测试播放。"),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        if not (self._cfg and self._tts_config_widgets_ready()):
+            return
+
+        config = self._current_tts_config(include_llm=True)
+        test_text = self._tts_test_text.toPlainText().strip() if hasattr(self, "_tts_test_text") else ""
+        if not test_text:
+            test_text = _tr("SettingsWindow.tts_test_default_text", default="你好，这是一段 TTS 测试语音。")
+
+        test_character = str(config.get("tts_reference_character", "") or "").strip() or self._current_char
+        if not test_character and hasattr(self, "_tts_reference_character"):
+            for index in range(self._tts_reference_character.count()):
+                candidate = str(self._tts_reference_character.itemData(index) or "").strip()
+                if candidate:
+                    test_character = candidate
+                    break
+        if not test_character:
+            InfoBar.warning(
+                _tr("SettingsWindow.tts_test_missing_reference_title", default="缺少参考音频"),
+                _tr("SettingsWindow.tts_test_missing_reference_content", default="请先选择参考音频角色，或确保当前模型角色有对应参考音频。"),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+
+        self._save_tts_config(show_info=False)
+        self._stop_tts_test_playback()
+        self._set_tts_test_running(True)
+        self._tts_test_failed = False
+        self._tts_test_received_audio = False
+        if getattr(self, "_tts_test_player", None) is None:
+            self._tts_test_player = TTSPlayer(self)
+            self._tts_test_player.error.connect(self._on_tts_test_error)
+            self._tts_test_player.playback_finished.connect(self._on_tts_test_playback_finished)
+        self._tts_test_worker = TTSRequestWorker(0, 0, test_text, test_character, config, self)
+        self._tts_test_worker.audio_ready.connect(self._on_tts_test_audio_ready)
+        self._tts_test_worker.error.connect(self._on_tts_test_error)
+        self._tts_test_worker.finished.connect(self._on_tts_test_finished)
+        self._tts_test_worker.start()
+
+    def _set_tts_test_running(self, running: bool):
+        self._tts_test_running = running
+        button = getattr(self, "_tts_test_button", None)
+        if button is not None:
+            button.setEnabled(_SETTINGS_TTS_AVAILABLE and not running)
+
+    def _stop_tts_test_playback(self):
+        worker = getattr(self, "_tts_test_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            worker.wait(2000)
+        player = getattr(self, "_tts_test_player", None)
+        if player is not None:
+            player.stop()
+
+    def _on_tts_test_audio_ready(self, _sequence: int, _generation: int, audio: bytes, media_type: str):
+        if not audio or getattr(self, "_tts_test_player", None) is None:
+            return
+        self._tts_test_received_audio = True
+        self._tts_test_player.enqueue(audio, media_type)
+
+    def _on_tts_test_finished(self):
+        if getattr(self, "_tts_test_failed", False):
+            self._set_tts_test_running(False)
+            return
+        if not getattr(self, "_tts_test_received_audio", False):
+            self._set_tts_test_running(False)
+            InfoBar.warning(
+                _tr("SettingsWindow.tts_test_empty_title", default="测试未返回音频"),
+                _tr("SettingsWindow.tts_test_empty_content", default="TTS 请求已完成，但没有收到可播放的音频数据。"),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        InfoBar.success(
+            _tr("SettingsWindow.tts_test_success_title", default="正在播放测试语音"),
+            _tr("SettingsWindow.tts_test_success_content", default="已收到 TTS 音频并开始播放。"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _on_tts_test_playback_finished(self):
+        self._set_tts_test_running(False)
+
+    def _on_tts_test_error(self, msg: str):
+        self._tts_test_failed = True
+        self._set_tts_test_running(False)
+        player = getattr(self, "_tts_test_player", None)
+        if player is not None:
+            player.stop()
+        InfoBar.error(
+            _tr("SettingsWindow.tts_test_failed_title", default="TTS 测试失败"),
+            msg,
+            duration=4000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _default_chat_backup_path(self) -> str:
         name = "bandori-chat-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".db"
