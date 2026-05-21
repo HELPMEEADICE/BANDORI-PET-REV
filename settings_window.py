@@ -5831,7 +5831,7 @@ class SettingsWindow(QWidget):
             else:
                 self._llm_api_url_hint.setText(_tr(
                     "SettingsWindow.llm_api_url_hint_chat_tools",
-                    default="Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在“工具与电脑控制”页。",
+                    default="别忘记在 API 地址末尾写 /v1/chat/completions。Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在“工具与电脑控制”页。",
                 ))
 
     def _on_llm_web_search_enabled_changed(self, enabled: bool):
