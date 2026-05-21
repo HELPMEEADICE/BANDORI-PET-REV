@@ -2,7 +2,6 @@ AGENTS.md
 __pycache__/
 .runtime/
 models/
-pixels/
 BUILD/
 build/
 BandoriPet.egg-info/
