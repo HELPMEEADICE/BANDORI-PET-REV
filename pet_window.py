@@ -181,10 +181,12 @@ LIVE2D_SCALE_MAX = 500
 LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
 LIVE2D_DAZE_AFTER_SECONDS = 7 * 60
 LIVE2D_SLEEP_AFTER_SECONDS = 18 * 60
-LIVE2D_AMBIENT_COOLDOWN_SECONDS = 90
-LIVE2D_MOUSE_APPROACH_COOLDOWN_SECONDS = 35
-LIVE2D_MOUSE_APPROACH_RADIUS = 230
-LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 310
+LIVE2D_AMBIENT_COOLDOWN_SECONDS = 180
+LIVE2D_MOUSE_APPROACH_COOLDOWN_SECONDS = 150
+LIVE2D_MOUSE_APPROACH_MIN_IDLE_SECONDS = 12
+LIVE2D_MOUSE_APPROACH_DWELL_SECONDS = 4.0
+LIVE2D_MOUSE_APPROACH_RADIUS = 180
+LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 
 
 def _clamp_live2d_scale(value) -> int:
@@ -249,6 +251,8 @@ class PetWindow(QWidget):
         self._last_context_idle_action_at = 0.0
         self._last_mouse_approach_action_at = 0.0
         self._cursor_was_near_live2d = False
+        self._cursor_near_live2d_since = 0.0
+        self._cursor_near_live2d_reacted = False
         self._daily_context_idle_seen = set()
         self._mouse_passthrough = False
         # QOpenGLWidget alpha reads are not reliable during WM_NCHITTEST on
@@ -576,6 +580,8 @@ class PetWindow(QWidget):
         self._motion_guard_token += 1
         self._last_context_idle_action_at = time.monotonic()
         self._cursor_was_near_live2d = False
+        self._cursor_near_live2d_since = 0.0
+        self._cursor_near_live2d_reacted = False
         if not enabled:
             model = self._live2d_widget.model
             if model is not None:
@@ -734,6 +740,8 @@ class PetWindow(QWidget):
         self._motion_guard_token += 1
         self._last_context_idle_action_at = 0.0
         self._cursor_was_near_live2d = False
+        self._cursor_near_live2d_since = 0.0
+        self._cursor_near_live2d_reacted = False
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
 
@@ -783,7 +791,7 @@ class PetWindow(QWidget):
         cursor = QCursor.pos()
         approach_radius = max(
             LIVE2D_MOUSE_APPROACH_RADIUS,
-            min(480, int(max(self.width(), self.height()) * 0.55)),
+            min(360, int(max(self.width(), self.height()) * 0.42)),
         )
         exit_radius = max(LIVE2D_MOUSE_APPROACH_EXIT_RADIUS, approach_radius + 80)
         if not self.geometry().adjusted(
@@ -793,6 +801,8 @@ class PetWindow(QWidget):
             exit_radius,
         ).contains(cursor):
             self._cursor_was_near_live2d = False
+            self._cursor_near_live2d_since = 0.0
+            self._cursor_near_live2d_reacted = False
             return
         center = self.geometry().center()
         dx = cursor.x() - center.x()
@@ -800,15 +810,28 @@ class PetWindow(QWidget):
         dist_sq = dx * dx + dy * dy
         if dist_sq > exit_radius * exit_radius:
             self._cursor_was_near_live2d = False
+            self._cursor_near_live2d_since = 0.0
+            self._cursor_near_live2d_reacted = False
             return
         near = dist_sq <= approach_radius * approach_radius
         if not near:
+            self._cursor_near_live2d_since = 0.0
             return
         now = time.monotonic()
-        if self._cursor_was_near_live2d:
+        if not self._cursor_was_near_live2d:
+            self._cursor_was_near_live2d = True
+            self._cursor_near_live2d_since = now
+            self._cursor_near_live2d_reacted = False
             return
-        self._cursor_was_near_live2d = True
-        if now - self._last_user_interaction_at < 6:
+        if self._cursor_near_live2d_reacted:
+            return
+        if not self._cursor_near_live2d_since:
+            self._cursor_near_live2d_since = now
+            return
+        if now - self._cursor_near_live2d_since < LIVE2D_MOUSE_APPROACH_DWELL_SECONDS:
+            return
+        self._cursor_near_live2d_reacted = True
+        if now - self._last_user_interaction_at < LIVE2D_MOUSE_APPROACH_MIN_IDLE_SECONDS:
             return
         if now - self._last_mouse_approach_action_at < LIVE2D_MOUSE_APPROACH_COOLDOWN_SECONDS:
             return
@@ -883,6 +906,19 @@ class PetWindow(QWidget):
     def _choose_context_idle_motion(self, kind: str, motion_names: list[str]) -> str:
         if not motion_names:
             return ""
+        if kind == "approach":
+            weighted_tags = (
+                ("smile", 3),
+                ("nf", 3),
+                ("idle02", 2),
+                ("surprised", 1),
+            )
+            choices = []
+            for tag, weight in weighted_tags:
+                motion = self._resolve_motion_tag(tag, motion_names)
+                if motion:
+                    choices.extend([motion] * weight)
+            return random.choice(choices) if choices else ""
         tags_by_kind = {
             "morning": ("stretch", "akubi", "sigh", "smile", "kime", "idle02"),
             "late_night": ("sleep", "akubi", "sigh", "sad", "idle02"),
@@ -900,6 +936,19 @@ class PetWindow(QWidget):
         return ""
 
     def _choose_context_idle_expression(self, kind: str) -> str:
+        if kind == "approach":
+            weighted_tags = (
+                ("smile", 4),
+                ("default", 3),
+                ("idle", 2),
+                ("surprised", 1),
+            )
+            choices = []
+            for tag, weight in weighted_tags:
+                expression = self._find_expression_tag(tag)
+                if expression:
+                    choices.extend([expression] * weight)
+            return random.choice(choices) if choices else ""
         tags_by_kind = {
             "morning": ("smile", "default", "idle"),
             "late_night": ("sad", "sleep", "idle", "default"),
