@@ -2790,6 +2790,27 @@ class SettingsWindow(QWidget):
         model_row.addWidget(fetch_btn)
         layout.addLayout(model_row)
 
+        aux_api_url_label = BodyLabel(_tr("SettingsWindow.llm_aux_api_url", default="辅助模型 API 地址"), page)
+        layout.addWidget(aux_api_url_label)
+        self._llm_aux_api_url = FluentContextLineEdit(page)
+        self._llm_aux_api_url.setPlaceholderText(_tr(
+            "SettingsWindow.llm_aux_api_url_placeholder",
+            default="留空则复用主模型 API 地址",
+        ))
+        self._llm_aux_api_url.setFixedHeight(36)
+        layout.addWidget(self._llm_aux_api_url)
+
+        aux_api_key_label = BodyLabel(_tr("SettingsWindow.llm_aux_api_key", default="辅助模型 API 密钥"), page)
+        layout.addWidget(aux_api_key_label)
+        self._llm_aux_api_key = FluentContextLineEdit(page)
+        self._llm_aux_api_key.setPlaceholderText(_tr(
+            "SettingsWindow.llm_aux_api_key_placeholder",
+            default="留空则复用主模型 API 密钥",
+        ))
+        self._llm_aux_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._llm_aux_api_key.setFixedHeight(36)
+        layout.addWidget(self._llm_aux_api_key)
+
         aux_model_label = BodyLabel(_tr("SettingsWindow.llm_aux_model_id"), page)
         layout.addWidget(aux_model_label)
         self._llm_aux_model_id = FluentContextLineEdit(page)
@@ -5305,6 +5326,8 @@ class SettingsWindow(QWidget):
                 "_llm_api_url_hint",
                 "_llm_api_key",
                 "_llm_model_id",
+                "_llm_aux_api_url",
+                "_llm_aux_api_key",
                 "_llm_aux_model_id",
                 "_llm_aux_enable_thinking",
                 "_llm_aux_vision_fallback_enabled",
@@ -5389,6 +5412,8 @@ class SettingsWindow(QWidget):
         self._llm_api_url.setStyleSheet(style)
         self._llm_api_key.setStyleSheet(style)
         self._llm_model_id.setStyleSheet(style)
+        self._llm_aux_api_url.setStyleSheet(style)
+        self._llm_aux_api_key.setStyleSheet(style)
         self._llm_aux_model_id.setStyleSheet(style)
         self._llm_api_profile_name.setStyleSheet(style)
         self._user_name.setStyleSheet(style)
@@ -5555,6 +5580,8 @@ class SettingsWindow(QWidget):
             self._llm_api_url.setText(self._cfg.get("llm_api_url", ""))
             self._llm_api_key.setText(self._cfg.get("llm_api_key", ""))
             self._llm_model_id.setText(self._cfg.get("llm_model_id", ""))
+            self._llm_aux_api_url.setText(self._cfg.get("llm_aux_api_url", ""))
+            self._llm_aux_api_key.setText(self._cfg.get("llm_aux_api_key", ""))
             self._llm_aux_model_id.setText(self._cfg.get("llm_aux_model_id", ""))
             aux_thinking_val = self._cfg.get("llm_aux_enable_thinking", None)
             if aux_thinking_val is True:
@@ -5633,6 +5660,8 @@ class SettingsWindow(QWidget):
                 "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
                 "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
                 "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
+                "llm_aux_api_url": str(profile.get("llm_aux_api_url", "") or "").strip(),
+                "llm_aux_api_key": str(profile.get("llm_aux_api_key", "") or "").strip(),
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
                 "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
                 if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
@@ -5657,6 +5686,8 @@ class SettingsWindow(QWidget):
             "llm_api_url": self._llm_api_url.text().strip(),
             "llm_api_key": self._llm_api_key.text().strip(),
             "llm_model_id": self._llm_model_id.text().strip(),
+            "llm_aux_api_url": self._llm_aux_api_url.text().strip(),
+            "llm_aux_api_key": self._llm_aux_api_key.text().strip(),
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
             "llm_aux_enable_thinking": aux_thinking,
             "llm_aux_vision_fallback_enabled": self._llm_aux_vision_fallback_enabled.isChecked(),
@@ -5673,6 +5704,8 @@ class SettingsWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_aux_api_url",
+            "llm_aux_api_key",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
             "llm_aux_vision_fallback_enabled",
@@ -5690,6 +5723,8 @@ class SettingsWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_aux_api_url",
+            "llm_aux_api_key",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
             "llm_aux_vision_fallback_enabled",
@@ -5764,6 +5799,8 @@ class SettingsWindow(QWidget):
         self._llm_api_url.setText(profile.get("llm_api_url", ""))
         self._llm_api_key.setText(profile.get("llm_api_key", ""))
         self._llm_model_id.setText(profile.get("llm_model_id", ""))
+        self._llm_aux_api_url.setText(profile.get("llm_aux_api_url", ""))
+        self._llm_aux_api_key.setText(profile.get("llm_aux_api_key", ""))
         self._llm_aux_model_id.setText(profile.get("llm_aux_model_id", ""))
         aux_thinking = profile.get("llm_aux_enable_thinking", None)
         self._llm_aux_enable_thinking.setCurrentIndex(1 if aux_thinking is True else 2 if aux_thinking is False else 0)
@@ -6046,6 +6083,8 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_api_url", self._llm_api_url.text().strip())
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
+            self._cfg.set("llm_aux_api_url", self._llm_aux_api_url.text().strip())
+            self._cfg.set("llm_aux_api_key", self._llm_aux_api_key.text().strip())
             self._cfg.set("llm_aux_model_id", self._llm_aux_model_id.text().strip())
             aux_thinking_idx = self._llm_aux_enable_thinking.currentIndex()
             if aux_thinking_idx == 1:
@@ -6120,6 +6159,8 @@ class SettingsWindow(QWidget):
                 "llm_api_url",
                 "llm_api_key",
                 "llm_model_id",
+                "llm_aux_api_url",
+                "llm_aux_api_key",
                 "llm_aux_model_id",
                 "llm_aux_enable_thinking",
             ):
@@ -6385,8 +6426,9 @@ class SettingsWindow(QWidget):
 
     def _fetch_models(self, target_input=None):
         self._llm_model_fetch_target = target_input or self._llm_model_id
-        api_url = self._llm_api_url.text().strip()
-        api_key = self._llm_api_key.text().strip()
+        is_aux_target = target_input is self._llm_aux_model_id
+        api_url = (self._llm_aux_api_url.text().strip() if is_aux_target else "") or self._llm_api_url.text().strip()
+        api_key = (self._llm_aux_api_key.text().strip() if is_aux_target else "") or self._llm_api_key.text().strip()
 
         if not api_url or not api_key:
             InfoBar.warning(

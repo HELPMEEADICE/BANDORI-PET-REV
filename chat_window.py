@@ -107,9 +107,11 @@ class AuxVisionFallbackWorker(QThread):
 
     def run(self):
         try:
+            aux_api_url = str(self._config.get("llm_aux_api_url", "") or "").strip() or str(self._config.get("llm_api_url", "") or "")
+            aux_api_key = str(self._config.get("llm_aux_api_key", "") or "").strip() or str(self._config.get("llm_api_key", "") or "")
             summary = analyze_images_with_aux_model(
-                str(self._config.get("llm_api_url", "") or ""),
-                str(self._config.get("llm_api_key", "") or ""),
+                aux_api_url,
+                aux_api_key,
                 str(self._config.get("llm_aux_model_id", "") or "").strip()
                 or str(self._config.get("llm_model_id", "") or "").strip(),
                 self._image_data_urls,
@@ -3677,6 +3679,8 @@ class ChatWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_aux_api_url",
+            "llm_aux_api_key",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
             "llm_aux_vision_fallback_enabled",
@@ -3847,6 +3851,8 @@ class ChatWindow(QWidget):
                 "llm_api_url": self._cfg.get("llm_api_url", ""),
                 "llm_api_key": self._cfg.get("llm_api_key", ""),
                 "llm_model_id": self._cfg.get("llm_model_id", ""),
+                "llm_aux_api_url": self._cfg.get("llm_aux_api_url", ""),
+                "llm_aux_api_key": self._cfg.get("llm_aux_api_key", ""),
                 "llm_aux_model_id": self._cfg.get("llm_aux_model_id", ""),
                 "llm_aux_enable_thinking": self._cfg.get("llm_aux_enable_thinking", None),
             },
@@ -3943,8 +3949,8 @@ class ChatWindow(QWidget):
 
     def _start_group_plan(self, user_text: str):
         self._show_plan_divider()
-        api_url = self._cfg.get("llm_api_url", "")
-        api_key = self._cfg.get("llm_api_key", "")
+        api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or self._cfg.get("llm_api_url", "")
+        api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or self._cfg.get("llm_api_key", "")
         aux_model_id = self._cfg.get("llm_aux_model_id", "").strip() or self._cfg.get("llm_model_id", "")
         if self._use_responses_api(api_url):
             api_url = self._chat_completions_api_url(api_url)
@@ -4064,26 +4070,30 @@ class ChatWindow(QWidget):
         messages = self._build_messages_for_character(character, spoken_names)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
         tool_config = self._tool_config_snapshot()
-        if self._use_responses_api(api_url):
+        web_search = bool(self._cfg.get("llm_web_search_enabled", False))
+        show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
+        if self._use_responses_api(api_url) and not web_search:
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                bool(self._cfg.get("llm_web_search_enabled", False)),
-                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                False,
+                show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
         else:
+            if self._use_responses_api(api_url):
+                api_url = self._chat_completions_api_url(api_url)
             self._worker = LLMStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                web_search=bool(self._cfg.get("llm_web_search_enabled", False)),
-                show_search_sources=bool(self._cfg.get("llm_web_search_show_sources", True)),
+                web_search=web_search,
+                show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
         self._worker.chunk_received.connect(self._on_chunk_received)
@@ -4279,6 +4289,8 @@ class ChatWindow(QWidget):
             "llm_api_url",
             "llm_api_key",
             "llm_model_id",
+            "llm_aux_api_url",
+            "llm_aux_api_key",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
         )

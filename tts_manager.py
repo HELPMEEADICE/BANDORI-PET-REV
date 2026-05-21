@@ -161,8 +161,8 @@ class TTSTranslationWorker(QThread):
         return text_language not in {"Chinese", "zh", "中文"}
 
     def _translate_to_selected_language(self, text: str, target_language: str) -> str:
-        api_url = str(self._config.get("llm_api_url", "") or "").strip()
-        api_key = str(self._config.get("llm_api_key", "") or "").strip()
+        api_url = str(self._config.get("llm_aux_api_url", "") or "").strip() or str(self._config.get("llm_api_url", "") or "").strip()
+        api_key = str(self._config.get("llm_aux_api_key", "") or "").strip() or str(self._config.get("llm_api_key", "") or "").strip()
         model_id = str(self._config.get("llm_aux_model_id", "") or "").strip() or str(self._config.get("llm_model_id", "") or "").strip()
         if not api_url or not api_key or not model_id:
             return ""
@@ -325,8 +325,8 @@ class TTSRequestWorker(QThread):
         return text_language not in {"Chinese", "zh", "中文"}
 
     def _translate_to_selected_language(self, text: str, target_language: str) -> str:
-        api_url = str(self._config.get("llm_api_url", "") or "").strip()
-        api_key = str(self._config.get("llm_api_key", "") or "").strip()
+        api_url = str(self._config.get("llm_aux_api_url", "") or "").strip() or str(self._config.get("llm_api_url", "") or "").strip()
+        api_key = str(self._config.get("llm_aux_api_key", "") or "").strip() or str(self._config.get("llm_api_key", "") or "").strip()
         model_id = str(self._config.get("llm_aux_model_id", "") or "").strip() or str(self._config.get("llm_model_id", "") or "").strip()
         if not api_url or not api_key or not model_id:
             return ""

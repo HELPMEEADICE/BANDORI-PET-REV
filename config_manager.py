@@ -15,6 +15,8 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_api_url": "https://api.deepseek.com/v1/chat/completions",
         "llm_api_key": "",
         "llm_model_id": "deepseek-v4-pro",
+        "llm_aux_api_url": "",
+        "llm_aux_api_key": "",
         "llm_aux_model_id": "deepseek-v4-flash",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
@@ -30,6 +32,8 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_api_url": "https://openrouter.ai/api/v1/chat/completions",
         "llm_api_key": "",
         "llm_model_id": "z-ai/glm-5.1",
+        "llm_aux_api_url": "",
+        "llm_aux_api_key": "",
         "llm_aux_model_id": "x-ai/grok-4.3",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": True,
@@ -45,6 +49,8 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_api_url": "https://openrouter.ai/api/v1/chat/completions",
         "llm_api_key": "",
         "llm_model_id": "anthropic/claude-sonnet-4.6",
+        "llm_aux_api_url": "",
+        "llm_aux_api_key": "",
         "llm_aux_model_id": "anthropic/claude-haiku-4.5",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
@@ -60,6 +66,8 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_api_url": "https://api.openai.com/v1/responses",
         "llm_api_key": "",
         "llm_model_id": "gpt-5.5",
+        "llm_aux_api_url": "",
+        "llm_aux_api_key": "",
         "llm_aux_model_id": "gpt-5.4-mini",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
@@ -75,6 +83,8 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_api_url": "https://api.x.ai/v1/chat/completions",
         "llm_api_key": "",
         "llm_model_id": "grok-4.3",
+        "llm_aux_api_url": "",
+        "llm_aux_api_key": "",
         "llm_aux_model_id": "grok-4-1-fast",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
@@ -114,6 +124,8 @@ DEFAULTS = {
     "llm_api_url": "",
     "llm_api_key": "",
     "llm_model_id": "",
+    "llm_aux_api_url": "",
+    "llm_aux_api_key": "",
     "llm_aux_model_id": "",
     "llm_aux_enable_thinking": None,
     "llm_aux_vision_fallback_enabled": False,
@@ -240,6 +252,8 @@ def _normalize_llm_api_profile(profile) -> dict | None:
         "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
         "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
         "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
+        "llm_aux_api_url": str(profile.get("llm_aux_api_url", "") or "").strip(),
+        "llm_aux_api_key": str(profile.get("llm_aux_api_key", "") or "").strip(),
         "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
         "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
         if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
@@ -268,8 +282,12 @@ def _merge_builtin_llm_api_profiles(profiles: list[dict]) -> list[dict]:
             profiles.append(normalized)
             continue
         api_key = profiles[idx].get("llm_api_key", "")
+        aux_api_url = profiles[idx].get("llm_aux_api_url", "")
+        aux_api_key = profiles[idx].get("llm_aux_api_key", "")
         profiles[idx].update(normalized)
         profiles[idx]["llm_api_key"] = api_key
+        profiles[idx]["llm_aux_api_url"] = aux_api_url
+        profiles[idx]["llm_aux_api_key"] = aux_api_key
     return profiles
 
 

@@ -202,9 +202,11 @@ def _screenshot_result(config: dict, content: str) -> dict:
     )
     if bool(config.get("llm_aux_vision_fallback_enabled", False)) and str(config.get("llm_aux_model_id", "") or "").strip():
         try:
+            aux_api_url = str(config.get("llm_aux_api_url", "") or "").strip() or str(config.get("llm_api_url", "") or "")
+            aux_api_key = str(config.get("llm_aux_api_key", "") or "").strip() or str(config.get("llm_api_key", "") or "")
             summary = analyze_images_with_aux_model(
-                str(config.get("llm_api_url", "") or ""),
-                str(config.get("llm_api_key", "") or ""),
+                aux_api_url,
+                aux_api_key,
                 str(config.get("llm_aux_model_id", "") or "").strip()
                 or str(config.get("llm_model_id", "") or "").strip(),
                 [data_url],
