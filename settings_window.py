@@ -2816,6 +2816,15 @@ class SettingsWindow(QWidget):
         self._llm_aux_enable_thinking.setCurrentIndex(0)
         layout.addWidget(self._llm_aux_enable_thinking)
 
+        aux_vision_row = QHBoxLayout()
+        aux_vision_row.setContentsMargins(0, 0, 0, 0)
+        aux_vision_label = BodyLabel(_tr("SettingsWindow.llm_aux_vision_fallback_enabled", default="辅助模型视觉解析"), page)
+        self._llm_aux_vision_fallback_enabled = SwitchButton(page)
+        aux_vision_row.addWidget(aux_vision_label)
+        aux_vision_row.addStretch()
+        aux_vision_row.addWidget(self._llm_aux_vision_fallback_enabled)
+        layout.addLayout(aux_vision_row)
+
         api_mode_label = BodyLabel(_tr("SettingsWindow.llm_api_mode", default="API 模式"), page)
         layout.addWidget(api_mode_label)
         self._llm_api_mode = OpaqueDropDownComboBox(page)
@@ -5298,6 +5307,7 @@ class SettingsWindow(QWidget):
                 "_llm_model_id",
                 "_llm_aux_model_id",
                 "_llm_aux_enable_thinking",
+                "_llm_aux_vision_fallback_enabled",
                 "_llm_api_profile_combo",
                 "_llm_api_profile_name",
                 "_llm_api_mode",
@@ -5553,6 +5563,7 @@ class SettingsWindow(QWidget):
                 self._llm_aux_enable_thinking.setCurrentIndex(2)
             else:
                 self._llm_aux_enable_thinking.setCurrentIndex(0)
+            self._llm_aux_vision_fallback_enabled.setChecked(bool(self._cfg.get("llm_aux_vision_fallback_enabled", False)))
             api_mode = self._cfg.get("llm_api_mode", "chat_completions")
             for i in range(self._llm_api_mode.count()):
                 if self._llm_api_mode.itemData(i) == api_mode:
@@ -5625,6 +5636,7 @@ class SettingsWindow(QWidget):
                 "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
                 "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
                 if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
+                "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
                 "llm_web_search_engine": str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn"),
@@ -5647,6 +5659,7 @@ class SettingsWindow(QWidget):
             "llm_model_id": self._llm_model_id.text().strip(),
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
             "llm_aux_enable_thinking": aux_thinking,
+            "llm_aux_vision_fallback_enabled": self._llm_aux_vision_fallback_enabled.isChecked(),
             "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
             "llm_web_search_engine": self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn",
@@ -5662,6 +5675,7 @@ class SettingsWindow(QWidget):
             "llm_model_id",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
+            "llm_aux_vision_fallback_enabled",
             "llm_api_mode",
             "llm_web_search_enabled",
             "llm_web_search_engine",
@@ -5678,6 +5692,7 @@ class SettingsWindow(QWidget):
             "llm_model_id",
             "llm_aux_model_id",
             "llm_aux_enable_thinking",
+            "llm_aux_vision_fallback_enabled",
             "llm_api_mode",
         )
         return all(left.get(key) == right.get(key) for key in keys)
@@ -5752,6 +5767,7 @@ class SettingsWindow(QWidget):
         self._llm_aux_model_id.setText(profile.get("llm_aux_model_id", ""))
         aux_thinking = profile.get("llm_aux_enable_thinking", None)
         self._llm_aux_enable_thinking.setCurrentIndex(1 if aux_thinking is True else 2 if aux_thinking is False else 0)
+        self._llm_aux_vision_fallback_enabled.setChecked(bool(profile.get("llm_aux_vision_fallback_enabled", False)))
         api_mode = profile.get("llm_api_mode", "chat_completions")
         for i in range(self._llm_api_mode.count()):
             if self._llm_api_mode.itemData(i) == api_mode:
@@ -6038,6 +6054,7 @@ class SettingsWindow(QWidget):
                 self._cfg.set("llm_aux_enable_thinking", False)
             else:
                 self._cfg.set("llm_aux_enable_thinking", None)
+            self._cfg.set("llm_aux_vision_fallback_enabled", self._llm_aux_vision_fallback_enabled.isChecked())
             self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")

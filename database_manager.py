@@ -82,12 +82,19 @@ def _sanitize_attachments_payload(value):
         path = str(item.get("path", "") or "").strip()
         if not _is_safe_chat_attachment_path(path):
             continue
-        cleaned.append({
+        cleaned_item = {
             "type": "image",
             "path": path,
             "name": str(item.get("name", "") or Path(path).name),
             "mime": str(item.get("mime", "") or "image/png"),
-        })
+        }
+        vision_summary = str(item.get("vision_summary", "") or "").strip()
+        if vision_summary:
+            cleaned_item["vision_summary"] = vision_summary[:6000]
+        vision_error = str(item.get("vision_error", "") or "").strip()
+        if vision_error:
+            cleaned_item["vision_error"] = vision_error[:600]
+        cleaned.append(cleaned_item)
     return cleaned
 
 

@@ -35,6 +35,7 @@ import os
 import shutil
 import sys
 import uuid
+import urllib.error
 from datetime import datetime
 import json
 import re
@@ -52,6 +53,7 @@ from llm_manager import (
     build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
+from vision_fallback import analyze_images_with_aux_model
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -91,6 +93,43 @@ from relationship_memory import (
     user_key_from_config,
 )
 from action_bus import publish_action, publish_lip_sync
+
+
+class AuxVisionFallbackWorker(QThread):
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, config: dict, text: str, image_data_urls: list[str], parent=None):
+        super().__init__(parent)
+        self._config = dict(config or {})
+        self._text = text
+        self._image_data_urls = list(image_data_urls or [])
+
+    def run(self):
+        try:
+            summary = analyze_images_with_aux_model(
+                str(self._config.get("llm_api_url", "") or ""),
+                str(self._config.get("llm_api_key", "") or ""),
+                str(self._config.get("llm_aux_model_id", "") or "").strip()
+                or str(self._config.get("llm_model_id", "") or "").strip(),
+                self._image_data_urls,
+                self._text,
+                self._config.get("llm_aux_enable_thinking", None),
+            )
+            if not self.isInterruptionRequested():
+                self.finished.emit(summary)
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+                data = json.loads(body)
+                message = data.get("error", {}).get("message", body[:300])
+            except Exception:
+                message = str(exc)
+            if not self.isInterruptionRequested():
+                self.error.emit(f"HTTP {exc.code}: {message}")
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.error.emit(str(exc))
 
 
 _BG_LIGHT = "#f5f7fb"
@@ -1535,6 +1574,8 @@ class ChatWindow(QWidget):
         self._group_queue: list[str] = []
         self._group_spoken: list[str] = []
         self._group_plan_worker = None
+        self._vision_fallback_worker = None
+        self._pending_vision_send: tuple[str, list[dict]] | None = None
         self._plan_divider = None
         self._active_response_character = character
         self._last_user_text = ""
@@ -3219,6 +3260,7 @@ class ChatWindow(QWidget):
         return bool(
             (self._worker is not None and self._worker.isRunning())
             or (self._group_plan_worker is not None and self._group_plan_worker.isRunning())
+            or (self._vision_fallback_worker is not None and self._vision_fallback_worker.isRunning())
             or self._group_queue
         )
 
@@ -3242,6 +3284,15 @@ class ChatWindow(QWidget):
             interrupted = True
         self._group_plan_worker = None
         self._group_queue = []
+
+        vision_worker = self._vision_fallback_worker
+        if vision_worker is not None:
+            vision_worker.requestInterruption()
+            vision_worker.quit()
+            self._park_cancelled_worker(vision_worker)
+            interrupted = True
+        self._vision_fallback_worker = None
+        self._pending_vision_send = None
         self._hide_plan_divider()
 
         self._stream_flush_timer.stop()
@@ -3574,12 +3625,40 @@ class ChatWindow(QWidget):
         items = self._normalize_attachments(attachments)
         if not items:
             return text
-        parts = [{"type": "text", "text": text or ""}]
+        text = text or ""
+        vision_notes = []
         for item in items:
+            summary = str(item.get("vision_summary", "") or "").strip()
+            if summary:
+                name = item.get("name") or Path(item.get("path", "")).name or "image"
+                vision_notes.append(f"{name}：{summary}")
+            else:
+                error_note = str(item.get("vision_error", "") or "").strip()
+                if error_note:
+                    name = item.get("name") or Path(item.get("path", "")).name or "image"
+                    vision_notes.append(f"{name}：{error_note}")
+        if vision_notes:
+            text += "\n\n【快速视觉模型观察】\n" + "\n".join(vision_notes)
+        parts = [{"type": "text", "text": text}]
+        for item in items:
+            if str(item.get("vision_summary", "") or "").strip() or str(item.get("vision_error", "") or "").strip():
+                continue
             data_url = self._image_data_url(item)
             if data_url:
                 parts.append({"type": "image_url", "image_url": {"url": data_url}})
         return parts if len(parts) > 1 else text
+
+    def _aux_vision_fallback_enabled(self) -> bool:
+        if not self._cfg or not bool(self._cfg.get("llm_aux_vision_fallback_enabled", False)):
+            return False
+        aux_model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip()
+        return bool(aux_model_id)
+
+    def _attachments_need_aux_vision(self, attachments) -> bool:
+        if not self._aux_vision_fallback_enabled():
+            return False
+        items = self._normalize_attachments(attachments)
+        return any(not str(item.get("vision_summary", "") or "").strip() for item in items)
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         url = (api_url or "").lower()
@@ -3595,6 +3674,12 @@ class ChatWindow(QWidget):
             return {}
         keys = (
             "llm_hide_tool_call_details",
+            "llm_api_url",
+            "llm_api_key",
+            "llm_model_id",
+            "llm_aux_model_id",
+            "llm_aux_enable_thinking",
+            "llm_aux_vision_fallback_enabled",
             "llm_web_search_engine",
             "llm_mcp_enabled",
             "llm_mcp_use_native",
@@ -3737,6 +3822,107 @@ class ChatWindow(QWidget):
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
         self._relayout_message_bubbles()
 
+        if self._attachments_need_aux_vision(attachments):
+            self._start_aux_vision_fallback(text, attachments)
+            return
+
+        self._commit_user_message(text, attachments)
+
+    def _start_aux_vision_fallback(self, text: str, attachments: list[dict]):
+        data_urls = []
+        normalized = self._normalize_attachments(attachments)
+        for item in normalized:
+            if str(item.get("vision_summary", "") or "").strip():
+                continue
+            data_url = self._image_data_url(item)
+            if data_url:
+                data_urls.append(data_url)
+        if not data_urls:
+            self._commit_user_message(text, attachments)
+            return
+        self._show_aux_vision_divider()
+        self._pending_vision_send = (text, [dict(item) for item in attachments])
+        self._vision_fallback_worker = AuxVisionFallbackWorker(
+            {
+                "llm_api_url": self._cfg.get("llm_api_url", ""),
+                "llm_api_key": self._cfg.get("llm_api_key", ""),
+                "llm_model_id": self._cfg.get("llm_model_id", ""),
+                "llm_aux_model_id": self._cfg.get("llm_aux_model_id", ""),
+                "llm_aux_enable_thinking": self._cfg.get("llm_aux_enable_thinking", None),
+            },
+            text,
+            data_urls,
+            self,
+        )
+        self._vision_fallback_worker.finished.connect(self._on_aux_vision_finished)
+        self._vision_fallback_worker.error.connect(self._on_aux_vision_error)
+        self._vision_fallback_worker.start()
+
+    def _show_aux_vision_divider(self):
+        self._hide_plan_divider()
+        divider = PlanDivider(_tr("ChatWindow.ai_viewing_image", default="AI 正在看图"), self._msg_area)
+        self._msg_layout.insertWidget(self._msg_layout.count() - 1, divider)
+        self._plan_divider = divider
+        self._scroll_to_bottom()
+
+    def _on_aux_vision_finished(self, summary: str):
+        if self.sender() is not self._vision_fallback_worker:
+            return
+        self._vision_fallback_worker = None
+        self._hide_plan_divider()
+        pending = self._pending_vision_send
+        self._pending_vision_send = None
+        if not pending:
+            self._set_busy(False)
+            return
+        text, attachments = pending
+        summary = str(summary or "").strip()
+        if summary:
+            attachments = [
+                dict(item, vision_summary=summary)
+                if isinstance(item, dict) and item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
+                else item
+                for item in attachments
+            ]
+        else:
+            empty_note = _tr("ChatWindow.vision_fallback_empty", default="快速视觉模型没有返回图片观察结果。")
+            attachments = [
+                dict(item, vision_error=empty_note)
+                if isinstance(item, dict) and item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
+                else item
+                for item in attachments
+            ]
+            self._composer_hint.setText(empty_note)
+            self._commit_user_message(text, attachments, start_response=False)
+            self._set_busy(False)
+            self._input.setFocus()
+            return
+        self._commit_user_message(text, attachments)
+
+    def _on_aux_vision_error(self, error_msg: str):
+        if self.sender() is not self._vision_fallback_worker:
+            return
+        self._vision_fallback_worker = None
+        self._hide_plan_divider()
+        pending = self._pending_vision_send
+        self._pending_vision_send = None
+        if not pending:
+            self._set_busy(False)
+            return
+        text, attachments = pending
+        error_note = _tr("ChatWindow.vision_fallback_failed", default="快速视觉模型看图失败：{error}", error=error_msg)
+        attachments = [
+            dict(item, vision_error=error_note)
+            if isinstance(item, dict) and item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
+            else item
+            for item in attachments
+        ]
+        self._composer_hint.setText(error_note)
+        self._commit_user_message(text, attachments, start_response=False)
+        self._set_busy(False)
+        self._input.setFocus()
+
+    def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
         if self._is_group_chat:
             self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments)
             self._last_user_message_id = None
@@ -3747,6 +3933,8 @@ class ChatWindow(QWidget):
             self._last_group_user_message_id = None
         self._last_user_text = text
         self._refresh_group_list()
+        if not start_response:
+            return
         if self._is_group_chat:
             self._group_spoken = []
             self._start_group_plan(text)
@@ -4342,6 +4530,10 @@ class ChatWindow(QWidget):
         if self._group_plan_worker and self._group_plan_worker.isRunning():
             self._group_plan_worker.quit()
             self._group_plan_worker.wait(2000)
+        if self._vision_fallback_worker and self._vision_fallback_worker.isRunning():
+            self._vision_fallback_worker.requestInterruption()
+            self._vision_fallback_worker.quit()
+            self._vision_fallback_worker.wait(2000)
         for worker in list(getattr(self, "_cancelled_workers", [])):
             if worker is not None and worker.isRunning():
                 worker.wait(1000)
