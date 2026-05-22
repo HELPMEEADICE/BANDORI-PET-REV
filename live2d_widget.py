@@ -2,7 +2,7 @@ import ctypes
 import sys
 import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
-from PySide6.QtGui import QMouseEvent, QCursor, QGuiApplication, QSurfaceFormat, QOpenGLContext, QMoveEvent, QResizeEvent
+from PySide6.QtGui import QMouseEvent, QCursor, QGuiApplication, QSurfaceFormat, QOpenGLContext, QMoveEvent, QResizeEvent, QContextMenuEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from lua_hit_area_projection import LuaCustomHitAreaState
@@ -44,6 +44,8 @@ class Live2DWidget(QOpenGLWidget):
         self._window_drag_callback = None
         self._click_callback = None
         self._right_click_callback = None
+        self._right_press_handled = False
+        self._suppress_next_context_menu = False
         self._drag_locked = False
         self._initialized_gl = False
         
@@ -317,6 +319,28 @@ class Live2DWidget(QOpenGLWidget):
         return moved
 
     def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.RightButton:
+            pos = event.scenePosition()
+            gpos = event.globalPosition()
+            self._right_press_handled = self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y())
+            if self._right_press_handled:
+                self._suppress_next_context_menu = True
+                event.accept()
+                return
+            return super().mousePressEvent(event)
+
+        if (
+            sys.platform == "darwin"
+            and event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            pos = event.scenePosition()
+            gpos = event.globalPosition()
+            if self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y()):
+                self._suppress_next_context_menu = True
+                event.accept()
+                return
+
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
             
@@ -335,11 +359,16 @@ class Live2DWidget(QOpenGLWidget):
     def mouseReleaseEvent(self, event: QMouseEvent):
         pos = event.scenePosition()
         x, y = pos.x(), pos.y()
-        
+
         if event.button() == Qt.MouseButton.RightButton:
-            if self._is_model_hit_at(x, y) and self._right_click_callback:
+            if self._right_press_handled:
+                self._right_press_handled = False
+                event.accept()
+                return
+            if self._right_click_callback and self._is_model_hit_at(x, y, sync=True):
                 gpos = event.globalPosition()
                 self._right_click_callback(int(gpos.x()), int(gpos.y()))
+                event.accept()
             return
 
         should_click = False
@@ -355,6 +384,18 @@ class Live2DWidget(QOpenGLWidget):
         self._dragging = False
         if should_click:
             self._click_callback(x, y, self.hit_area_name_at(x, y))
+
+    def contextMenuEvent(self, event: QContextMenuEvent):
+        if self._suppress_next_context_menu:
+            self._suppress_next_context_menu = False
+            event.accept()
+            return
+        pos = event.pos()
+        gpos = event.globalPos()
+        if self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y()):
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._drag_locked or not (self._dragging and self._window_drag_callback):
@@ -493,9 +534,9 @@ class Live2DWidget(QOpenGLWidget):
         alpha = self._get_alpha_fast(local.x(), local.y())
         return 0 if alpha is None else alpha
 
-    def is_model_hit_at_global(self, global_pos: QPoint) -> bool:
+    def is_model_hit_at_global(self, global_pos: QPoint, *, sync: bool = False) -> bool:
         local = self._get_valid_local_pos(global_pos)
-        return self._is_model_hit_at(local.x(), local.y()) if local else False
+        return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
 
     def model_hit_state_at_global(self, global_pos: QPoint):
         local = self._get_valid_local_pos(global_pos)
@@ -519,12 +560,18 @@ class Live2DWidget(QOpenGLWidget):
         except Exception:
             return None
 
-    def _is_model_hit_at(self, x: float, y: float) -> bool:
+    def _is_model_hit_at(self, x: float, y: float, *, sync: bool = False) -> bool:
         if not self._model: return False
-        state = self._hit_state_at(x, y)
+        state = None if sync else self._hit_state_at(x, y)
         if state is None:
             state = self._hit_state_at_sync(x, y)
         return state is True
+
+    def _emit_right_click(self, x: float, y: float, gx: float, gy: float) -> bool:
+        if self._right_click_callback and self._is_model_hit_at(x, y, sync=True):
+            self._right_click_callback(int(gx), int(gy))
+            return True
+        return False
 
     def _hit_state_at_sync(self, x: float, y: float) -> bool:
         if not self._model:

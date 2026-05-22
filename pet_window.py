@@ -32,6 +32,7 @@ from model_manager import ModelManager
 from pixel_pet_widget import PixelPetWidget, load_pixel_frames, pixel_path_for_character
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 from radial_menu import RadialMenu
+from tray_utils import keep_tray_icon_visible, load_tray_icon
 
 if sys.platform == "darwin":
     import macos_patch
@@ -221,6 +222,8 @@ class PetWindow(QWidget):
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
         self._tray_icon = None
+        self._tray_menu = None
+        self._tray_actions = []
         self._enable_tray = enable_tray
         self._cfg = config_manager
         if self._cfg:
@@ -261,7 +264,7 @@ class PetWindow(QWidget):
         # Windows 11; keep hit sampling on the Qt timer path.
         self._use_native_hit_test_passthrough = False
         self._passthrough_timer = QTimer(self)
-        self._passthrough_timer.setInterval(50)
+        self._passthrough_timer.setInterval(16 if sys.platform == "darwin" else 50)
         self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
@@ -550,6 +553,8 @@ class PetWindow(QWidget):
     def _is_interaction_hit(self, global_pos: QPoint) -> bool:
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
+        if sys.platform == "darwin" and self._mouse_passthrough:
+            return self._live2d_widget.is_model_hit_at_global(global_pos, sync=True)
         return self._live2d_widget.is_model_hit_at_global(global_pos)
 
     def _update_mouse_passthrough(self):
@@ -642,24 +647,24 @@ class PetWindow(QWidget):
 
     def _init_tray(self):
         self._tray_icon = QSystemTrayIcon(self)
-        icon_path = os.path.join(app_base_dir(), "logo.ico")
-        if os.path.exists(icon_path):
-            self._tray_icon.setIcon(QIcon(icon_path))
-        else:
-            self._tray_icon.setIcon(QIcon())
+        self._tray_icon.setIcon(load_tray_icon())
 
         self._tray_icon.setToolTip(_tr("PetWindow.tray_tooltip"))
 
-        menu = QMenu()
+        menu = QMenu(self)
+        actions = []
 
         show_action = menu.addAction(_tr("PetWindow.tray_show_hide"))
         show_action.triggered.connect(self._toggle_visible)
+        actions.append(show_action)
 
         chat_action = menu.addAction(_tr("PetWindow.tray_chat"))
         chat_action.triggered.connect(self._open_chat)
+        actions.append(chat_action)
 
         settings_action = menu.addAction(_tr("PetWindow.tray_settings"))
         settings_action.triggered.connect(self._open_settings)
+        actions.append(settings_action)
 
         menu.addSeparator()
 
@@ -667,15 +672,19 @@ class PetWindow(QWidget):
         for pct in [100, 80, 60, 40, 20]:
             act = opacity_menu.addAction(_tr("PetWindow.opacity_pct", pct=pct))
             act.triggered.connect(lambda checked, v=pct: self.set_opacity(v / 100.0))
+            actions.append(act)
 
         menu.addSeparator()
 
         exit_action = menu.addAction(_tr("PetWindow.tray_exit"))
         exit_action.triggered.connect(self._quit)
+        actions.append(exit_action)
 
         self._tray_icon.setContextMenu(menu)
         self._tray_icon.activated.connect(self._on_tray_activated)
-        self._tray_icon.show()
+        self._tray_menu = menu
+        self._tray_actions = actions
+        keep_tray_icon_visible(self._tray_icon)
 
     def _load_initial_model(self):
         if not self._current_char or not self._current_costume:
@@ -1106,6 +1115,8 @@ class PetWindow(QWidget):
         self._sync_compact_ai_window()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason):
+        if sys.platform == "darwin":
+            return
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._open_settings()
 

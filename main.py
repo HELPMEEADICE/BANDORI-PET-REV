@@ -1,5 +1,4 @@
 import sys
-import os
 import json
 import threading
 
@@ -10,7 +9,6 @@ BASE_DIR = str(app_base_dir())
 from PySide6.QtCore import Qt, QObject, QProcess, Signal
 from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from live2d_lua_adapter import live2d
@@ -22,6 +20,7 @@ from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
 from database_manager import DatabaseManager
+from tray_utils import keep_tray_icon_visible, load_tray_icon
 
 
 class AiEventBridge(QObject):
@@ -79,14 +78,12 @@ def main():
     from i18n_manager import current_language
 
     tray_icon = None
+    tray_ref = {"menu": None, "actions": []}
 
     def init_tray():
         nonlocal tray_icon
         tray_icon = QSystemTrayIcon(app)
-        icon_path = os.path.join(BASE_DIR, "logo.ico")
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(BASE_DIR, "logo.png")
-        tray_icon.setIcon(QIcon(icon_path) if os.path.exists(icon_path) else QIcon())
+        tray_icon.setIcon(load_tray_icon())
         tray_icon.setToolTip(_tr("MainTray.tooltip"))
 
         menu = QMenu()
@@ -95,8 +92,16 @@ def main():
         exit_action = menu.addAction(_tr("MainTray.exit"))
         exit_action.triggered.connect(quit_all)
         tray_icon.setContextMenu(menu)
-        tray_icon.activated.connect(lambda reason: launch_settings_process(show_launch=False) if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
-        tray_icon.show()
+        tray_icon.activated.connect(on_tray_activated)
+        tray_ref["menu"] = menu
+        tray_ref["actions"] = [settings_action, exit_action]
+        keep_tray_icon_visible(tray_icon)
+
+    def on_tray_activated(reason: QSystemTrayIcon.ActivationReason):
+        if sys.platform == "darwin":
+            return
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            launch_settings_process(show_launch=False)
 
     def quit_all():
         notify_chat_processes_shutdown()
