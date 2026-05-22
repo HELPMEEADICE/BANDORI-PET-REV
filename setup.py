@@ -139,6 +139,33 @@ def release_arch_name() -> str:
     return machine.upper().replace("-", "_")
 
 
+def lupa_luajit_runtime_module() -> str:
+    candidates = ("lupa.luajit21", "lupa.lua")
+    errors: list[str] = []
+
+    for name in candidates:
+        spec = importlib.util.find_spec(name)
+        if spec is None:
+            errors.append(f"{name}: not installed")
+            continue
+        try:
+            module = __import__(name, fromlist=["LuaRuntime"])
+            lua = module.LuaRuntime()
+            lua.execute('assert(require("ffi"))')
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        return name
+
+    details = "; ".join(errors)
+    raise RuntimeError(
+        "A Lupa runtime built with LuaJIT FFI is required. "
+        "On macOS, reinstall it with: "
+        "LUPA_NO_BUNDLE=true pip install --no-binary lupa --force-reinstall lupa. "
+        f"Checked runtimes: {details}"
+    )
+
+
 include_files = [
     include_if_exists("logo.ico"),
     include_if_exists("band.json"),
@@ -155,11 +182,12 @@ include_files = [
 
 include_files.extend(_live2d_lua_include_files())
 include_files = [item for item in include_files if item is not None]
+lupa_runtime = lupa_luajit_runtime_module()
 
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["tts_manager"],
+    "includes": ["tts_manager", lupa_runtime],
     "packages": [
         "OpenGL",
         "PIL",
@@ -168,7 +196,6 @@ build_exe_options = {
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
         "darkdetect",
-        "lupa.luajit21",
         "numpy",
         "qfluentwidgets",
         "requests",
