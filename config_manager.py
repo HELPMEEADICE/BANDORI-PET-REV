@@ -133,6 +133,7 @@ DEFAULTS = {
     "llm_web_search_enabled": False,
     "llm_web_search_engine": "bing_cn",
     "llm_web_search_show_sources": True,
+    "llm_custom_system_prompt": "",
     "llm_hide_tool_call_details": True,
     "llm_mcp_enabled": False,
     "llm_mcp_use_native": True,
