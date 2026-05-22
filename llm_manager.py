@@ -447,6 +447,14 @@ def build_system_prompt(character: str, config_manager=None) -> str:
         prompt = md_prompt + "\n\n" + prompt
 
     if config_manager:
+        custom_system_prompt = str(config_manager.get("llm_custom_system_prompt", "") or "").strip()
+        if custom_system_prompt:
+            prompt = (
+                "【最高优先级用户自定义系统指令】\n"
+                + custom_system_prompt
+                + "\n\n【角色/system 基础背景】\n"
+                + prompt
+            )
         pov_mode = config_manager.get("pov_mode", "off")
         user_name = _get_user_display_name(config_manager, pov_mode)
         if user_name:
