@@ -2727,6 +2727,26 @@ class SettingsWindow(QWidget):
         ), page))
         layout.addWidget(capability_hint)
 
+        custom_system_label = BodyLabel(_tr(
+            "SettingsWindow.llm_custom_system_prompt",
+            default="最高优先级系统提示词",
+        ), page)
+        layout.addWidget(custom_system_label)
+        self._llm_custom_system_prompt = FluentContextTextEdit(page)
+        self._llm_custom_system_prompt.setPlaceholderText(_tr(
+            "SettingsWindow.llm_custom_system_prompt_placeholder",
+            default="留空则不启用。这里的内容会在每次聊天请求中置于角色设定之前。",
+        ))
+        self._llm_custom_system_prompt.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._llm_custom_system_prompt.setMinimumHeight(72)
+        self._llm_custom_system_prompt.setMaximumHeight(120)
+        layout.addWidget(self._llm_custom_system_prompt)
+        custom_system_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_custom_system_prompt_hint",
+            default="这段指令优先级高于角色档案、长期记忆和会话历史；建议只写全局行为约束，避免与角色身份或动作标签规则冲突。",
+        ), page))
+        layout.addWidget(custom_system_hint)
+
         profile_label = BodyLabel(_tr("SettingsWindow.llm_api_profile", default="API 配置档案"), page)
         layout.addWidget(profile_label)
         profile_row = QHBoxLayout()
@@ -5337,6 +5357,7 @@ class SettingsWindow(QWidget):
                 "_llm_web_search_enabled",
                 "_llm_web_search_engine",
                 "_llm_web_search_show_sources",
+                "_llm_custom_system_prompt",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
                 "_user_name",
@@ -5416,6 +5437,7 @@ class SettingsWindow(QWidget):
         self._llm_aux_api_key.setStyleSheet(style)
         self._llm_aux_model_id.setStyleSheet(style)
         self._llm_api_profile_name.setStyleSheet(style)
+        self._llm_custom_system_prompt.setStyleSheet(style)
         self._user_name.setStyleSheet(style)
         self._pov_custom_prompt.setStyleSheet(style)
         hint_color = "#a7b0bf" if dark else "#687385"
@@ -5603,6 +5625,7 @@ class SettingsWindow(QWidget):
                     self._llm_web_search_engine.setCurrentIndex(i)
                     break
             self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
+            self._llm_custom_system_prompt.setPlainText(self._cfg.get("llm_custom_system_prompt", ""))
             self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
             self._saved_user_name = self._cfg.get("user_name", "")
@@ -6098,6 +6121,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
             self._cfg.set("llm_web_search_show_sources", self._llm_web_search_show_sources.isChecked())
+            self._cfg.set("llm_custom_system_prompt", self._llm_custom_system_prompt.toPlainText().strip())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
             if pov_mode == "role":
                 user_name = self._pov_role_character.currentText().strip()
