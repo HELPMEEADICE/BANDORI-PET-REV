@@ -33,7 +33,9 @@ except (ImportError, OSError):
     class TTSPlayer(QObject):
         error = Signal(str)
         level_changed = Signal(float)
+        mouth_pose_changed = Signal(float, float)
         playback_finished = Signal()
+        def prepare_lip_sync_text(self, text, language=""): pass
         def enqueue(self, audio, media_type): pass
         def stop(self): pass
         def is_idle(self): return True
@@ -203,7 +205,7 @@ class CompactAIWindow(QWidget):
         self._tts_generation = 0
         self._tts_playing_character = ""
         self._tts_player = TTSPlayer(self)
-        self._tts_player.level_changed.connect(self._on_tts_level_changed)
+        self._tts_player.mouth_pose_changed.connect(self._on_tts_mouth_pose_changed)
         self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
         self._external_stream_text = ""
         self._clear_timer = QTimer(self)
@@ -1116,6 +1118,11 @@ class CompactAIWindow(QWidget):
         del sequence
         if generation != self._tts_generation or self.sender() is not self._tts_worker:
             return
+        if self._tts_worker is not None:
+            self._tts_player.prepare_lip_sync_text(
+                getattr(self._tts_worker, "prepared_text", ""),
+                getattr(self._tts_worker, "prepared_language", ""),
+            )
         self._tts_player.enqueue(audio, media_type)
 
     def _on_tts_error(self, error_msg: str):
@@ -1125,9 +1132,9 @@ class CompactAIWindow(QWidget):
         if self.sender() is self._tts_worker:
             self._tts_worker = None
 
-    def _on_tts_level_changed(self, level: float):
+    def _on_tts_mouth_pose_changed(self, level: float, form: float):
         if self._tts_playing_character:
-            publish_lip_sync(self._tts_playing_character, level)
+            publish_lip_sync(self._tts_playing_character, level, form)
 
     def _on_tts_playback_finished(self):
         if self._tts_playing_character:

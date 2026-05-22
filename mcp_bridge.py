@@ -7,8 +7,10 @@ import subprocess
 import threading
 import time
 import urllib.error
-import urllib.request
 from dataclasses import dataclass
+
+from PySide6.QtCore import QByteArray, QEventLoop, QUrl
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from i18n_manager import tr as _tr
 
@@ -17,6 +19,7 @@ _TOOL_PREFIX = "mcp__"
 _TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
 _CLIENTS: dict[str, "StdioMcpClient"] = {}
 _LOCK = threading.RLock()
+_thread_local = threading.local()
 
 
 @dataclass
@@ -341,26 +344,52 @@ def _stdio_client(server: dict) -> "StdioMcpClient":
         return client
 
 
+def _thread_nam() -> QNetworkAccessManager:
+    nam = getattr(_thread_local, "nam", None)
+    if nam is None:
+        _thread_local.nam = QNetworkAccessManager()
+    return _thread_local.nam
+
+
 def _request_http_json(server: dict, payload: dict) -> dict:
     url = str(server.get("url", "") or "").strip()
     if not url:
         raise ValueError(_tr("McpBridge.http_url_empty", default="HTTP MCP server url is empty"))
     timeout = int(server.get("timeout_seconds", 30) or 30)
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
     auth = str(server.get("authorization", "") or "").strip()
+    body = json.dumps(payload).encode("utf-8")
+
+    request = QNetworkRequest(QUrl(url))
+    request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
+    request.setRawHeader(b"Accept", b"application/json, text/event-stream")
     if auth:
-        headers["Authorization"] = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+        auth_val = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
+        request.setRawHeader(b"Authorization", auth_val.encode("utf-8"))
+    request.setTransferTimeout(timeout * 1000)
+
+    nam = _thread_nam()
+    loop = QEventLoop()
+    reply = nam.post(request, QByteArray(body))
+    reply.finished.connect(loop.quit)
+    loop.exec()
+
+    error_code = reply.error()
+    status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute) or 0
+
+    if error_code != QNetworkReply.NoError or int(status_code) >= 400:
+        raw_bytes = bytes(reply.readAll()) if reply.isOpen() else b""
+        raw_text = raw_bytes.decode("utf-8", errors="replace")
+        reply.deleteLater()
+        if int(status_code) >= 400:
+            raise urllib.error.HTTPError(
+                url, int(status_code), raw_text or reply.errorString(),
+                dict(reply.rawHeaderPairs()), None,
+            )
+        raise urllib.error.URLError(reply.errorString())
+
+    raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
+    reply.deleteLater()
+
     raw = raw.strip()
     if raw.startswith("event:") or "\ndata:" in raw or raw.startswith("data:"):
         for line in raw.splitlines():

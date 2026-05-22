@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import platform
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ from pathlib import Path
 
 import fluent_bootstrap  # noqa: F401
 from cx_Freeze import Executable, setup
+from cx_Freeze.command.bdist_mac import bdist_mac
 from cx_Freeze.command.bdist_msi import bdist_msi
 from cx_Freeze.command.build_exe import build_exe
 
@@ -33,6 +35,29 @@ class BuildExeWithEmptyModels(build_exe):
 
 class BuildMsiAlias(bdist_msi):
     """Expose cx_Freeze's MSI builder as `python setup.py build_msi`."""
+
+
+class BuildMacWithResourceLinks(bdist_mac):
+    """Keep cx_Freeze's macOS app layout compatible with app_base_dir()."""
+
+    def run(self):
+        super().run()
+        self._link_root_resource_files()
+        if self.codesign_identity:
+            self._codesign(self.bundle_dir)
+
+    def _link_root_resource_files(self):
+        for filename in ("logo.ico", "band.json", "outfit.json", "custom_hit_area_state.ljbc"):
+            source = Path(self.resources_dir) / filename
+            origin = Path(self.bin_dir) / filename
+            if not source.exists() or origin.exists():
+                continue
+            relative_reference = os.path.relpath(source, self.bin_dir)
+            self.execute(
+                os.symlink,
+                (relative_reference, origin, True),
+                msg=f"linking {origin} -> {relative_reference}",
+            )
 
 
 def include_if_exists(path: str) -> tuple[str, str] | None:
@@ -139,6 +164,59 @@ def release_arch_name() -> str:
     return machine.upper().replace("-", "_")
 
 
+def _mac_iconfile() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    source = BASE_DIR / "logo.ico"
+    if not source.exists():
+        return None
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+
+    iconfile = BASE_DIR / "BUILD" / "BandoriPet.icns"
+    if iconfile.exists() and iconfile.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+        return str(iconfile)
+
+    iconfile.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(source) as image:
+        image.convert("RGBA").save(
+            iconfile,
+            format="ICNS",
+            sizes=[(16, 16), (32, 32), (128, 128), (256, 256), (512, 512), (1024, 1024)],
+        )
+    return str(iconfile) if iconfile.exists() else None
+
+
+def lupa_luajit_runtime_module() -> str:
+    candidates = ("lupa.luajit21", "lupa.lua")
+    errors: list[str] = []
+
+    for name in candidates:
+        spec = importlib.util.find_spec(name)
+        if spec is None:
+            errors.append(f"{name}: not installed")
+            continue
+        try:
+            module = __import__(name, fromlist=["LuaRuntime"])
+            lua = module.LuaRuntime()
+            lua.execute('assert(require("ffi"))')
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        return name
+
+    details = "; ".join(errors)
+    raise RuntimeError(
+        "A Lupa runtime built with LuaJIT FFI is required. "
+        "On macOS, reinstall it with: "
+        "LUPA_NO_BUNDLE=true pip install --no-binary lupa --force-reinstall lupa. "
+        f"Checked runtimes: {details}"
+    )
+
+
 include_files = [
     include_if_exists("logo.ico"),
     include_if_exists("band.json"),
@@ -155,11 +233,12 @@ include_files = [
 
 include_files.extend(_live2d_lua_include_files())
 include_files = [item for item in include_files if item is not None]
+lupa_runtime = lupa_luajit_runtime_module()
 
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["tts_manager"],
+    "includes": ["tts_manager", lupa_runtime],
     "packages": [
         "OpenGL",
         "PIL",
@@ -168,7 +247,6 @@ build_exe_options = {
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
         "darkdetect",
-        "lupa.luajit21",
         "numpy",
         "qfluentwidgets",
         "requests",
@@ -200,6 +278,19 @@ build_msi_options = {
     }
 } if sys.platform == "win32" else {}
 
+build_mac_options = {
+    "bundle_name": APP_NAME,
+    "iconfile": _mac_iconfile(),
+    "plist_items": [
+        ("CFBundleDisplayName", APP_NAME),
+        ("CFBundleName", APP_NAME),
+        ("CFBundleIdentifier", "com.bandori.pet.rev"),
+        ("CFBundleShortVersionString", APP_VERSION),
+        ("CFBundleVersion", APP_VERSION),
+        ("LSUIElement", True),
+    ],
+} if sys.platform == "darwin" else {}
+
 _exec_suffix = ".exe" if sys.platform == "win32" else ""
 
 executables = [
@@ -215,7 +306,16 @@ setup(
     name=APP_NAME,
     version=APP_VERSION,
     description="Bandori desktop pet",
-    options={"build_exe": build_exe_options, "build_msi": build_msi_options, "bdist_msi": build_msi_options},
+    options={
+        "build_exe": build_exe_options,
+        "build_msi": build_msi_options,
+        "bdist_msi": build_msi_options,
+        "bdist_mac": build_mac_options,
+    },
     executables=executables,
-    cmdclass={"build_exe": BuildExeWithEmptyModels, "build_msi": BuildMsiAlias},
+    cmdclass={
+        "build_exe": BuildExeWithEmptyModels,
+        "build_msi": BuildMsiAlias,
+        "bdist_mac": BuildMacWithResourceLinks,
+    },
 )

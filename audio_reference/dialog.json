@@ -1,4 +1,42 @@
 {
+  "__groups": {
+    "poppin_party": {
+      "lora_id": "popipa_qwen3tts",
+      "characters": ["kasumi", "tae", "rimi", "saaya", "arisa"]
+    },
+    "afterglow": {
+      "lora_id": "afterglow_qwen3tts",
+      "characters": ["ran", "moca", "himari", "tomoe", "tsugumi"]
+    },
+    "pastel_palettes": {
+      "lora_id": "pastel_palettes_qwen3tts",
+      "characters": ["aya", "hina", "chisato", "maya", "eve"]
+    },
+    "hello_happy_world": {
+      "lora_id": "hhw_qwen3tts",
+      "characters": ["kokoro", "kaoru", "hagumi", "kanon", "misaki"]
+    },
+    "roselia": {
+      "lora_id": "roselia_qwen3tts",
+      "characters": ["yukina", "sayo", "lisa", "ako", "rinko"]
+    },
+    "raise_a_suilen": {
+      "lora_id": "ras_qwen3tts",
+      "characters": ["rei", "lock", "masuki", "pareo", "chu2"]
+    },
+    "morfonica": {
+      "lora_id": "morfonica_qwen3tts",
+      "characters": ["mashiro", "touko", "nanami", "tsukushi", "rui"]
+    },
+    "mygo": {
+      "lora_id": "mygo_qwen3tts",
+      "characters": ["tomorin", "anon", "rana", "soyo", "taki"]
+    },
+    "ave_mujica": {
+      "lora_id": "ave_mujica_qwen3tts",
+      "characters": ["sakiko", "mutsumi", "uika", "umiri", "nyamu"]
+    }
+  },
   "ako": "あこが友達紹介キャンペーンの特典をもらうために一緒にやってもらったんだけどね",
   "anon": "家の都合で変な時期の入学ですが、よかったら仲良くしてください。よろしくお願いします！",
   "arisa": "ほっとけ。どうせお祭りのこと考えてるんだろ。ちゃんと練習集中しないなら、私やめるぞ",

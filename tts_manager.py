@@ -5,6 +5,7 @@ import re
 import struct
 import urllib.error
 import urllib.request
+from collections import deque
 
 import numpy as np
 import requests
@@ -17,6 +18,8 @@ from process_utils import app_base_dir
 
 
 _ACTION_TAG_RE = re.compile(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]")
+_DIALOG_GROUPS_KEY = "__groups"
+_WORD_RE = re.compile(r"[A-Za-z']+")
 
 
 CHARACTER_TRILINGUAL_NAMES = {
@@ -126,6 +129,108 @@ def _aux_model_enable_thinking(config: dict):
     return value if value in (True, False, None) else None
 
 
+_VISEME_POSES = {
+    "aa": (0.55, 0.0),
+    "ow": (0.34, -0.72),
+    "iy": (0.28, 0.82),
+    "uw": (0.22, -1.0),
+    "mbp": (0.0, 0.0),
+    "fv": (0.18, 0.32),
+    "neutral": (0.24, 0.0),
+}
+
+
+def _estimate_viseme_units(text: str, language: str = "") -> list[str]:
+    text = str(text or "").strip()
+    if not text:
+        return []
+    language = str(language or "").lower()
+    units: list[str] = []
+    for token in re.findall(r"[A-Za-z']+|[\u3040-\u30ff]+|[\u3400-\u9fff]+|.", text):
+        if not token or token.isspace():
+            continue
+        if _WORD_RE.fullmatch(token):
+            units.extend(_estimate_latin_word_visemes(token.lower()))
+        elif all("\u3040" <= ch <= "\u30ff" for ch in token):
+            units.extend(_estimate_kana_visemes(token))
+        elif any("\u3400" <= ch <= "\u9fff" for ch in token):
+            fallback = "aa" if language in {"chinese", "zh", "中文"} else "neutral"
+            units.extend([fallback] * len(token))
+        elif token in ",，.。!！?？:：;；、~～-":
+            units.append("mbp")
+        else:
+            units.append("neutral")
+    return units
+
+
+def _estimate_latin_word_visemes(word: str) -> list[str]:
+    units: list[str] = []
+    i = 0
+    while i < len(word):
+        pair3 = word[i:i + 3]
+        pair2 = word[i:i + 2]
+        ch = word[i]
+        if pair2 in {"mb", "mp"}:
+            units.append("mbp")
+            i += 2
+            continue
+        if ch in "mbp":
+            units.append("mbp")
+        elif ch in "fv":
+            units.append("fv")
+        elif pair3 in {"you", "yoo"} or pair2 in {"oo", "uu", "ew"}:
+            units.append("uw")
+            i += 3 if pair3 in {"you", "yoo"} else 2
+            continue
+        elif pair2 in {"ow", "oh", "oa", "ou", "aw", "au"}:
+            units.append("ow")
+            i += 2
+            continue
+        elif pair2 in {"ee", "ea", "ie"} or ch in "iy":
+            units.append("iy")
+        elif ch == "u":
+            units.append("uw")
+        elif ch == "o":
+            units.append("ow")
+        elif ch in "ae":
+            units.append("aa")
+        elif ch in "rlwn":
+            units.append("neutral")
+        else:
+            units.append("aa")
+        i += 1
+    return units
+
+
+def _estimate_kana_visemes(text: str) -> list[str]:
+    units: list[str] = []
+    for ch in text:
+        if ch in "まみむめもマミムメモばびぶべぼバビブベボぱぴぷぺぽパピプペポんン":
+            units.append("mbp")
+        elif ch in "ふフゔヴ":
+            units.append("fv")
+        elif ch in "いきぎしじちぢにひびぴみりイキギシジチヂニヒビピミリぇェゃャ":
+            units.append("iy")
+        elif ch in "うくぐすずつづぬぶぷむゆるウクグスズツヅヌブプムユルぅゥゅュ":
+            units.append("uw")
+        elif ch in "おこごそぞとのほぼぽもよろをオコゴソゾトノホボポモヨロヲぉォょョ":
+            units.append("ow")
+        elif ch in "ぁァあかがさざただなはばぱやらわアカガサザタダナハバパヤラワ":
+            units.append("aa")
+        else:
+            units.append("neutral")
+    return units
+
+
+def _estimate_units_per_second(language: str) -> float:
+    language = str(language or "").lower()
+    if language in {"english", "en", "英文"}:
+        return 10.0
+    if language in {"japanese", "ja", "日文"}:
+        return 8.0
+    return 7.0
+
+
 class TTSTranslationWorker(QThread):
     translated = Signal(int, int, str, str)
     error = Signal(str)
@@ -212,6 +317,8 @@ class TTSRequestWorker(QThread):
         self._text = text
         self._character = character
         self._config = config
+        self.prepared_text = ""
+        self.prepared_language = ""
 
     def run(self):
         try:
@@ -224,6 +331,8 @@ class TTSRequestWorker(QThread):
                 translated = self._translate_to_selected_language(text, selected_language)
                 if translated:
                     text = translated
+            self.prepared_text = text
+            self.prepared_language = text_language
 
             payload = {
                 "refer_wav_path": self._reference_audio_path(),
@@ -246,6 +355,7 @@ class TTSRequestWorker(QThread):
             prompt_text = self._reference_prompt_text(selected_language)
             if prompt_text:
                 payload["prompt_text"] = prompt_text
+            self._apply_qwen_lora(payload)
 
             response = requests.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
             if response.status_code != 200:
@@ -298,8 +408,11 @@ class TTSRequestWorker(QThread):
         url = str(self._config.get("tts_api_url", "") or "").strip() or "http://127.0.0.1:9880/"
         return url if url.endswith("/") else url + "/"
 
+    def _reference_character(self) -> str:
+        return str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+
     def _reference_audio_path(self) -> str:
-        ref_char = str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+        ref_char = self._reference_character()
         ref_dir = app_base_dir() / "audio_reference"
         for suffix in (".mp3", ".wav", ".flac", ".ogg", ".m4a"):
             path = ref_dir / f"{ref_char}{suffix}"
@@ -310,7 +423,7 @@ class TTSRequestWorker(QThread):
     def _reference_prompt_text(self, text_language: str) -> str:
         if text_language not in {"Japanese", "ja", "日文"}:
             return ""
-        ref_char = str(self._config.get("tts_reference_character", "") or "").strip() or self._character
+        ref_char = self._reference_character()
         path = app_base_dir() / "audio_reference" / "dialog.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -318,6 +431,50 @@ class TTSRequestWorker(QThread):
             return ""
         value = data.get(ref_char, "")
         return value if isinstance(value, str) else ""
+
+    def _apply_qwen_lora(self, payload: dict):
+        loras = self._available_qwen_loras()
+        if loras is None:
+            return
+        lora_id = self._reference_lora_id()
+        if lora_id and lora_id in loras:
+            payload["lora_id"] = lora_id
+            return
+        self._unload_qwen_lora()
+
+    def _available_qwen_loras(self) -> dict | None:
+        try:
+            response = requests.get(self._tts_url() + "lora/list", timeout=5)
+            if response.status_code != 200:
+                return None
+            loras = response.json().get("loras")
+            return loras if isinstance(loras, dict) else None
+        except Exception:
+            return None
+
+    def _unload_qwen_lora(self):
+        try:
+            requests.post(self._tts_url() + "lora/unload", timeout=5)
+        except Exception:
+            pass
+
+    def _reference_lora_id(self) -> str:
+        path = app_base_dir() / "audio_reference" / "dialog.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return ""
+        groups = data.get(_DIALOG_GROUPS_KEY, {})
+        if not isinstance(groups, dict):
+            return ""
+        ref_char = self._reference_character()
+        for group in groups.values():
+            if not isinstance(group, dict):
+                continue
+            members = group.get("characters", [])
+            if ref_char in members:
+                return str(group.get("lora_id", "") or "").strip()
+        return ""
 
     def _should_translate(self, text_language: str) -> bool:
         if not self._config.get("tts_translate_to_selected_language", True):
@@ -368,18 +525,24 @@ class TTSRequestWorker(QThread):
 class TTSPlayer(QObject):
     error = Signal(str)
     level_changed = Signal(float)
+    mouth_pose_changed = Signal(float, float)
     playback_finished = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._queue: queue.Queue[np.ndarray] = queue.Queue()
+        self._queue = queue.Queue()
         self._stream = None
         self._sample_rate = 0
         self._channels = 1
         self._current_chunk = None
+        self._current_visemes = ()
         self._current_pos = 0
         self._level = 0.0
+        self._mouth_open_base = 0.0
+        self._mouth_form_base = 0.0
         self._playback_active = False
+        self._pending_visemes: deque[str] = deque()
+        self._pending_language = ""
         self._level_timer = QTimer(self)
         self._level_timer.setInterval(33)
         self._level_timer.timeout.connect(self._emit_level)
@@ -393,16 +556,26 @@ class TTSPlayer(QObject):
             pass
         self._stream = None
         self._current_chunk = None
+        self._current_visemes = ()
         self._current_pos = 0
         self._level = 0.0
+        self._mouth_open_base = 0.0
+        self._mouth_form_base = 0.0
         self._playback_active = False
+        self._pending_visemes.clear()
+        self._pending_language = ""
         self.level_changed.emit(0.0)
+        self.mouth_pose_changed.emit(0.0, 0.0)
         self._level_timer.stop()
         while True:
             try:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
+
+    def prepare_lip_sync_text(self, text: str, language: str = ""):
+        self._pending_visemes = deque(_estimate_viseme_units(text, language))
+        self._pending_language = str(language or "")
 
     def enqueue(self, audio: bytes, media_type: str = "wav"):
         if not audio:
@@ -420,10 +593,29 @@ class TTSPlayer(QObject):
         if self._stream is not None and sample_rate != self._sample_rate:
             self.stop()
         self._ensure_stream(sample_rate, data.shape[1])
-        self._queue.put_nowait(data)
+        visemes = self._allocate_chunk_visemes(len(data), sample_rate)
+        self._queue.put_nowait((data, tuple(visemes)))
         self._playback_active = True
         if not self._level_timer.isActive():
             self._level_timer.start()
+
+    def _allocate_chunk_visemes(self, frame_count: int, sample_rate: int) -> list[tuple[int, float, float]]:
+        if frame_count <= 0 or sample_rate <= 0:
+            return []
+        duration = frame_count / float(sample_rate)
+        count = max(1, int(round(duration * _estimate_units_per_second(self._pending_language))))
+        raw_units: list[str] = []
+        while self._pending_visemes and len(raw_units) < count:
+            raw_units.append(self._pending_visemes.popleft())
+        if not raw_units:
+            raw_units.append("neutral")
+        per_unit = max(1, frame_count // len(raw_units))
+        result: list[tuple[int, float, float]] = []
+        for index, name in enumerate(raw_units, start=1):
+            end_frame = frame_count if index == len(raw_units) else min(frame_count, per_unit * index)
+            open_value, form_value = _VISEME_POSES.get(name, _VISEME_POSES["neutral"])
+            result.append((end_frame, open_value, form_value))
+        return result
 
     def is_idle(self) -> bool:
         return (
@@ -461,7 +653,7 @@ class TTSPlayer(QObject):
         while filled < frames:
             if self._current_chunk is None or self._current_pos >= len(self._current_chunk):
                 try:
-                    self._current_chunk = self._queue.get_nowait()
+                    self._current_chunk, self._current_visemes = self._queue.get_nowait()
                 except queue.Empty:
                     return
                 self._current_pos = 0
@@ -472,6 +664,7 @@ class TTSPlayer(QObject):
             rms = float(np.sqrt(np.mean(chunk * chunk)))
             peak = float(np.max(np.abs(chunk)))
             self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
+            self._update_mouth_pose_for_range(self._current_pos, take)
             if chunk.shape[1] == self._channels:
                 outdata[filled:filled + take] = chunk
             elif self._channels == 1:
@@ -481,9 +674,28 @@ class TTSPlayer(QObject):
             self._current_pos += take
             filled += take
 
+    def _update_mouth_pose_for_range(self, start_frame: int, frame_count: int):
+        if not self._current_visemes:
+            self._mouth_open_base, self._mouth_form_base = _VISEME_POSES["neutral"]
+            return
+        probe = start_frame + max(0, frame_count // 2)
+        for end_frame, open_value, form_value in self._current_visemes:
+            if probe < end_frame:
+                self._mouth_open_base = open_value
+                self._mouth_form_base = form_value
+                return
+        self._mouth_open_base, self._mouth_form_base = self._current_visemes[-1][1:]
+
     def _emit_level(self):
         level = self._level
         self._level *= 0.55
+        if self._mouth_open_base < 0.05:
+            mouth_open = min(level * 0.2, 0.04)
+            mouth_form = 0.0
+        else:
+            activity = min(1.0, level / 0.18) if level > 0.01 else 0.0
+            mouth_open = min(0.55, max(level * 0.9, self._mouth_open_base * activity))
+            mouth_form = self._mouth_form_base * max(0.25, activity) if activity > 0.0 else 0.0
         done = (
             self._queue.empty()
             and (self._current_chunk is None or self._current_pos >= len(self._current_chunk))
@@ -491,8 +703,10 @@ class TTSPlayer(QObject):
         if done and level < 0.01:
             self._level_timer.stop()
             self.level_changed.emit(0.0)
+            self.mouth_pose_changed.emit(0.0, 0.0)
             if self._playback_active:
                 self._playback_active = False
                 self.playback_finished.emit()
             return
         self.level_changed.emit(level)
+        self.mouth_pose_changed.emit(mouth_open, max(-1.0, min(1.0, mouth_form)))
