@@ -1171,16 +1171,28 @@ class SettingsWindow(QWidget):
                 entry["click_motion_actions"] = normalize_click_motion_actions(
                     entry.get("click_motion_actions", {})
                 )
+                if entry.get("pet_mode") not in {"live2d", "pixel"}:
+                    entry["pet_mode"] = "live2d"
                 result.append(entry)
                 seen.add(character)
         if self._current_char and self._current_char not in seen:
             costume = self._current_costume or self._model_manager.get_default_costume(self._current_char)
             path = self._model_manager.get_model_json_path(self._current_char, costume)
             if path:
+                pet_mode = self._cfg.get("pet_mode", "live2d") if self._cfg else "live2d"
+                if pet_mode not in {"live2d", "pixel"}:
+                    pet_mode = "live2d"
                 result.insert(0, {
                     "character": self._current_char,
                     "costume": costume,
                     "path": path,
+                    "window_x": self._cfg.get("window_x", -1) if self._cfg else -1,
+                    "window_y": self._cfg.get("window_y", -1) if self._cfg else -1,
+                    "window_width": self._cfg.get("window_width", 400) if self._cfg else 400,
+                    "window_height": self._cfg.get("window_height", 500) if self._cfg else 500,
+                    "pixel_window_x": self._cfg.get("pixel_window_x", -1) if self._cfg else -1,
+                    "pixel_window_y": self._cfg.get("pixel_window_y", -1) if self._cfg else -1,
+                    "pet_mode": pet_mode,
                     "click_motion_actions": {},
                 })
         return result
@@ -6916,6 +6928,7 @@ class SettingsWindow(QWidget):
                 "window_height",
                 "pixel_window_x",
                 "pixel_window_y",
+                "pet_mode",
             )
             if previous.get("character") == character and previous.get("costume") == costume:
                 preserve_keys += (
@@ -6941,6 +6954,7 @@ class SettingsWindow(QWidget):
                         "window_height",
                         "pixel_window_x",
                         "pixel_window_y",
+                        "pet_mode",
                     )
                     if item.get("costume") == costume:
                         preserve_keys += (
