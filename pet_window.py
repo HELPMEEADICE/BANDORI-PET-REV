@@ -1397,7 +1397,8 @@ class PetWindow(QWidget):
     def _radial_menu_payload(self, gx: int, gy: int) -> dict:
         _pixel_widget_class, _load_pixel_frames, pixel_path_for_character = _pixel_pet_support()
         pixel_label = _tr("PetWindow.radial_live2d") if self._pixel_mode else _tr("PetWindow.radial_pixel")
-        pixel_glyph = "L2D" if self._pixel_mode else "\U0001F47E"
+        pixel_glyph = "2D" if self._pixel_mode else "\U0001F47E"
+        pixel_color = [66, 142, 214] if self._pixel_mode else [124, 92, 210]
         pixel_enabled = True if self._pixel_mode else bool(pixel_path_for_character(self._current_char))
         return {
             "x": int(gx),
@@ -1430,7 +1431,7 @@ class PetWindow(QWidget):
                     "action": "pixel",
                     "label": pixel_label,
                     "glyph": pixel_glyph,
-                    "color": [34, 180, 140],
+                    "color": pixel_color,
                     "enabled": pixel_enabled,
                 },
             ],
