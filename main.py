@@ -498,70 +498,40 @@ def main():
         cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
         cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
         cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
-        if "user_avatar_color" in data:
-            cfg.set("user_avatar_color", data["user_avatar_color"])
-        if "user_avatar_path" in data:
-            cfg.set("user_avatar_path", data["user_avatar_path"])
-        if "model_action_settings" in data:
-            cfg.set("model_action_settings", data["model_action_settings"])
-        if "models" in data:
-            cfg.set("models", data["models"])
+        for key in ("user_avatar_color", "user_avatar_path", "model_action_settings", "models"):
+            value = data.get(key)
+            if value is not None:
+                cfg.set(key, value)
         cfg.save()
         init_ai_status_server()
         init_chat_integration_server()
 
     def launch_pet():
         cfg.load()
-        if "language" in pet_window_ref:
-            set_language(pet_window_ref["language"])
-            cfg.set("language", pet_window_ref["language"])
-        if pet_window_ref.get("dark", False):
+        _sentinel = object()
+        language = pet_window_ref.get("language")
+        if language:
+            set_language(language)
+            cfg.set("language", language)
+        dark = pet_window_ref.get("dark")
+        if dark:
             apply_app_theme(True)
             cfg.set("dark_theme", True)
-        if "fps" in pet_window_ref:
-            cfg.set("fps", pet_window_ref["fps"])
-        if "opacity" in pet_window_ref:
-            cfg.set("opacity", pet_window_ref["opacity"])
-        if "vsync" in pet_window_ref:
-            cfg.set("vsync", pet_window_ref["vsync"])
-        if "game_topmost" in pet_window_ref:
-            cfg.set("game_topmost", pet_window_ref["game_topmost"])
-        if "hide_live2d_model" in pet_window_ref:
-            cfg.set("hide_live2d_model", pet_window_ref["hide_live2d_model"])
-        if "live2d_idle_actions_enabled" in pet_window_ref:
-            cfg.set("live2d_idle_actions_enabled", pet_window_ref["live2d_idle_actions_enabled"])
-        if "live2d_quality" in pet_window_ref:
-            cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
-        if "live2d_scale" in pet_window_ref:
-            cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
-        if "compact_ai_window_enabled" in pet_window_ref:
-            cfg.set("compact_ai_window_enabled", pet_window_ref["compact_ai_window_enabled"])
-        if "compact_ai_window_opacity" in pet_window_ref:
-            cfg.set("compact_ai_window_opacity", pet_window_ref["compact_ai_window_opacity"])
-        if "compact_ai_window_font_size" in pet_window_ref:
-            cfg.set("compact_ai_window_font_size", pet_window_ref["compact_ai_window_font_size"])
-        if "compact_ai_window_background_color" in pet_window_ref:
-            cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
-        if "compact_ai_window_text_color" in pet_window_ref:
-            cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
-        if "ai_event_overlay_enabled" in pet_window_ref:
-            cfg.set("ai_event_overlay_enabled", pet_window_ref["ai_event_overlay_enabled"])
-        if "ai_status_port_enabled" in pet_window_ref:
-            cfg.set("ai_status_port_enabled", pet_window_ref["ai_status_port_enabled"])
-        if "ai_status_port" in pet_window_ref:
-            cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
-        if "ai_status_token" in pet_window_ref:
-            cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
-        if "chat_integration_enabled" in pet_window_ref:
-            cfg.set("chat_integration_enabled", pet_window_ref["chat_integration_enabled"])
-        if "chat_integration_overlay_enabled" in pet_window_ref:
-            cfg.set("chat_integration_overlay_enabled", pet_window_ref["chat_integration_overlay_enabled"])
-        if "chat_integration_include_context" in pet_window_ref:
-            cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
-        if "chat_integration_port" in pet_window_ref:
-            cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
-        if "chat_integration_token" in pet_window_ref:
-            cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
+        _pet_window_keys = (
+            "fps", "opacity", "vsync", "game_topmost", "hide_live2d_model",
+            "live2d_idle_actions_enabled", "live2d_quality", "live2d_scale",
+            "compact_ai_window_enabled", "compact_ai_window_opacity",
+            "compact_ai_window_font_size", "compact_ai_window_background_color",
+            "compact_ai_window_text_color", "ai_event_overlay_enabled",
+            "ai_status_port_enabled", "ai_status_port", "ai_status_token",
+            "chat_integration_enabled", "chat_integration_overlay_enabled",
+            "chat_integration_include_context", "chat_integration_port",
+            "chat_integration_token",
+        )
+        for key in _pet_window_keys:
+            value = pet_window_ref.get(key, _sentinel)
+            if value is not _sentinel:
+                cfg.set(key, value)
         cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")

@@ -111,6 +111,12 @@ class RadialMenuItem(QWidget):
         )
         self.update()
 
+    def set_color(self, color: QColor):
+        if self._color == color:
+            return
+        self._color = color
+        self.update()
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -387,7 +393,8 @@ class RadialMenu(QWidget):
         ))
 
     def update_item(self, index: int, *, label: str | None = None,
-                    glyph: str | None = None, enabled: bool | None = None):
+                    glyph: str | None = None, enabled: bool | None = None,
+                    color: QColor | None = None):
         if index < 0 or index >= len(self._items):
             return
         widget = self._items[index].widget
@@ -397,6 +404,8 @@ class RadialMenu(QWidget):
             widget.set_glyph(glyph)
         if enabled is not None:
             widget.set_enabled_state(enabled)
+        if color is not None:
+            widget.set_color(color)
 
     def show_at(self, center: QPoint):
         if self._is_showing:

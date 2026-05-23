@@ -221,6 +221,9 @@ class CompactAIWindow(QWidget):
         self._panel_color = QColor(255, 255, 255, 210)
         self._panel_border_color = QColor(255, 255, 255, 160)
         self._shadow_color = QColor(0, 0, 0, 42)
+        self._output = None
+        self._input = None
+        self._send_button = None
 
         self._init_ui()
         self.refresh_theme()
@@ -302,7 +305,7 @@ class CompactAIWindow(QWidget):
         if not QColor(text_color).isValid():
             text_color = "#24242a"
         radius = self._control_radius()
-        button_radius = self._send_button.width() // 2 if hasattr(self, "_send_button") else 18
+        button_radius = self._send_button.width() // 2 if self._send_button is not None else 18
         solid_accent = QColor(background_color)
         if not solid_accent.isValid():
             solid_accent = QColor("#e4004f")
@@ -322,7 +325,7 @@ class CompactAIWindow(QWidget):
         send_pressed = QColor(solid_accent.darker(116))
         send_pressed.setAlpha(255)
         send_text = _contrast_text(solid_accent)
-        if hasattr(self, "_send_button") and isinstance(self._send_button, CompactSendButton):
+        if self._send_button is not None:
             self._send_button.set_colors(send_bg, send_hover, send_pressed, QColor(send_text))
 
         self.setStyleSheet(f"""
@@ -389,7 +392,7 @@ class CompactAIWindow(QWidget):
                 height: 0px;
             }}
         """)
-        if hasattr(self, "_input"):
+        if self._input is not None:
             self._sync_scaled_controls()
         self.update()
 
@@ -486,7 +489,7 @@ class CompactAIWindow(QWidget):
         self._update_output_height(animated=animated)
 
     def _update_output_height(self, animated: bool = True):
-        if not hasattr(self, "_output") or not hasattr(self, "_input"):
+        if self._output is None or self._input is None:
             return
         output_height = self._target_output_height()
         self._output.setFixedHeight(output_height)
@@ -511,7 +514,7 @@ class CompactAIWindow(QWidget):
         self._geometry_anim.start()
 
     def _sync_scrollbar_policies(self):
-        if not hasattr(self, "_output") or not hasattr(self, "_input"):
+        if self._output is None or self._input is None:
             return
         self._set_vertical_scrollbar_policy(
             self._output,
@@ -1165,10 +1168,7 @@ class CompactAIWindow(QWidget):
     def _interrupt_generation(self):
         worker = self._worker
         if worker is not None:
-            try:
-                worker.cancel()
-            except Exception:
-                worker.requestInterruption()
+            worker.cancel()
             self._park_cancelled_worker(worker)
         self._worker = None
         self._thinking_text = ""

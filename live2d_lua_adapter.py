@@ -158,8 +158,6 @@ def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
     with Image.open(source) as image:
         if image.mode != "RGBA":
             image = image.convert("RGBA")
-        else:
-            image = image.copy()
         try:
             image = _resize_for_quality(image, scale)
             image = _bleed_transparent_edges(image, bleed_passes)
