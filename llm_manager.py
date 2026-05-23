@@ -2,9 +2,13 @@ import json
 import re
 import urllib.request
 import urllib.error
-from urllib.parse import urlsplit, urlunsplit
 from PySide6.QtCore import QThread, Signal
 
+from llm_api_compat import (
+    chat_completions_api_url,
+    responses_api_url,
+    sanitize_chat_body_for_url,
+)
 from local_tools import (
     chat_completion_tools,
     responses_native_tools,
@@ -495,7 +499,7 @@ class LLMStreamWorker(QThread):
                  messages: list[dict], enable_thinking=None, parent=None,
                  web_search=False, show_search_sources=True, tool_config=None):
         super().__init__(parent)
-        self._api_url = api_url.rstrip("/")
+        self._api_url = chat_completions_api_url(api_url)
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
@@ -595,6 +599,7 @@ class LLMStreamWorker(QThread):
             body["tools"] = tools
             body["tool_choice"] = "auto"
         _apply_thinking_options(body, self._enable_thinking)
+        sanitize_chat_body_for_url(body, self._api_url)
         data = json.dumps(body).encode("utf-8")
 
         headers = {
@@ -815,7 +820,7 @@ class NonStreamWorker(QThread):
     def __init__(self, api_url: str, api_key: str, model_id: str,
                  messages: list[dict], enable_thinking=None, parent=None):
         super().__init__(parent)
-        self._api_url = api_url.rstrip("/")
+        self._api_url = chat_completions_api_url(api_url)
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
@@ -829,6 +834,7 @@ class NonStreamWorker(QThread):
                 "stream": False,
             }
             _apply_thinking_options(body, self._enable_thinking)
+            sanitize_chat_body_for_url(body, self._api_url)
             data = json.dumps(body).encode("utf-8")
 
             headers = {
@@ -993,18 +999,7 @@ def _apply_responses_thinking_options(body: dict, enable_thinking):
 
 
 def _responses_api_url(api_url: str) -> str:
-    url = (api_url or "").rstrip("/")
-    if not url:
-        return url
-    if url.endswith("/responses"):
-        return url
-    if url.endswith("/chat/completions"):
-        return url[: -len("/chat/completions")] + "/responses"
-    parts = urlsplit(url)
-    path = parts.path.rstrip("/")
-    if path.endswith("/v1"):
-        return urlunsplit((parts.scheme, parts.netloc, path + "/responses", parts.query, parts.fragment))
-    return url + "/responses"
+    return responses_api_url(api_url)
 
 
 def _messages_to_responses_input(messages: list[dict]) -> tuple[str, list[dict]]:

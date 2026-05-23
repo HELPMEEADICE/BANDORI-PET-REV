@@ -3,14 +3,7 @@ import re
 import urllib.error
 import urllib.request
 
-
-def chat_completions_api_url(api_url: str) -> str:
-    url = (api_url or "").rstrip("/")
-    if url.endswith("/responses"):
-        return url[: -len("/responses")] + "/chat/completions"
-    if url.endswith("/v1"):
-        return url + "/chat/completions"
-    return url
+from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
 
 
 def _apply_thinking_options(body: dict, enable_thinking):
@@ -55,8 +48,10 @@ def analyze_images_with_aux_model(
         "stream": False,
     }
     _apply_thinking_options(body, enable_thinking)
+    request_url = chat_completions_api_url(api_url)
+    sanitize_chat_body_for_url(body, request_url)
     req = urllib.request.Request(
-        chat_completions_api_url(api_url),
+        request_url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
@@ -65,4 +60,3 @@ def analyze_images_with_aux_model(
         data = json.loads(resp.read().decode("utf-8"))
     message = data.get("choices", [{}])[0].get("message", {})
     return _strip_thinking_text(message.get("content", ""))
-

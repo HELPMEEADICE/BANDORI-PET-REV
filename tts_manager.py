@@ -14,6 +14,7 @@ import soundfile as sf
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
 from process_utils import app_base_dir
 
 
@@ -283,8 +284,10 @@ class TTSTranslationWorker(QThread):
         if enable_thinking is not None:
             body["enable_thinking"] = enable_thinking
             body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
+        request_url = chat_completions_api_url(api_url)
+        sanitize_chat_body_for_url(body, request_url)
         req = urllib.request.Request(
-            api_url,
+            request_url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
             method="POST",
@@ -499,8 +502,10 @@ class TTSRequestWorker(QThread):
         if enable_thinking is not None:
             body["enable_thinking"] = enable_thinking
             body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
+        request_url = chat_completions_api_url(api_url)
+        sanitize_chat_body_for_url(body, request_url)
         req = urllib.request.Request(
-            api_url,
+            request_url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
             method="POST",
