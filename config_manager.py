@@ -465,6 +465,15 @@ class ConfigManager:
                 continue
             entry = dict(MODEL_DEFAULTS)
             entry.update(item)
+            if item.get("pet_mode") not in {"live2d", "pixel"}:
+                if (
+                    character == self._data.get("character", "")
+                    and costume == self._data.get("costume", "")
+                    and self._data.get("pet_mode") in {"live2d", "pixel"}
+                ):
+                    entry["pet_mode"] = self._data.get("pet_mode")
+                else:
+                    entry["pet_mode"] = MODEL_DEFAULTS["pet_mode"]
             profile = self.get_model_action_profile(character, costume)
             for key in MODEL_ACTION_KEYS:
                 if not item.get(key) and profile.get(key):

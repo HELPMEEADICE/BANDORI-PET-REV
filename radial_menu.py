@@ -10,7 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import (
     Qt, Signal, QPoint, QPropertyAnimation, QEasingCurve, QTimer,
-    QParallelAnimationGroup, QVariantAnimation,
+    QParallelAnimationGroup, QVariantAnimation, QRectF,
 )
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QMouseEvent,
@@ -117,6 +117,11 @@ class RadialMenuItem(QWidget):
         self._color = color
         self.update()
 
+    @staticmethod
+    def _is_text_badge(glyph: str) -> bool:
+        text = str(glyph or "").strip()
+        return bool(text) and len(text) <= 5 and all(ch.isascii() and (ch.isalnum() or ch in ".+-") for ch in text)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -131,15 +136,23 @@ class RadialMenuItem(QWidget):
 
         p.setPen(Qt.PenStyle.NoPen)
 
+        p.setBrush(QColor(0, 0, 0, 34 if self._enabled else 18))
+        p.drawEllipse(QPoint(int(cx), int(cy + 2)), int(r), int(r))
+
         gradient = QRadialGradient(cx, cy - r * 0.3, r * 1.2)
-        gradient.setColorAt(0, color.lighter(150))
-        gradient.setColorAt(0.7, color)
-        gradient.setColorAt(1, color.darker(120))
+        gradient.setColorAt(0, color.lighter(162))
+        gradient.setColorAt(0.62, color)
+        gradient.setColorAt(1, color.darker(116))
         p.setBrush(QBrush(gradient))
         p.drawEllipse(QPoint(int(cx), int(cy)), int(r), int(r))
 
-        p.setBrush(QColor(255, 255, 255, 40 if self._hover else 10))
-        p.drawEllipse(QPoint(int(cx), int(cy)), int(r * 0.85), int(r * 0.85))
+        p.setPen(QPen(QColor(255, 255, 255, 92 if self._enabled else 42), 1.4))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPoint(int(cx), int(cy)), int(r - 1), int(r - 1))
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 46 if self._hover and self._enabled else 22))
+        p.drawEllipse(QPoint(int(cx), int(cy - r * 0.22)), int(r * 0.64), int(r * 0.42))
 
         if self._icon and not self._icon.isNull():
             icon_size = int(r * 0.7)
@@ -149,22 +162,54 @@ class RadialMenuItem(QWidget):
             )
             p.drawPixmap(int(cx - icon_size / 2), int(cy - icon_size / 2 - r * 0.15), scaled)
         elif self._glyph:
-            font = p.font()
-            font.setPointSize(22)
-            p.setFont(font)
-            p.setPen(QColor(255, 255, 255, 240))
-            fm = QFontMetrics(font)
-            g_w = fm.horizontalAdvance(self._glyph)
-            p.drawText(int(cx - g_w / 2), int(cy - 2), self._glyph)
+            if self._is_text_badge(self._glyph):
+                badge = str(self._glyph).strip().upper()
+                font = p.font()
+                font.setFamily("Microsoft YaHei UI")
+                font.setPointSize(12 if len(badge) <= 3 else 10)
+                font.setBold(True)
+                p.setFont(font)
+                fm = QFontMetrics(font)
+                text_w = fm.horizontalAdvance(badge)
+                badge_w = min(r * 1.22, max(r * 0.86, text_w + 18))
+                badge_h = 24
+                badge_rect = QRectF(
+                    cx - badge_w / 2,
+                    cy - r * 0.34,
+                    badge_w,
+                    badge_h,
+                )
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(255, 255, 255, 46 if self._enabled else 24))
+                p.drawRoundedRect(badge_rect, 9, 9)
+                p.setPen(QPen(QColor(255, 255, 255, 128 if self._enabled else 64), 1))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(badge_rect.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9)
+                p.setPen(QColor(255, 255, 255, 242 if self._enabled else 170))
+                p.drawText(
+                    badge_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    badge,
+                )
+            else:
+                font = p.font()
+                font.setPointSize(21)
+                p.setFont(font)
+                p.setPen(QColor(255, 255, 255, 240 if self._enabled else 170))
+                fm = QFontMetrics(font)
+                g_w = fm.horizontalAdvance(self._glyph)
+                p.drawText(int(cx - g_w / 2), int(cy - 2), self._glyph)
 
         font = p.font()
-        font.setPointSize(9)
+        font.setFamily("Microsoft YaHei UI")
+        font.setPointSize(8)
         font.setBold(True)
         p.setFont(font)
-        p.setPen(QColor(255, 255, 255, 230))
+        p.setPen(QColor(255, 255, 255, 232 if self._enabled else 170))
         fm = QFontMetrics(font)
-        text_w = fm.horizontalAdvance(self._label)
-        p.drawText(int(cx - text_w / 2), int(cy + r * 0.55), self._label)
+        label = fm.elidedText(self._label, Qt.TextElideMode.ElideRight, int(r * 1.42))
+        text_w = fm.horizontalAdvance(label)
+        p.drawText(int(cx - text_w / 2), int(cy + r * 0.56), label)
 
     def enterEvent(self, event):
         self._hover = True
