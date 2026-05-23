@@ -2727,8 +2727,16 @@ class SettingsWindow(QWidget):
         ), page))
         layout.addWidget(capability_hint)
 
+        profile_header = QHBoxLayout()
+        profile_header.setContentsMargins(0, 0, 0, 0)
+        profile_header.setSpacing(8)
         profile_label = BodyLabel(_tr("SettingsWindow.llm_api_profile", default="API 配置档案"), page)
-        layout.addWidget(profile_label)
+        profile_header.addWidget(profile_label)
+        self._llm_active_api_profile_label = BodyLabel("", page)
+        self._llm_active_api_profile_label.setWordWrap(False)
+        profile_header.addWidget(self._llm_active_api_profile_label)
+        profile_header.addStretch()
+        layout.addLayout(profile_header)
         profile_row = QHBoxLayout()
         profile_row.setSpacing(8)
         self._llm_api_profile_combo = OpaqueDropDownComboBox(page)
@@ -2741,7 +2749,7 @@ class SettingsWindow(QWidget):
         self._llm_api_profile_name.setFixedHeight(36)
         profile_row.addWidget(self._llm_api_profile_name, 1)
 
-        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_api_profile_save", default="保存档案并应用"), page)
+        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_api_profile_save", default="保存配置"), page)
         save_profile_btn.setFixedHeight(36)
         save_profile_btn.clicked.connect(self._save_llm_api_profile)
         profile_row.addWidget(save_profile_btn)
@@ -5458,6 +5466,8 @@ class SettingsWindow(QWidget):
         self._pov_custom_prompt.setStyleSheet(style)
         hint_color = "#a7b0bf" if dark else "#687385"
         self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
+        if hasattr(self, "_llm_active_api_profile_label"):
+            self._llm_active_api_profile_label.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
         self._update_user_avatar_preview()
 
@@ -5675,6 +5685,7 @@ class SettingsWindow(QWidget):
             self._reload_llm_api_profiles(
                 self._cfg.get("llm_active_api_profile", "") or self._matching_llm_api_profile_name()
             )
+            self._update_current_llm_api_profile_label()
 
     def _normalized_llm_api_profiles(self) -> list[dict]:
         if not self._cfg:
@@ -5736,6 +5747,29 @@ class SettingsWindow(QWidget):
             "llm_web_search_show_sources": self._llm_web_search_show_sources.isChecked(),
             "llm_enable_thinking": thinking,
             "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
+        }
+
+    def _saved_llm_api_profile(self, name: str = "__current__") -> dict:
+        if not self._cfg:
+            return {"name": name}
+        return {
+            "name": name.strip(),
+            "llm_api_url": str(self._cfg.get("llm_api_url", "") or "").strip(),
+            "llm_api_key": str(self._cfg.get("llm_api_key", "") or "").strip(),
+            "llm_model_id": str(self._cfg.get("llm_model_id", "") or "").strip(),
+            "llm_aux_api_url": str(self._cfg.get("llm_aux_api_url", "") or "").strip(),
+            "llm_aux_api_key": str(self._cfg.get("llm_aux_api_key", "") or "").strip(),
+            "llm_aux_model_id": str(self._cfg.get("llm_aux_model_id", "") or "").strip(),
+            "llm_aux_enable_thinking": self._cfg.get("llm_aux_enable_thinking", None)
+            if self._cfg.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
+            "llm_aux_vision_fallback_enabled": bool(self._cfg.get("llm_aux_vision_fallback_enabled", False)),
+            "llm_api_mode": self._cfg.get("llm_api_mode", "chat_completions") or "chat_completions",
+            "llm_web_search_enabled": bool(self._cfg.get("llm_web_search_enabled", False)),
+            "llm_web_search_engine": self._cfg.get("llm_web_search_engine", "bing_cn") or "bing_cn",
+            "llm_web_search_show_sources": bool(self._cfg.get("llm_web_search_show_sources", True)),
+            "llm_enable_thinking": self._cfg.get("llm_enable_thinking", None)
+            if self._cfg.get("llm_enable_thinking", None) in (True, False, None) else None,
+            "llm_show_reasoning": bool(self._cfg.get("llm_show_reasoning", True)),
         }
 
     def _llm_profiles_equal(self, left: dict, right: dict) -> bool:
@@ -5800,19 +5834,45 @@ class SettingsWindow(QWidget):
                 return profile["name"]
         return ""
 
-    def _persist_current_llm_api_config(self, active_profile_name: str | None = None):
+    def _applied_llm_api_profile_display_name(self) -> tuple[str, bool]:
         if not self._cfg:
+            return "", False
+        current = self._saved_llm_api_profile("__current__")
+        if not (
+            current.get("llm_api_url")
+            or current.get("llm_api_key")
+            or current.get("llm_model_id")
+        ):
+            return "", False
+        profiles = self._normalized_llm_api_profiles()
+        for profile in profiles:
+            if self._llm_profiles_equal(current, profile):
+                return profile["name"], False
+
+        active_name = str(self._cfg.get("llm_active_api_profile", "") or "").strip()
+        for profile in profiles:
+            if profile["name"] == active_name and self._llm_profile_api_identity_equal(current, profile):
+                return profile["name"], True
+        for profile in profiles:
+            if self._llm_profile_api_identity_equal(current, profile):
+                return profile["name"], True
+        return "", True
+
+    def _update_current_llm_api_profile_label(self):
+        if not hasattr(self, "_llm_active_api_profile_label"):
             return
-        active = self._current_llm_api_profile("__active__")
-        for key, value in active.items():
-            if key != "name":
-                self._cfg.set(key, value)
-        if active_profile_name is not None:
-            self._cfg.set("llm_active_api_profile", active_profile_name)
-        try:
-            self._cfg.save()
-        except Exception:
-            pass
+        name, modified = self._applied_llm_api_profile_display_name()
+        if name:
+            key = (
+                "SettingsWindow.llm_api_profile_current_modified"
+                if modified else
+                "SettingsWindow.llm_api_profile_current"
+            )
+            self._llm_active_api_profile_label.setText(_tr(key, name=name))
+        elif modified:
+            self._llm_active_api_profile_label.setText(_tr("SettingsWindow.llm_api_profile_current_custom"))
+        else:
+            self._llm_active_api_profile_label.setText(_tr("SettingsWindow.llm_api_profile_current_none"))
 
     def _reload_llm_api_profiles(self, selected_name: str = ""):
         self._loading_llm_profile = True
@@ -5872,7 +5932,6 @@ class SettingsWindow(QWidget):
         for profile in self._normalized_llm_api_profiles():
             if profile["name"] == name:
                 self._apply_llm_api_profile(profile)
-                self._persist_current_llm_api_config(name)
                 return
 
     def _save_llm_api_profile(self):
@@ -5894,11 +5953,10 @@ class SettingsWindow(QWidget):
         profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
         profiles.append(self._current_llm_api_profile(name))
         self._cfg.set("llm_api_profiles", profiles)
-        self._cfg.set("llm_active_api_profile", name)
-        self._persist_current_llm_api_config(name)
         try:
             self._cfg.save()
             self._reload_llm_api_profiles(name)
+            self._update_current_llm_api_profile_label()
             InfoBar.success(
                 _tr("SettingsWindow.llm_api_profile_saved_title", default="档案已保存"),
                 _tr("SettingsWindow.llm_api_profile_saved_content", default="当前 API 配置已保存。"),
@@ -5923,6 +5981,7 @@ class SettingsWindow(QWidget):
             self._cfg.save()
             self._llm_api_profile_name.clear()
             self._reload_llm_api_profiles()
+            self._update_current_llm_api_profile_label()
             InfoBar.success(
                 _tr("SettingsWindow.llm_api_profile_deleted_title", default="档案已删除"),
                 _tr("SettingsWindow.llm_api_profile_deleted_content", default="API 配置档案已删除。"),
@@ -6166,6 +6225,7 @@ class SettingsWindow(QWidget):
             try:
                 self._cfg.save()
                 self._reload_llm_api_profiles(active_profile)
+                self._update_current_llm_api_profile_label()
                 if show_info:
                     title_key = "SettingsWindow.pov_saved_title" if source == "pov" else "SettingsWindow.llm_saved_title"
                     content_key = "SettingsWindow.pov_saved_content" if source == "pov" else "SettingsWindow.llm_saved_content"
