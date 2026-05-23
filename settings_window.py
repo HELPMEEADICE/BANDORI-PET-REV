@@ -1249,7 +1249,6 @@ class SettingsWindow(QWidget):
         try:
             from live2d_lua_adapter import live2d
 
-            live2d.init()
             self._live2d = live2d
             self._owns_live2d = True
             return self._live2d

@@ -463,8 +463,7 @@ class ConfigManager:
             costume = item.get("costume", "")
             if not character or not costume:
                 continue
-            entry = dict(MODEL_DEFAULTS)
-            entry.update(item)
+            entry = {**MODEL_DEFAULTS, **item}
             if item.get("pet_mode") not in {"live2d", "pixel"}:
                 if (
                     character == self._data.get("character", "")
@@ -503,13 +502,9 @@ class ConfigManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2, ensure_ascii=False)
                 f.flush()
-                os.fsync(f.fileno())
             os.replace(tmp_path, self._path)
         except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            os.unlink(tmp_path)
             raise
 
     def get(self, key, default=None):
@@ -545,7 +540,3 @@ class ConfigManager:
         else:
             profiles.pop(key, None)
         self._data["model_action_settings"] = profiles
-
-    @property
-    def data(self):
-        return dict(self._data)

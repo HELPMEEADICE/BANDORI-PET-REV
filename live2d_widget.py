@@ -154,8 +154,9 @@ class Live2DWidget(QOpenGLWidget):
         if profile == self._quality_profile:
             return
         self._quality_profile = profile
-        if self._model_path:
-            self._load_model_internal(self._model_path)
+        set_live2d_texture_quality(profile)
+        if self._model:
+            self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -240,45 +241,39 @@ class Live2DWidget(QOpenGLWidget):
             self._update_render_timer()
 
     def _prepare_custom_hit_areas(self, model):
-        try:
-            config = model.modelSetting.json
-            areas = config.get("hit_areas_custom") or {}
-            if not isinstance(areas, dict):
-                return ()
-
-            prepared = []
-            for name, x_range in areas.items():
-                if not name.endswith("_x") or not isinstance(x_range, list) or len(x_range) != 2:
-                    continue
-                y_range = areas.get(f"{name[:-2]}_y")
-                if not isinstance(y_range, list) or len(y_range) != 2:
-                    continue
-                x0, x1, y0, y1 = float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1])
-                area_name = name[:-2].strip().lower()
-                prepared.append((area_name, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
-                
-            priority = {"head": 0, "face": 0, "body": 10}
-            prepared.sort(key=lambda item: (priority.get(item[0], 5), item[0]))
-            return tuple(prepared)
-        except Exception:
+        config = model.modelSetting.json
+        areas = config.get("hit_areas_custom") or {}
+        if not isinstance(areas, dict):
             return ()
+
+        prepared = []
+        for name, x_range in areas.items():
+            if not name.endswith("_x") or not isinstance(x_range, list) or len(x_range) != 2:
+                continue
+            y_range = areas.get(f"{name[:-2]}_y")
+            if not isinstance(y_range, list) or len(y_range) != 2:
+                continue
+            x0, x1, y0, y1 = float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1])
+            area_name = name[:-2].strip().lower()
+            prepared.append((area_name, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
+
+        priority = {"head": 0, "face": 0, "body": 10}
+        prepared.sort(key=lambda item: (priority.get(item[0], 5), item[0]))
+        return tuple(prepared)
 
     def _update_custom_hit_area_projection(self):
         model = self._model
         if not model or not self._custom_hit_areas.has_scene_areas():
             self._custom_hit_areas.clear_projected()
             return
-        try:
-            matrix = model.matrixManager
-            if not self._custom_hit_areas.project(
-                matrix.screenToScene(0.0, 0.0),
-                matrix.screenToScene(float(self._cache_w), 0.0),
-                matrix.screenToScene(0.0, float(self._cache_h)),
-                self._cache_w,
-                self._cache_h,
-            ):
-                self._custom_hit_areas.clear_projected()
-        except Exception:
+        matrix = model.matrixManager
+        if not self._custom_hit_areas.project(
+            matrix.screenToScene(0.0, 0.0),
+            matrix.screenToScene(float(self._cache_w), 0.0),
+            matrix.screenToScene(0.0, float(self._cache_h)),
+            self._cache_w,
+            self._cache_h,
+        ):
             self._custom_hit_areas.clear_projected()
 
     # --------------------------------------------------------------------------
@@ -467,10 +462,6 @@ class Live2DWidget(QOpenGLWidget):
     def initializeGL(self):
         if self._live2d:
             self._live2d.glInit()
-        try:
-            gl.glEnable(gl.GL_MULTISAMPLE)
-        except Exception:
-            pass
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glDisable(gl.GL_DITHER)
         
@@ -555,16 +546,10 @@ class Live2DWidget(QOpenGLWidget):
     def hit_area_bounds(self, area_name: str):
         area_name = str(area_name or "").strip().lower()
         if not area_name: return None
-        try:
-            return self._custom_hit_areas.bounds_for(area_name)
-        except Exception:
-            return None
+        return self._custom_hit_areas.bounds_for(area_name)
 
     def hit_area_union_bounds(self):
-        try:
-            return self._custom_hit_areas.union_bounds()
-        except Exception:
-            return None
+        return self._custom_hit_areas.union_bounds()
 
     def _is_model_hit_at(self, x: float, y: float, *, sync: bool = False) -> bool:
         if not self._model: return False
