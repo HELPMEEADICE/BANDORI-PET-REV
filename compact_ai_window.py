@@ -24,6 +24,7 @@ from llm_manager import (
     parse_action_tags,
     strip_action_tags,
 )
+from llm_api_compat import chat_completions_api_url
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -885,12 +886,7 @@ class CompactAIWindow(QWidget):
         return self._supports_openai_responses_api(api_url or self._cfg.get("llm_api_url", ""))
 
     def _chat_completions_api_url(self, api_url: str) -> str:
-        url = (api_url or "").rstrip("/")
-        if url.endswith("/responses"):
-            return url[: -len("/responses")] + "/chat/completions"
-        if url.endswith("/v1"):
-            return url + "/chat/completions"
-        return url
+        return chat_completions_api_url(api_url)
 
     def _on_chunk_received(self, text: str, reasoning: str):
         if self.sender() is not self._worker:

@@ -31,6 +31,13 @@ from qfluentwidgets.components.widgets.menu import (
 from qfluentwidgets.common.config import qconfig
 
 from i18n_manager import tr as _tr, set_language, available_languages, current_language
+from llm_api_compat import (
+    chat_completions_api_url,
+    is_google_generative_language_url,
+    models_api_url,
+    responses_api_url,
+    sanitize_chat_body_for_url,
+)
 from process_utils import app_base_dir
 from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
 from app_update import detect_update_channel
@@ -6529,10 +6536,7 @@ class SettingsWindow(QWidget):
             )
             return
 
-        base_url = api_url.rstrip("/")
-        base_url = base_url.rsplit("/chat/completions", 1)[0]
-        base_url = base_url.rsplit("/responses", 1)[0]
-        models_url = base_url + "/models"
+        models_url = models_api_url(api_url)
 
         if hasattr(self, '_fetch_worker') and self._fetch_worker is not None:
             if self._fetch_worker.isRunning():
@@ -7152,25 +7156,11 @@ class SettingsWindow(QWidget):
 
 
 def _responses_api_url(api_url: str) -> str:
-    url = (api_url or "").rstrip("/")
-    if url.endswith("/responses"):
-        return url
-    if url.endswith("/chat/completions"):
-        return url[: -len("/chat/completions")] + "/responses"
-    if url.endswith("/v1"):
-        return url + "/responses"
-    return url + "/responses"
+    return responses_api_url(api_url)
 
 
 def _chat_completions_api_url(api_url: str) -> str:
-    url = (api_url or "").rstrip("/")
-    if url.endswith("/chat/completions"):
-        return url
-    if url.endswith("/responses"):
-        return url[: -len("/responses")] + "/chat/completions"
-    if url.endswith("/v1"):
-        return url + "/chat/completions"
-    return url
+    return chat_completions_api_url(api_url)
 
 
 class UpdateCheckWorker(QThread):
@@ -7249,7 +7239,7 @@ class TestConnectionWorker(QThread):
             }
 
             try:
-                if self._api_mode == "responses":
+                if self._api_mode == "responses" and not is_google_generative_language_url(self._api_url):
                     self._test_responses_request(urllib.request, json, headers, ctx)
                 else:
                     self._test_chat_completions_request(urllib.request, json, headers, ctx)
@@ -7286,10 +7276,12 @@ class TestConnectionWorker(QThread):
 
     def _test_chat_completions_request(self, urllib_request, json_module, headers: dict, ctx):
         url = _chat_completions_api_url(self._api_url)
-        body = json_module.dumps({
+        body_obj = {
             "model": self._model_id,
             "messages": [{"role": "user", "content": "Hi"}],
-        }).encode("utf-8")
+        }
+        sanitize_chat_body_for_url(body_obj, url)
+        body = json_module.dumps(body_obj).encode("utf-8")
         req = urllib_request.Request(url, data=body, headers=headers, method="POST")
         with urllib_request.urlopen(req, timeout=30, context=ctx) as resp:
             data = json_module.loads(resp.read().decode("utf-8"))

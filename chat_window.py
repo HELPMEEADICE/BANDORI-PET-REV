@@ -53,6 +53,7 @@ from llm_manager import (
     build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
+from llm_api_compat import chat_completions_api_url
 from vision_fallback import analyze_images_with_aux_model
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
@@ -3950,12 +3951,7 @@ class ChatWindow(QWidget):
         return snapshot
 
     def _chat_completions_api_url(self, api_url: str) -> str:
-        url = (api_url or "").rstrip("/")
-        if url.endswith("/responses"):
-            return url[: -len("/responses")] + "/chat/completions"
-        if url.endswith("/v1"):
-            return url + "/chat/completions"
-        return url
+        return chat_completions_api_url(api_url)
 
     def _reload_runtime_config(self):
         if self._cfg and hasattr(self._cfg, "load"):
