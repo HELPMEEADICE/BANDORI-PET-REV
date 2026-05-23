@@ -68,7 +68,6 @@ def main():
     cfg = ConfigManager()
     set_language(cfg.get("language", "") or detect_system_language())
 
-    live2d.init()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     if sys.platform != "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)

@@ -11,6 +11,7 @@ from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 from radial_menu import RadialMenu
 
@@ -189,9 +190,12 @@ def main():
         if socket in clients:
             clients.remove(socket)
         buffers.pop(socket, None)
-        socket.deleteLater()
+        if isValid(socket):
+            socket.deleteLater()
 
     def read_client(socket: QLocalSocket):
+        if not isValid(socket):
+            return
         data = bytes(socket.readAll()).decode("utf-8", errors="replace")
         buffer = buffers.get(socket, "") + data
         lines = buffer.splitlines(keepends=True)

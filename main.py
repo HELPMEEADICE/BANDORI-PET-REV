@@ -43,8 +43,6 @@ def main():
         lang = detect_system_language()
     set_language(lang)
 
-    live2d.init()
-
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     if sys.platform != "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
@@ -173,7 +171,7 @@ def main():
         if not cfg.get("ai_status_port_enabled", False):
             return
         port = _clamp_ai_status_port(cfg.get("ai_status_port", 38472))
-        token = str(cfg.get("ai_status_token", "") or "")
+        token = cfg.get("ai_status_token") or ""
 
         def on_ai_event(event: dict):
             payload = json.dumps(event, ensure_ascii=False)
@@ -204,7 +202,7 @@ def main():
             lines.append(f"[{platform}] {label}（{unread}）")
             for message in (thread.get("messages") or [])[-3:]:
                 sender = message.get("sender_name") or message.get("sender_id") or "unknown"
-                content = str(message.get("content", "") or "").replace("\r", " ").replace("\n", " ").strip()
+                content = (message.get("content") or "").replace("\r", " ").replace("\n", " ").strip()
                 if len(content) > 80:
                     content = content[:80] + "..."
                 lines.append(f"{sender}: {content}")
@@ -225,7 +223,7 @@ def main():
             "ttl_ms": int(event.get("ttl_ms") or 9000),
             "anchor_to_pet": True,
         }
-        character = str(event.get("character") or event.get("target_character") or "").strip()
+        character = (event.get("character") or event.get("target_character") or "").strip()
         if character:
             overlay["character"] = character
         broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
@@ -240,8 +238,8 @@ def main():
     def handle_chat_integration_read(data: dict) -> dict:
         with chat_integration_ref["lock"]:
             result = chat_integration_db().mark_external_chat_read(
-                str(data.get("platform", "") or ""),
-                str(data.get("thread_id", "") or data.get("conversation_id", "") or ""),
+                data.get("platform") or "",
+                data.get("thread_id") or data.get("conversation_id") or "",
             )
         overlay = {
             "source": "chat",
@@ -258,7 +256,7 @@ def main():
         if not cfg.get("chat_integration_enabled", False):
             return
         port = _clamp_ai_status_port(cfg.get("chat_integration_port", 38473))
-        token = str(cfg.get("chat_integration_token", "") or "")
+        token = cfg.get("chat_integration_token") or ""
         try:
             server = ChatIntegrationHttpServer(
                 port,
@@ -323,8 +321,7 @@ def main():
                 path = ModelManager.get_model_json_path(model_char, model_costume)
                 if not path:
                     continue
-                entry = dict(item)
-                entry.update({"character": model_char, "costume": model_costume, "path": path})
+                entry = {**item, "character": model_char, "costume": model_costume, "path": path}
                 result.append(entry)
                 seen.add(model_char)
         if not result and char and costume and ModelManager.get_model_json_path(char, costume):
@@ -336,47 +333,28 @@ def main():
         cfg.set("language", current_language())
         cfg.save()
 
-    def close_pet_processes(force=False):
-        for process in list(pet_window_ref.get("processes", [])):
-            if not isValid(process):
-                continue
-            try:
-                process.finished.disconnect()
-            except RuntimeError:
-                pass
-            if process.state() != QProcess.ProcessState.NotRunning:
-                if force:
-                    if not process.waitForFinished(1000):
-                        process.kill()
-                        process.waitForFinished(1000)
-                else:
-                    process.terminate()
-                    if not process.waitForFinished(100):
-                        process.kill()
-                        process.waitForFinished(1000)
-            process.deleteLater()
-        pet_window_ref["processes"] = []
-
-    def close_settings_process(force=False):
-        process = settings_process_ref.get("process")
-        if process is None or not isValid(process):
-            settings_process_ref.pop("process", None)
-            settings_process_ref.pop("show_launch", None)
+    def _close_qprocess(process, force=False):
+        if not process or not isValid(process):
             return
         try:
             process.finished.disconnect()
         except RuntimeError:
             pass
         if process.state() != QProcess.ProcessState.NotRunning:
-            if force:
+            process.terminate()
+            if not process.waitForFinished(1000):
                 process.kill()
                 process.waitForFinished(1000)
-            else:
-                process.terminate()
-                if not process.waitForFinished(1000):
-                    process.kill()
-                    process.waitForFinished(1000)
         process.deleteLater()
+
+    def close_pet_processes(force=False):
+        for process in list(pet_window_ref.get("processes", [])):
+            _close_qprocess(process, force)
+        pet_window_ref["processes"] = []
+
+    def close_settings_process(force=False):
+        process = settings_process_ref.get("process")
+        _close_qprocess(process, force)
         settings_process_ref.pop("process", None)
         settings_process_ref.pop("show_launch", None)
 
@@ -390,114 +368,45 @@ def main():
             launch_pet()
 
     def on_settings_changed(data):
+        _SETTINGS_MAP = (
+            ("fps", "fps", 120),
+            ("opacity", "opacity", 1.0),
+            ("dark_theme", "dark", False),
+            ("vsync", "vsync", True),
+            ("game_topmost", "game_topmost", False),
+            ("hide_live2d_model", "hide_live2d_model", False),
+            ("live2d_idle_actions_enabled", "live2d_idle_actions_enabled", True),
+            ("live2d_quality", "live2d_quality", "balanced"),
+            ("live2d_scale", "live2d_scale", 100),
+            ("compact_ai_window_enabled", "compact_ai_window_enabled", False),
+            ("compact_ai_window_opacity", "compact_ai_window_opacity", 44),
+            ("compact_ai_window_font_size", "compact_ai_window_font_size", 12),
+            ("compact_ai_window_background_color", "compact_ai_window_background_color", ""),
+            ("compact_ai_window_text_color", "compact_ai_window_text_color", "#24242a"),
+            ("ai_event_overlay_enabled", "ai_event_overlay_enabled", False),
+            ("ai_status_port_enabled", "ai_status_port_enabled", False),
+            ("ai_status_port", "ai_status_port", 38472),
+            ("ai_status_token", "ai_status_token", ""),
+            ("chat_integration_enabled", "chat_integration_enabled", False),
+            ("chat_integration_overlay_enabled", "chat_integration_overlay_enabled", True),
+            ("chat_integration_include_context", "chat_integration_include_context", True),
+            ("chat_integration_port", "chat_integration_port", 38473),
+            ("chat_integration_token", "chat_integration_token", ""),
+        )
         language = data.get("language")
         if language:
             set_language(language)
             pet_window_ref["language"] = language
-        pet_window_ref["fps"] = data.get("fps", pet_window_ref.get("fps", cfg.get("fps", 120)))
-        pet_window_ref["opacity"] = data.get("opacity", pet_window_ref.get("opacity", cfg.get("opacity", 1.0)))
-        pet_window_ref["dark"] = data.get("dark_theme", pet_window_ref.get("dark", cfg.get("dark_theme", False)))
-        pet_window_ref["vsync"] = data.get("vsync", pet_window_ref.get("vsync", cfg.get("vsync", True)))
-        pet_window_ref["game_topmost"] = data.get(
-            "game_topmost",
-            pet_window_ref.get("game_topmost", cfg.get("game_topmost", False)),
-        )
-        pet_window_ref["hide_live2d_model"] = data.get(
-            "hide_live2d_model",
-            pet_window_ref.get("hide_live2d_model", cfg.get("hide_live2d_model", False)),
-        )
-        pet_window_ref["live2d_idle_actions_enabled"] = data.get(
-            "live2d_idle_actions_enabled",
-            pet_window_ref.get("live2d_idle_actions_enabled", cfg.get("live2d_idle_actions_enabled", True)),
-        )
-        pet_window_ref["live2d_quality"] = data.get(
-            "live2d_quality",
-            pet_window_ref.get("live2d_quality", cfg.get("live2d_quality", "balanced")),
-        )
-        pet_window_ref["live2d_scale"] = data.get(
-            "live2d_scale",
-            pet_window_ref.get("live2d_scale", cfg.get("live2d_scale", 100)),
-        )
-        pet_window_ref["compact_ai_window_enabled"] = data.get(
-            "compact_ai_window_enabled",
-            pet_window_ref.get("compact_ai_window_enabled", cfg.get("compact_ai_window_enabled", False)),
-        )
-        pet_window_ref["compact_ai_window_opacity"] = data.get(
-            "compact_ai_window_opacity",
-            pet_window_ref.get("compact_ai_window_opacity", cfg.get("compact_ai_window_opacity", 44)),
-        )
-        pet_window_ref["compact_ai_window_font_size"] = data.get(
-            "compact_ai_window_font_size",
-            pet_window_ref.get("compact_ai_window_font_size", cfg.get("compact_ai_window_font_size", 12)),
-        )
-        pet_window_ref["compact_ai_window_background_color"] = data.get(
-            "compact_ai_window_background_color",
-            pet_window_ref.get("compact_ai_window_background_color", cfg.get("compact_ai_window_background_color", "")),
-        )
-        pet_window_ref["compact_ai_window_text_color"] = data.get(
-            "compact_ai_window_text_color",
-            pet_window_ref.get("compact_ai_window_text_color", cfg.get("compact_ai_window_text_color", "#24242a")),
-        )
-        pet_window_ref["ai_event_overlay_enabled"] = data.get(
-            "ai_event_overlay_enabled",
-            pet_window_ref.get("ai_event_overlay_enabled", cfg.get("ai_event_overlay_enabled", False)),
-        )
-        pet_window_ref["ai_status_port_enabled"] = data.get(
-            "ai_status_port_enabled",
-            pet_window_ref.get("ai_status_port_enabled", cfg.get("ai_status_port_enabled", False)),
-        )
-        pet_window_ref["ai_status_port"] = _clamp_ai_status_port(
-            data.get("ai_status_port", pet_window_ref.get("ai_status_port", cfg.get("ai_status_port", 38472)))
-        )
-        pet_window_ref["ai_status_token"] = data.get(
-            "ai_status_token",
-            pet_window_ref.get("ai_status_token", cfg.get("ai_status_token", "")),
-        )
-        pet_window_ref["chat_integration_enabled"] = data.get(
-            "chat_integration_enabled",
-            pet_window_ref.get("chat_integration_enabled", cfg.get("chat_integration_enabled", False)),
-        )
-        pet_window_ref["chat_integration_overlay_enabled"] = data.get(
-            "chat_integration_overlay_enabled",
-            pet_window_ref.get("chat_integration_overlay_enabled", cfg.get("chat_integration_overlay_enabled", True)),
-        )
-        pet_window_ref["chat_integration_include_context"] = data.get(
-            "chat_integration_include_context",
-            pet_window_ref.get("chat_integration_include_context", cfg.get("chat_integration_include_context", True)),
-        )
-        pet_window_ref["chat_integration_port"] = _clamp_ai_status_port(
-            data.get("chat_integration_port", pet_window_ref.get("chat_integration_port", cfg.get("chat_integration_port", 38473)))
-        )
-        pet_window_ref["chat_integration_token"] = data.get(
-            "chat_integration_token",
-            pet_window_ref.get("chat_integration_token", cfg.get("chat_integration_token", "")),
-        )
+        for cfg_key, ref_key, default in _SETTINGS_MAP:
+            value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
+            if cfg_key in ("ai_status_port", "chat_integration_port"):
+                value = _clamp_ai_status_port(value)
+            pet_window_ref[ref_key] = value
         cfg.load()
         if language:
             cfg.set("language", language)
-        cfg.set("fps", pet_window_ref["fps"])
-        cfg.set("opacity", pet_window_ref["opacity"])
-        cfg.set("dark_theme", pet_window_ref["dark"])
-        cfg.set("vsync", pet_window_ref["vsync"])
-        cfg.set("game_topmost", pet_window_ref["game_topmost"])
-        cfg.set("hide_live2d_model", pet_window_ref["hide_live2d_model"])
-        cfg.set("live2d_idle_actions_enabled", pet_window_ref["live2d_idle_actions_enabled"])
-        cfg.set("live2d_quality", pet_window_ref["live2d_quality"])
-        cfg.set("live2d_scale", pet_window_ref["live2d_scale"])
-        cfg.set("compact_ai_window_enabled", pet_window_ref["compact_ai_window_enabled"])
-        cfg.set("compact_ai_window_opacity", pet_window_ref["compact_ai_window_opacity"])
-        cfg.set("compact_ai_window_font_size", pet_window_ref["compact_ai_window_font_size"])
-        cfg.set("compact_ai_window_background_color", pet_window_ref["compact_ai_window_background_color"])
-        cfg.set("compact_ai_window_text_color", pet_window_ref["compact_ai_window_text_color"])
-        cfg.set("ai_event_overlay_enabled", pet_window_ref["ai_event_overlay_enabled"])
-        cfg.set("ai_status_port_enabled", pet_window_ref["ai_status_port_enabled"])
-        cfg.set("ai_status_port", pet_window_ref["ai_status_port"])
-        cfg.set("ai_status_token", pet_window_ref["ai_status_token"])
-        cfg.set("chat_integration_enabled", pet_window_ref["chat_integration_enabled"])
-        cfg.set("chat_integration_overlay_enabled", pet_window_ref["chat_integration_overlay_enabled"])
-        cfg.set("chat_integration_include_context", pet_window_ref["chat_integration_include_context"])
-        cfg.set("chat_integration_port", pet_window_ref["chat_integration_port"])
-        cfg.set("chat_integration_token", pet_window_ref["chat_integration_token"])
+        for cfg_key, ref_key, _default in _SETTINGS_MAP:
+            cfg.set(cfg_key, pet_window_ref[ref_key])
         for key in ("user_avatar_color", "user_avatar_path", "model_action_settings", "models"):
             value = data.get(key)
             if value is not None:

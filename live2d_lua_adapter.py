@@ -262,14 +262,8 @@ class LuaLive2DModule:
         self._apply_texture_quality = None
         self.MotionPriority = MotionPriority
 
-    def init(self):
-        return True
-
     def glInit(self):
         self._ensure_runtime()
-
-    def clearBuffer(self):
-        return True
 
     def dispose(self):
         if self._embed is not None:
@@ -417,6 +411,8 @@ class LuaLAppModel:
             opts,
         )
         self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
+        self._draw_opts = self._module._lua.table()
+        self._draw_opts[b"clear"] = False
 
     def Resize(self, width: int, height: int):
         self._width = max(int(width), 1)
@@ -425,14 +421,10 @@ class LuaLAppModel:
         if self._renderer is not None:
             self._module._resize(self._renderer, self._width, self._height)
 
-    def Update(self):
-        return True
-
     def Draw(self):
         if self._renderer is None:
             return
-        opts = self._module._lua.table()
-        opts[b"clear"] = False
+        opts = self._draw_opts
         opts[b"time_msec"] = time.monotonic() * 1000.0
         if self._pending_parameters:
             params = self._module._lua.table()
@@ -443,31 +435,24 @@ class LuaLAppModel:
                 item[b"weight"] = float(weight)
                 params[index] = item
             opts[b"parameters"] = params
+        else:
+            opts[b"parameters"] = None
         self._module._draw(self._renderer, opts)
 
     def Drag(self, x: float, y: float):
-        if self._renderer is not None:
-            self._module._drag(self._renderer, float(x), float(y))
+        self._module._drag(self._renderer, float(x), float(y))
 
     def SetOffset(self, x: float, y: float):
-        if self._renderer is not None:
-            self._module._set_offset(self._renderer, float(x), float(y))
+        self._module._set_offset(self._renderer, float(x), float(y))
 
     def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
         self._pending_parameters[str(param_id)] = (str(param_id), float(value), float(weight))
 
     def HitTest(self, _area_name: str, x: float, y: float):
-        if self._renderer is None:
-            return None
         hits = self._module._hit_test(self._renderer, float(x), float(y))
-        try:
-            return "hit" if len(hits) > 0 else None
-        except Exception:
-            return None
+        return "hit" if len(hits) > 0 else None
 
     def StartMotion(self, name: str, no: int = 0, priority=MotionPriority.FORCE, **_kwargs):
-        if self._renderer is None:
-            return
         resolved = self.modelSetting.resolveMotion(str(name), int(no)) if self.modelSetting else None
         if resolved is None:
             return
@@ -493,21 +478,16 @@ class LuaLAppModel:
         self.StartMotion(name, random.randrange(count), priority)
 
     def ClearMotions(self):
-        if self._renderer is not None:
-            self._module._clear_motions(self._renderer)
+        self._module._clear_motions(self._renderer)
 
     def IsMotionFinished(self) -> bool:
-        if self._renderer is None:
-            return True
         return bool(self._module._is_motion_finished(self._renderer))
 
     def SetExpression(self, name: str):
-        if self._renderer is not None:
-            self._module._set_expression(self._renderer, str(name).encode("utf-8"))
+        self._module._set_expression(self._renderer, str(name).encode("utf-8"))
 
     def ResetExpression(self):
-        if self._renderer is not None:
-            self._module._reset_expression(self._renderer)
+        self._module._reset_expression(self._renderer)
 
     @staticmethod
     def _read_expression_names(model_json: dict) -> dict[str, None]:

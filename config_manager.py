@@ -213,8 +213,8 @@ def normalize_model_action_profile(profile) -> dict:
         return {}
 
     normalized = {}
-    default_motion = str(profile.get("default_motion", "") or "").strip()
-    default_expression = str(profile.get("default_expression", "") or "").strip()
+    default_motion = str(profile.get("default_motion", "")).strip()
+    default_expression = str(profile.get("default_expression", "")).strip()
     click_motion_actions = normalize_click_motion_actions(
         profile.get("click_motion_actions", {})
     )
@@ -242,20 +242,20 @@ def _normalize_web_search_engine(value) -> str:
 def _normalize_llm_api_profile(profile) -> dict | None:
     if not isinstance(profile, dict):
         return None
-    name = str(profile.get("name", "") or "").strip()
+    name = str(profile.get("name", "")).strip()
     if not name:
         return None
-    api_mode = str(profile.get("llm_api_mode", "chat_completions") or "chat_completions")
+    api_mode = str(profile.get("llm_api_mode", "chat_completions"))
     if api_mode not in ("chat_completions", "responses"):
         api_mode = "chat_completions"
     return {
         "name": name,
-        "llm_api_url": str(profile.get("llm_api_url", "") or "").strip(),
-        "llm_api_key": str(profile.get("llm_api_key", "") or "").strip(),
-        "llm_model_id": str(profile.get("llm_model_id", "") or "").strip(),
-        "llm_aux_api_url": str(profile.get("llm_aux_api_url", "") or "").strip(),
-        "llm_aux_api_key": str(profile.get("llm_aux_api_key", "") or "").strip(),
-        "llm_aux_model_id": str(profile.get("llm_aux_model_id", "") or "").strip(),
+        "llm_api_url": str(profile.get("llm_api_url", "")).strip(),
+        "llm_api_key": str(profile.get("llm_api_key", "")).strip(),
+        "llm_model_id": str(profile.get("llm_model_id", "")).strip(),
+        "llm_aux_api_url": str(profile.get("llm_aux_api_url", "")).strip(),
+        "llm_aux_api_key": str(profile.get("llm_aux_api_key", "")).strip(),
+        "llm_aux_model_id": str(profile.get("llm_aux_model_id", "")).strip(),
         "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
         if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
         "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
@@ -322,7 +322,7 @@ class ConfigManager:
             self._seed_model_action_settings_from_models()
         if not isinstance(self._data.get("chat_avatar_paths"), dict):
             self._data["chat_avatar_paths"] = {}
-        self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "") or "").strip()
+        self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "")).strip()
         self._normalize_llm_api_profiles()
         self._normalize_mcp_servers()
         self._normalize_computer_use_settings()
@@ -349,7 +349,7 @@ class ConfigManager:
             normalized.append(item)
         normalized = _merge_builtin_llm_api_profiles(normalized)
         self._data["llm_api_profiles"] = normalized
-        active = str(self._data.get("llm_active_api_profile", "") or "").strip()
+        active = str(self._data.get("llm_active_api_profile", "")).strip()
         names = {profile["name"] for profile in normalized}
         self._data["llm_active_api_profile"] = active if active in names else ""
 
@@ -363,11 +363,11 @@ class ConfigManager:
         for item in servers:
             if not isinstance(item, dict):
                 continue
-            label = str(item.get("label", "") or item.get("server_label", "") or "").strip()
+            label = str(item.get("label", "") or item.get("server_label", "")).strip()
             if not label or label in seen:
                 continue
             seen.add(label)
-            transport = str(item.get("transport", "stdio") or "stdio").strip().lower()
+            transport = str(item.get("transport", "stdio")).strip().lower()
             if transport not in ("stdio", "http", "native"):
                 transport = "stdio"
             allowed_tools = item.get("allowed_tools", [])
@@ -384,20 +384,20 @@ class ConfigManager:
                 args = [str(part or "") for part in args if str(part or "")]
             else:
                 args = []
-            require_approval = str(item.get("require_approval", "always") or "always").strip().lower()
+            require_approval = str(item.get("require_approval", "always")).strip().lower()
             if require_approval not in ("always", "never"):
                 require_approval = "always"
             normalized.append({
                 "enabled": bool(item.get("enabled", True)),
                 "label": label,
-                "description": str(item.get("description", "") or "").strip(),
+                "description": str(item.get("description", "")).strip(),
                 "transport": transport,
-                "command": str(item.get("command", "") or "").strip(),
+                "command": str(item.get("command", "")).strip(),
                 "args": args,
-                "cwd": str(item.get("cwd", "") or "").strip(),
-                "url": str(item.get("url", "") or item.get("server_url", "") or "").strip(),
-                "connector_id": str(item.get("connector_id", "") or "").strip(),
-                "authorization": str(item.get("authorization", "") or "").strip(),
+                "cwd": str(item.get("cwd", "")).strip(),
+                "url": str(item.get("url", "") or item.get("server_url", "")).strip(),
+                "connector_id": str(item.get("connector_id", "")).strip(),
+                "authorization": str(item.get("authorization", "")).strip(),
                 "allowed_tools": allowed_tools,
                 "require_approval": require_approval,
                 "timeout_seconds": max(3, min(120, _int_value(item.get("timeout_seconds", 30), 30))),
@@ -463,8 +463,7 @@ class ConfigManager:
             costume = item.get("costume", "")
             if not character or not costume:
                 continue
-            entry = dict(MODEL_DEFAULTS)
-            entry.update(item)
+            entry = {**MODEL_DEFAULTS, **item}
             if item.get("pet_mode") not in {"live2d", "pixel"}:
                 if (
                     character == self._data.get("character", "")
@@ -503,13 +502,9 @@ class ConfigManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2, ensure_ascii=False)
                 f.flush()
-                os.fsync(f.fileno())
             os.replace(tmp_path, self._path)
         except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            os.unlink(tmp_path)
             raise
 
     def get(self, key, default=None):
@@ -545,7 +540,3 @@ class ConfigManager:
         else:
             profiles.pop(key, None)
         self._data["model_action_settings"] = profiles
-
-    @property
-    def data(self):
-        return dict(self._data)

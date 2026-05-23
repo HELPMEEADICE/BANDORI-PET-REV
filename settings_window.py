@@ -1249,7 +1249,6 @@ class SettingsWindow(QWidget):
         try:
             from live2d_lua_adapter import live2d
 
-            live2d.init()
             self._live2d = live2d
             self._owns_live2d = True
             return self._live2d
@@ -1459,8 +1458,6 @@ class SettingsWindow(QWidget):
             self._llm_page = self._add_lazy_page("llm", self._build_llm_page())
 
     def _update_sidebar_style(self):
-        if not hasattr(self, '_sidebar'):
-            return
         dark = isDarkTheme()
         self._sidebar.setStyleSheet(f"""
             #sidebar {{
@@ -1896,8 +1893,6 @@ class SettingsWindow(QWidget):
         return page
 
     def _update_switch_button_style(self):
-        if not hasattr(self, "_switch_model_btn"):
-            return
         dark = isDarkTheme()
         card_bg = "#252525" if dark else "#ffffff"
         card_border = "#3a3a3a" if dark else "#e5e7eb"
@@ -2613,12 +2608,9 @@ class SettingsWindow(QWidget):
 
     def _populate_bands(self):
         self._clear_selection_cards()
-        if hasattr(self, "_model_detail_widget"):
-            self._model_detail_widget.hide()
-        if hasattr(self, "_selection_grid_widget"):
-            self._selection_grid_widget.show()
-        if hasattr(self, "_selection_scroll"):
-            self._selection_scroll.show()
+        self._model_detail_widget.hide()
+        self._selection_grid_widget.show()
+        self._selection_scroll.show()
         self._selected_band = ""
         self._selection_back_btn.hide()
         self._selection_title.setText(_tr("SettingsWindow.band_title"))
@@ -5478,8 +5470,7 @@ class SettingsWindow(QWidget):
         self._pov_custom_prompt.setStyleSheet(style)
         hint_color = "#a7b0bf" if dark else "#687385"
         self._llm_api_url_hint.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
-        if hasattr(self, "_llm_active_api_profile_label"):
-            self._llm_active_api_profile_label.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
+        self._llm_active_api_profile_label.setStyleSheet(f"color: {hint_color}; font-size: 13px;")
         self._style_avatar_buttons()
         self._update_user_avatar_preview()
 
@@ -5516,8 +5507,7 @@ class SettingsWindow(QWidget):
         """
         self._tts_api_url.setStyleSheet(style)
         self._tts_temperature.setStyleSheet(style)
-        if hasattr(self, "_tts_test_text"):
-            self._tts_test_text.setStyleSheet(style)
+        self._tts_test_text.setStyleSheet(style)
 
     def _style_avatar_buttons(self):
         for btn in self._avatar_color_btns:
@@ -5579,14 +5569,12 @@ class SettingsWindow(QWidget):
         self._update_user_avatar_preview()
 
     def _update_user_avatar_preview(self):
-        if not hasattr(self, "_user_avatar_preview"):
-            return
-        color = self._selected_avatar_color() if hasattr(self, "_avatar_color_btns") else BANDORI_PRIMARY
+        color = self._selected_avatar_color()
         dark = isDarkTheme()
         border = "#4a4a4a" if dark else "#d8d8d8"
         pixmap = _rounded_avatar_pixmap(self._user_avatar_path_pending, 44)
         if pixmap.isNull():
-            name = self._user_name.text().strip() if hasattr(self, "_user_name") else ""
+            name = self._user_name.text().strip()
             self._user_avatar_preview.setPixmap(QPixmap())
             fallback_name = name or _tr("ChatWindow.you")
             self._user_avatar_preview.setText(fallback_name[:1].upper() if fallback_name else "U")
@@ -5610,8 +5598,7 @@ class SettingsWindow(QWidget):
                     border-radius: 22px;
                 }}
             """)
-        if hasattr(self, "_user_avatar_reset_btn"):
-            self._user_avatar_reset_btn.setEnabled(bool(self._user_avatar_path_pending))
+        self._user_avatar_reset_btn.setEnabled(bool(self._user_avatar_path_pending))
 
     def _on_avatar_color_clicked(self, btn: QPushButton):
         for b in self._avatar_color_btns:
@@ -5871,8 +5858,6 @@ class SettingsWindow(QWidget):
         return "", True
 
     def _update_current_llm_api_profile_label(self):
-        if not hasattr(self, "_llm_active_api_profile_label"):
-            return
         name, modified = self._applied_llm_api_profile_display_name()
         if name:
             key = (
@@ -6005,48 +5990,42 @@ class SettingsWindow(QWidget):
             pass
 
     def _on_llm_api_mode_changed(self, index: int):
-        mode = self._llm_api_mode.itemData(index) if hasattr(self, "_llm_api_mode") else "chat_completions"
+        mode = self._llm_api_mode.itemData(index)
         responses = mode == "responses"
-        api_url = self._llm_api_url.text().strip() if hasattr(self, "_llm_api_url") else ""
-        if hasattr(self, "_llm_web_search_enabled"):
-            self._llm_web_search_enabled.setEnabled(True)
-        if hasattr(self, "_llm_web_search_engine"):
-            self._llm_web_search_engine.setEnabled(
-                bool(self._llm_web_search_enabled.isChecked()) if hasattr(self, "_llm_web_search_enabled") else True
-            )
-        if hasattr(self, "_llm_web_search_show_sources"):
-            self._llm_web_search_show_sources.setEnabled(
-                bool(self._llm_web_search_enabled.isChecked()) if hasattr(self, "_llm_web_search_enabled") else True
-            )
-        if hasattr(self, "_llm_api_url_hint"):
-            if responses:
-                if api_url and not self._supports_openai_responses_api(api_url):
-                    self._llm_api_url_hint.setText(_tr(
-                        "SettingsWindow.llm_api_url_hint_responses_fallback",
-                        default="此服务商不支持 OpenAI Responses，运行时会自动使用 Chat Completions 兼容模式；联网、MCP 和 Computer Use 会通过 tool_calls/function calling 接入。",
-                    ))
-                else:
-                    self._llm_api_url_hint.setText(_tr(
-                        "SettingsWindow.llm_api_url_hint_responses",
-                        default="Responses 模式可填写 https://api.openai.com/v1/responses；OpenAI 官方可用原生工具，MCP/Computer 相关选项在“工具与电脑控制”页配置。",
-                    ))
+        api_url = self._llm_api_url.text().strip()
+        self._llm_web_search_enabled.setEnabled(True)
+        self._llm_web_search_engine.setEnabled(
+            bool(self._llm_web_search_enabled.isChecked())
+        )
+        self._llm_web_search_show_sources.setEnabled(
+            bool(self._llm_web_search_enabled.isChecked())
+        )
+        if responses:
+            if api_url and not self._supports_openai_responses_api(api_url):
+                self._llm_api_url_hint.setText(_tr(
+                    "SettingsWindow.llm_api_url_hint_responses_fallback",
+                    default="此服务商不支持 OpenAI Responses，运行时会自动使用 Chat Completions 兼容模式；联网、MCP 和 Computer Use 会通过 tool_calls/function calling 接入。",
+                ))
             else:
                 self._llm_api_url_hint.setText(_tr(
-                    "SettingsWindow.llm_api_url_hint_chat_tools",
-                    default="别忘记在 API 地址末尾写 /v1/chat/completions。Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在“工具与电脑控制”页。",
+                    'SettingsWindow.llm_api_url_hint_responses',
+                    default='Responses 模式可填写 https://api.openai.com/v1/responses；OpenAI 官方可用原生工具，MCP/Computer 相关选项在\u201c工具与电脑控制\u201d页配置。',
                 ))
+        else:
+            self._llm_api_url_hint.setText(_tr(
+                'SettingsWindow.llm_api_url_hint_chat_tools',
+                default='别忘记在 API 地址末尾写 /v1/chat/completions。Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在\u201c工具与电脑控制\u201d页。',
+            ))
 
     def _on_llm_web_search_enabled_changed(self, enabled: bool):
-        if hasattr(self, "_llm_web_search_engine"):
-            self._llm_web_search_engine.setEnabled(bool(enabled))
-        if hasattr(self, "_llm_web_search_show_sources"):
-            self._llm_web_search_show_sources.setEnabled(bool(enabled))
+        self._llm_web_search_engine.setEnabled(bool(enabled))
+        self._llm_web_search_show_sources.setEnabled(bool(enabled))
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         return "api.openai.com" in (api_url or "").lower()
 
     def _effective_llm_api_mode(self) -> str:
-        mode = self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) if hasattr(self, "_llm_api_mode") else "chat_completions"
+        mode = self._llm_api_mode.itemData(self._llm_api_mode.currentIndex())
         if mode == "responses" and self._supports_openai_responses_api(self._llm_api_url.text().strip()):
             return "responses"
         return "chat_completions"
@@ -6078,7 +6057,7 @@ class SettingsWindow(QWidget):
         if mode == "role":
             self._sync_role_display_name()
         else:
-            self._user_name.setText(getattr(self, "_saved_user_name", ""))
+            self._user_name.setText(self._saved_user_name)
 
     def _normalized_pov_personas(self) -> list[dict]:
         if not self._cfg:
@@ -6100,9 +6079,7 @@ class SettingsWindow(QWidget):
         return personas
 
     def _reload_pov_persona_combo(self):
-        if not hasattr(self, "_pov_persona_combo"):
-            return
-        current_prompt = self._pov_custom_prompt.toPlainText().strip() if hasattr(self, "_pov_custom_prompt") else ""
+        current_prompt = self._pov_custom_prompt.toPlainText().strip()
         self._pov_persona_combo.blockSignals(True)
         self._pov_persona_combo.clear()
         self._pov_persona_combo.addItem(_tr("SettingsWindow.pov_persona_new"), userData="")
@@ -6133,7 +6110,7 @@ class SettingsWindow(QWidget):
         return title or "Persona"
 
     def _save_current_pov_persona(self):
-        if not self._cfg or not hasattr(self, "_pov_custom_prompt"):
+        if not self._cfg:
             return
         prompt = self._pov_custom_prompt.toPlainText().strip()
         if not prompt:
@@ -6163,7 +6140,7 @@ class SettingsWindow(QWidget):
         )
 
     def _delete_current_pov_persona(self):
-        if not self._cfg or not hasattr(self, "_pov_persona_combo"):
+        if not self._cfg:
             return
         prompt = self._pov_persona_combo.itemData(self._pov_persona_combo.currentIndex()) or ""
         if not prompt:
@@ -6313,12 +6290,12 @@ class SettingsWindow(QWidget):
             return
 
         config = self._current_tts_config(include_llm=True)
-        test_text = self._tts_test_text.toPlainText().strip() if hasattr(self, "_tts_test_text") else ""
+        test_text = self._tts_test_text.toPlainText().strip()
         if not test_text:
             test_text = _tr("SettingsWindow.tts_test_default_text", default="你好，这是一段 TTS 测试语音。")
 
         test_character = str(config.get("tts_reference_character", "") or "").strip() or self._current_char
-        if not test_character and hasattr(self, "_tts_reference_character"):
+        if not test_character:
             for index in range(self._tts_reference_character.count()):
                 candidate = str(self._tts_reference_character.itemData(index) or "").strip()
                 if candidate:
@@ -6568,10 +6545,8 @@ class SettingsWindow(QWidget):
         self._fetch_worker.start()
 
     def _on_models_fetched(self, models: list[str]):
-        target = getattr(self, "_llm_model_fetch_target", self._llm_model_id)
+        target = self._llm_model_fetch_target
         if target is self._llm_aux_model_id:
-            list_widget = self._llm_aux_model_list
-            list_layout = self._llm_aux_model_list_layout
             label = self._llm_aux_model_combo_label
             scroll = self._llm_aux_model_scroll
         else:
@@ -6613,7 +6588,7 @@ class SettingsWindow(QWidget):
         scroll.show()
 
     def _set_fetched_model_id(self, model_name: str):
-        target = getattr(self, "_llm_model_fetch_target", self._llm_model_id)
+        target = self._llm_model_fetch_target
         target.setText(model_name)
 
     def _build_side_panel(self):
@@ -6761,8 +6736,6 @@ class SettingsWindow(QWidget):
         return panel
 
     def _update_side_panel_style(self):
-        if not hasattr(self, "_model_list_scroll"):
-            return
         dark = isDarkTheme()
         bg = "#232125" if dark else "#fff8fb"
         border = "#3b343a" if dark else "#f1d7e1"
@@ -6779,8 +6752,6 @@ class SettingsWindow(QWidget):
         """)
 
     def _update_model_list_style(self):
-        if not hasattr(self, "_model_list_widget"):
-            return
         self._model_list_widget.setStyleSheet("""
             #modelListWidget {
                 background: transparent;
@@ -6807,8 +6778,6 @@ class SettingsWindow(QWidget):
         self._cfg.save()
 
     def _refresh_model_list(self):
-        if not hasattr(self, "_model_list_layout"):
-            return
         while self._model_list_layout.count():
             item = self._model_list_layout.takeAt(0)
             widget = item.widget() if item else None
@@ -7076,7 +7045,7 @@ class SettingsWindow(QWidget):
         self._fps_value.setEnabled(not checked)
 
     def _apply_auto_start_setting(self) -> bool:
-        enabled = bool(self._auto_start_switch.isChecked()) if hasattr(self, "_auto_start_switch") else False
+        enabled = bool(self._auto_start_switch.isChecked())
         if not self._auto_start_supported:
             if self._cfg:
                 self._cfg.set("auto_start", False)

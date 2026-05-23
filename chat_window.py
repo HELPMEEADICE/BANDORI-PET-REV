@@ -1848,7 +1848,7 @@ class ChatWindow(QWidget):
 
     def _group_display_name(self, characters: list[str]) -> str:
         group_key = self._conversation_key_for(characters)
-        if hasattr(self, "_db") and group_key.startswith("__group__:"):
+        if group_key.startswith("__group__:"):
             custom_name = self._db.get_group_display_name(group_key).strip()
             if custom_name:
                 return custom_name
@@ -2081,7 +2081,7 @@ class ChatWindow(QWidget):
         self._relayout_message_bubbles()
 
     def _position_resize_grip(self):
-        if not getattr(self, "_resize_grip", None):
+        if not self._resize_grip:
             return
         inset = 5
         self._resize_grip.move(
@@ -2376,8 +2376,6 @@ class ChatWindow(QWidget):
         return "", data, "head" if data else "center"
 
     def _update_title_avatar(self):
-        if not hasattr(self, "_title_avatar"):
-            return
         character = self._title_avatar_character()
         path, data, focus = self._avatar_info_for_character(character)
         pixmap = _rounded_avatar_pixmap(path, data, 34, focus)
@@ -2535,14 +2533,20 @@ class ChatWindow(QWidget):
 
     def eventFilter(self, obj, event):
         input_widget = getattr(self, "_input", None)
-        if obj in (
-            input_widget,
-            getattr(self, "_composer", None),
-            getattr(self, "_input_area", None),
-            getattr(self, "_attach_btn", None),
-            getattr(self, "_send_btn", None),
-            input_widget.viewport() if input_widget is not None else None,
-        ):
+        input_viewport = input_widget.viewport() if input_widget is not None else None
+        drag_targets = {
+            widget
+            for widget in (
+                input_widget,
+                input_viewport,
+                getattr(self, "_composer", None),
+                getattr(self, "_input_area", None),
+                getattr(self, "_attach_btn", None),
+                getattr(self, "_send_btn", None),
+            )
+            if widget is not None
+        }
+        if obj in drag_targets:
             if event.type() in (
                 QEvent.Type.DragEnter,
                 QEvent.Type.DragMove,
@@ -2701,7 +2705,7 @@ class ChatWindow(QWidget):
         self._sync_group_sidebar_toggle_buttons()
         self._send_btn.apply_theme()
         self._attach_btn.apply_theme()
-        if getattr(self, "_resize_grip", None):
+        if self._resize_grip:
             self._resize_grip.update()
         self._update_title_avatar()
 
@@ -2745,8 +2749,6 @@ class ChatWindow(QWidget):
         return bubbles
 
     def _relayout_message_bubbles(self):
-        if not hasattr(self, "_scroll"):
-            return
         viewport_width = self._scroll.viewport().width()
         for bubble in self._message_bubbles():
             bubble.update_bubble_width(viewport_width)
@@ -3081,8 +3083,7 @@ class ChatWindow(QWidget):
         self._conversation_key = next_key
         self._display_name = self._chat_display_name()
         self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
-        if hasattr(self, "_title_label"):
-            self._title_label.setText(self._display_name)
+        self._title_label.setText(self._display_name)
         self._update_title_avatar()
         self._clear_message_widgets()
         self._conv_id = None
@@ -3155,8 +3156,7 @@ class ChatWindow(QWidget):
         if group_key == self._conversation_key:
             self._display_name = self._chat_display_name()
             self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
-            if hasattr(self, "_title_label"):
-                self._title_label.setText(self._display_name)
+            self._title_label.setText(self._display_name)
             self._update_title_avatar()
         self._refresh_group_list()
 
@@ -3252,7 +3252,7 @@ class ChatWindow(QWidget):
         if not self._composer_colors:
             return
         focused = self._input.hasFocus()
-        dragging = getattr(self, "_composer_drag_active", False)
+        dragging = self._composer_drag_active
         active = focused or dragging
         border = self._composer_colors["focus_border"] if active else self._composer_colors["border"]
         target_width = 3.0 if dragging else 2.0 if focused else 1.0
@@ -4800,7 +4800,7 @@ class ChatWindow(QWidget):
             self._vision_fallback_worker.requestInterruption()
             self._vision_fallback_worker.quit()
             self._vision_fallback_worker.wait(2000)
-        for worker in list(getattr(self, "_cancelled_workers", [])):
+        for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
                 worker.wait(1000)
         self._cancelled_workers.clear()

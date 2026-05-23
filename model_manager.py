@@ -343,7 +343,7 @@ class ModelManager:
             return []
         try:
             data = self._read_model_json(path)
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             return []
         motions = data.get("motions", {})
         if not isinstance(motions, dict):
@@ -356,7 +356,7 @@ class ModelManager:
             return []
         try:
             data = self._read_model_json(path)
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             return []
         expressions = data.get("expressions", [])
         if not isinstance(expressions, list):

@@ -2,6 +2,7 @@ import ctypes
 import sys
 import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from lua_hit_area_projection import LuaCustomHitAreaState
@@ -153,8 +154,9 @@ class Live2DWidget(QOpenGLWidget):
         if profile == self._quality_profile:
             return
         self._quality_profile = profile
-        if self._model_path:
-            self._load_model_internal(self._model_path)
+        set_live2d_texture_quality(profile)
+        if self._model:
+            self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -239,45 +241,39 @@ class Live2DWidget(QOpenGLWidget):
             self._update_render_timer()
 
     def _prepare_custom_hit_areas(self, model):
-        try:
-            config = model.modelSetting.json
-            areas = config.get("hit_areas_custom") or {}
-            if not isinstance(areas, dict):
-                return ()
-
-            prepared = []
-            for name, x_range in areas.items():
-                if not name.endswith("_x") or not isinstance(x_range, list) or len(x_range) != 2:
-                    continue
-                y_range = areas.get(f"{name[:-2]}_y")
-                if not isinstance(y_range, list) or len(y_range) != 2:
-                    continue
-                x0, x1, y0, y1 = float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1])
-                area_name = name[:-2].strip().lower()
-                prepared.append((area_name, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
-                
-            priority = {"head": 0, "face": 0, "body": 10}
-            prepared.sort(key=lambda item: (priority.get(item[0], 5), item[0]))
-            return tuple(prepared)
-        except Exception:
+        config = model.modelSetting.json
+        areas = config.get("hit_areas_custom") or {}
+        if not isinstance(areas, dict):
             return ()
+
+        prepared = []
+        for name, x_range in areas.items():
+            if not name.endswith("_x") or not isinstance(x_range, list) or len(x_range) != 2:
+                continue
+            y_range = areas.get(f"{name[:-2]}_y")
+            if not isinstance(y_range, list) or len(y_range) != 2:
+                continue
+            x0, x1, y0, y1 = float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1])
+            area_name = name[:-2].strip().lower()
+            prepared.append((area_name, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)))
+
+        priority = {"head": 0, "face": 0, "body": 10}
+        prepared.sort(key=lambda item: (priority.get(item[0], 5), item[0]))
+        return tuple(prepared)
 
     def _update_custom_hit_area_projection(self):
         model = self._model
         if not model or not self._custom_hit_areas.has_scene_areas():
             self._custom_hit_areas.clear_projected()
             return
-        try:
-            matrix = model.matrixManager
-            if not self._custom_hit_areas.project(
-                matrix.screenToScene(0.0, 0.0),
-                matrix.screenToScene(float(self._cache_w), 0.0),
-                matrix.screenToScene(0.0, float(self._cache_h)),
-                self._cache_w,
-                self._cache_h,
-            ):
-                self._custom_hit_areas.clear_projected()
-        except Exception:
+        matrix = model.matrixManager
+        if not self._custom_hit_areas.project(
+            matrix.screenToScene(0.0, 0.0),
+            matrix.screenToScene(float(self._cache_w), 0.0),
+            matrix.screenToScene(0.0, float(self._cache_h)),
+            self._cache_w,
+            self._cache_h,
+        ):
             self._custom_hit_areas.clear_projected()
 
     # --------------------------------------------------------------------------
@@ -456,8 +452,6 @@ class Live2DWidget(QOpenGLWidget):
         self._model.Drag(local_x, local_y)
 
     def _poll_head_tracking(self):
-        from PySide6.QtGui import QCursor
-
         pos = QCursor.pos()
         self._track_head_at_global(pos.x(), pos.y())
 
@@ -468,10 +462,6 @@ class Live2DWidget(QOpenGLWidget):
     def initializeGL(self):
         if self._live2d:
             self._live2d.glInit()
-        try:
-            gl.glEnable(gl.GL_MULTISAMPLE)
-        except Exception:
-            pass
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glDisable(gl.GL_DITHER)
         
@@ -506,19 +496,15 @@ class Live2DWidget(QOpenGLWidget):
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
-        self._live2d.clearBuffer()
         gl.glClearColor(*self._clear_color)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        
-        self._model.Update()
+
         self._apply_lip_sync()
         self._model.Draw()
         if self._static_render:
             self._static_render_done = True
 
     def _apply_lip_sync(self):
-        if not self._model:
-            return
         now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
         target = self._lip_sync_target if now - self._lip_sync_last_ms <= 180 else 0.0
         form_target = self._lip_sync_form_target if now - self._lip_sync_last_ms <= 180 else 0.0
@@ -558,18 +544,12 @@ class Live2DWidget(QOpenGLWidget):
         return self._custom_hit_area_name_at(x, y) or self._sdk_hit_area_name_at(x, y)
 
     def hit_area_bounds(self, area_name: str):
-        area_name = str(area_name or "").strip().lower()
+        area_name = (area_name or "").strip().lower()
         if not area_name: return None
-        try:
-            return self._custom_hit_areas.bounds_for(area_name)
-        except Exception:
-            return None
+        return self._custom_hit_areas.bounds_for(area_name)
 
     def hit_area_union_bounds(self):
-        try:
-            return self._custom_hit_areas.union_bounds()
-        except Exception:
-            return None
+        return self._custom_hit_areas.union_bounds()
 
     def _is_model_hit_at(self, x: float, y: float, *, sync: bool = False) -> bool:
         if not self._model: return False
@@ -590,7 +570,7 @@ class Live2DWidget(QOpenGLWidget):
             return False
         alpha = self._alpha_near(x, y, sync=True)
         self._last_hit_test_ms = self._hit_clock.elapsed()
-        self._last_hit_state = (alpha or 0) > self._hit_alpha_threshold
+        self._last_hit_state = alpha > self._hit_alpha_threshold
         return self._last_hit_state
 
     def _hit_state_at(self, x: float, y: float):
@@ -627,7 +607,7 @@ class Live2DWidget(QOpenGLWidget):
 
     def _sdk_hit_area_name_at(self, x: float, y: float) -> str:
         if not self._has_sdk_hit_areas(): return ""
-        return str(self._model.HitTest("", x, y) or "").strip().lower()
+        return (self._model.HitTest("", x, y) or "").strip().lower()
 
     def _is_in_custom_hit_area(self, x: float, y: float) -> bool:
         return bool(self._custom_hit_area_name_at(x, y))
@@ -746,16 +726,18 @@ class Live2DWidget(QOpenGLWidget):
             ptr = gl.glMapBuffer(gl.GL_PIXEL_PACK_BUFFER, gl.GL_READ_ONLY)
             if ptr:
                 data = ctypes.string_at(ptr, self._hit_pbo_size)
-                self._hit_alpha_cache[request["key"]] = (data[3], now)
+                self._insert_hit_cache(request["key"], data[3], now)
                 gl.glUnmapBuffer(gl.GL_PIXEL_PACK_BUFFER)
             self._safe_unbind_pbo()
             if fence:
                 gl.glDeleteSync(fence)
-                    
-        # 缓存清理机制
+    
+    def _insert_hit_cache(self, key, alpha, now):
+        self._hit_alpha_cache[key] = (alpha, now)
         if len(self._hit_alpha_cache) > 128:
             expired = [k for k, (_, ts) in self._hit_alpha_cache.items() if now - ts > self._hit_alpha_cache_ttl_ms]
-            for k in expired: self._hit_alpha_cache.pop(k, None)
+            for k in expired:
+                self._hit_alpha_cache.pop(k, None)
 
     def _queue_hit_pbo_read(self, key: tuple[int, int], sx: int, sy: int):
         if not self._hit_pbo_supported or not self._hit_pbo_ids: return
@@ -788,6 +770,11 @@ class Live2DWidget(QOpenGLWidget):
         alpha, known = 0, False
         fetch_method = self._get_alpha_sync if sync else self._get_alpha_fast
         
+        self._safe_make_current()
+        if self._hit_pbo_supported is not False:
+            self._init_hit_pbos()
+            self._process_hit_pbo_results()
+        
         for dx, dy in self._hit_probe_offsets:
             sample_alpha = fetch_method(x + dx, y + dy)
             if sample_alpha is None: continue
@@ -800,14 +787,10 @@ class Live2DWidget(QOpenGLWidget):
         return alpha if (known or sync) else None
 
     def _get_alpha_read_context(self, x: float, y: float):
-        """通用：检查坐标合法性，获取GL坐标并尝试从缓存取值，减少重复代码"""
         if not self._initialized_gl or not self._model: return None
         if not (0 <= x < self._cache_w and 0 <= y < self._cache_h): return None
         
         self._safe_make_current()
-        if self._hit_pbo_supported is not False:
-            self._init_hit_pbos()
-            self._process_hit_pbo_results()
             
         sx = int(x * self._system_scale)
         sy = int((self._cache_h - 1 - y) * self._system_scale)
@@ -830,7 +813,7 @@ class Live2DWidget(QOpenGLWidget):
         self._safe_unbind_pbo()
         gl.glReadPixels(sx, sy, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, pixel)
         alpha = int(pixel[3])
-        self._hit_alpha_cache[key] = (alpha, now)
+        self._insert_hit_cache(key, alpha, now)
         return alpha
 
     def _get_alpha_fast(self, x: float, y: float):
@@ -840,5 +823,4 @@ class Live2DWidget(QOpenGLWidget):
         if cached_alpha is not None: return cached_alpha
 
         self._queue_hit_pbo_read(key, sx, sy)
-        cached = self._hit_alpha_cache.get(key)
-        return cached[0] if cached else None
+        return None
