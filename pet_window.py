@@ -24,7 +24,8 @@ from live2d_click_actions import (
     click_motion_region_for_point,
     normalize_click_motion_actions,
 )
-from live2d_widget import Live2DWidget, normalize_live2d_quality
+from live2d_quality import LIVE2D_SCALE_MAX, LIVE2D_SCALE_MIN, clamp_live2d_scale, normalize_live2d_quality
+from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 
@@ -171,8 +172,6 @@ def _is_windows_11_or_later() -> bool:
 
 LIVE2D_BASE_WIDTH = 400
 LIVE2D_BASE_HEIGHT = 500
-LIVE2D_SCALE_MIN = 25
-LIVE2D_SCALE_MAX = 500
 LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
 LIVE2D_DAZE_AFTER_SECONDS = 7 * 60
 LIVE2D_SLEEP_AFTER_SECONDS = 18 * 60
@@ -185,12 +184,8 @@ LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 
 
-def _clamp_live2d_scale(value) -> int:
-    try:
-        pct = int(round(float(value)))
-    except (TypeError, ValueError):
-        pct = 100
-    return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))
+def _clamp_live2d_scale(value: object) -> int:
+    return clamp_live2d_scale(value)
 
 
 _PIXEL_PET_WIDGET_CLASS = None
@@ -826,10 +821,11 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None or self._is_pet_dragging():
             return
-        self._maybe_trigger_mouse_approach_behavior()
         if self._is_radial_menu_visible():
             return
         now = time.monotonic()
+        if now - self._last_user_interaction_at >= LIVE2D_MOUSE_APPROACH_MIN_IDLE_SECONDS:
+            self._maybe_trigger_mouse_approach_behavior(now)
         if now - self._last_context_idle_action_at < LIVE2D_AMBIENT_COOLDOWN_SECONDS:
             return
         idle_seconds = now - self._last_user_interaction_at
@@ -854,11 +850,13 @@ class PetWindow(QWidget):
             return "daze"
         return ""
 
-    def _maybe_trigger_mouse_approach_behavior(self):
+    def _maybe_trigger_mouse_approach_behavior(self, now: float | None = None):
         if not self._live2d_idle_actions_enabled:
             return
         if self._is_radial_menu_visible():
             return
+        if now is None:
+            now = time.monotonic()
         from PySide6.QtGui import QCursor
 
         cursor = QCursor.pos()
@@ -890,7 +888,6 @@ class PetWindow(QWidget):
         if not near:
             self._cursor_near_live2d_since = 0.0
             return
-        now = time.monotonic()
         if not self._cursor_was_near_live2d:
             self._cursor_was_near_live2d = True
             self._cursor_near_live2d_since = now
@@ -1152,7 +1149,7 @@ class PetWindow(QWidget):
         scale = self._live2d_scale / 100.0
         return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(LIVE2D_BASE_HEIGHT * scale))
 
-    def set_live2d_scale(self, value):
+    def set_live2d_scale(self, value: object):
         self._live2d_scale = _clamp_live2d_scale(value)
         if not self._pixel_mode:
             self.resize(*self._live2d_size())

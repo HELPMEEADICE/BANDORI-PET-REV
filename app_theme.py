@@ -12,6 +12,7 @@ BANDORI_PRIMARY_SOFT = "#fff0f5"
 BANDORI_PRIMARY_SOFT_HOVER = "#ffe2ec"
 BANDORI_PRIMARY_SOFT_DARK = "#3a1826"
 BANDORI_PRIMARY_SOFT_DARK_HOVER = "#4a1d2f"
+BANDORI_UI_FONT_FAMILY = "Microsoft YaHei UI"
 
 
 def accent_color(dark: bool = False) -> str:

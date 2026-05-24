@@ -80,7 +80,10 @@ class Live2DWidget(QOpenGLWidget):
         self._hit_pbo_ids = []
         self._hit_pbo_next = 0
         self._hit_pbo_pending = []
+        self._hit_pbo_pending_keys = set()
+        self._hit_pbo_pending_ids = set()
         self._hit_pbo_supported = None
+        self._hit_pbo_count = 4
         self._hit_pbo_size = 4
         
         self._hit_clock = QElapsedTimer()
@@ -683,7 +686,7 @@ class Live2DWidget(QOpenGLWidget):
                 raise RuntimeError("PBO sync functions are unavailable")
                 
             self._hit_pbo_ids = []
-            for _ in self._hit_probe_offsets:
+            for _ in range(self._hit_pbo_count):
                 pbo = gl.glGenBuffers(1)
                 pbo = int(pbo[0] if isinstance(pbo, (list, tuple)) else pbo)
                 self._hit_pbo_ids.append(pbo)
@@ -696,11 +699,15 @@ class Live2DWidget(QOpenGLWidget):
             self._safe_unbind_pbo()
             self._hit_pbo_ids = []
             self._hit_pbo_pending = []
+            self._hit_pbo_pending_keys.clear()
+            self._hit_pbo_pending_ids.clear()
             self._hit_pbo_supported = False
 
     def _clear_pending_hit_pbos(self):
         pending = self._hit_pbo_pending
         self._hit_pbo_pending = []
+        self._hit_pbo_pending_keys.clear()
+        self._hit_pbo_pending_ids.clear()
         for request in pending:
             fence = request.get("fence")
             if fence:
@@ -718,19 +725,23 @@ class Live2DWidget(QOpenGLWidget):
                 still_pending.append(request)
                 
         self._hit_pbo_pending = still_pending
+        self._hit_pbo_pending_keys = {request["key"] for request in still_pending}
+        self._hit_pbo_pending_ids = {request["pbo"] for request in still_pending}
         now = self._hit_clock.elapsed()
         
         for request in ready:
             fence = request.get("fence")
-            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, request["pbo"])
-            ptr = gl.glMapBuffer(gl.GL_PIXEL_PACK_BUFFER, gl.GL_READ_ONLY)
-            if ptr:
-                data = ctypes.string_at(ptr, self._hit_pbo_size)
-                self._insert_hit_cache(request["key"], data[3], now)
-                gl.glUnmapBuffer(gl.GL_PIXEL_PACK_BUFFER)
-            self._safe_unbind_pbo()
-            if fence:
-                gl.glDeleteSync(fence)
+            try:
+                gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, request["pbo"])
+                ptr = gl.glMapBuffer(gl.GL_PIXEL_PACK_BUFFER, gl.GL_READ_ONLY)
+                if ptr:
+                    data = ctypes.string_at(ptr, self._hit_pbo_size)
+                    self._insert_hit_cache(request["key"], data[3], now)
+                    gl.glUnmapBuffer(gl.GL_PIXEL_PACK_BUFFER)
+            finally:
+                self._safe_unbind_pbo()
+                if fence:
+                    gl.glDeleteSync(fence)
     
     def _insert_hit_cache(self, key, alpha, now):
         self._hit_alpha_cache[key] = (alpha, now)
@@ -741,15 +752,14 @@ class Live2DWidget(QOpenGLWidget):
 
     def _queue_hit_pbo_read(self, key: tuple[int, int], sx: int, sy: int):
         if not self._hit_pbo_supported or not self._hit_pbo_ids: return
-        if any(r["key"] == key for r in self._hit_pbo_pending) or len(self._hit_pbo_pending) >= len(self._hit_pbo_ids):
+        if key in self._hit_pbo_pending_keys or len(self._hit_pbo_pending) >= len(self._hit_pbo_ids):
             return
-            
-        pending_pbos = {r["pbo"] for r in self._hit_pbo_pending}
+
         pbo = None
         for _ in self._hit_pbo_ids:
             candidate = self._hit_pbo_ids[self._hit_pbo_next]
             self._hit_pbo_next = (self._hit_pbo_next + 1) % len(self._hit_pbo_ids)
-            if candidate not in pending_pbos:
+            if candidate not in self._hit_pbo_pending_ids:
                 pbo = candidate
                 break
         if pbo is None: return
@@ -760,6 +770,8 @@ class Live2DWidget(QOpenGLWidget):
             fence = gl.glFenceSync(gl.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
             if not fence: raise RuntimeError("PBO fence creation failed")
             self._hit_pbo_pending.append({"pbo": pbo, "key": key, "fence": fence})
+            self._hit_pbo_pending_keys.add(key)
+            self._hit_pbo_pending_ids.add(pbo)
         except Exception:
             self._hit_pbo_supported = False
             self._clear_pending_hit_pbos()

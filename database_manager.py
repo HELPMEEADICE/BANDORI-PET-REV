@@ -3,6 +3,8 @@ import os
 import shutil
 import tempfile
 import json
+import threading
+from functools import wraps
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -340,6 +342,7 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
 class DatabaseManager:
     def __init__(self, db_path=DB_PATH):
         self._db_path = db_path
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -1221,3 +1224,19 @@ class DatabaseManager:
 
     def close(self):
         self._conn.close()
+
+
+def _with_database_lock(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+for _name, _method in list(DatabaseManager.__dict__.items()):
+    if _name.startswith("_") or not callable(_method):
+        continue
+    setattr(DatabaseManager, _name, _with_database_lock(_method))
+
+del _name, _method

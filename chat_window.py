@@ -26,6 +26,7 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
+from ui_helpers import circular_pixmap
 
 import ctypes
 import base64
@@ -272,22 +273,7 @@ def _rounded_avatar_pixmap(path: str = "", data: bytes = b"", size: int = 28, fo
         return QPixmap()
 
     crop = _avatar_crop(source, focus)
-    scaled = crop.scaled(
-        size,
-        size,
-        Qt.AspectRatioMode.IgnoreAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-
-    rounded = QPixmap(size, size)
-    rounded.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(rounded)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    path_shape = QPainterPath()
-    path_shape.addEllipse(QRectF(0, 0, size, size))
-    painter.setClipPath(path_shape)
-    painter.drawPixmap(0, 0, scaled)
-    painter.end()
+    rounded = circular_pixmap(crop, size)
     _AVATAR_PIXMAP_CACHE[cache_key] = QPixmap(rounded)
     if len(_AVATAR_PIXMAP_CACHE) > _AVATAR_PIXMAP_CACHE_LIMIT:
         _AVATAR_PIXMAP_CACHE.pop(next(iter(_AVATAR_PIXMAP_CACHE)))

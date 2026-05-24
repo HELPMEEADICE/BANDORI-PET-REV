@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget, QGraphicsOpacityEffect,
 )
 
+from app_theme import BANDORI_UI_FONT_FAMILY
+
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
@@ -165,7 +167,7 @@ class RadialMenuItem(QWidget):
             if self._is_text_badge(self._glyph):
                 badge = str(self._glyph).strip().upper()
                 font = p.font()
-                font.setFamily("Microsoft YaHei UI")
+                font.setFamily(BANDORI_UI_FONT_FAMILY)
                 font.setPointSize(12 if len(badge) <= 3 else 10)
                 font.setBold(True)
                 p.setFont(font)
@@ -201,7 +203,7 @@ class RadialMenuItem(QWidget):
                 p.drawText(int(cx - g_w / 2), int(cy - 2), self._glyph)
 
         font = p.font()
-        font.setFamily("Microsoft YaHei UI")
+        font.setFamily(BANDORI_UI_FONT_FAMILY)
         font.setPointSize(8)
         font.setBold(True)
         p.setFont(font)

@@ -64,13 +64,26 @@ from relationship_memory import (
     role_character_from_user_key,
     user_key_from_config,
 )
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker
+TTSPlayer = None
+TTSRequestWorker = None
+_SETTINGS_TTS_AVAILABLE = True
+_SETTINGS_TTS_CHECKED = False
+
+
+def _ensure_settings_tts_available() -> bool:
+    global TTSPlayer, TTSRequestWorker, _SETTINGS_TTS_AVAILABLE, _SETTINGS_TTS_CHECKED
+    if _SETTINGS_TTS_CHECKED:
+        return _SETTINGS_TTS_AVAILABLE
+    _SETTINGS_TTS_CHECKED = True
+    try:
+        from tts_manager import TTSPlayer as player_class, TTSRequestWorker as worker_class
+    except (ImportError, OSError):
+        _SETTINGS_TTS_AVAILABLE = False
+        return False
+    TTSPlayer = player_class
+    TTSRequestWorker = worker_class
     _SETTINGS_TTS_AVAILABLE = True
-except (ImportError, OSError):
-    TTSPlayer = None
-    TTSRequestWorker = None
-    _SETTINGS_TTS_AVAILABLE = False
+    return True
 
 import json
 
@@ -85,14 +98,12 @@ from live2d_click_actions import (
     CLICK_MOTION_REGIONS,
     normalize_click_motion_actions,
 )
-from live2d_quality import normalize_live2d_quality
+from live2d_quality import LIVE2D_SCALE_MAX, LIVE2D_SCALE_MIN, clamp_live2d_scale, normalize_live2d_quality
+from ui_helpers import rounded_avatar_pixmap
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
 _AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-
-LIVE2D_SCALE_MIN = 25
-LIVE2D_SCALE_MAX = 500
 
 _ROLEPLAY_STATUS_COLORS = {
     "green": "#2ecc71",
@@ -132,35 +143,7 @@ def _app_icon_path() -> str:
 
 
 def _rounded_avatar_pixmap(path: str, size: int) -> QPixmap:
-    if not path or not os.path.exists(path):
-        return QPixmap()
-    source = QPixmap(path)
-    if source.isNull():
-        return QPixmap()
-
-    side = min(source.width(), source.height())
-    crop = source.copy(
-        max(0, (source.width() - side) // 2),
-        max(0, (source.height() - side) // 2),
-        side,
-        side,
-    )
-    scaled = crop.scaled(
-        size,
-        size,
-        Qt.AspectRatioMode.IgnoreAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    rounded = QPixmap(size, size)
-    rounded.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(rounded)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    path_shape = QPainterPath()
-    path_shape.addEllipse(QRectF(0, 0, size, size))
-    painter.setClipPath(path_shape)
-    painter.drawPixmap(0, 0, scaled)
-    painter.end()
-    return rounded
+    return rounded_avatar_pixmap(path, size)
 
 
 class FluentContextLineEdit(QLineEdit):
@@ -391,16 +374,8 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
             self.menuItem.setSelected(True)
 
 
-def _clamp_live2d_scale(value) -> int:
-    try:
-        pct = int(round(float(value)))
-    except (TypeError, ValueError):
-        pct = 0
-    if pct <= 0:
-        screen = QApplication.primaryScreen()
-        ratio = screen.devicePixelRatio() if screen else 1.0
-        pct = int(round(ratio * 100))
-    return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))
+def _clamp_live2d_scale(value: object) -> int:
+    return clamp_live2d_scale(value, use_device_pixel_ratio_default=True)
 
 
 class ModelListItem(QWidget):
@@ -2808,6 +2783,29 @@ class SettingsWindow(QWidget):
         fetch_btn.clicked.connect(lambda: self._fetch_models(self._llm_model_id))
         model_row.addWidget(fetch_btn)
         layout.addLayout(model_row)
+
+        thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
+        layout.addWidget(thinking_label)
+        self._llm_enable_thinking = OpaqueDropDownComboBox(page)
+        self._llm_enable_thinking.addItems([
+            _tr("SettingsWindow.llm_enable_thinking_default"),
+            _tr("SettingsWindow.llm_enable_thinking_on"),
+            _tr("SettingsWindow.llm_enable_thinking_off"),
+        ])
+        self._llm_enable_thinking.setFixedHeight(36)
+        self._llm_enable_thinking.setCurrentIndex(0)
+        layout.addWidget(self._llm_enable_thinking)
+
+        show_reasoning_row = QHBoxLayout()
+        show_reasoning_row.setContentsMargins(0, 0, 0, 0)
+        show_reasoning_label = BodyLabel(_tr("SettingsWindow.llm_show_reasoning"), page)
+        self._llm_show_reasoning = SwitchButton(page)
+        self._llm_show_reasoning.setChecked(True)
+        show_reasoning_row.addWidget(show_reasoning_label)
+        show_reasoning_row.addStretch()
+        show_reasoning_row.addWidget(self._llm_show_reasoning)
+        layout.addLayout(show_reasoning_row)
+
         (
             self._llm_primary_model_combo_label,
             self._llm_primary_model_scroll,
@@ -2920,28 +2918,6 @@ class SettingsWindow(QWidget):
         web_search_sources_row.addStretch()
         web_search_sources_row.addWidget(self._llm_web_search_show_sources)
         layout.addLayout(web_search_sources_row)
-
-        thinking_label = BodyLabel(_tr("SettingsWindow.llm_enable_thinking"), page)
-        layout.addWidget(thinking_label)
-        self._llm_enable_thinking = OpaqueDropDownComboBox(page)
-        self._llm_enable_thinking.addItems([
-            _tr("SettingsWindow.llm_enable_thinking_default"),
-            _tr("SettingsWindow.llm_enable_thinking_on"),
-            _tr("SettingsWindow.llm_enable_thinking_off"),
-        ])
-        self._llm_enable_thinking.setFixedHeight(36)
-        self._llm_enable_thinking.setCurrentIndex(0)
-        layout.addWidget(self._llm_enable_thinking)
-
-        show_reasoning_row = QHBoxLayout()
-        show_reasoning_row.setContentsMargins(0, 0, 0, 0)
-        show_reasoning_label = BodyLabel(_tr("SettingsWindow.llm_show_reasoning"), page)
-        self._llm_show_reasoning = SwitchButton(page)
-        self._llm_show_reasoning.setChecked(True)
-        show_reasoning_row.addWidget(show_reasoning_label)
-        show_reasoning_row.addStretch()
-        show_reasoning_row.addWidget(self._llm_show_reasoning)
-        layout.addLayout(show_reasoning_row)
 
         layout.addWidget(SubtitleLabel(_tr("SettingsWindow.llm_chat_commands_title", default="LLM 对话命令"), page))
         layout.addWidget(_wrap_label(BodyLabel(_tr(
@@ -6284,7 +6260,8 @@ class SettingsWindow(QWidget):
     def _test_tts(self):
         if getattr(self, "_tts_test_running", False):
             return
-        if not _SETTINGS_TTS_AVAILABLE:
+        if not _ensure_settings_tts_available():
+            self._set_tts_test_running(False)
             InfoBar.warning(
                 _tr("SettingsWindow.tts_test_unavailable_title", default="TTS 不可用"),
                 _tr("SettingsWindow.tts_test_unavailable_content", default="当前环境缺少 TTS 播放依赖，无法进行测试播放。"),
