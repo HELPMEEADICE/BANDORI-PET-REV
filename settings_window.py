@@ -43,6 +43,7 @@ from llm_api_compat import (
     sanitize_chat_body_for_url,
 )
 from process_utils import app_base_dir
+from model_manager import MODELS_DIR, MODELS_DOWNLOAD_URL, ModelManager
 from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
 from app_update import detect_update_channel
 from app_theme import (
@@ -1142,8 +1143,8 @@ class SettingsWindow(QWidget):
 
     def __init__(self, model_manager, current_char="", current_costume="",
                  current_fps=120, current_opacity=1.0, show_launch=True,
-                 start_on_costumes=False, config_manager=None, vsync=True,
-                 live2d_module=None):
+                 start_on_costumes=False, first_run_wizard=False,
+                 config_manager=None, vsync=True, live2d_module=None):
         super().__init__()
         self._model_manager = model_manager
         self._live2d = live2d_module
@@ -1182,6 +1183,10 @@ class SettingsWindow(QWidget):
         self._live2d_error_shown = False
         self._show_launch = show_launch
         self._start_on_costumes = start_on_costumes
+        self._first_run_wizard = bool(first_run_wizard)
+        self._wizard_step = 0
+        self._wizard_step_labels: list[BodyLabel] = []
+        self._wizard_pages: dict[str, QWidget] = {}
         self._theme_widgets: list[QWidget] = []
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
@@ -1243,9 +1248,10 @@ class SettingsWindow(QWidget):
                 self._current_char
             )
 
-        self._nav_buttons["characters"].setChecked(True)
-
-        if self._start_on_costumes:
+        if self._first_run_wizard:
+            self._setup_first_run_wizard()
+        elif self._start_on_costumes:
+            self._nav_buttons["characters"].setChecked(True)
             self._selecting_model = True
             self._populate_costumes(self._current_char)
             display = self._model_manager.get_display_name(self._current_char)
@@ -1254,6 +1260,7 @@ class SettingsWindow(QWidget):
             self._char_page.hide()
             self._costume_page.show()
         else:
+            self._nav_buttons["characters"].setChecked(True)
             if self._selected_list_character:
                 self._show_model_detail()
             else:
@@ -1595,6 +1602,10 @@ class SettingsWindow(QWidget):
         self._refresh_theme_widget_styles(edit._line_number_area)
 
     def _init_ui(self):
+        if self._first_run_wizard:
+            self._init_first_run_wizard_ui()
+            return
+
         self._make_theme_widget(self)
         qconfig.themeChanged.connect(self._update_all_theme_bgs)
 
@@ -1637,6 +1648,433 @@ class SettingsWindow(QWidget):
         right_layout.addWidget(side_panel, 0)
 
         main_layout.addWidget(right_area, 1)
+
+    def _init_first_run_wizard_ui(self):
+        self._make_theme_widget(self)
+        qconfig.themeChanged.connect(self._update_all_theme_bgs)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 18, 20, 18)
+        main_layout.setSpacing(14)
+
+        header = self._make_theme_widget(QWidget(self))
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        title = TitleLabel(_tr("SettingsWindow.wizard_title", default="首次启动向导"), header)
+        subtitle = _wrap_label(SubtitleLabel(_tr(
+            "SettingsWindow.wizard_subtitle",
+            default="按顺序完成模型包、角色服装和可选 AI/TTS 配置，之后就可以启动桌宠。",
+        ), header))
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+
+        step_row = QHBoxLayout()
+        step_row.setContentsMargins(0, 4, 0, 0)
+        step_row.setSpacing(8)
+        self._wizard_step_labels = []
+        for text in (
+            _tr("SettingsWindow.wizard_step_models", default="1 模型包"),
+            _tr("SettingsWindow.wizard_step_character", default="2 角色/服装"),
+            _tr("SettingsWindow.wizard_step_ai", default="3 AI/TTS"),
+        ):
+            label = BodyLabel(text, header)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setFixedHeight(30)
+            label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            self._wizard_step_labels.append(label)
+            step_row.addWidget(label)
+        header_layout.addLayout(step_row)
+        main_layout.addWidget(header)
+
+        self._wizard_stack = self._make_theme_widget(QWidget(self))
+        self._wizard_stack_layout = QVBoxLayout(self._wizard_stack)
+        self._wizard_stack_layout.setContentsMargins(0, 0, 0, 0)
+        self._wizard_stack_layout.setSpacing(0)
+
+        self._wizard_model_page = self._build_wizard_model_page()
+        self._char_page = self._build_char_page()
+        self._costume_page = self._build_costume_page()
+        self._costume_page.hide()
+
+        self._pov_page = self._build_pov_page()
+        self._pov_page.hide()
+        self._llm_page = self._build_llm_page()
+        self._tts_page = self._build_tts_page()
+        self._wizard_ai_page = self._build_wizard_ai_page()
+
+        for page in (self._wizard_model_page, self._char_page, self._costume_page, self._wizard_ai_page):
+            self._wizard_stack_layout.addWidget(page)
+            page.hide()
+
+        scroll = ScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(self._wizard_stack)
+        main_layout.addWidget(scroll, 1)
+
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(8)
+        self._wizard_back_btn = PushButton(FluentIcon.LEFT_ARROW, _tr("SettingsWindow.wizard_back", default="上一步"), self)
+        self._wizard_back_btn.setFixedHeight(36)
+        self._wizard_back_btn.clicked.connect(self._wizard_previous_step)
+        footer.addWidget(self._wizard_back_btn)
+        footer.addStretch()
+        self._wizard_skip_ai_btn = PushButton(_tr("SettingsWindow.wizard_skip_ai", default="跳过 AI/TTS，启动"), self)
+        self._wizard_skip_ai_btn.setFixedHeight(36)
+        self._wizard_skip_ai_btn.clicked.connect(self._on_apply)
+        footer.addWidget(self._wizard_skip_ai_btn)
+        self._wizard_next_btn = PrimaryPushButton(
+            FluentIcon.ACCEPT,
+            _tr("SettingsWindow.wizard_next", default="下一步"),
+            self,
+        )
+        self._wizard_next_btn.setFixedHeight(36)
+        self._wizard_next_btn.clicked.connect(self._wizard_next_step)
+        footer.addWidget(self._wizard_next_btn)
+        main_layout.addLayout(footer)
+
+        self._wizard_hidden_side_panel = self._build_side_panel()
+        self._wizard_hidden_side_panel.hide()
+        self._pages["characters"] = self._char_page
+        self._pages["costumes"] = self._costume_page
+        self._pages["llm"] = self._llm_page
+        self._pages["tts"] = self._tts_page
+        self._pages["pov"] = self._pov_page
+
+        self._update_wizard_style()
+        qconfig.themeChanged.connect(self._update_wizard_style)
+
+    def _build_wizard_model_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        title = TitleLabel(_tr("SettingsWindow.wizard_models_title", default="检测模型包"), page)
+        layout.addWidget(title)
+        subtitle = _wrap_label(SubtitleLabel(_tr(
+            "SettingsWindow.wizard_models_subtitle",
+            default="先确认 Live2D 模型资源已经放在正确位置。",
+        ), page))
+        layout.addWidget(subtitle)
+
+        guide = CardWidget(page)
+        guide_layout = QVBoxLayout(guide)
+        guide_layout.setContentsMargins(16, 14, 16, 14)
+        guide_layout.setSpacing(8)
+        guide_layout.addWidget(StrongBodyLabel(_tr("SettingsWindow.wizard_models_place_title", default="正确放置方式"), guide))
+        guide_text = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.wizard_models_place_content",
+            default="下载模型包后请先解压，然后把解压出的角色 .zst 压缩包或角色文件夹直接放进项目目录的 models 文件夹。",
+        ), guide))
+        guide_layout.addWidget(guide_text)
+        correct = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.wizard_models_correct_path",
+            default="正确示例：项目目录/models/角色.zst 或 项目目录/models/角色/服装/model.json",
+        ), guide))
+        wrong = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.wizard_models_wrong_path",
+            default="常见错误：项目目录/models/models/角色.zst。检测到这种情况时可以使用下方的一键整理。",
+        ), guide))
+        guide_layout.addWidget(correct)
+        guide_layout.addWidget(wrong)
+        layout.addWidget(guide)
+
+        self._wizard_model_status_card = CardWidget(page)
+        status_layout = QVBoxLayout(self._wizard_model_status_card)
+        status_layout.setContentsMargins(16, 14, 16, 14)
+        status_layout.setSpacing(8)
+        self._wizard_model_status_title = StrongBodyLabel("", self._wizard_model_status_card)
+        self._wizard_model_status_label = _wrap_label(BodyLabel("", self._wizard_model_status_card))
+        self._wizard_model_nested_label = _wrap_label(BodyLabel("", self._wizard_model_status_card))
+        status_layout.addWidget(self._wizard_model_status_title)
+        status_layout.addWidget(self._wizard_model_status_label)
+        status_layout.addWidget(self._wizard_model_nested_label)
+        layout.addWidget(self._wizard_model_status_card)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        download_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.wizard_models_download", default="打开下载页面"), page)
+        download_btn.setFixedHeight(36)
+        download_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODELS_DOWNLOAD_URL)))
+        btn_row.addWidget(download_btn)
+        open_models_btn = PushButton(_tr("SettingsWindow.wizard_models_open_folder", default="打开 models 文件夹"), page)
+        open_models_btn.setFixedHeight(36)
+        open_models_btn.clicked.connect(self._open_models_dir)
+        btn_row.addWidget(open_models_btn)
+        self._wizard_open_nested_btn = PushButton(_tr("SettingsWindow.wizard_models_open_nested", default="打开错误嵌套目录"), page)
+        self._wizard_open_nested_btn.setFixedHeight(36)
+        self._wizard_open_nested_btn.clicked.connect(self._open_nested_models_dir)
+        btn_row.addWidget(self._wizard_open_nested_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        fix_row = QHBoxLayout()
+        fix_row.setSpacing(8)
+        self._wizard_fix_nested_btn = PrimaryPushButton(
+            FluentIcon.ACCEPT,
+            _tr("SettingsWindow.wizard_models_fix_nested", default="一键整理到正确位置"),
+            page,
+        )
+        self._wizard_fix_nested_btn.setFixedHeight(36)
+        self._wizard_fix_nested_btn.clicked.connect(self._fix_nested_models_dir)
+        fix_row.addWidget(self._wizard_fix_nested_btn)
+        recheck_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.wizard_models_recheck", default="重新检测"), page)
+        recheck_btn.setFixedHeight(36)
+        recheck_btn.clicked.connect(self._recheck_model_resources)
+        fix_row.addWidget(recheck_btn)
+        fix_row.addStretch()
+        layout.addLayout(fix_row)
+        layout.addStretch()
+        return page
+
+    def _build_wizard_ai_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        title = TitleLabel(_tr("SettingsWindow.wizard_ai_title", default="可选配置 AI / TTS"), page)
+        layout.addWidget(title)
+        subtitle = _wrap_label(SubtitleLabel(_tr(
+            "SettingsWindow.wizard_ai_subtitle",
+            default="这些配置可以先跳过，以后也能在设置页里继续调整。",
+        ), page))
+        layout.addWidget(subtitle)
+        layout.addWidget(self._llm_page)
+        layout.addWidget(self._tts_page)
+        layout.addStretch()
+        return page
+
+    def _setup_first_run_wizard(self):
+        self._recheck_model_resources(show_message=False)
+        if self._has_available_model_resources():
+            if self._selected_list_character:
+                self._show_model_detail()
+            else:
+                self._enter_model_selection()
+            self._wizard_go_to_step(1)
+        else:
+            self._wizard_go_to_step(0)
+
+    def _wizard_go_to_step(self, step: int):
+        self._wizard_step = max(0, min(2, int(step)))
+        for page in (self._wizard_model_page, self._char_page, self._costume_page, self._wizard_ai_page):
+            page.hide()
+        if self._wizard_step == 0:
+            self._wizard_model_page.show()
+        elif self._wizard_step == 1:
+            if self._current_page == "costumes":
+                self._costume_page.show()
+            else:
+                self._char_page.show()
+        else:
+            self._wizard_ai_page.show()
+        self._update_wizard_footer()
+        self._update_wizard_style()
+
+    def _wizard_next_step(self):
+        if self._wizard_step == 0:
+            self._recheck_model_resources(show_message=False)
+            if not self._has_available_model_resources():
+                InfoBar.warning(
+                    _tr("SettingsWindow.wizard_models_missing_title", default="还没有检测到模型"),
+                    _tr("SettingsWindow.wizard_models_missing_content", default="请先下载并解压模型资源，确认角色文件直接位于 models 文件夹内。"),
+                    duration=3500,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+            self._enter_model_selection()
+            self._wizard_go_to_step(1)
+            return
+        if self._wizard_step == 1:
+            selected = self._selected_model_item()
+            if not selected:
+                InfoBar.warning(
+                    _tr("SettingsWindow.launch_missing_model_title"),
+                    _tr("SettingsWindow.launch_missing_model_content"),
+                    duration=2500,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
+            self._current_char = selected["character"]
+            self._selected_costume = selected["costume"]
+            self._wizard_go_to_step(2)
+            return
+        self._on_apply()
+
+    def _wizard_previous_step(self):
+        if self._wizard_step <= 0:
+            return
+        self._wizard_go_to_step(self._wizard_step - 1)
+
+    def _update_wizard_footer(self):
+        self._wizard_back_btn.setEnabled(self._wizard_step > 0)
+        self._wizard_skip_ai_btn.setVisible(self._wizard_step == 2)
+        if self._wizard_step == 2:
+            self._wizard_next_btn.setText(_tr("SettingsWindow.wizard_save_launch", default="保存并启动"))
+        else:
+            self._wizard_next_btn.setText(_tr("SettingsWindow.wizard_next", default="下一步"))
+
+    def _update_wizard_style(self):
+        dark = isDarkTheme()
+        active_bg = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
+        inactive_bg = "#2a2a2a" if dark else "#eef0f4"
+        active_text = "#ffffff"
+        inactive_text = "#d9dce4" if dark else "#4f5968"
+        for idx, label in enumerate(self._wizard_step_labels):
+            active = idx == self._wizard_step
+            label.setStyleSheet(f"""
+                BodyLabel {{
+                    background: {active_bg if active else inactive_bg};
+                    color: {active_text if active else inactive_text};
+                    border-radius: 8px;
+                    font-weight: 700;
+                }}
+            """)
+
+    def _available_model_count(self) -> int:
+        count = 0
+        for character in self._model_manager.characters:
+            for costume in self._model_manager.get_costumes(character):
+                costume_id = costume.get("id", "")
+                if costume_id and self._model_manager.get_model_json_path(character, costume_id):
+                    count += 1
+        return count
+
+    def _has_available_model_resources(self) -> bool:
+        return self._available_model_count() > 0
+
+    def _nested_models_dir(self):
+        return MODELS_DIR / "models"
+
+    def _nested_models_entries(self) -> list:
+        nested = self._nested_models_dir()
+        if not nested.is_dir():
+            return []
+        return [entry for entry in nested.iterdir() if not entry.name.startswith(".")]
+
+    def _open_models_dir(self):
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(MODELS_DIR.resolve())))
+
+    def _open_nested_models_dir(self):
+        nested = self._nested_models_dir()
+        if nested.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(nested.resolve())))
+
+    def _recheck_model_resources(self, show_message: bool = True):
+        self._model_manager = ModelManager()
+        self._configured_models = self._load_configured_models()
+        if self._current_char not in self._model_manager.characters:
+            self._current_char = ""
+            self._current_costume = ""
+            self._selected_costume = ""
+            self._selected_list_character = ""
+        self._selected_band = self._model_manager.get_character_band(self._current_char)
+        self._refresh_model_list()
+        if self._has_available_model_resources():
+            if not self._current_char and self._model_manager.characters:
+                self._enter_model_selection()
+        self._update_wizard_model_status()
+        if show_message:
+            title = (
+                _tr("SettingsWindow.wizard_models_ready_title", default="已检测到模型")
+                if self._has_available_model_resources()
+                else _tr("SettingsWindow.wizard_models_missing_title", default="还没有检测到模型")
+            )
+            content = (
+                _tr("SettingsWindow.wizard_models_ready_content", default="可以继续选择角色和服装。")
+                if self._has_available_model_resources()
+                else _tr("SettingsWindow.wizard_models_missing_content", default="请先下载并解压模型资源，确认角色文件直接位于 models 文件夹内。")
+            )
+            bar = InfoBar.success if self._has_available_model_resources() else InfoBar.warning
+            bar(title, content, duration=3000, position=InfoBarPosition.TOP, parent=self)
+        self._update_wizard_footer()
+
+    def _update_wizard_model_status(self):
+        if not hasattr(self, "_wizard_model_status_label"):
+            return
+        count = self._available_model_count()
+        nested_entries = self._nested_models_entries()
+        if count:
+            self._wizard_model_status_title.setText(_tr("SettingsWindow.wizard_models_ready_title", default="已检测到模型"))
+            self._wizard_model_status_label.setText(_tr(
+                "SettingsWindow.wizard_models_ready_detail",
+                default="当前检测到 {count} 个可用角色/服装模型，可以进入下一步。",
+                count=count,
+            ))
+        else:
+            self._wizard_model_status_title.setText(_tr("SettingsWindow.wizard_models_missing_title", default="还没有检测到模型"))
+            self._wizard_model_status_label.setText(_tr(
+                "SettingsWindow.wizard_models_missing_detail",
+                default="请把解压后的角色 .zst 压缩包或角色文件夹放到：{path}",
+                path=str(MODELS_DIR.resolve()),
+            ))
+        if nested_entries:
+            self._wizard_model_nested_label.setText(_tr(
+                "SettingsWindow.wizard_models_nested_detected",
+                default="检测到 {count} 个文件/文件夹位于 models/models，可能是多套了一层 models 文件夹。",
+                count=len(nested_entries),
+            ))
+        else:
+            self._wizard_model_nested_label.setText(_tr(
+                "SettingsWindow.wizard_models_nested_clear",
+                default="没有检测到 models/models 嵌套目录。",
+            ))
+        self._wizard_open_nested_btn.setVisible(bool(nested_entries))
+        self._wizard_fix_nested_btn.setVisible(bool(nested_entries))
+
+    def _fix_nested_models_dir(self):
+        nested = self._nested_models_dir()
+        entries = self._nested_models_entries()
+        if not entries:
+            self._update_wizard_model_status()
+            return
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        skipped = []
+        failed = []
+        for entry in entries:
+            target = MODELS_DIR / entry.name
+            if target.exists():
+                skipped.append(entry.name)
+                continue
+            try:
+                shutil.move(str(entry), str(target))
+                moved += 1
+            except OSError as exc:
+                failed.append(f"{entry.name}: {exc}")
+        try:
+            if nested.exists() and not any(nested.iterdir()):
+                nested.rmdir()
+        except OSError:
+            pass
+        self._recheck_model_resources(show_message=False)
+        detail_parts = [_tr("SettingsWindow.wizard_models_fix_moved", default="已移动 {count} 个项目。", count=moved)]
+        if skipped:
+            detail_parts.append(_tr(
+                "SettingsWindow.wizard_models_fix_skipped",
+                default="同名冲突已跳过：{items}",
+                items=", ".join(skipped[:6]),
+            ))
+        if failed:
+            detail_parts.append(_tr(
+                "SettingsWindow.wizard_models_fix_failed",
+                default="部分项目移动失败：{items}",
+                items="; ".join(failed[:3]),
+            ))
+        InfoBar.success(
+            _tr("SettingsWindow.wizard_models_fix_done", default="整理完成"),
+            "\n".join(detail_parts),
+            duration=5000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _add_lazy_page(self, key: str, page: QWidget):
         page.hide()
@@ -7433,6 +7871,8 @@ class SettingsWindow(QWidget):
         self._costume_page.hide()
         self._char_page.show()
         self._show_model_detail()
+        if self._first_run_wizard:
+            self._wizard_go_to_step(1)
 
     def _costume_preview_key(self, costume_id: str) -> str:
         return self._costume_key(self._current_char, costume_id)
@@ -7553,6 +7993,7 @@ class SettingsWindow(QWidget):
             self._launched = False
             return
         self._save_llm_config(show_info=False)
+        self._save_tts_config(show_info=False)
         self._save_compact_window_config(show_info=False, emit_update=False)
         self._save_chat_integration_config(show_info=False, emit_update=False)
         self._save_mcp_computer_config(show_info=False)
