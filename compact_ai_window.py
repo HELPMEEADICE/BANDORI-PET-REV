@@ -25,6 +25,7 @@ from llm_manager import (
     strip_action_tags,
 )
 from llm_api_compat import chat_completions_api_url
+from llm_error_hints import format_llm_error_message
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -1143,7 +1144,7 @@ class CompactAIWindow(QWidget):
     def _on_response_error(self, error_msg: str):
         if self.sender() is not self._worker:
             return
-        self._set_output_text(f"Error: {error_msg}")
+        self._set_output_text(format_llm_error_message(error_msg))
         self._reset_tts(stop_player=False)
         self._worker = None
         self._set_busy(False)
