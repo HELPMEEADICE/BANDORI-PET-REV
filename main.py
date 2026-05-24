@@ -537,6 +537,7 @@ def main():
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             return
         cfg.load()
+        first_run_wizard = show_launch and not (has_configured_models or model_valid)
         process = QProcess(app)
         program, arguments = process_program_and_args(BASE_DIR, "settings_process.py", [
             "--character", cfg.get("character", char),
@@ -546,6 +547,7 @@ def main():
             "--vsync", "1" if cfg.get("vsync", True) else "0",
             "--show-launch", "1" if show_launch else "0",
             "--start-on-costumes", "0",
+            "--first-run-wizard", "1" if first_run_wizard else "0",
         ])
         process.setProgram(program)
         process.setArguments(arguments)
