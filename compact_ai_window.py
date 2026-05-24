@@ -653,7 +653,7 @@ class CompactAIWindow(QWidget):
         if not last:
             return
         self._conv_id = last["id"]
-        for message in self._db.get_messages(self._conv_id)[-12:]:
+        for message in self._db.get_messages(self._conv_id, limit=12):
             role = message.get("role", "")
             if role not in {"user", "assistant"}:
                 continue
