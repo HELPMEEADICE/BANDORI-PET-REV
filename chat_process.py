@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -22,7 +23,34 @@ def _parse_args():
     parser.add_argument("--pet-y", type=int, required=True)
     parser.add_argument("--pet-w", type=int, required=True)
     parser.add_argument("--pet-h", type=int, required=True)
+    parser.add_argument("--group-characters", default="")
     return parser.parse_args()
+
+
+def _normalize_characters(characters, valid_characters: set[str], current_character: str = "") -> list[str]:
+    result = []
+    seen = set()
+    if not isinstance(characters, list):
+        characters = []
+    for item in characters:
+        character = str(item or "").strip()
+        if not character or character in seen or character not in valid_characters:
+            continue
+        result.append(character)
+        seen.add(character)
+    if current_character and current_character in valid_characters and current_character not in seen:
+        result.insert(0, current_character)
+    return result
+
+
+def _parse_group_characters(value: str, valid_characters: set[str], current_character: str) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return _normalize_characters(parsed, valid_characters, current_character)
 
 
 def main():
@@ -49,18 +77,18 @@ def main():
         return 0
 
     mgr = ModelManager()
-    models = cfg.get("models", [])
-    characters = []
-    seen = set()
-    if isinstance(models, list):
-        for item in models:
-            if isinstance(item, dict):
-                character = item.get("character", "")
-                if character and character not in seen and character in mgr.characters:
-                    characters.append(character)
-                    seen.add(character)
-    if args.character and args.character not in seen and args.character in mgr.characters:
-        characters.insert(0, args.character)
+    valid_characters = set(mgr.characters)
+    characters = _parse_group_characters(args.group_characters, valid_characters, args.character)
+    if not characters:
+        models = cfg.get("models", [])
+        model_characters = []
+        if isinstance(models, list):
+            model_characters = [
+                item.get("character", "")
+                for item in models
+                if isinstance(item, dict)
+            ]
+        characters = _normalize_characters(model_characters, valid_characters, args.character)
 
     window = ChatWindow(args.character, mgr, None, cfg, group_characters=characters if len(characters) > 1 else None)
     window.action_triggered.connect(window.emit_action_for_ipc)

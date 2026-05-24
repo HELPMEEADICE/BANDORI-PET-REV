@@ -235,7 +235,7 @@ def _compact_ai_window_class():
 class PetWindow(QWidget):
     def __init__(self, live2d_module, model_manager=None,
                  character="", costume="", fps=120, opacity=1.0,
-                 config_manager=None, enable_tray=True):
+                 config_manager=None, enable_tray=True, group_characters=None):
         super().__init__()
         icon_path = os.path.join(app_base_dir(), "logo.ico")
         if os.path.exists(icon_path):
@@ -246,6 +246,12 @@ class PetWindow(QWidget):
         self._model_manager = model_manager or ModelManager()
         self._current_char = character
         self._current_costume = costume
+        if group_characters is None:
+            group_characters = self._chat_group_characters_from_models(
+                config_manager.get("models", []) if config_manager else []
+            ) or [character]
+        self._group_characters = self._normalize_chat_group_characters(group_characters)
+        self._ensure_current_character_in_group()
         self._fps = fps
         self._opacity = opacity
         self._vsync = True
@@ -769,6 +775,7 @@ class PetWindow(QWidget):
                 return
             self._current_char = chars[0]
             self._current_costume = self._model_manager.get_default_costume(self._current_char)
+            self._ensure_current_character_in_group()
 
         path = self._model_manager.get_model_json_path(
             self._current_char, self._current_costume
@@ -778,6 +785,37 @@ class PetWindow(QWidget):
             if self._pixel_mode and not self._enable_pixel_mode(save=False):
                 self._enable_live2d_mode(save=False)
             self._update_tooltip()
+
+    @staticmethod
+    def _normalize_chat_group_characters(characters) -> list[str]:
+        result = []
+        seen = set()
+        if not isinstance(characters, list):
+            return result
+        for item in characters:
+            character = str(item or "").strip()
+            if character and character not in seen:
+                result.append(character)
+                seen.add(character)
+        return result
+
+    @classmethod
+    def _chat_group_characters_from_models(cls, models) -> list[str]:
+        if not isinstance(models, list):
+            return []
+        return cls._normalize_chat_group_characters([
+            item.get("character", "")
+            for item in models
+            if isinstance(item, dict)
+        ])
+
+    def _ensure_current_character_in_group(self):
+        if self._current_char and self._current_char not in self._group_characters:
+            self._group_characters.insert(0, self._current_char)
+
+    def _chat_group_characters(self) -> list[str]:
+        self._ensure_current_character_in_group()
+        return list(self._group_characters)
 
     def _current_model_entry(self) -> dict:
         if not self._cfg:
@@ -827,6 +865,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._current_char = character
         self._current_costume = costume
+        self._ensure_current_character_in_group()
         self._live2d_widget.set_model_path(path)
         self._sync_current_model_entry(path)
         if self._pixel_mode and not self._load_pixel_for_current_character():
@@ -1288,6 +1327,10 @@ class PetWindow(QWidget):
         if "model_action_settings" in data and self._cfg:
             self._cfg.set("model_action_settings", data["model_action_settings"])
         if "models" in data and self._cfg:
+            next_group_characters = self._chat_group_characters_from_models(data["models"])
+            if next_group_characters:
+                self._group_characters = next_group_characters
+                self._ensure_current_character_in_group()
             self._cfg.set("models", data["models"])
             self._cfg.save()
         self._save_config()
@@ -1695,6 +1738,7 @@ class PetWindow(QWidget):
             "--pet-y", str(self.y()),
             "--pet-w", str(self.width()),
             "--pet-h", str(self.height()),
+            "--group-characters", json.dumps(self._chat_group_characters(), ensure_ascii=False),
         ])
         process.setProgram(program)
         process.setArguments(arguments)

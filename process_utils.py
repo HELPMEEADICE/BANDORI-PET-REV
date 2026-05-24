@@ -42,5 +42,8 @@ def set_windows_app_user_model_id(app_id: str) -> None:
 
 
 def ipc_server_name() -> str:
+    override = os.environ.get("BANDORI_PET_IPC_SERVER_NAME", "").strip()
+    if override:
+        return override
     digest = hashlib.sha1(str(app_base_dir()).encode("utf-8")).hexdigest()[:12]
     return f"BandoriPet-{digest}"

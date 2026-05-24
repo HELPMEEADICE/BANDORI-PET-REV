@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -24,7 +25,25 @@ def _parse_args():
     parser.add_argument("--costume", required=True)
     parser.add_argument("--model-path", default="")
     parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--group-characters", default="")
     return parser.parse_args()
+
+
+def _parse_group_characters(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value) if value else []
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    result = []
+    seen = set()
+    for item in parsed:
+        character = str(item or "").strip()
+        if character and character not in seen:
+            result.append(character)
+            seen.add(character)
+    return result
 
 
 class SingleModelManager:
@@ -89,6 +108,11 @@ def main():
         return 0
 
     mgr = SingleModelManager(args.character, args.costume, args.model_path) if args.model_path else ModelManager()
+    group_characters = (
+        _parse_group_characters(args.group_characters)
+        if args.group_characters
+        else None
+    )
     pet = PetWindow(
         live2d,
         model_manager=mgr,
@@ -98,6 +122,7 @@ def main():
         opacity=cfg.get("opacity", 1.0),
         config_manager=cfg,
         enable_tray=False,
+        group_characters=group_characters,
     )
 
     entry = _model_entry(cfg, args.character)
