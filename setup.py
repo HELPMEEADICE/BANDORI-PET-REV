@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-import fluent_bootstrap  # noqa: F401
+import fluent_bootstrap
+
+fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
+
 from cx_Freeze import Executable, setup
 from cx_Freeze.command.bdist_mac import bdist_mac
 from cx_Freeze.command.bdist_msi import bdist_msi
@@ -16,10 +19,13 @@ from cx_Freeze.command.build_exe import build_exe
 BASE_DIR = Path(__file__).resolve().parent
 BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
 
-import PySide6.QtCore  # noqa: E402,F401
-import PySide6.QtGui  # noqa: E402,F401
-import PySide6.QtOpenGLWidgets  # noqa: E402,F401
-import PySide6.QtWidgets  # noqa: E402,F401
+for module_name in (
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtOpenGLWidgets",
+    "PySide6.QtWidgets",
+):
+    importlib.import_module(module_name)
 
 from app_info import APP_NAME, APP_VERSION  # noqa: E402
 

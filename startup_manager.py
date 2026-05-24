@@ -33,17 +33,21 @@ def startup_command() -> str:
 
 
 def _open_run_key(access):
+    winreg = _winreg()
+    return winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, access)
+
+
+def _winreg():
     import winreg
 
-    return winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, access)
+    return winreg
 
 
 def current_startup_command() -> str:
     if not is_supported():
         return ""
     try:
-        import winreg
-
+        winreg = _winreg()
         with _open_run_key(winreg.KEY_READ) as key:
             value, _value_type = winreg.QueryValueEx(key, APP_RUN_VALUE)
             return str(value or "").strip()
@@ -58,7 +62,7 @@ def is_startup_enabled() -> bool:
 def set_startup_enabled(enabled: bool) -> None:
     if not is_supported():
         raise RuntimeError("Auto start is only supported on Windows.")
-    import winreg
+    winreg = _winreg()
 
     with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER,

@@ -3,9 +3,13 @@ import secrets
 import shutil
 import urllib.error
 import urllib.request
+import ssl
 from datetime import datetime
 
-import fluent_bootstrap  # noqa: F401
+import fluent_bootstrap
+
+fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
+
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl, QRectF, QRect, QSize
 from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices, QFont, QTextCursor
 from PySide6.QtWidgets import (
@@ -7204,10 +7208,6 @@ class TestConnectionWorker(QThread):
 
     def run(self):
         try:
-            import urllib.request
-            import json
-            import ssl
-
             ctx = ssl.create_default_context()
 
             headers = {
@@ -7277,10 +7277,6 @@ class FetchModelsWorker(QThread):
 
     def run(self):
         try:
-            import urllib.request
-            import json
-            import ssl
-
             ctx = ssl.create_default_context()
 
             headers = {

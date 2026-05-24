@@ -463,6 +463,7 @@ class DatabaseManager:
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
@@ -692,15 +693,13 @@ class DatabaseManager:
     def delete_character_memory(self, memory_id: int, character: str = "", user_key: str = "") -> bool:
         if not memory_id:
             return False
-        params: list = [memory_id]
-        where = "id=?"
-        if character:
-            where += " AND character=?"
-            params.append(character)
-        if user_key:
-            where += " AND user_key=?"
-            params.append(self._normalize_user_key(user_key))
-        cur = self._conn.execute(f"DELETE FROM character_memories WHERE {where}", params)
+        character_filter = str(character or "")
+        user_key_filter = self._normalize_user_key(user_key) if user_key else ""
+        cur = self._conn.execute(
+            "DELETE FROM character_memories "
+            "WHERE id=? AND (?='' OR character=?) AND (?='' OR user_key=?)",
+            (memory_id, character_filter, character_filter, user_key_filter, user_key_filter),
+        )
         self._conn.commit()
         return bool(cur.rowcount)
 
@@ -834,18 +833,36 @@ class DatabaseManager:
         self._conn.commit()
         return cur.lastrowid
 
-    def get_messages(self, conversation_id: int) -> list[dict]:
+    def get_messages(self, conversation_id: int, limit: int | None = None) -> list[dict]:
+        params: tuple = (conversation_id,)
+        order = "ASC"
+        limit_sql = ""
+        if limit is not None:
+            limit = _clamp_int(limit, 1, 1000, 1000)
+            params = (conversation_id, limit)
+            order = "DESC"
+            limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
-            "WHERE conversation_id=? ORDER BY id ASC",
-            (conversation_id,)
+            f"WHERE conversation_id=? ORDER BY id {order}{limit_sql}",
+            params,
         ).fetchall()
+        if limit is not None:
+            rows.reverse()
         result = []
         for r in rows:
             message = _message_row_dict(r)
             if message is not None:
                 result.append(message)
         return result
+
+    def get_first_user_message_content(self, conversation_id: int) -> str:
+        row = self._conn.execute(
+            "SELECT content FROM messages WHERE conversation_id=? AND role='user' AND content != '' "
+            "ORDER BY id ASC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        return _db_text(row[0]).strip() if row else ""
 
     def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -859,13 +876,23 @@ class DatabaseManager:
         self._conn.commit()
         return cur.lastrowid
 
-    def get_group_messages(self, group_key: str, conversation_id: str) -> list[dict]:
+    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None) -> list[dict]:
         conversation_id = conversation_id or "default"
+        params: tuple = (group_key, conversation_id, conversation_id)
+        order = "ASC"
+        limit_sql = ""
+        if limit is not None:
+            limit = _clamp_int(limit, 1, 1000, 1000)
+            params = (group_key, conversation_id, conversation_id, limit)
+            order = "DESC"
+            limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
-            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id ASC",
-            (group_key, conversation_id, conversation_id)
+            f"WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id {order}{limit_sql}",
+            params,
         ).fetchall()
+        if limit is not None:
+            rows.reverse()
         result = []
         for r in rows:
             message = _message_row_dict(r, grouped=True)
@@ -1184,17 +1211,10 @@ class DatabaseManager:
     def mark_external_chat_read(self, platform: str = "", thread_id: str = "") -> dict:
         platform = _clean_external_text(platform)
         thread_id = _clean_external_text(thread_id)
-        params: list[str] = []
-        where = "1=1"
-        if platform:
-            where += " AND platform=?"
-            params.append(platform)
-        if thread_id:
-            where += " AND thread_id=?"
-            params.append(thread_id)
         cur = self._conn.execute(
-            f"UPDATE external_chat_messages SET unread=0 WHERE unread=1 AND {where}",
-            params,
+            "UPDATE external_chat_messages SET unread=0 "
+            "WHERE unread=1 AND (?='' OR platform=?) AND (?='' OR thread_id=?)",
+            (platform, platform, thread_id, thread_id),
         )
         if platform and thread_id:
             self._conn.execute(

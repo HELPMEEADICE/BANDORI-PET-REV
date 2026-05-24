@@ -13,7 +13,8 @@ if os.name == "nt":
 
 from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
 from PySide6.QtNetwork import QLocalSocket
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout
+from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
 
 from app_theme import apply_app_theme
 from i18n_manager import tr as _tr, set_language
@@ -24,10 +25,11 @@ from live2d_click_actions import (
     click_motion_region_for_point,
     normalize_click_motion_actions,
 )
-from live2d_quality import LIVE2D_SCALE_MAX, LIVE2D_SCALE_MIN, clamp_live2d_scale, normalize_live2d_quality
-from live2d_widget import Live2DWidget
+from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
+from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from zst_model_archive import prefetch_virtual_action_resources
 
 if sys.platform == "darwin":
     import macos_patch
@@ -188,6 +190,22 @@ def _clamp_live2d_scale(value: object) -> int:
     return clamp_live2d_scale(value)
 
 
+def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
+def _clamp_float(value: object, minimum: float, maximum: float, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
 _PIXEL_PET_WIDGET_CLASS = None
 _PIXEL_FRAME_LOADER = None
 _PIXEL_PATH_RESOLVER = None
@@ -238,6 +256,8 @@ class PetWindow(QWidget):
         )
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
+        self._live2d_hit_alpha_threshold = DEFAULT_HIT_ALPHA_THRESHOLD
+        self._live2d_lip_sync_max_open = DEFAULT_LIP_SYNC_MAX_OPEN
         self._tray_icon = None
         self._tray_menu = None
         self._tray_actions = []
@@ -248,6 +268,18 @@ class PetWindow(QWidget):
                 self._cfg.get("live2d_quality", "balanced")
             )
             self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
+            self._live2d_hit_alpha_threshold = _clamp_int(
+                self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
+                0,
+                255,
+                DEFAULT_HIT_ALPHA_THRESHOLD,
+            )
+            self._live2d_lip_sync_max_open = _clamp_float(
+                self._cfg.get("live2d_lip_sync_max_open", DEFAULT_LIP_SYNC_MAX_OPEN),
+                0.0,
+                1.0,
+                DEFAULT_LIP_SYNC_MAX_OPEN,
+            )
         self._radial_menu_process = None
         self._radial_menu_buffer = ""
         self._radial_menu_socket = QLocalSocket(self)
@@ -276,6 +308,10 @@ class PetWindow(QWidget):
         self._show_pos_set = False
         self._motion_guard_token = 0
         self._expression_guard_token = 0
+        self._live2d_prewarm_token = 0
+        self._live2d_prewarm_motion_queue = []
+        self._live2d_prewarm_expression_queue = []
+        self._live2d_prewarm_prefetched = False
         self._exp_map_cache = ({}, [])
         self._exp_map_cache_id = None
         self._click_expression_hold_until = 0.0
@@ -361,6 +397,8 @@ class PetWindow(QWidget):
         self._live2d_widget.set_right_click_callback(self._on_right_click)
         self._live2d_widget.set_fps(self._fps)
         self._live2d_widget.set_render_quality(self._live2d_quality)
+        self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
+        self._live2d_widget.set_lip_sync_max_open(self._live2d_lip_sync_max_open)
         self._live2d_widget.model_loaded.connect(self._on_live2d_model_loaded)
         self._stack.addWidget(self._live2d_widget)
 
@@ -376,8 +414,6 @@ class PetWindow(QWidget):
         if not sys.platform.startswith("linux"):
             return False
         try:
-            from PySide6.QtGui import QGuiApplication
-
             return "xcb" in QGuiApplication.platformName().lower()
         except Exception:
             return False
@@ -599,8 +635,6 @@ class PetWindow(QWidget):
             return
         if self._live2d_widget._dragging or self._pixel_widget._dragging:
             return
-        from PySide6.QtGui import QCursor
-
         global_pos = QCursor.pos()
         if not self.geometry().contains(global_pos):
             self._set_mouse_passthrough(False)
@@ -668,6 +702,7 @@ class PetWindow(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        self._live2d_widget.dispose()
         self._close_radial_menu_process(force=True)
         self._close_chat_process()
         self._close_compact_ai_window()
@@ -684,7 +719,7 @@ class PetWindow(QWidget):
         self._position_save_timer.start()
 
     def _init_tray(self):
-        from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+        from PySide6.QtWidgets import QMenu
         from tray_utils import keep_tray_icon_visible, load_tray_icon
 
         self._tray_icon = QSystemTrayIcon(self)
@@ -802,6 +837,7 @@ class PetWindow(QWidget):
 
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
+        self._live2d_prewarm_token += 1
         self._last_context_idle_action_at = 0.0
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
@@ -809,7 +845,104 @@ class PetWindow(QWidget):
         self._exp_map_cache = ({}, [])
         self._exp_map_cache_id = None
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
+        self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
+
+    def _schedule_live2d_action_prewarm(self, token: int):
+        self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()
+        self._live2d_prewarm_expression_queue = self._build_live2d_prewarm_expression_queue()
+        self._live2d_prewarm_prefetched = False
+        QTimer.singleShot(350, lambda t=token: self._prewarm_next_live2d_action(t))
+
+    def _prefetch_live2d_action_resources(self):
+        if self._live2d_prewarm_prefetched:
+            return
+        self._live2d_prewarm_prefetched = True
+        try:
+            prefetch_virtual_action_resources(
+                self._live2d_widget.model_path,
+                self._live2d_prewarm_motion_queue,
+                self._live2d_prewarm_expression_queue,
+            )
+        except Exception:
+            pass
+
+    def _build_live2d_prewarm_motion_queue(self) -> list[str]:
+        model = self._live2d_widget.model
+        if model is None:
+            return []
+        motion_names = self._current_motion_names()
+        motion_set = set(motion_names)
+        ordered = []
+
+        def add(name: str):
+            name = str(name or "")
+            if name in motion_set and name not in ordered:
+                ordered.append(name)
+
+        entry = self._current_model_entry()
+        add(entry.get("default_motion", ""))
+        for feedback in normalize_click_motion_actions(
+            entry.get("click_motion_actions", {}),
+            motion_names,
+            self._current_expression_names(),
+        ).values():
+            add(feedback.get("motion", ""))
+        for tag in ("smile", "nf", "idle02", "surprised", "stretch", "akubi", "sigh", "sleep", "sad", "stare", "mitore", "thinking", "eeto", "odoodo"):
+            add(self._resolve_motion_tag(tag, motion_names))
+        for name in motion_names:
+            if not str(name).lower().startswith(("idle", "sys-")):
+                add(name)
+        for name in motion_names:
+            add(name)
+        return ordered
+
+    def _build_live2d_prewarm_expression_queue(self) -> list[str]:
+        expression_names = self._current_expression_names()
+        expression_set = set(expression_names)
+        ordered = []
+
+        def add(name: str):
+            name = str(name or "")
+            if name in expression_set and name not in ordered:
+                ordered.append(name)
+
+        entry = self._current_model_entry()
+        add(entry.get("default_expression", ""))
+        for feedback in normalize_click_motion_actions(
+            entry.get("click_motion_actions", {}),
+            self._current_motion_names(),
+            expression_names,
+        ).values():
+            add(feedback.get("expression", ""))
+        for tag in ("smile", "default", "idle", "surprised", "sad", "sleep"):
+            add(self._find_expression_tag(tag))
+        for name in expression_names:
+            add(name)
+        return ordered
+
+    def _prewarm_next_live2d_action(self, token: int):
+        if token != self._live2d_prewarm_token or self._pixel_mode:
+            return
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        self._prefetch_live2d_action_resources()
+        if self._live2d_prewarm_motion_queue:
+            name = self._live2d_prewarm_motion_queue.pop(0)
+            try:
+                model.PreloadMotionGroup(name)
+            except Exception:
+                pass
+            QTimer.singleShot(45, lambda t=token: self._prewarm_next_live2d_action(t))
+            return
+        if self._live2d_prewarm_expression_queue:
+            name = self._live2d_prewarm_expression_queue.pop(0)
+            try:
+                model.PreloadExpression(name)
+            except Exception:
+                pass
+            QTimer.singleShot(45, lambda t=token: self._prewarm_next_live2d_action(t))
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()
@@ -857,8 +990,6 @@ class PetWindow(QWidget):
             return
         if now is None:
             now = time.monotonic()
-        from PySide6.QtGui import QCursor
-
         cursor = QCursor.pos()
         approach_radius = max(
             LIVE2D_MOUSE_APPROACH_RADIUS,
@@ -1135,6 +1266,22 @@ class PetWindow(QWidget):
             self._live2d_widget.set_render_quality(self._live2d_quality)
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
+        if "live2d_hit_alpha_threshold" in data:
+            self._live2d_hit_alpha_threshold = _clamp_int(
+                data["live2d_hit_alpha_threshold"],
+                0,
+                255,
+                DEFAULT_HIT_ALPHA_THRESHOLD,
+            )
+            self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
+        if "live2d_lip_sync_max_open" in data:
+            self._live2d_lip_sync_max_open = _clamp_float(
+                data["live2d_lip_sync_max_open"],
+                0.0,
+                1.0,
+                DEFAULT_LIP_SYNC_MAX_OPEN,
+            )
+            self._live2d_widget.set_lip_sync_max_open(self._live2d_lip_sync_max_open)
         self._sync_compact_ai_window(allow_create=True)
         if self._cfg and ("models" in data or "model_action_settings" in data):
             self._cfg.load()
@@ -1156,8 +1303,6 @@ class PetWindow(QWidget):
         self._sync_compact_ai_window()
 
     def _on_tray_activated(self, reason):
-        from PySide6.QtWidgets import QSystemTrayIcon
-
         if sys.platform == "darwin":
             return
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -2266,6 +2411,8 @@ class PetWindow(QWidget):
             self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
+            self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)
+            self._cfg.set("live2d_lip_sync_max_open", self._live2d_lip_sync_max_open)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
             if model_exists:
                 self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")
@@ -2370,8 +2517,6 @@ class PetWindow(QWidget):
         if self._show_pos_set and self._is_position_on_screen():
             self._sync_compact_ai_window(allow_create=True)
             return
-        from PySide6.QtGui import QGuiApplication
-
         screen = QGuiApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
@@ -2384,8 +2529,6 @@ class PetWindow(QWidget):
         self._sync_compact_ai_window(allow_create=True)
 
     def _is_position_on_screen(self) -> bool:
-        from PySide6.QtGui import QGuiApplication
-
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return False

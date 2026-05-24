@@ -9,6 +9,10 @@ from lua_hit_area_projection import LuaCustomHitAreaState
 from platform_patch import set_live2d_texture_quality
 from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
 
+
+DEFAULT_HIT_ALPHA_THRESHOLD = 8
+DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
+
 class Live2DWidget(QOpenGLWidget):
     model_loaded = Signal()
 
@@ -61,7 +65,8 @@ class Live2DWidget(QOpenGLWidget):
         self._lip_sync_form = 0.0
         self._lip_sync_form_target = 0.0
         self._lip_sync_last_ms = -1000
-        self._hit_alpha_threshold = 8
+        self._hit_alpha_threshold = DEFAULT_HIT_ALPHA_THRESHOLD
+        self._lip_sync_max_open = DEFAULT_LIP_SYNC_MAX_OPEN
         self._hit_probe_offsets = (
             (0, 0),
             (-3, 0), (3, 0), (0, -3), (0, 3),
@@ -177,13 +182,30 @@ class Live2DWidget(QOpenGLWidget):
         self.set_lip_sync_pose(level, self._lip_sync_form_target)
 
     def set_lip_sync_pose(self, level: float, form: float = 0.0):
-        self._lip_sync_target = max(0.0, min(float(level), 0.55))
+        self._lip_sync_target = max(0.0, min(float(level), self._lip_sync_max_open))
         self._lip_sync_form_target = max(-1.0, min(float(form), 1.0))
         self._lip_sync_last_ms = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
         self.update()
 
+    def set_hit_alpha_threshold(self, threshold: int):
+        self._hit_alpha_threshold = max(0, min(int(threshold), 255))
+        self._clear_hit_framebuffer_cache()
+
+    def set_lip_sync_max_open(self, value: float):
+        self._lip_sync_max_open = max(0.0, min(float(value), 1.0))
+        self._lip_sync_target = max(0.0, min(self._lip_sync_target, self._lip_sync_max_open))
+
     def set_live2d_module(self, module):
         self._live2d = module
+
+    def dispose(self):
+        if self._custom_hit_areas is not None:
+            self._custom_hit_areas.dispose()
+            self._custom_hit_areas = None
+
+    def closeEvent(self, event):
+        self.dispose()
+        super().closeEvent(event)
 
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb

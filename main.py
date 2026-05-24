@@ -11,7 +11,6 @@ from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from live2d_lua_adapter import live2d
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 from config_manager import ConfigManager

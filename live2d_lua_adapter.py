@@ -11,6 +11,7 @@ except ModuleNotFoundError:
     from lupa.lua import LuaRuntime
 from PIL import Image
 
+from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
 from zst_model_archive import is_virtual_path, load_virtual_bytes
@@ -97,9 +98,12 @@ def _load_model_json(path: str) -> dict:
 
 
 def _texture_options(profile: str) -> tuple[float, bool, int]:
-    if profile == "performance":
-        return 0.5, False, 0
-    return 1.0, False, 0
+    options = LIVE2D_QUALITY_PROFILES[normalize_live2d_quality(profile)]
+    return (
+        float(options["texture_scale"]),
+        bool(options["use_mipmap"]),
+        int(options["bleed_passes"]),
+    )
 
 
 def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
@@ -113,7 +117,7 @@ def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
         for y in range(height):
             for x in range(width):
                 alpha = pixels[x, y][3]
-                if alpha >= 255:
+                if alpha != 0:
                     continue
 
                 red = green = blue = count = 0
@@ -126,7 +130,7 @@ def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
                     if nx < 0 or ny < 0 or nx >= width or ny >= height:
                         continue
                     nr, ng, nb, na = pixels[nx, ny]
-                    if na <= alpha:
+                    if na <= 0:
                         continue
                     red += nr
                     green += ng
@@ -149,7 +153,26 @@ def _resize_for_quality(image: Image.Image, scale: float) -> Image.Image:
     width = max(1, int(image.width * scale))
     height = max(1, int(image.height * scale))
     resampling = getattr(Image, "Resampling", Image).BILINEAR
-    return image.resize((width, height), resampling)
+    data = bytearray(image.tobytes())
+    for i in range(0, len(data), 4):
+        alpha = data[i + 3]
+        data[i] = (data[i] * alpha + 127) // 255
+        data[i + 1] = (data[i + 1] * alpha + 127) // 255
+        data[i + 2] = (data[i + 2] * alpha + 127) // 255
+
+    premultiplied = Image.frombytes("RGBA", image.size, bytes(data))
+    resized = premultiplied.resize((width, height), resampling)
+    premultiplied.close()
+    data = bytearray(resized.tobytes())
+    resized.close()
+    for i in range(0, len(data), 4):
+        alpha = data[i + 3]
+        if alpha <= 0:
+            continue
+        data[i] = min(255, (data[i] * 255 + alpha // 2) // alpha)
+        data[i + 1] = min(255, (data[i + 1] * 255 + alpha // 2) // alpha)
+        data[i + 2] = min(255, (data[i + 2] * 255 + alpha // 2) // alpha)
+    return Image.frombytes("RGBA", (width, height), bytes(data))
 
 
 def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
@@ -307,15 +330,18 @@ class LuaLive2DModule:
             b"(function() "
             b"local gl = require('live2d.core.live2d_gl_wrapper'); "
             b"local GL_NEAREST = 0x2600; "
+            b"local GL_LINEAR_MIPMAP_LINEAR = 0x2703; "
             b"return function(renderer, profile) "
             b"local model = renderer:get_model(); "
             b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
             b"local textures = model.live2DModel.drawParamGL.textures or {}; "
             b"local min_filter = gl.LINEAR; "
             b"local mag_filter = gl.LINEAR; "
-            b"local use_mipmap = false; "
+            b"local use_mipmap = true; "
             b"if profile == 'performance' then "
-            b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; "
+            b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; use_mipmap = false; "
+            b"else "
+            b"min_filter = GL_LINEAR_MIPMAP_LINEAR; "
             b"end; "
             b"for i = 1, #textures do "
             b"local texture = textures[i]; "
@@ -345,6 +371,12 @@ class LuaLive2DModule:
         self._set_expression = lua.eval(
             b"function(renderer, name) return renderer:set_expression(name) end"
         )
+        self._preload_expression = lua.eval(
+            b"function(renderer, name) return renderer:preload_expression(name) end"
+        )
+        self._preload_motion_group = lua.eval(
+            b"function(renderer, name) return renderer:preload_motion_group(name) end"
+        )
         self._reset_expression = lua.eval(b"function(renderer) return renderer:reset_expression() end")
         self._lua = lua
         self._initialized = True
@@ -368,6 +400,7 @@ class LuaLive2DModule:
             entry[b"height"] = h
             entry[b"data"] = rgba
             entry[b"mipmap"] = use_mipmap
+            entry[b"edge_bleed"] = False
             return entry
 
         resources = lua.table()
@@ -476,6 +509,16 @@ class LuaLAppModel:
         if count <= 0:
             return
         self.StartMotion(name, random.randrange(count), priority)
+
+    def PreloadMotionGroup(self, name: str):
+        if self._renderer is None or not name:
+            return
+        self._module._preload_motion_group(self._renderer, str(name).encode("utf-8"))
+
+    def PreloadExpression(self, name: str):
+        if self._renderer is None or not name:
+            return
+        self._module._preload_expression(self._renderer, str(name).encode("utf-8"))
 
     def ClearMotions(self):
         self._module._clear_motions(self._renderer)

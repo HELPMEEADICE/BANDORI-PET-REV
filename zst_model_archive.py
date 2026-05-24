@@ -2,13 +2,17 @@ import json
 import posixpath
 import tarfile
 import threading
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
 
 VIRTUAL_SEP = "::"
 INDEX_MEMBER = ".bandori_zst_index.json"
-_VIRTUAL_BYTE_CACHE: dict[str, bytes] = {}
+_VIRTUAL_BYTE_CACHE_MAX_ITEMS = 128
+_VIRTUAL_BYTE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_VIRTUAL_BYTE_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_VIRTUAL_BYTE_CACHE_BYTES = 0
 _CACHE_LOCK = threading.RLock()
 
 
@@ -31,6 +35,8 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
     if cache:
         with _CACHE_LOCK:
             cached = _VIRTUAL_BYTE_CACHE.get(cache_key)
+            if cached is not None:
+                _VIRTUAL_BYTE_CACHE.move_to_end(cache_key)
         if cached is not None:
             return cached
 
@@ -44,7 +50,7 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
             data = extracted.read()
             if cache:
                 with _CACHE_LOCK:
-                    _VIRTUAL_BYTE_CACHE[cache_key] = data
+                    _store_virtual_bytes(cache_key, data)
             return data
     raise KeyError(path)
 
@@ -58,8 +64,25 @@ def load_virtual_json(path: str) -> dict:
 
 
 def clear_virtual_byte_cache():
+    global _VIRTUAL_BYTE_CACHE_BYTES
     with _CACHE_LOCK:
         _VIRTUAL_BYTE_CACHE.clear()
+        _VIRTUAL_BYTE_CACHE_BYTES = 0
+
+
+def _store_virtual_bytes(cache_key: str, data: bytes):
+    global _VIRTUAL_BYTE_CACHE_BYTES
+    old = _VIRTUAL_BYTE_CACHE.pop(cache_key, None)
+    if old is not None:
+        _VIRTUAL_BYTE_CACHE_BYTES -= len(old)
+    _VIRTUAL_BYTE_CACHE[cache_key] = data
+    _VIRTUAL_BYTE_CACHE_BYTES += len(data)
+    while (
+        len(_VIRTUAL_BYTE_CACHE) > _VIRTUAL_BYTE_CACHE_MAX_ITEMS
+        or _VIRTUAL_BYTE_CACHE_BYTES > _VIRTUAL_BYTE_CACHE_MAX_BYTES
+    ):
+        _, evicted = _VIRTUAL_BYTE_CACHE.popitem(last=False)
+        _VIRTUAL_BYTE_CACHE_BYTES -= len(evicted)
 
 
 def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expressions: bool = False):
@@ -101,7 +124,56 @@ def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expr
                 continue
             data = extracted.read()
             with _CACHE_LOCK:
-                _VIRTUAL_BYTE_CACHE[make_virtual_path(archive_path, member_name)] = data
+                _store_virtual_bytes(make_virtual_path(archive_path, member_name), data)
+            target_members.remove(member_name)
+            if not target_members:
+                break
+
+
+def prefetch_virtual_action_resources(
+    model_json_path: str,
+    motion_groups: list[str] | tuple[str, ...] | None = None,
+    expression_names: list[str] | tuple[str, ...] | None = None,
+):
+    if not is_virtual_path(model_json_path):
+        return
+
+    archive_path, model_member = split_virtual_path(model_json_path)
+    model_bytes = load_virtual_bytes(make_virtual_path(archive_path, model_member))
+    try:
+        model_json = json.loads(model_bytes.decode("utf-8"))
+    except Exception:
+        return
+
+    target_members = _action_resource_members(
+        model_member,
+        model_json,
+        motion_groups or (),
+        expression_names or (),
+    )
+    if not target_members:
+        return
+
+    with _CACHE_LOCK:
+        target_members = {
+            member
+            for member in target_members
+            if make_virtual_path(archive_path, member) not in _VIRTUAL_BYTE_CACHE
+        }
+    if not target_members:
+        return
+
+    with _open_tar_zst(archive_path) as archive:
+        for member in archive:
+            member_name = _normalize_member(member.name)
+            if not member.isfile() or member_name not in target_members:
+                continue
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            data = extracted.read()
+            with _CACHE_LOCK:
+                _store_virtual_bytes(make_virtual_path(archive_path, member_name), data)
             target_members.remove(member_name)
             if not target_members:
                 break
@@ -126,6 +198,40 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
         for expression in expressions:
             if isinstance(expression, dict):
                 add(expression.get("file"))
+
+    return members
+
+
+def _action_resource_members(
+    model_member: str,
+    model_json: dict,
+    motion_groups: list[str] | tuple[str, ...],
+    expression_names: list[str] | tuple[str, ...],
+) -> set[str]:
+    base_dir = posixpath.dirname(model_member)
+    members = set()
+
+    def add(path):
+        if isinstance(path, str) and path:
+            members.add(_join_member(base_dir, path))
+
+    wanted_motions = {str(name) for name in motion_groups if name}
+    motions = model_json.get("motions") or {}
+    if isinstance(motions, dict):
+        for group_name in wanted_motions:
+            group = motions.get(group_name) or []
+            if not isinstance(group, list):
+                continue
+            for item in group:
+                if isinstance(item, dict):
+                    add(item.get("file"))
+
+    wanted_expressions = {str(name) for name in expression_names if name}
+    expressions = model_json.get("expressions") or []
+    if isinstance(expressions, list):
+        for item in expressions:
+            if isinstance(item, dict) and str(item.get("name", "")) in wanted_expressions:
+                add(item.get("file"))
 
     return members
 
