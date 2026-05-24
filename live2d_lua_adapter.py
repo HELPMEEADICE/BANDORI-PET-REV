@@ -58,20 +58,28 @@ def _iter_lua_module_files(root: Path) -> list[tuple[str, Path]]:
     return sorted(modules.items())
 
 
-def _preload_lua_modules(lua: LuaRuntime, root: Path):
-    register = lua.eval(
-        b"function(name, chunk, chunk_name) "
-        b"local loader, err = load(chunk, chunk_name); "
-        b"assert(loader, err); "
-        b"package.preload[name] = loader "
-        b"end"
+def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
+    module_paths = dict(_iter_lua_module_files(root))
+
+    def load_module_source(name):
+        module_name = name.decode("utf-8") if isinstance(name, bytes) else str(name)
+        module_path = module_paths.get(module_name)
+        if module_path is None:
+            return None, None
+        return _read_lua_chunk_bytes(module_path), ("@" + module_path.as_posix()).encode("utf-8")
+
+    lua.globals()[b"__bandori_lazy_lua_module_source"] = load_module_source
+    lua.execute(
+        b"local loader = function(name) "
+        b"local chunk, chunk_name = __bandori_lazy_lua_module_source(name); "
+        b"if chunk == nil then return '\\n\\tno bundled Live2D module ' .. name end; "
+        b"local fn, err = load(chunk, chunk_name); "
+        b"if fn == nil then return '\\n\\t' .. tostring(err) end; "
+        b"return fn "
+        b"end; "
+        b"local loaders = package.searchers or package.loaders; "
+        b"table.insert(loaders, 1, loader)"
     )
-    for module_name, module_path in _iter_lua_module_files(root):
-        register(
-            module_name.encode("utf-8"),
-            _read_lua_chunk_bytes(module_path),
-            ("@" + module_path.as_posix()).encode("utf-8"),
-        )
 
 
 def _load_model_bytes(path: str) -> bytes:
@@ -177,7 +185,7 @@ def _resize_for_quality(image: Image.Image, scale: float) -> Image.Image:
 
 def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
     scale, use_mipmap, bleed_passes = _texture_options(profile)
-    source = io.BytesIO(load_virtual_bytes(path, cache=False)) if is_virtual_path(path) else Path(path)
+    source = io.BytesIO(load_virtual_bytes(path)) if is_virtual_path(path) else Path(path)
     with Image.open(source) as image:
         if image.mode != "RGBA":
             image = image.convert("RGBA")
@@ -306,7 +314,7 @@ class LuaLive2DModule:
             return
         lua = LuaRuntime(unpack_returned_tuples=True, encoding=None)
         lua.execute(b'assert(require("ffi"), "lupa must be built with LuaJIT FFI")')
-        _preload_lua_modules(lua, LIVE2D_LUA_DIR)
+        _install_lazy_lua_module_loader(lua, LIVE2D_LUA_DIR)
         lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
         lua.execute(
             b"local root = ...; "

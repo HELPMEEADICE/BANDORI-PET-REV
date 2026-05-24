@@ -70,19 +70,20 @@ def clear_virtual_byte_cache():
         _VIRTUAL_BYTE_CACHE_BYTES = 0
 
 
-def _store_virtual_bytes(cache_key: str, data: bytes):
+def _store_virtual_bytes(cache_key: str, data: bytes, enforce_limits: bool = True):
     global _VIRTUAL_BYTE_CACHE_BYTES
     old = _VIRTUAL_BYTE_CACHE.pop(cache_key, None)
     if old is not None:
         _VIRTUAL_BYTE_CACHE_BYTES -= len(old)
     _VIRTUAL_BYTE_CACHE[cache_key] = data
     _VIRTUAL_BYTE_CACHE_BYTES += len(data)
-    while (
-        len(_VIRTUAL_BYTE_CACHE) > _VIRTUAL_BYTE_CACHE_MAX_ITEMS
-        or _VIRTUAL_BYTE_CACHE_BYTES > _VIRTUAL_BYTE_CACHE_MAX_BYTES
-    ):
-        _, evicted = _VIRTUAL_BYTE_CACHE.popitem(last=False)
-        _VIRTUAL_BYTE_CACHE_BYTES -= len(evicted)
+    if enforce_limits:
+        while (
+            len(_VIRTUAL_BYTE_CACHE) > _VIRTUAL_BYTE_CACHE_MAX_ITEMS
+            or _VIRTUAL_BYTE_CACHE_BYTES > _VIRTUAL_BYTE_CACHE_MAX_BYTES
+        ):
+            _, evicted = _VIRTUAL_BYTE_CACHE.popitem(last=False)
+            _VIRTUAL_BYTE_CACHE_BYTES -= len(evicted)
 
 
 def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expressions: bool = False):
@@ -124,7 +125,11 @@ def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expr
                 continue
             data = extracted.read()
             with _CACHE_LOCK:
-                _store_virtual_bytes(make_virtual_path(archive_path, member_name), data)
+                _store_virtual_bytes(
+                    make_virtual_path(archive_path, member_name),
+                    data,
+                    enforce_limits=False,
+                )
             target_members.remove(member_name)
             if not target_members:
                 break
@@ -188,8 +193,11 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
             members.add(_join_member(base_dir, path))
 
     add(model_json.get("model"))
-    # Textures are large and are decoded directly into GL upload buffers; keeping
-    # their compressed bytes in the virtual cache doubles peak resident memory.
+    textures = model_json.get("textures", []) or []
+    if isinstance(textures, list):
+        for texture in textures:
+            add(texture)
+
     add(model_json.get("physics"))
     add(model_json.get("pose"))
 

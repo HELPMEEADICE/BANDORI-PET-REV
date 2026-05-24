@@ -8,6 +8,7 @@ from functools import wraps
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from types import FunctionType
 from process_utils import app_base_dir
 
 BASE_DIR = app_base_dir()
@@ -339,7 +340,25 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
     return chat_database_summary(str(target))
 
 
-class DatabaseManager:
+def _with_database_lock(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+class _DatabaseManagerMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        for attr_name, attr_value in list(namespace.items()):
+            if attr_name == "__init__" or attr_name.startswith("__"):
+                continue
+            if isinstance(attr_value, FunctionType):
+                namespace[attr_name] = _with_database_lock(attr_value)
+        return super().__new__(mcls, name, bases, namespace)
+
+
+class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
         self._db_path = db_path
         self._lock = threading.RLock()
@@ -1244,19 +1263,3 @@ class DatabaseManager:
 
     def close(self):
         self._conn.close()
-
-
-def _with_database_lock(method):
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return method(self, *args, **kwargs)
-    return wrapper
-
-
-for _name, _method in list(DatabaseManager.__dict__.items()):
-    if _name.startswith("_") or not callable(_method):
-        continue
-    setattr(DatabaseManager, _name, _with_database_lock(_method))
-
-del _name, _method
