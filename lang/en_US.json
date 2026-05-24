@@ -552,6 +552,7 @@
     "ChatWindow.vision_fallback_failed": "Fast vision model failed to read the image: {error}",
     "ChatWindow.input_placeholder": "Message your Bandori pet...",
     "ChatWindow.send_tooltip": "Send",
+    "ChatWindow.stop_tooltip": "Stop generating",
     "ChatWindow.attach_image_tooltip": "Add image",
     "ChatWindow.attach_image_title": "Choose Image",
     "ChatWindow.attach_image_filter": "Images (*.png *.jpg *.jpeg *.webp *.gif)",

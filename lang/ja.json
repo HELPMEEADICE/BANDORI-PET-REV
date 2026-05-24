@@ -552,6 +552,7 @@
     "ChatWindow.vision_fallback_failed": "高速視覚モデルの画像確認に失敗しました：{error}",
     "ChatWindow.input_placeholder": "Bandori ペットにメッセージを送る...",
     "ChatWindow.send_tooltip": "送信",
+    "ChatWindow.stop_tooltip": "生成を停止",
     "ChatWindow.attach_image_tooltip": "画像を追加",
     "ChatWindow.attach_image_title": "画像を選択",
     "ChatWindow.attach_image_filter": "画像 (*.png *.jpg *.jpeg *.webp *.gif)",

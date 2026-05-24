@@ -552,6 +552,7 @@
     "ChatWindow.vision_fallback_failed": "快速視覺模型看圖失敗：{error}",
     "ChatWindow.input_placeholder": "給你的 Bandori 桌寵發訊息...",
     "ChatWindow.send_tooltip": "傳送",
+    "ChatWindow.stop_tooltip": "停止生成",
     "ChatWindow.attach_image_tooltip": "新增圖片",
     "ChatWindow.attach_image_title": "選擇圖片",
     "ChatWindow.attach_image_filter": "圖片 (*.png *.jpg *.jpeg *.webp *.gif)",
