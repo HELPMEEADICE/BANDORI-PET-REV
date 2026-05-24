@@ -11,7 +11,7 @@ import fluent_bootstrap
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl, QRectF, QRect, QSize
-from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices, QFont, QTextCursor
+from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices, QFont, QTextCursor, QRegion
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QScrollArea,
@@ -135,6 +135,11 @@ CLICK_MOTION_SCOPES = {
     CLICK_MOTION_SCOPE_COSTUME,
 }
 MEMORY_KIND_ORDER = ("profile", "preference", "relationship", "manual", "note")
+MODEL_PICKER_STATE_KEY = "model_picker_state"
+MODEL_PICKER_RECENT_LIMIT = 8
+MODEL_PICKER_FILTER_ALL = "all"
+MODEL_PICKER_FILTER_RECENT = "recent"
+MODEL_PICKER_FILTER_FAVORITES = "favorites"
 
 
 def _app_icon_path() -> str:
@@ -548,19 +553,34 @@ def _wrap_label(label: QLabel):
     return label
 
 
+class FullHitToolButton(QToolButton):
+    def hitButton(self, pos):
+        return self.rect().contains(pos)
+
+
 class CharacterCard(CardWidget):
     char_selected = Signal(str)
+    favorite_toggled = Signal(str, bool)
 
     def __init__(self, char_key: str, display_name: str, costume_count: int,
                  image_path: str = "", roleplay_status: str = "red", parent=None,
-                 image_data: bytes = b""):
+                 image_data: bytes = b"", favorite: bool = False):
         super().__init__(parent)
         self._char_key = char_key
+        self._favorite = bool(favorite)
         self._disabled_for_existing = False
         self.setFixedSize(220, 360)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._status_dot = RoleplayStatusDot(roleplay_status, self)
+        self._favorite_btn = FullHitToolButton(self)
+        self._favorite_btn.setCheckable(True)
+        self._favorite_btn.setChecked(self._favorite)
+        self._favorite_btn.setFixedSize(28, 28)
+        self._favorite_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._favorite_btn.setToolTip(_tr("SettingsWindow.favorite_character_tooltip"))
+        self._favorite_btn.clicked.connect(self._on_favorite_clicked)
+        self._favorite_btn.raise_()
         self._position_status_dot()
 
         layout = QVBoxLayout(self)
@@ -593,6 +613,8 @@ class CharacterCard(CardWidget):
         layout.addStretch()
         self.clicked.connect(self._on_card_clicked)
         qconfig.themeChanged.connect(self._update_count_label_style)
+        qconfig.themeChanged.connect(self._update_favorite_style)
+        self._update_favorite_style()
 
     def animate_in(self, delay_ms: int = 0):
         if self._disabled_for_existing:
@@ -623,15 +645,45 @@ class CharacterCard(CardWidget):
             return
         self.char_selected.emit(self._char_key)
 
+    def _on_favorite_clicked(self, checked: bool):
+        self._favorite = bool(checked)
+        self._update_favorite_style()
+        self.favorite_toggled.emit(self._char_key, self._favorite)
+
+    def set_favorite(self, favorite: bool):
+        self._favorite = bool(favorite)
+        self._favorite_btn.setChecked(self._favorite)
+        self._update_favorite_style()
+
+    def _update_favorite_style(self):
+        dark = isDarkTheme()
+        icon_color = accent_color(dark) if self._favorite else ("#9aa5bd" if dark else "#7b8494")
+        bg = BANDORI_PRIMARY_SOFT_DARK if self._favorite and dark else BANDORI_PRIMARY_SOFT if self._favorite else "#2b2b2b" if dark else "#ffffff"
+        hover = BANDORI_PRIMARY_SOFT_DARK_HOVER if dark else BANDORI_PRIMARY_SOFT_HOVER
+        border = accent_color(dark) if self._favorite else "#4a4a4a" if dark else "#d9dde7"
+        self._favorite_btn.setIcon(FluentIcon.HEART.icon(color=QColor(icon_color)))
+        self._favorite_btn.setStyleSheet(f"""
+            QToolButton {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 14px;
+            }}
+            QToolButton:hover {{
+                background: {hover};
+                border-color: {accent_color(dark)};
+            }}
+        """)
+
     def set_disabled_for_existing(self, disabled: bool):
         self._disabled_for_existing = disabled
-        self.setEnabled(not disabled)
         self.setCursor(Qt.CursorShape.ForbiddenCursor if disabled else Qt.CursorShape.PointingHandCursor)
+        self._favorite_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setGraphicsEffect(None)
         if disabled:
             effect = QGraphicsOpacityEffect(self)
             effect.setOpacity(0.38)
             self.setGraphicsEffect(effect)
+            self._favorite_btn.raise_()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -639,6 +691,8 @@ class CharacterCard(CardWidget):
 
     def _position_status_dot(self):
         self._status_dot.move(self.width() - self._status_dot.width() - 12, 12)
+        self._favorite_btn.move(self.width() - self._favorite_btn.width() - 8, 34)
+        self._favorite_btn.raise_()
 
 
 class BandCard(CardWidget):
@@ -718,15 +772,34 @@ class BandCard(CardWidget):
 
 class CostumeItem(QPushButton):
     preview_requested = Signal(object, str)
-    preview_cancelled = Signal()
+    preview_toggled = Signal(object, str)
+    preview_cancelled = Signal(str)
+    favorite_toggled = Signal(str, bool)
 
-    def __init__(self, costume_id: str, display_name: str, parent=None):
+    def __init__(self, costume_id: str, display_name: str, parent=None, favorite: bool = False):
         super().__init__(parent)
         self._costume_id = costume_id
+        self._display_name = display_name
+        self._favorite = bool(favorite)
         self.setText(display_name)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(40)
         self.setCheckable(True)
+        self._preview_btn = FullHitToolButton(self)
+        self._preview_btn.setIcon(FluentIcon.VIEW.icon())
+        self._preview_btn.setToolTip(_tr("SettingsWindow.preview_costume_tooltip"))
+        self._preview_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preview_btn.setFixedSize(28, 28)
+        self._preview_btn.clicked.connect(lambda checked=False: self.preview_toggled.emit(self, self._costume_id))
+        self._favorite_btn = FullHitToolButton(self)
+        self._favorite_btn.setCheckable(True)
+        self._favorite_btn.setChecked(self._favorite)
+        self._favorite_btn.setToolTip(_tr("SettingsWindow.favorite_costume_tooltip"))
+        self._favorite_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._favorite_btn.setFixedSize(28, 28)
+        self._favorite_btn.clicked.connect(self._on_favorite_clicked)
+        self._preview_btn.raise_()
+        self._favorite_btn.raise_()
         self._update_stylesheet()
         qconfig.themeChanged.connect(self._update_stylesheet)
 
@@ -754,10 +827,16 @@ class CostumeItem(QPushButton):
         checked_bg = accent_color(dark)
         checked_fg = "#1a1a1a" if dark else "white"
         text_color = "#e0e0e0" if dark else "#333333"
+        tool_bg = "#262626" if dark else "#ffffff"
+        tool_border = "#4a4a4a" if dark else "#d9dde7"
+        tool_hover = BANDORI_PRIMARY_SOFT_DARK_HOVER if dark else BANDORI_PRIMARY_SOFT_HOVER
+        favorite_icon = accent_color(dark) if self._favorite else ("#9aa5bd" if dark else "#7b8494")
+        self._preview_btn.setIcon(FluentIcon.VIEW.icon(color=QColor(text_color)))
+        self._favorite_btn.setIcon(FluentIcon.HEART.icon(color=QColor(favorite_icon)))
         self.setStyleSheet(f"""
             QPushButton {{
                 text-align: left;
-                padding: 8px 16px;
+                padding: 8px 84px 8px 16px;
                 border: 1px solid {border};
                 border-radius: 6px;
                 background: {bg};
@@ -773,27 +852,51 @@ class CostumeItem(QPushButton):
                 color: {checked_fg};
                 border-color: {hover_border};
             }}
+            QToolButton {{
+                background: {tool_bg};
+                border: 1px solid {tool_border};
+                border-radius: 14px;
+            }}
+            QToolButton:hover {{
+                background: {tool_hover};
+                border-color: {hover_border};
+            }}
         """)
 
     @property
     def costume_id(self):
         return self._costume_id
 
+    @property
+    def display_name(self):
+        return self._display_name
+
+    def _on_favorite_clicked(self, checked: bool):
+        self._favorite = bool(checked)
+        self._update_stylesheet()
+        self.favorite_toggled.emit(self._costume_id, self._favorite)
+
     def enterEvent(self, event):
-        self._maybe_request_preview()
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.preview_requested.emit(self, self._costume_id)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.preview_cancelled.emit()
+        self.preview_cancelled.emit(self._costume_id)
         super().leaveEvent(event)
 
     def keyPressEvent(self, event):
-        self._maybe_request_preview()
+        if event.key() == Qt.Key.Key_Shift:
+            self.preview_requested.emit(self, self._costume_id)
         super().keyPressEvent(event)
 
-    def _maybe_request_preview(self):
-        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
-            self.preview_requested.emit(self, self._costume_id)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        y = (self.height() - self._preview_btn.height()) // 2
+        self._favorite_btn.move(self.width() - self._favorite_btn.width() - 10, y)
+        self._preview_btn.move(self._favorite_btn.x() - self._preview_btn.width() - 8, y)
+        self._preview_btn.raise_()
+        self._favorite_btn.raise_()
 
 
 class Live2DPreviewBubble(QWidget):
@@ -836,16 +939,7 @@ class Live2DPreviewBubble(QWidget):
     def set_render_quality(self, profile: str):
         self._live2d_widget.set_render_quality(profile)
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        dark = isDarkTheme()
-        bg = QColor(32, 32, 32, 255) if dark else QColor(255, 255, 255, 255)
-        border = QColor(BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY)
-        border.setAlpha(190 if dark else 165)
-        shadow = QColor(0, 0, 0, 65) if dark else QColor(0, 0, 0, 38)
-
+    def _bubble_path(self) -> QPainterPath:
         rect = self.rect().adjusted(18, 2, -2, -2)
         tail_y = max(70, min(self.height() - 70, 150))
 
@@ -856,7 +950,22 @@ class Live2DPreviewBubble(QWidget):
         tail.lineTo(2, tail_y)
         tail.lineTo(19, tail_y + 18)
         tail.closeSubpath()
-        path = path.united(tail)
+        return path.united(tail)
+
+    def _update_window_mask(self):
+        self.setMask(QRegion(self._bubble_path().toFillPolygon().toPolygon()))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        dark = isDarkTheme()
+        bg = QColor(32, 32, 32, 255) if dark else QColor(255, 255, 255, 255)
+        border = QColor(BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY)
+        border.setAlpha(190 if dark else 165)
+        shadow = QColor(0, 0, 0, 65) if dark else QColor(0, 0, 0, 38)
+
+        path = self._bubble_path()
 
         shadow_path = QPainterPath(path)
         shadow_path.translate(0, 3)
@@ -882,9 +991,17 @@ class Live2DPreviewBubble(QWidget):
             y = min(max(pos.y(), geo.top()), geo.bottom() - self.height())
             pos = QPoint(x, y)
         self.move(pos)
+        self._update_window_mask()
         if not self.isVisible():
             self.show()
         self.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_window_mask()
+
+    def is_showing(self, model_path: str) -> bool:
+        return self.isVisible() and model_path == self._current_model_path
 
 
 class NavButton(QPushButton):
@@ -1037,9 +1154,15 @@ class SettingsWindow(QWidget):
         self._opacity = current_opacity
         self._cfg = config_manager
         self._costume_buttons: list[CostumeItem] = []
-        self._selection_cards: list[CardWidget] = []
+        self._selection_cards: list[QWidget] = []
         self._selected_costume = ""
         self._configured_models = self._load_configured_models()
+        self._picker_state = self._load_model_picker_state()
+        self._character_search_text = ""
+        self._character_filter = MODEL_PICKER_FILTER_ALL
+        self._costume_search_text = ""
+        self._costume_filter = MODEL_PICKER_FILTER_ALL
+        self._costume_empty_label = None
         self._selected_list_character = ""
         self._editing_list_character = ""
         self._editing_model_index = None
@@ -1052,6 +1175,9 @@ class SettingsWindow(QWidget):
             self._current_costume = self._configured_models[0]["costume"]
         self._selected_band = model_manager.get_character_band(self._current_char)
         self._preview_bubble = None
+        self._preview_pinned_key = ""
+        self._preview_pinned_anchor = None
+        self._preview_hover_key = ""
         self._owns_live2d = False
         self._live2d_error_shown = False
         self._show_launch = show_launch
@@ -1183,6 +1309,122 @@ class SettingsWindow(QWidget):
                 })
         return result
 
+    def _load_model_picker_state(self) -> dict:
+        raw = self._cfg.get(MODEL_PICKER_STATE_KEY, {}) if self._cfg else {}
+        if not isinstance(raw, dict):
+            raw = {}
+        valid_chars = set(self._model_manager.characters)
+        state = {
+            "recent_characters": self._clean_character_list(raw.get("recent_characters", []), valid_chars),
+            "favorite_characters": self._clean_character_list(raw.get("favorite_characters", []), valid_chars),
+            "recent_costumes": self._clean_costume_key_list(raw.get("recent_costumes", [])),
+            "favorite_costumes": self._clean_costume_key_list(raw.get("favorite_costumes", [])),
+        }
+        state["recent_characters"] = state["recent_characters"][:MODEL_PICKER_RECENT_LIMIT]
+        state["recent_costumes"] = state["recent_costumes"][:MODEL_PICKER_RECENT_LIMIT]
+        return state
+
+    @staticmethod
+    def _clean_character_list(value, valid_chars: set[str]) -> list[str]:
+        result = []
+        seen = set()
+        if not isinstance(value, list):
+            return result
+        for item in value:
+            key = str(item or "").strip()
+            if key and key in valid_chars and key not in seen:
+                result.append(key)
+                seen.add(key)
+        return result
+
+    def _clean_costume_key_list(self, value) -> list[str]:
+        result = []
+        seen = set()
+        if not isinstance(value, list):
+            return result
+        for item in value:
+            key = str(item or "").strip()
+            if key and key not in seen and self._costume_key_exists(key):
+                result.append(key)
+                seen.add(key)
+        return result
+
+    def _costume_key_exists(self, key: str) -> bool:
+        character, costume = self._split_costume_key(key)
+        return bool(character and costume and self._model_manager.get_model_json_path(character, costume))
+
+    @staticmethod
+    def _costume_key(character: str, costume: str) -> str:
+        return f"{character}:{costume}"
+
+    @staticmethod
+    def _split_costume_key(key: str) -> tuple[str, str]:
+        if ":" not in key:
+            return "", ""
+        character, costume = key.split(":", 1)
+        return character, costume
+
+    def _save_model_picker_state(self):
+        if not self._cfg:
+            return
+        self._cfg.set(MODEL_PICKER_STATE_KEY, {
+            "recent_characters": list(self._picker_state.get("recent_characters", [])),
+            "favorite_characters": list(self._picker_state.get("favorite_characters", [])),
+            "recent_costumes": list(self._picker_state.get("recent_costumes", [])),
+            "favorite_costumes": list(self._picker_state.get("favorite_costumes", [])),
+        })
+        self._cfg.save()
+
+    def _remember_character(self, character: str):
+        if not character:
+            return
+        recent = [item for item in self._picker_state.get("recent_characters", []) if item != character]
+        recent.insert(0, character)
+        self._picker_state["recent_characters"] = recent[:MODEL_PICKER_RECENT_LIMIT]
+        self._save_model_picker_state()
+
+    def _remember_costume(self, character: str, costume: str):
+        if not character or not costume:
+            return
+        key = self._costume_key(character, costume)
+        recent = [item for item in self._picker_state.get("recent_costumes", []) if item != key]
+        recent.insert(0, key)
+        self._picker_state["recent_costumes"] = recent[:MODEL_PICKER_RECENT_LIMIT]
+        self._save_model_picker_state()
+
+    def _is_favorite_character(self, character: str) -> bool:
+        return character in self._picker_state.get("favorite_characters", [])
+
+    def _is_favorite_costume(self, character: str, costume: str) -> bool:
+        return self._costume_key(character, costume) in self._picker_state.get("favorite_costumes", [])
+
+    def _set_character_favorite(self, character: str, favorite: bool):
+        favorites = [item for item in self._picker_state.get("favorite_characters", []) if item != character]
+        if favorite and character:
+            favorites.insert(0, character)
+        self._picker_state["favorite_characters"] = favorites
+        self._save_model_picker_state()
+        self._refresh_visible_character_favorites(character, favorite)
+
+    def _set_costume_favorite(self, costume: str, favorite: bool):
+        if not self._current_char or not costume:
+            return
+        key = self._costume_key(self._current_char, costume)
+        favorites = [item for item in self._picker_state.get("favorite_costumes", []) if item != key]
+        if favorite:
+            favorites.insert(0, key)
+        self._picker_state["favorite_costumes"] = favorites
+        self._save_model_picker_state()
+        if self._costume_filter == MODEL_PICKER_FILTER_FAVORITES:
+            self._populate_costumes(self._current_char)
+
+    def _refresh_visible_character_favorites(self, character: str, favorite: bool):
+        for card in self._selection_cards:
+            if isinstance(card, CharacterCard) and getattr(card, "_char_key", "") == character:
+                card.set_favorite(favorite)
+        if self._character_filter == MODEL_PICKER_FILTER_FAVORITES:
+            self._refresh_character_selection_view()
+
     def _restore_model_action_profile(self, entry: dict, prefer_existing: bool = False):
         if not self._cfg or not hasattr(self._cfg, "get_model_action_profile"):
             return
@@ -1266,7 +1508,7 @@ class SettingsWindow(QWidget):
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift:
-            self._hide_costume_preview()
+            self._hide_hover_costume_preview()
         elif event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Shift:
             widget = QApplication.widgetAt(QCursor.pos())
             while widget is not None:
@@ -1659,6 +1901,26 @@ class SettingsWindow(QWidget):
         self._selection_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._selection_subtitle)
 
+        self._character_tools_widget = QWidget(page)
+        character_tools = QHBoxLayout(self._character_tools_widget)
+        character_tools.setContentsMargins(0, 0, 0, 0)
+        character_tools.setSpacing(8)
+        self._character_search = LineEdit(self._character_tools_widget)
+        self._character_search.setClearButtonEnabled(True)
+        self._character_search.setPlaceholderText(_tr("SettingsWindow.character_search_placeholder"))
+        self._character_search.setFixedHeight(36)
+        self._character_search.textChanged.connect(self._on_character_search_changed)
+        character_tools.addWidget(self._character_search, 1)
+        self._character_filter_combo = OpaqueDropDownComboBox(self._character_tools_widget)
+        self._character_filter_combo.setFixedHeight(36)
+        self._character_filter_combo.setMinimumWidth(140)
+        self._character_filter_combo.addItem(_tr("SettingsWindow.filter_all"), userData=MODEL_PICKER_FILTER_ALL)
+        self._character_filter_combo.addItem(_tr("SettingsWindow.filter_recent"), userData=MODEL_PICKER_FILTER_RECENT)
+        self._character_filter_combo.addItem(_tr("SettingsWindow.filter_favorites"), userData=MODEL_PICKER_FILTER_FAVORITES)
+        self._character_filter_combo.currentIndexChanged.connect(self._on_character_filter_changed)
+        character_tools.addWidget(self._character_filter_combo)
+        layout.addWidget(self._character_tools_widget)
+
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -1917,6 +2179,7 @@ class SettingsWindow(QWidget):
             self._enter_model_selection()
             return
         self._selecting_model = False
+        self._set_character_tools_visible(False)
         self._clear_selection_cards()
         self._selection_scroll.hide()
         self._selection_grid_widget.hide()
@@ -2563,6 +2826,7 @@ class SettingsWindow(QWidget):
 
     def _enter_model_selection(self):
         self._selecting_model = True
+        self._set_character_tools_visible(True)
         self._model_detail_widget.hide()
         self._selection_scroll.show()
         self._selection_grid_widget.show()
@@ -2592,7 +2856,136 @@ class SettingsWindow(QWidget):
             card.deleteLater()
         self._selection_cards.clear()
 
+    def _set_character_tools_visible(self, visible: bool):
+        widget = getattr(self, "_character_tools_widget", None)
+        if widget is not None:
+            widget.setVisible(visible)
+
+    def _on_character_search_changed(self, text: str):
+        self._character_search_text = str(text or "").strip().lower()
+        self._refresh_character_selection_view()
+
+    def _on_character_filter_changed(self, index: int):
+        self._character_filter = self._character_filter_combo.itemData(index) or MODEL_PICKER_FILTER_ALL
+        self._refresh_character_selection_view()
+
+    def _refresh_character_selection_view(self):
+        if not self._selecting_model or self._current_page != "characters":
+            return
+        if self._selected_band:
+            self._populate_characters(self._selected_band)
+        else:
+            self._populate_bands()
+
+    def _character_search_active(self) -> bool:
+        return bool(self._character_search_text or self._character_filter != MODEL_PICKER_FILTER_ALL)
+
+    def _character_matches_filter(self, character: str) -> bool:
+        if self._character_filter == MODEL_PICKER_FILTER_RECENT:
+            return character in self._picker_state.get("recent_characters", [])
+        if self._character_filter == MODEL_PICKER_FILTER_FAVORITES:
+            return self._is_favorite_character(character)
+        return True
+
+    def _character_matches_search(self, character: str) -> bool:
+        text = self._character_search_text
+        if not text:
+            return True
+        display = self._model_manager.get_display_name(character)
+        band_id = self._model_manager.get_character_band(character)
+        band = self._model_manager.get_band_display_name(band_id) if band_id else ""
+        haystack = " ".join([character, display, band]).lower()
+        return text in haystack
+
+    def _filtered_characters(self, characters: list[str]) -> list[str]:
+        result = [
+            character for character in characters
+            if self._character_matches_filter(character) and self._character_matches_search(character)
+        ]
+        if self._character_filter == MODEL_PICKER_FILTER_RECENT:
+            order = {character: idx for idx, character in enumerate(self._picker_state.get("recent_characters", []))}
+            result.sort(key=lambda character: order.get(character, 9999))
+        elif self._character_filter == MODEL_PICKER_FILTER_FAVORITES:
+            order = {character: idx for idx, character in enumerate(self._picker_state.get("favorite_characters", []))}
+            result.sort(key=lambda character: order.get(character, 9999))
+        return result
+
+    def _add_empty_selection_message(self, text: str):
+        label = _wrap_label(BodyLabel(text, self._selection_grid_widget))
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet(f"color: {'#a7b0bf' if isDarkTheme() else '#687385'};")
+        self._char_grid.addWidget(label, 0, 0, 1, 3)
+        self._selection_cards.append(label)
+
+    def _add_character_cards(self, characters: list[str]):
+        configured_characters = {
+            item["character"] for item in self._configured_models
+            if item.get("character") != self._selected_list_character
+        }
+
+        col = 0
+        row = 0
+        cols_per_row = 3
+        card_idx = 0
+        for char_key in characters:
+            costumes = self._model_manager.get_costumes(char_key)
+            if not costumes:
+                continue
+            display = self._model_manager.get_display_name(char_key)
+            image_path = self._model_manager.get_character_image_path(char_key)
+            image_data = self._model_manager.get_character_image_data(char_key)
+            card = CharacterCard(
+                char_key, display, len(costumes), image_path,
+                "green" if self._model_manager.has_advanced_roleplay(char_key) else "red",
+                self._selection_grid_widget,
+                image_data=image_data,
+                favorite=self._is_favorite_character(char_key),
+            )
+            card.set_disabled_for_existing(char_key in configured_characters)
+            card.char_selected.connect(self._on_char_selected)
+            card.favorite_toggled.connect(self._set_character_favorite)
+            card.animate_in(delay_ms=card_idx * 50)
+            self._char_grid.addWidget(card, row, col)
+            self._selection_cards.append(card)
+            col += 1
+            card_idx += 1
+            if col >= cols_per_row:
+                col = 0
+                row += 1
+
+    def _populate_character_results(self, band_id: str = ""):
+        self._set_character_tools_visible(True)
+        self._clear_selection_cards()
+        self._model_detail_widget.hide()
+        self._selection_grid_widget.show()
+        self._selection_scroll.show()
+        self._selected_band = band_id
+        self._selection_back_btn.setVisible(bool(band_id))
+        source_characters = (
+            self._model_manager.get_band_characters(band_id)
+            if band_id else list(self._model_manager.characters)
+        )
+        characters = self._filtered_characters(source_characters)
+        self._selection_title.setText(_tr("SettingsWindow.char_title"))
+        if band_id:
+            band_display = self._model_manager.get_band_display_name(band_id)
+            self._selection_subtitle.setText(_tr("SettingsWindow.char_subtitle_with_band", band=band_display))
+        else:
+            self._selection_subtitle.setText(_tr(
+                "SettingsWindow.character_search_subtitle",
+                count=len(characters),
+                total=len(source_characters),
+            ))
+        if characters:
+            self._add_character_cards(characters)
+        else:
+            self._add_empty_selection_message(_tr("SettingsWindow.no_character_results"))
+
     def _populate_bands(self):
+        if self._character_search_active():
+            self._populate_character_results("")
+            return
+        self._set_character_tools_visible(True)
         self._clear_selection_cards()
         self._model_detail_widget.hide()
         self._selection_grid_widget.show()
@@ -2627,40 +3020,7 @@ class SettingsWindow(QWidget):
                 row += 1
 
     def _populate_characters(self, band_id: str):
-        self._clear_selection_cards()
-        self._selected_band = band_id
-        self._selection_back_btn.show()
-        band_display = self._model_manager.get_band_display_name(band_id)
-        self._selection_title.setText(_tr("SettingsWindow.char_title"))
-        self._selection_subtitle.setText(_tr("SettingsWindow.char_subtitle_with_band", band=band_display))
-        configured_characters = {
-            item["character"] for item in self._configured_models
-            if item.get("character") != self._selected_list_character
-        }
-
-        col = 0
-        row = 0
-        card_idx = 0
-        for char_key in self._model_manager.get_band_characters(band_id):
-            costumes = self._model_manager.get_costumes(char_key)
-            if not costumes:
-                continue
-            display = self._model_manager.get_display_name(char_key)
-            image_path = self._model_manager.get_character_image_path(char_key)
-            image_data = self._model_manager.get_character_image_data(char_key)
-            card = CharacterCard(
-                char_key, display, len(costumes), image_path,
-                "green" if self._model_manager.has_advanced_roleplay(char_key) else "red",
-                self._selection_grid_widget,
-                image_data=image_data,
-            )
-            card.set_disabled_for_existing(char_key in configured_characters)
-            card.char_selected.connect(self._on_char_selected)
-            card.animate_in(delay_ms=card_idx * 80)
-            self._char_grid.addWidget(card, row, col)
-            self._selection_cards.append(card)
-            col += 1
-            card_idx += 1
+        self._populate_character_results(band_id)
 
     def _build_costume_page(self):
         page = self._make_theme_widget(QWidget())
@@ -2684,6 +3044,25 @@ class SettingsWindow(QWidget):
         self._costume_preview_hint = BodyLabel(_tr("SettingsWindow.costume_preview_hint"), page)
         self._costume_preview_hint.setWordWrap(True)
         layout.addWidget(self._costume_preview_hint)
+
+        costume_tools = QHBoxLayout()
+        costume_tools.setContentsMargins(0, 0, 0, 0)
+        costume_tools.setSpacing(8)
+        self._costume_search = LineEdit(page)
+        self._costume_search.setClearButtonEnabled(True)
+        self._costume_search.setPlaceholderText(_tr("SettingsWindow.costume_search_placeholder"))
+        self._costume_search.setFixedHeight(36)
+        self._costume_search.textChanged.connect(self._on_costume_search_changed)
+        costume_tools.addWidget(self._costume_search, 1)
+        self._costume_filter_combo = OpaqueDropDownComboBox(page)
+        self._costume_filter_combo.setFixedHeight(36)
+        self._costume_filter_combo.setMinimumWidth(140)
+        self._costume_filter_combo.addItem(_tr("SettingsWindow.filter_all"), userData=MODEL_PICKER_FILTER_ALL)
+        self._costume_filter_combo.addItem(_tr("SettingsWindow.filter_recent"), userData=MODEL_PICKER_FILTER_RECENT)
+        self._costume_filter_combo.addItem(_tr("SettingsWindow.filter_favorites"), userData=MODEL_PICKER_FILTER_FAVORITES)
+        self._costume_filter_combo.currentIndexChanged.connect(self._on_costume_filter_changed)
+        costume_tools.addWidget(self._costume_filter_combo)
+        layout.addLayout(costume_tools)
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
@@ -6795,6 +7174,8 @@ class SettingsWindow(QWidget):
                 self._current_costume = item["costume"]
                 self._selected_costume = item["costume"]
                 self._selected_band = self._model_manager.get_character_band(character)
+                self._remember_character(character)
+                self._remember_costume(character, item["costume"])
                 self._refresh_model_list()
                 self._show_model_detail()
                 return
@@ -6935,6 +7316,7 @@ class SettingsWindow(QWidget):
     def _on_char_selected(self, char_key: str):
         self._selecting_model = True
         self._current_char = char_key
+        self._remember_character(char_key)
         self._selected_band = self._model_manager.get_character_band(char_key)
         self._populate_costumes(char_key)
         display = self._model_manager.get_display_name(char_key)
@@ -6949,23 +7331,83 @@ class SettingsWindow(QWidget):
     def _on_band_selected(self, band_id: str):
         self._populate_characters(band_id)
 
+    def _on_costume_search_changed(self, text: str):
+        self._costume_search_text = str(text or "").strip().lower()
+        if self._current_char:
+            self._populate_costumes(self._current_char)
+
+    def _on_costume_filter_changed(self, index: int):
+        self._costume_filter = self._costume_filter_combo.itemData(index) or MODEL_PICKER_FILTER_ALL
+        if self._current_char:
+            self._populate_costumes(self._current_char)
+
+    def _costume_matches_filter(self, char_key: str, costume_id: str) -> bool:
+        key = self._costume_key(char_key, costume_id)
+        if self._costume_filter == MODEL_PICKER_FILTER_RECENT:
+            return key in self._picker_state.get("recent_costumes", [])
+        if self._costume_filter == MODEL_PICKER_FILTER_FAVORITES:
+            return key in self._picker_state.get("favorite_costumes", [])
+        return True
+
+    def _costume_matches_search(self, char_key: str, costume_id: str, display_name: str) -> bool:
+        text = self._costume_search_text
+        if not text:
+            return True
+        return text in " ".join([costume_id, display_name]).lower()
+
+    def _filtered_costumes(self, char_key: str, costumes: list[dict]) -> list[dict]:
+        result = []
+        for costume in costumes:
+            cid = costume.get("id", "")
+            cname = self._model_manager.get_costume_display_name(char_key, cid)
+            if self._costume_matches_filter(char_key, cid) and self._costume_matches_search(char_key, cid, cname):
+                item = dict(costume)
+                item["_display_name"] = cname
+                result.append(item)
+        if self._costume_filter == MODEL_PICKER_FILTER_RECENT:
+            order = {key: idx for idx, key in enumerate(self._picker_state.get("recent_costumes", []))}
+            result.sort(key=lambda item: order.get(self._costume_key(char_key, item.get("id", "")), 9999))
+        elif self._costume_filter == MODEL_PICKER_FILTER_FAVORITES:
+            order = {key: idx for idx, key in enumerate(self._picker_state.get("favorite_costumes", []))}
+            result.sort(key=lambda item: order.get(self._costume_key(char_key, item.get("id", "")), 9999))
+        return result
+
     def _populate_costumes(self, char_key: str):
+        self._hide_costume_preview()
         for btn in self._costume_buttons:
             self._costume_list.removeWidget(btn)
             btn.deleteLater()
         self._costume_buttons.clear()
+        if self._costume_empty_label is not None:
+            self._costume_list.removeWidget(self._costume_empty_label)
+            self._costume_empty_label.deleteLater()
+            self._costume_empty_label = None
 
-        costumes = self._model_manager.get_costumes(char_key)
+        costumes = self._filtered_costumes(char_key, self._model_manager.get_costumes(char_key))
         for idx, costume in enumerate(costumes):
             cid = costume["id"]
-            cname = self._model_manager.get_costume_display_name(char_key, cid)
-            btn = CostumeItem(cid, cname, self._costume_list_widget)
+            cname = costume.get("_display_name") or self._model_manager.get_costume_display_name(char_key, cid)
+            btn = CostumeItem(
+                cid,
+                cname,
+                self._costume_list_widget,
+                favorite=self._is_favorite_costume(char_key, cid),
+            )
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
             btn.preview_requested.connect(self._show_costume_preview)
-            btn.preview_cancelled.connect(self._hide_costume_preview)
+            btn.preview_toggled.connect(self._toggle_costume_preview)
+            btn.preview_cancelled.connect(self._hide_hover_costume_preview)
+            btn.favorite_toggled.connect(self._set_costume_favorite)
             btn.animate_in(delay_ms=idx * 40)
             self._costume_buttons.append(btn)
             self._costume_list.insertWidget(self._costume_list.count() - 1, btn)
+
+        if not self._costume_buttons:
+            self._costume_empty_label = _wrap_label(BodyLabel(_tr("SettingsWindow.no_costume_results"), self._costume_list_widget))
+            self._costume_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._costume_empty_label.setStyleSheet(f"color: {'#a7b0bf' if isDarkTheme() else '#687385'};")
+            self._costume_list.insertWidget(self._costume_list.count() - 1, self._costume_empty_label)
+            return
 
         if self._costume_buttons:
             default_id = next(
@@ -6984,25 +7426,63 @@ class SettingsWindow(QWidget):
         btn.setChecked(True)
         self._selected_costume = costume_id
         self._current_costume = costume_id
+        self._remember_costume(self._current_char, costume_id)
         self._upsert_configured_model(self._current_char, costume_id)
         self._selecting_model = False
+        self._hide_costume_preview()
         self._costume_page.hide()
         self._char_page.show()
         self._show_model_detail()
 
-    def _show_costume_preview(self, anchor: QWidget, costume_id: str):
+    def _costume_preview_key(self, costume_id: str) -> str:
+        return self._costume_key(self._current_char, costume_id)
+
+    def _show_costume_preview(self, anchor: QWidget, costume_id: str, pinned: bool = False):
         live2d_module = self._ensure_live2d_preview_module()
         if not live2d_module:
             return
         model_path = self._model_manager.get_model_json_path(self._current_char, costume_id)
         if not model_path:
             return
+        key = self._costume_preview_key(costume_id)
+        if pinned:
+            self._preview_pinned_key = key
+            self._preview_pinned_anchor = anchor
+        else:
+            self._preview_hover_key = key
         if self._preview_bubble is None:
             self._preview_bubble = Live2DPreviewBubble(live2d_module, self._live2d_quality, self)
         self._preview_bubble.set_render_quality(self._live2d_quality)
         self._preview_bubble.show_preview(model_path, anchor)
 
+    def _toggle_costume_preview(self, anchor: QWidget, costume_id: str):
+        model_path = self._model_manager.get_model_json_path(self._current_char, costume_id)
+        key = self._costume_preview_key(costume_id)
+        if (
+            self._preview_bubble is not None
+            and self._preview_bubble.is_showing(model_path)
+            and self._preview_pinned_key == key
+        ):
+            self._hide_costume_preview()
+            return
+        self._show_costume_preview(anchor, costume_id, pinned=True)
+
+    def _hide_hover_costume_preview(self, costume_id: str = ""):
+        key = self._costume_preview_key(costume_id) if costume_id else self._preview_hover_key
+        if key and self._preview_hover_key and key != self._preview_hover_key:
+            return
+        self._preview_hover_key = ""
+        if self._preview_pinned_key and self._preview_pinned_anchor is not None:
+            _, pinned_costume = self._split_costume_key(self._preview_pinned_key)
+            if pinned_costume:
+                self._show_costume_preview(self._preview_pinned_anchor, pinned_costume, pinned=True)
+            return
+        self._hide_costume_preview()
+
     def _hide_costume_preview(self):
+        self._preview_pinned_key = ""
+        self._preview_pinned_anchor = None
+        self._preview_hover_key = ""
         if self._preview_bubble is not None:
             self._preview_bubble.hide()
 
