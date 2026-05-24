@@ -2806,12 +2806,7 @@ class ChatWindow(QWidget):
         menu.adjustSize()
 
     def _conversation_title(self, conv: dict) -> str:
-        messages = self._db.get_messages(conv["id"])
-        preview = ""
-        for msg in messages:
-            if msg["role"] == "user" and msg["content"].strip():
-                preview = msg["content"].strip().replace("\n", " ")
-                break
+        preview = self._db.get_first_user_message_content(conv["id"]).replace("\n", " ")
         if not preview:
             preview = conv.get("title") or _tr("ChatWindow.empty_conv")
         if len(preview) > 28:
@@ -3967,17 +3962,21 @@ class ChatWindow(QWidget):
                 system_prompt += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         if self._is_group_chat:
-            history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
             max_history = 20
-            for m in history[-(max_history * 2):]:
+            history = self._db.get_group_messages(
+                self._conversation_key,
+                self._group_conv_id,
+                limit=max_history * 2,
+            ) if self._group_conv_id else []
+            for m in history:
                 messages.append({
                     "role": m["role"],
                     "content": self._chat_message_content(m["content"], m.get("attachments_json")),
                 })
         elif self._conv_id:
-            history = self._db.get_messages(self._conv_id)
             max_history = 20
-            for m in history[-(max_history * 2):]:
+            history = self._db.get_messages(self._conv_id, limit=max_history * 2)
+            for m in history:
                 messages.append({
                     "role": m["role"],
                     "content": self._chat_message_content(m["content"], m.get("attachments_json")),
@@ -4196,8 +4195,12 @@ class ChatWindow(QWidget):
             for character in self._group_characters
         ]
         recent = []
-        history = self._db.get_group_messages(self._conversation_key, self._group_conv_id) if self._group_conv_id else []
-        for m in history[-12:]:
+        history = self._db.get_group_messages(
+            self._conversation_key,
+            self._group_conv_id,
+            limit=12,
+        ) if self._group_conv_id else []
+        for m in history:
             recent.append({"role": m["role"], "content": m["content"]})
         planner_prompt = (
             "你是群聊发言调度器。根据用户最新发言、成员关系和最近上下文，决定接下来哪些角色发言以及发言条数。"

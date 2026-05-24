@@ -463,6 +463,7 @@ class DatabaseManager:
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
@@ -832,18 +833,36 @@ class DatabaseManager:
         self._conn.commit()
         return cur.lastrowid
 
-    def get_messages(self, conversation_id: int) -> list[dict]:
+    def get_messages(self, conversation_id: int, limit: int | None = None) -> list[dict]:
+        params: tuple = (conversation_id,)
+        order = "ASC"
+        limit_sql = ""
+        if limit is not None:
+            limit = _clamp_int(limit, 1, 1000, 1000)
+            params = (conversation_id, limit)
+            order = "DESC"
+            limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
-            "WHERE conversation_id=? ORDER BY id ASC",
-            (conversation_id,)
+            f"WHERE conversation_id=? ORDER BY id {order}{limit_sql}",
+            params,
         ).fetchall()
+        if limit is not None:
+            rows.reverse()
         result = []
         for r in rows:
             message = _message_row_dict(r)
             if message is not None:
                 result.append(message)
         return result
+
+    def get_first_user_message_content(self, conversation_id: int) -> str:
+        row = self._conn.execute(
+            "SELECT content FROM messages WHERE conversation_id=? AND role='user' AND content != '' "
+            "ORDER BY id ASC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        return _db_text(row[0]).strip() if row else ""
 
     def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -857,13 +876,23 @@ class DatabaseManager:
         self._conn.commit()
         return cur.lastrowid
 
-    def get_group_messages(self, group_key: str, conversation_id: str) -> list[dict]:
+    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None) -> list[dict]:
         conversation_id = conversation_id or "default"
+        params: tuple = (group_key, conversation_id, conversation_id)
+        order = "ASC"
+        limit_sql = ""
+        if limit is not None:
+            limit = _clamp_int(limit, 1, 1000, 1000)
+            params = (group_key, conversation_id, conversation_id, limit)
+            order = "DESC"
+            limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
-            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id ASC",
-            (group_key, conversation_id, conversation_id)
+            f"WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id {order}{limit_sql}",
+            params,
         ).fetchall()
+        if limit is not None:
+            rows.reverse()
         result = []
         for r in rows:
             message = _message_row_dict(r, grouped=True)
