@@ -7,11 +7,6 @@ except ModuleNotFoundError:
     from lupa.lua import LuaRuntime
 
 
-_LUA = LuaRuntime(unpack_returned_tuples=True)
-
-if _LUA.eval("jit == nil"):
-    raise RuntimeError("LuaJIT is required for custom hit area handling")
-
 _LUA_BASENAME = "custom_hit_area_state"
 
 
@@ -25,17 +20,31 @@ def _lua_source_path() -> Path:
     return Path(__file__).resolve().with_name(f"{_LUA_BASENAME}.lua")
 
 
-def _load_lua_chunk(path: Path):
+def _new_lua_runtime():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    if lua.eval("jit == nil"):
+        raise RuntimeError("LuaJIT is required for custom hit area handling")
+    return lua
+
+
+def _load_lua_chunk(lua: LuaRuntime, path: Path):
     # Let Python open the file so frozen apps still work from non-ASCII paths on Windows.
-    return _LUA.execute(path.read_bytes())
-
-
-_NEW_CUSTOM_HIT_AREA_STATE = _load_lua_chunk(_lua_source_path())
+    return lua.execute(path.read_bytes())
 
 
 class LuaCustomHitAreaState:
     def __init__(self):
-        self._state = _NEW_CUSTOM_HIT_AREA_STATE()
+        self._lua = _new_lua_runtime()
+        self._new_state = _load_lua_chunk(self._lua, _lua_source_path())
+        self._state = self._new_state()
+
+    def dispose(self):
+        self._state = None
+        self._new_state = None
+        self._lua = None
+
+    def __del__(self):
+        self.dispose()
 
     def clear(self):
         self._state.clear(self._state)
@@ -46,15 +55,15 @@ class LuaCustomHitAreaState:
     def set_scene_areas(self, scene_areas):
         self._state.set_scene_areas(
             self._state,
-            _LUA.table_from(self._lua_scene_area(area) for area in scene_areas)
+            self._lua.table_from(self._lua_scene_area(area) for area in scene_areas)
         )
 
     def _lua_scene_area(self, area):
         if len(area) == 5:
             name, min_x, max_x, min_y, max_y = area
-            return _LUA.table_from((str(name), float(min_x), float(max_x), float(min_y), float(max_y)))
+            return self._lua.table_from((str(name), float(min_x), float(max_x), float(min_y), float(max_y)))
         min_x, max_x, min_y, max_y = area
-        return _LUA.table_from(("", float(min_x), float(max_x), float(min_y), float(max_y)))
+        return self._lua.table_from(("", float(min_x), float(max_x), float(min_y), float(max_y)))
 
     def has_scene_areas(self) -> bool:
         return bool(self._state.has_scene_areas(self._state))

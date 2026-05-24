@@ -129,6 +129,8 @@ DEFAULTS = {
     "live2d_idle_actions_enabled": True,
     "live2d_quality": "balanced",
     "live2d_scale": 0,
+    "live2d_hit_alpha_threshold": 8,
+    "live2d_lip_sync_max_open": 0.55,
     "auto_start": False,
     "drag_locked": False,
     "pet_mode": "live2d",

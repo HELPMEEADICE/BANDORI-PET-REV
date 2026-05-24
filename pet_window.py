@@ -25,7 +25,7 @@ from live2d_click_actions import (
     normalize_click_motion_actions,
 )
 from live2d_quality import LIVE2D_SCALE_MAX, LIVE2D_SCALE_MIN, clamp_live2d_scale, normalize_live2d_quality
-from live2d_widget import Live2DWidget
+from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 
@@ -188,6 +188,22 @@ def _clamp_live2d_scale(value: object) -> int:
     return clamp_live2d_scale(value)
 
 
+def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
+def _clamp_float(value: object, minimum: float, maximum: float, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
 _PIXEL_PET_WIDGET_CLASS = None
 _PIXEL_FRAME_LOADER = None
 _PIXEL_PATH_RESOLVER = None
@@ -238,6 +254,8 @@ class PetWindow(QWidget):
         )
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
+        self._live2d_hit_alpha_threshold = DEFAULT_HIT_ALPHA_THRESHOLD
+        self._live2d_lip_sync_max_open = DEFAULT_LIP_SYNC_MAX_OPEN
         self._tray_icon = None
         self._tray_menu = None
         self._tray_actions = []
@@ -248,6 +266,18 @@ class PetWindow(QWidget):
                 self._cfg.get("live2d_quality", "balanced")
             )
             self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
+            self._live2d_hit_alpha_threshold = _clamp_int(
+                self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
+                0,
+                255,
+                DEFAULT_HIT_ALPHA_THRESHOLD,
+            )
+            self._live2d_lip_sync_max_open = _clamp_float(
+                self._cfg.get("live2d_lip_sync_max_open", DEFAULT_LIP_SYNC_MAX_OPEN),
+                0.0,
+                1.0,
+                DEFAULT_LIP_SYNC_MAX_OPEN,
+            )
         self._radial_menu_process = None
         self._radial_menu_buffer = ""
         self._radial_menu_socket = QLocalSocket(self)
@@ -361,6 +391,8 @@ class PetWindow(QWidget):
         self._live2d_widget.set_right_click_callback(self._on_right_click)
         self._live2d_widget.set_fps(self._fps)
         self._live2d_widget.set_render_quality(self._live2d_quality)
+        self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
+        self._live2d_widget.set_lip_sync_max_open(self._live2d_lip_sync_max_open)
         self._live2d_widget.model_loaded.connect(self._on_live2d_model_loaded)
         self._stack.addWidget(self._live2d_widget)
 
@@ -668,6 +700,7 @@ class PetWindow(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        self._live2d_widget.dispose()
         self._close_radial_menu_process(force=True)
         self._close_chat_process()
         self._close_compact_ai_window()
@@ -1135,6 +1168,22 @@ class PetWindow(QWidget):
             self._live2d_widget.set_render_quality(self._live2d_quality)
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
+        if "live2d_hit_alpha_threshold" in data:
+            self._live2d_hit_alpha_threshold = _clamp_int(
+                data["live2d_hit_alpha_threshold"],
+                0,
+                255,
+                DEFAULT_HIT_ALPHA_THRESHOLD,
+            )
+            self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
+        if "live2d_lip_sync_max_open" in data:
+            self._live2d_lip_sync_max_open = _clamp_float(
+                data["live2d_lip_sync_max_open"],
+                0.0,
+                1.0,
+                DEFAULT_LIP_SYNC_MAX_OPEN,
+            )
+            self._live2d_widget.set_lip_sync_max_open(self._live2d_lip_sync_max_open)
         self._sync_compact_ai_window(allow_create=True)
         if self._cfg and ("models" in data or "model_action_settings" in data):
             self._cfg.load()
@@ -2266,6 +2315,8 @@ class PetWindow(QWidget):
             self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
+            self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)
+            self._cfg.set("live2d_lip_sync_max_open", self._live2d_lip_sync_max_open)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
             if model_exists:
                 self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")

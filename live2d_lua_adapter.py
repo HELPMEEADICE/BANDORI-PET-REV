@@ -11,6 +11,7 @@ except ModuleNotFoundError:
     from lupa.lua import LuaRuntime
 from PIL import Image
 
+from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
 from zst_model_archive import is_virtual_path, load_virtual_bytes
@@ -97,9 +98,12 @@ def _load_model_json(path: str) -> dict:
 
 
 def _texture_options(profile: str) -> tuple[float, bool, int]:
-    if profile == "performance":
-        return 0.5, False, 0
-    return 1.0, False, 0
+    options = LIVE2D_QUALITY_PROFILES[normalize_live2d_quality(profile)]
+    return (
+        float(options["texture_scale"]),
+        bool(options["use_mipmap"]),
+        int(options["bleed_passes"]),
+    )
 
 
 def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
@@ -307,15 +311,18 @@ class LuaLive2DModule:
             b"(function() "
             b"local gl = require('live2d.core.live2d_gl_wrapper'); "
             b"local GL_NEAREST = 0x2600; "
+            b"local GL_LINEAR_MIPMAP_LINEAR = 0x2703; "
             b"return function(renderer, profile) "
             b"local model = renderer:get_model(); "
             b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
             b"local textures = model.live2DModel.drawParamGL.textures or {}; "
             b"local min_filter = gl.LINEAR; "
             b"local mag_filter = gl.LINEAR; "
-            b"local use_mipmap = false; "
+            b"local use_mipmap = true; "
             b"if profile == 'performance' then "
-            b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; "
+            b"min_filter = GL_NEAREST; mag_filter = GL_NEAREST; use_mipmap = false; "
+            b"else "
+            b"min_filter = GL_LINEAR_MIPMAP_LINEAR; "
             b"end; "
             b"for i = 1, #textures do "
             b"local texture = textures[i]; "

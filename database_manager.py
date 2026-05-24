@@ -692,15 +692,13 @@ class DatabaseManager:
     def delete_character_memory(self, memory_id: int, character: str = "", user_key: str = "") -> bool:
         if not memory_id:
             return False
-        params: list = [memory_id]
-        where = "id=?"
-        if character:
-            where += " AND character=?"
-            params.append(character)
-        if user_key:
-            where += " AND user_key=?"
-            params.append(self._normalize_user_key(user_key))
-        cur = self._conn.execute(f"DELETE FROM character_memories WHERE {where}", params)
+        character_filter = str(character or "")
+        user_key_filter = self._normalize_user_key(user_key) if user_key else ""
+        cur = self._conn.execute(
+            "DELETE FROM character_memories "
+            "WHERE id=? AND (?='' OR character=?) AND (?='' OR user_key=?)",
+            (memory_id, character_filter, character_filter, user_key_filter, user_key_filter),
+        )
         self._conn.commit()
         return bool(cur.rowcount)
 
@@ -1184,17 +1182,10 @@ class DatabaseManager:
     def mark_external_chat_read(self, platform: str = "", thread_id: str = "") -> dict:
         platform = _clean_external_text(platform)
         thread_id = _clean_external_text(thread_id)
-        params: list[str] = []
-        where = "1=1"
-        if platform:
-            where += " AND platform=?"
-            params.append(platform)
-        if thread_id:
-            where += " AND thread_id=?"
-            params.append(thread_id)
         cur = self._conn.execute(
-            f"UPDATE external_chat_messages SET unread=0 WHERE unread=1 AND {where}",
-            params,
+            "UPDATE external_chat_messages SET unread=0 "
+            "WHERE unread=1 AND (?='' OR platform=?) AND (?='' OR thread_id=?)",
+            (platform, platform, thread_id, thread_id),
         )
         if platform and thread_id:
             self._conn.execute(

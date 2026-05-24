@@ -2,13 +2,17 @@ import json
 import posixpath
 import tarfile
 import threading
+from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
 
 VIRTUAL_SEP = "::"
 INDEX_MEMBER = ".bandori_zst_index.json"
-_VIRTUAL_BYTE_CACHE: dict[str, bytes] = {}
+_VIRTUAL_BYTE_CACHE_MAX_ITEMS = 128
+_VIRTUAL_BYTE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_VIRTUAL_BYTE_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_VIRTUAL_BYTE_CACHE_BYTES = 0
 _CACHE_LOCK = threading.RLock()
 
 
@@ -31,6 +35,8 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
     if cache:
         with _CACHE_LOCK:
             cached = _VIRTUAL_BYTE_CACHE.get(cache_key)
+            if cached is not None:
+                _VIRTUAL_BYTE_CACHE.move_to_end(cache_key)
         if cached is not None:
             return cached
 
@@ -44,7 +50,7 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
             data = extracted.read()
             if cache:
                 with _CACHE_LOCK:
-                    _VIRTUAL_BYTE_CACHE[cache_key] = data
+                    _store_virtual_bytes(cache_key, data)
             return data
     raise KeyError(path)
 
@@ -58,8 +64,25 @@ def load_virtual_json(path: str) -> dict:
 
 
 def clear_virtual_byte_cache():
+    global _VIRTUAL_BYTE_CACHE_BYTES
     with _CACHE_LOCK:
         _VIRTUAL_BYTE_CACHE.clear()
+        _VIRTUAL_BYTE_CACHE_BYTES = 0
+
+
+def _store_virtual_bytes(cache_key: str, data: bytes):
+    global _VIRTUAL_BYTE_CACHE_BYTES
+    old = _VIRTUAL_BYTE_CACHE.pop(cache_key, None)
+    if old is not None:
+        _VIRTUAL_BYTE_CACHE_BYTES -= len(old)
+    _VIRTUAL_BYTE_CACHE[cache_key] = data
+    _VIRTUAL_BYTE_CACHE_BYTES += len(data)
+    while (
+        len(_VIRTUAL_BYTE_CACHE) > _VIRTUAL_BYTE_CACHE_MAX_ITEMS
+        or _VIRTUAL_BYTE_CACHE_BYTES > _VIRTUAL_BYTE_CACHE_MAX_BYTES
+    ):
+        _, evicted = _VIRTUAL_BYTE_CACHE.popitem(last=False)
+        _VIRTUAL_BYTE_CACHE_BYTES -= len(evicted)
 
 
 def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expressions: bool = False):
@@ -101,7 +124,7 @@ def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expr
                 continue
             data = extracted.read()
             with _CACHE_LOCK:
-                _VIRTUAL_BYTE_CACHE[make_virtual_path(archive_path, member_name)] = data
+                _store_virtual_bytes(make_virtual_path(archive_path, member_name), data)
             target_members.remove(member_name)
             if not target_members:
                 break
