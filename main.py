@@ -1,6 +1,8 @@
 import sys
 import json
 import threading
+import os
+import uuid
 
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
 
@@ -35,6 +37,11 @@ def _clamp_ai_status_port(value) -> int:
 
 
 def main():
+    if not os.environ.get("BANDORI_PET_IPC_SERVER_NAME", "").strip():
+        os.environ["BANDORI_PET_IPC_SERVER_NAME"] = (
+            f"{ipc_server_name()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        )
+
     cfg = ConfigManager()
 
     lang = cfg.get("language", "")
@@ -448,6 +455,14 @@ def main():
             path = ModelManager.get_model_json_path(selected_char, selected_costume)
             if path:
                 models.append({"character": selected_char, "costume": selected_costume, "path": path})
+        group_characters = []
+        seen_group_characters = set()
+        for model in models:
+            model_char = model.get("character", "")
+            if model_char and model_char not in seen_group_characters:
+                group_characters.append(model_char)
+                seen_group_characters.add(model_char)
+        group_characters_arg = json.dumps(group_characters, ensure_ascii=False)
         close_pet_processes()
         pet_window_ref["processes"] = []
         for idx, model in enumerate(models):
@@ -457,6 +472,7 @@ def main():
                 "--costume", model["costume"],
                 "--model-path", model["path"],
                 "--index", str(idx),
+                "--group-characters", group_characters_arg,
             ])
             process.setProgram(program)
             process.setArguments(arguments)
