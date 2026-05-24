@@ -463,6 +463,117 @@ class IconButton(QToolButton):
         """)
 
 
+class ChatSendButton(IconButton):
+    def __init__(self, parent=None):
+        super().__init__(FluentIcon.SEND, parent, primary=True)
+        self._busy = False
+        self._hovered = False
+        self._spin_angle = 0
+        self._normal_icon = FluentIcon.SEND.icon()
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(34)
+        self._spin_timer.timeout.connect(self._tick_spinner)
+
+    def set_busy(self, busy: bool):
+        busy = bool(busy)
+        if self._busy == busy:
+            return
+        self._busy = busy
+        if hasattr(self, "_hover_anim"):
+            self._hover_anim.stop()
+        self.setGraphicsEffect(None)
+        self.setIcon(QIcon() if busy else self._normal_icon)
+        self.setToolTip(
+            _tr("ChatWindow.stop_tooltip", default="停止生成")
+            if busy
+            else _tr("ChatWindow.send_tooltip")
+        )
+        if busy:
+            self._spin_timer.start()
+        else:
+            self._spin_timer.stop()
+            self._spin_angle = 0
+        self.apply_theme()
+        self.update()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        if self._busy:
+            self.update()
+        else:
+            super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        if self._busy:
+            self.update()
+        else:
+            super().leaveEvent(event)
+
+    def apply_theme(self):
+        if not self._busy:
+            super().apply_theme()
+            return
+        self.setStyleSheet("""
+            QToolButton {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+        """)
+        self.update()
+
+    def _tick_spinner(self):
+        if not self._busy or self._hovered:
+            return
+        self._spin_angle = (self._spin_angle + 18) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._busy:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        dark = isDarkTheme()
+        rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        base = QColor(accent_color(dark))
+        hover = QColor(BANDORI_PRIMARY_DARK_HOVER if dark else BANDORI_PRIMARY_HOVER)
+        pressed = QColor(BANDORI_PRIMARY_DARK_PRESSED if dark else BANDORI_PRIMARY_PRESSED)
+        bg = pressed if self.isDown() else hover if self._hovered else base
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(bg)
+        if self._hovered:
+            painter.drawEllipse(rect)
+            painter.setBrush(QColor("#ffffff"))
+            center = rect.center()
+            icon_w = rect.width() * 0.38
+            icon_h = rect.height() * 0.34
+            icon_rect = QRectF(
+                center.x() - icon_w / 2,
+                center.y() - icon_h / 2,
+                icon_w,
+                icon_h,
+            )
+            painter.drawRoundedRect(
+                icon_rect,
+                min(icon_rect.width(), icon_rect.height()) * 0.22,
+                min(icon_rect.width(), icon_rect.height()) * 0.22,
+            )
+            return
+
+        painter.drawEllipse(rect)
+        spinner_rect = rect.adjusted(12, 12, -12, -12)
+        track = QColor("#ffffff")
+        track.setAlpha(74)
+        painter.setPen(QPen(track, 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawEllipse(spinner_rect)
+        painter.setPen(QPen(QColor("#ffffff"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawArc(spinner_rect, int(-self._spin_angle * 16), int(-235 * 16))
+
+
 class FluentSplitterHandle(QSplitterHandle):
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
@@ -2505,11 +2616,11 @@ class ChatWindow(QWidget):
         self._input.textChanged.connect(self._sync_input_height)
         layout.addWidget(self._input)
 
-        self._send_btn = IconButton(FluentIcon.SEND, self._composer, primary=True)
+        self._send_btn = ChatSendButton(self._composer)
         self._send_btn.setFixedSize(46, 46)
         self._send_btn.setIconSize(QSize(22, 22))
         self._send_btn.setToolTip(_tr("ChatWindow.send_tooltip"))
-        self._send_btn.clicked.connect(self._send_message)
+        self._send_btn.clicked.connect(self._on_send_button_clicked)
         self._send_btn.setAcceptDrops(True)
         self._send_btn.installEventFilter(self)
         layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -3222,6 +3333,8 @@ class ChatWindow(QWidget):
     def _set_busy(self, busy: bool, planning: bool = False):
         self._input.setEnabled(True)
         self._send_btn.setEnabled(True)
+        if hasattr(self._send_btn, "set_busy"):
+            self._send_btn.set_busy(busy)
         self._new_btn.setEnabled(not busy)
         if planning:
             status = _tr("ChatWindow.planning_group_response")
@@ -3451,7 +3564,7 @@ class ChatWindow(QWidget):
             or self._group_queue
         )
 
-    def _interrupt_generation(self):
+    def _interrupt_generation(self, clear_input: bool = True):
         interrupted = False
         worker = self._worker
         if worker is not None:
@@ -3494,7 +3607,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._reset_tts_stream()
         self._set_busy(False)
-        self._input.clear()
+        if clear_input:
+            self._input.clear()
         self._input.setFocus()
 
     def _park_cancelled_worker(self, worker):
@@ -4063,6 +4177,12 @@ class ChatWindow(QWidget):
             return
 
         self._commit_user_message(text, attachments)
+
+    def _on_send_button_clicked(self):
+        if self._generation_busy():
+            self._interrupt_generation(clear_input=False)
+            return
+        self._send_message()
 
     def _start_aux_vision_fallback(self, text: str, attachments: list[dict]):
         data_urls = []
