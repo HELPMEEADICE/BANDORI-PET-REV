@@ -27,6 +27,7 @@ def _parse_args():
     parser.add_argument("--vsync", choices=("0", "1"), default="1")
     parser.add_argument("--show-launch", choices=("0", "1"), default="0")
     parser.add_argument("--start-on-costumes", choices=("0", "1"), default="0")
+    parser.add_argument("--first-run-wizard", choices=("0", "1"), default="0")
     return parser.parse_args()
 
 
@@ -61,7 +62,7 @@ def main():
 
     apply_app_theme(cfg.get("dark_theme", False))
 
-    if not models_dir_exists():
+    if not models_dir_exists() and args.first_run_wizard != "1":
         prompt_download_model_resources()
         return 0
 
@@ -89,6 +90,7 @@ def main():
         current_opacity=args.opacity,
         show_launch=args.show_launch == "1",
         start_on_costumes=args.start_on_costumes == "1",
+        first_run_wizard=args.first_run_wizard == "1",
         config_manager=cfg,
         vsync=args.vsync == "1",
         live2d_module=None,
