@@ -58,6 +58,7 @@ from llm_manager import (
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
 from llm_api_compat import chat_completions_api_url
+from llm_error_hints import format_llm_error_message
 from vision_fallback import analyze_images_with_aux_model
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
@@ -4610,7 +4611,7 @@ class ChatWindow(QWidget):
             return
         if self._current_bubble:
             self._current_bubble.set_streaming(False)
-            self._current_bubble.set_text(f"Error: {error_msg}")
+            self._current_bubble.set_text(format_llm_error_message(error_msg))
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._reset_tts_stream(stop_player=False)
