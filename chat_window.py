@@ -96,8 +96,11 @@ except (ImportError, OSError):
         return _re.sub(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]", "", text).strip()
 from relationship_memory import (
     analyze_interaction,
+    build_memory_extraction_messages,
     build_relationship_context,
     format_character_status,
+    parse_memory_extraction_response,
+    parse_relationship_analysis_response,
     user_key_from_config,
 )
 from action_bus import publish_action, publish_lip_sync
@@ -1848,6 +1851,7 @@ class ChatWindow(QWidget):
         self._group_spoken: list[str] = []
         self._group_plan_worker = None
         self._vision_fallback_worker = None
+        self._memory_workers: list[NonStreamWorker] = []
         self._pending_vision_send: tuple[str, list[dict]] | None = None
         self._plan_divider = None
         self._active_response_character = character
@@ -3747,7 +3751,20 @@ class ChatWindow(QWidget):
         if not user_text.strip() or not character:
             return
         user_key = self._user_memory_key()
-        analysis = analyze_interaction(user_text, assistant_text, actions)
+        fallback_analysis = analyze_interaction(user_text, assistant_text, actions)
+        if self._start_memory_extraction(
+            character,
+            user_key,
+            user_text,
+            assistant_text,
+            self._last_user_message_id,
+            self._last_group_user_message_id,
+            fallback_analysis,
+        ):
+            return
+        self._apply_relationship_analysis(character, user_key, fallback_analysis, "chat")
+
+    def _apply_relationship_analysis(self, character: str, user_key: str, analysis: dict, event_type: str):
         self._db.apply_relationship_delta(
             character,
             user_key,
@@ -3756,19 +3773,99 @@ class ChatWindow(QWidget):
             familiarity_delta=analysis["familiarity_delta"],
             mood=analysis["mood"],
             mood_intensity=analysis["mood_intensity"],
-            event_type="chat",
+            event_type=event_type,
             reason=analysis["reason"],
         )
-        for memory in analysis.get("memories", []):
+
+    def _memory_extraction_api_config(self) -> tuple[str, str, str]:
+        if not self._cfg:
+            return "", "", ""
+        api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or str(self._cfg.get("llm_api_url", "") or "").strip()
+        api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or str(self._cfg.get("llm_api_key", "") or "").strip()
+        model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip() or str(self._cfg.get("llm_model_id", "") or "").strip()
+        if self._use_responses_api(api_url):
+            api_url = self._chat_completions_api_url(api_url)
+        return api_url, api_key, model_id
+
+    def _start_memory_extraction(
+        self,
+        character: str,
+        user_key: str,
+        user_text: str,
+        assistant_text: str,
+        source_message_id: int | None,
+        source_group_message_id: int | None,
+        fallback_analysis: dict,
+    ) -> bool:
+        api_url, api_key, model_id = self._memory_extraction_api_config()
+        if not api_url or not api_key or not model_id:
+            return False
+        existing = self._db.get_character_memories(character, user_key, limit=12)
+        messages = build_memory_extraction_messages(user_text, assistant_text, existing)
+        worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
+        self._memory_workers.append(worker)
+        worker.finished.connect(
+            lambda content, _reasoning, _actions, worker=worker, character=character, user_key=user_key,
+            source_message_id=source_message_id, source_group_message_id=source_group_message_id,
+            fallback_analysis=fallback_analysis:
+                self._on_memory_extraction_finished(
+                    worker,
+                    character,
+                    user_key,
+                    content,
+                    source_message_id,
+                    source_group_message_id,
+                    fallback_analysis,
+                )
+        )
+        worker.error.connect(
+            lambda _error, worker=worker, character=character, user_key=user_key, fallback_analysis=fallback_analysis:
+                self._on_memory_extraction_error(worker, character, user_key, fallback_analysis)
+        )
+        worker.start()
+        return True
+
+    def _on_memory_extraction_finished(
+        self,
+        worker: NonStreamWorker,
+        character: str,
+        user_key: str,
+        content: str,
+        source_message_id: int | None,
+        source_group_message_id: int | None,
+        fallback_analysis: dict,
+    ):
+        self._forget_memory_worker(worker)
+        relationship_analysis = parse_relationship_analysis_response(content) or fallback_analysis
+        self._apply_relationship_analysis(
+            character,
+            user_key,
+            relationship_analysis,
+            "chat_model",
+        )
+        for memory in parse_memory_extraction_response(content):
             self._db.add_character_memory(
                 character,
                 user_key,
                 memory["kind"],
                 memory["content"],
                 memory["importance"],
-                source_message_id=self._last_user_message_id,
-                source_group_message_id=self._last_group_user_message_id,
+                source_message_id=source_message_id,
+                source_group_message_id=source_group_message_id,
             )
+
+    def _forget_memory_worker(self, worker: NonStreamWorker):
+        self._memory_workers = [item for item in self._memory_workers if item is not worker]
+
+    def _on_memory_extraction_error(
+        self,
+        worker: NonStreamWorker,
+        character: str,
+        user_key: str,
+        fallback_analysis: dict,
+    ):
+        self._forget_memory_worker(worker)
+        self._apply_relationship_analysis(character, user_key, fallback_analysis, "chat")
 
     def _group_system_prompt(self, character: str, spoken_names: list[str]) -> str:
         prompt = build_system_prompt(character, self._cfg)
@@ -3782,8 +3879,6 @@ class ChatWindow(QWidget):
             "\n如果需要提到其他成员的反应，只能用你自己的视角转述，不能写出对方的原话。"
             "\n回复时不要添加任何角色名前缀或剧本标签，例如【角色名】、[角色名]、角色名：，程序会自动添加。"
         )
-        if spoken_names:
-            prompt += "\n你是在" + "、".join(spoken_names) + "之后发言，请自然承接前面角色的内容。"
         return prompt
 
     def _chat_attachment_dir(self) -> Path:
@@ -4065,16 +4160,18 @@ class ChatWindow(QWidget):
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
-        system_prompt += "\n\n" + build_relationship_context(
+        dynamic_context = build_relationship_context(
             self._db,
             character,
             self._user_memory_key(),
             self._user_name or _tr("ChatWindow.you"),
         )
+        if self._is_group_chat and spoken_names:
+            dynamic_context += "\n\n【群聊发言顺序】\n你是在" + "、".join(spoken_names) + "之后发言，请自然承接前面角色的内容。"
         if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
             external_context = self._db.external_chat_context_text()
             if external_context:
-                system_prompt += "\n\n" + external_context
+                dynamic_context += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         if self._is_group_chat:
             max_history = 20
@@ -4098,19 +4195,24 @@ class ChatWindow(QWidget):
                 })
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %I:%M %p")
-        time_suffix = f"\n\n【后置提示词】\n当前时间：{time_str}"
+        dynamic_context += f"\n\n【后置提示词】\n当前时间：{time_str}"
+        self._append_dynamic_context_to_last_user(messages, dynamic_context)
+        return messages
+
+    @staticmethod
+    def _append_dynamic_context_to_last_user(messages: list[dict], context: str):
+        context = str(context or "").strip()
+        if not context:
+            return
+        suffix = "\n\n【动态上下文】\n" + context
         for i in range(len(messages) - 1, -1, -1):
             if messages[i]["role"] == "user":
                 content = messages[i]["content"]
                 if isinstance(content, list) and content:
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            part["text"] = str(part.get("text", "")) + time_suffix
-                            break
+                    content.append({"type": "text", "text": suffix})
                 else:
-                    messages[i]["content"] = str(content) + time_suffix
+                    messages[i]["content"] = str(content) + suffix
                 break
-        return messages
 
     def _send_message(self):
         text = self._input.toPlainText().strip()
