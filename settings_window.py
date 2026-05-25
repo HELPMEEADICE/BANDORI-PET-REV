@@ -166,6 +166,7 @@ DATA_CONFIG_KEYS = {
         "llm_web_search_enabled",
         "llm_web_search_engine",
         "llm_web_search_show_sources",
+        "llm_custom_system_prompt_enabled",
         "llm_custom_system_prompt",
         "llm_api_profiles",
         "llm_active_api_profile",
@@ -3901,15 +3902,28 @@ class SettingsWindow(QWidget):
             default="@stop / @停止 / @中断：强制中断当前模型输出。好感度、记忆和关系数值命令在“好感度 / 记忆”页说明。",
         ), page)))
 
+        custom_system_row = QHBoxLayout()
+        custom_system_row.setContentsMargins(0, 0, 0, 0)
         custom_system_label = BodyLabel(_tr(
             "SettingsWindow.llm_custom_system_prompt",
             default="最高优先级系统提示词",
         ), page)
-        layout.addWidget(custom_system_label)
+        self._llm_custom_system_prompt_enabled = SwitchButton(page)
+        self._llm_custom_system_prompt_enabled.checkedChanged.connect(
+            self._on_llm_custom_system_prompt_enabled_changed
+        )
+        custom_system_row.addWidget(custom_system_label)
+        custom_system_row.addStretch()
+        custom_system_row.addWidget(BodyLabel(_tr(
+            "SettingsWindow.llm_custom_system_prompt_enabled",
+            default="启用",
+        ), page))
+        custom_system_row.addWidget(self._llm_custom_system_prompt_enabled)
+        layout.addLayout(custom_system_row)
         self._llm_custom_system_prompt = FluentContextTextEdit(page)
         self._llm_custom_system_prompt.setPlaceholderText(_tr(
             "SettingsWindow.llm_custom_system_prompt_placeholder",
-            default="留空则不启用。这里的内容会在每次聊天请求中置于角色设定之前。",
+            default="关闭开关可临时禁用且保留内容。这里的内容会在每次聊天请求中置于角色设定之前。",
         ))
         self._llm_custom_system_prompt.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self._llm_custom_system_prompt.setMinimumHeight(72)
@@ -6907,6 +6921,7 @@ class SettingsWindow(QWidget):
                 "_llm_web_search_enabled",
                 "_llm_web_search_engine",
                 "_llm_web_search_show_sources",
+                "_llm_custom_system_prompt_enabled",
                 "_llm_custom_system_prompt",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
@@ -7172,7 +7187,11 @@ class SettingsWindow(QWidget):
                     self._llm_web_search_engine.setCurrentIndex(i)
                     break
             self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
+            self._llm_custom_system_prompt_enabled.setChecked(bool(self._cfg.get("llm_custom_system_prompt_enabled", True)))
             self._llm_custom_system_prompt.setPlainText(self._cfg.get("llm_custom_system_prompt", ""))
+            self._on_llm_custom_system_prompt_enabled_changed(
+                self._llm_custom_system_prompt_enabled.isChecked()
+            )
             self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
             self._saved_user_name = self._cfg.get("user_name", "")
@@ -7543,6 +7562,9 @@ class SettingsWindow(QWidget):
         self._llm_web_search_engine.setEnabled(bool(enabled))
         self._llm_web_search_show_sources.setEnabled(bool(enabled))
 
+    def _on_llm_custom_system_prompt_enabled_changed(self, enabled: bool):
+        self._llm_custom_system_prompt.setEnabled(bool(enabled))
+
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         return "api.openai.com" in (api_url or "").lower()
 
@@ -7707,6 +7729,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
             self._cfg.set("llm_web_search_show_sources", self._llm_web_search_show_sources.isChecked())
+            self._cfg.set("llm_custom_system_prompt_enabled", self._llm_custom_system_prompt_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt", self._llm_custom_system_prompt.toPlainText().strip())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
             if pov_mode == "role":

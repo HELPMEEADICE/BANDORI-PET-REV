@@ -451,8 +451,9 @@ def build_system_prompt(character: str, config_manager=None) -> str:
         prompt = md_prompt + "\n\n" + prompt
 
     if config_manager:
+        custom_system_prompt_enabled = bool(config_manager.get("llm_custom_system_prompt_enabled", True))
         custom_system_prompt = str(config_manager.get("llm_custom_system_prompt", "") or "").strip()
-        if custom_system_prompt:
+        if custom_system_prompt_enabled and custom_system_prompt:
             prompt = (
                 "【最高优先级用户自定义系统指令】\n"
                 + custom_system_prompt
