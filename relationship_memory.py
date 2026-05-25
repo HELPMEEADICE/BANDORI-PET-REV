@@ -1,3 +1,4 @@
+import json
 import re
 
 from i18n_manager import tr as _tr
@@ -45,14 +46,25 @@ MEMORY_KIND_LABELS = {
     "note": "记录",
 }
 
-_MEMORY_PATTERNS = (
-    (r"(?:请|帮我)?记住[：:，,\s]*(.{2,120})", "manual", 90, "用户希望我记住：{value}"),
-    (r"(?:我叫|我的名字是|你可以叫我)[：:，,\s]*(.{1,24})", "profile", 85, "用户的称呼是：{value}"),
-    (r"我的生日(?:是|在)?[：:，,\s]*(.{2,40})", "profile", 85, "用户的生日是：{value}"),
-    (r"我(?:很|最|超)?喜欢[：:，,\s]*(.{1,50})", "preference", 72, "用户喜欢：{value}"),
-    (r"我(?:不喜欢|讨厌)[：:，,\s]*(.{1,50})", "preference", 72, "用户不喜欢：{value}"),
-    (r"我住在[：:，,\s]*(.{2,50})", "profile", 70, "用户住在：{value}"),
-    (r"我是[：:，,\s]*(.{2,60})", "profile", 58, "用户自我描述：{value}"),
+MEMORY_EXTRACTOR_SYSTEM_PROMPT = (
+    "You are a multilingual interaction analysis component for a role-play chat app. "
+    "Read the latest user message and the assistant reply. Extract durable facts that the character "
+    "should remember about the user or the user's relationship with the character, and estimate a small "
+    "relationship-state update. Understand any language, including "
+    "Simplified Chinese, Traditional Chinese, English, Japanese, Korean, and mixed-language messages. "
+    "Do not extract temporary requests, one-off topics, greetings, assistant facts, role instructions, "
+    "or anything merely implied. Prefer user profile facts, stable preferences, boundaries, recurring "
+    "habits, relationship notes, and explicit requests to remember durable information. "
+    "Write memory content in concise Chinese so it fits the existing UI. "
+    "Return only valid JSON with this exact shape: "
+    "{\"relationship\":{\"affection_delta\":0,\"trust_delta\":0,\"familiarity_delta\":1,"
+    "\"mood\":\"calm\",\"mood_intensity\":24,\"reason\":\"...\"},"
+    "\"memories\":[{\"kind\":\"profile|preference|relationship|note\",\"content\":\"...\","
+    "\"importance\":1-100}]}. "
+    "Use small relationship deltas from -5 to 5. familiarity_delta is usually 1 when the user sent a "
+    "substantive message, otherwise 0. mood must be one of calm, happy, excited, soft, concerned, sad, "
+    "hurt, annoyed, angry, shy, thoughtful, surprised, tired. If there is nothing worth saving, use an "
+    "empty memories array."
 )
 
 _POSITIVE_TERMS = (
@@ -159,32 +171,112 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
-def _clean_value(value: str, limit: int = 80) -> str:
-    value = re.split(r"[。！？!?;\n\r]", value.strip(), 1)[0].strip(" ：:，,。. ")
+def _trim_text(value: str, limit: int = 180) -> str:
+    value = re.sub(r"\s+", " ", str(value or "")).strip(" ：:，,。. ")
     if len(value) > limit:
         value = value[:limit].rstrip() + "..."
     return value
 
 
-def extract_memories(user_text: str) -> list[dict]:
-    text = str(user_text or "").strip()
+def build_memory_extraction_messages(
+    user_text: str,
+    assistant_text: str = "",
+    existing_memories: list[dict] | None = None,
+) -> list[dict]:
+    existing_lines = []
+    for memory in (existing_memories or [])[:12]:
+        content = _trim_text(memory.get("content", ""), 160)
+        if content:
+            existing_lines.append("- " + content)
+    existing_text = "\n".join(existing_lines) or "无"
+    user_payload = (
+        "现有长期记忆：\n"
+        + existing_text
+        + "\n\n用户最新消息：\n"
+        + str(user_text or "").strip()
+    )
+    assistant_text = str(assistant_text or "").strip()
+    if assistant_text:
+        user_payload += "\n\n助手刚才的回复（仅用于判断语境，不要抽取助手事实）：\n" + assistant_text[:1200]
+    return [
+        {"role": "system", "content": MEMORY_EXTRACTOR_SYSTEM_PROMPT},
+        {"role": "user", "content": user_payload},
+    ]
+
+
+def _json_object_from_text(text: str) -> dict:
+    source = str(text or "").strip()
+    if not source:
+        return {}
+    try:
+        data = json.loads(source)
+    except (TypeError, ValueError):
+        match = re.search(r"\{.*\}", source, flags=re.S)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+            except (TypeError, ValueError):
+                data = {}
+        else:
+            data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def parse_relationship_analysis_response(text: str) -> dict:
+    data = _json_object_from_text(text)
+    if "relationship" not in data:
+        return {}
+    relationship = data.get("relationship", {})
+    if not isinstance(relationship, dict):
+        return {}
+    mood = str(relationship.get("mood", "") or "").strip()
+    if mood not in MOOD_LABELS:
+        mood = "calm"
+
+    def bounded_int(key: str, default: int, low: int, high: int) -> int:
+        try:
+            value = int(relationship.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(low, min(high, value))
+
+    return {
+        "affection_delta": bounded_int("affection_delta", 0, -5, 5),
+        "trust_delta": bounded_int("trust_delta", 0, -5, 5),
+        "familiarity_delta": bounded_int("familiarity_delta", 1, 0, 3),
+        "mood": mood,
+        "mood_intensity": bounded_int("mood_intensity", 24, 0, 100),
+        "reason": _trim_text(relationship.get("reason", "模型互动分析"), 100) or "模型互动分析",
+    }
+
+
+def parse_memory_extraction_response(text: str) -> list[dict]:
+    data = _json_object_from_text(text)
+
     memories = []
     seen = set()
-    for pattern, kind, importance, template in _MEMORY_PATTERNS:
-        for match in re.finditer(pattern, text):
-            value = _clean_value(match.group(1))
-            if not value:
-                continue
-            content = template.format(value=value)
-            if content in seen:
-                continue
-            seen.add(content)
-            memories.append({
-                "kind": kind,
-                "content": content,
-                "importance": importance,
-            })
-    return memories[:5]
+    for item in data.get("memories", []):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "note") or "note").strip()
+        if kind not in MEMORY_KIND_LABELS:
+            kind = "note"
+        content = _trim_text(item.get("content", ""), 180)
+        if len(content) < 3 or content in seen:
+            continue
+        seen.add(content)
+        try:
+            importance = int(item.get("importance", 60))
+        except (TypeError, ValueError):
+            importance = 60
+        memories.append({
+            "kind": kind,
+            "content": content,
+            "importance": max(1, min(100, importance)),
+        })
+        if len(memories) >= 5:
+            break
+    return memories
 
 
 def _mood_from_actions(actions: list[str]) -> str:
@@ -257,7 +349,7 @@ def analyze_interaction(user_text: str, assistant_text: str = "", actions: list[
         "mood": mood,
         "mood_intensity": mood_intensity,
         "reason": "；".join(reasons) or "普通互动",
-        "memories": extract_memories(text),
+        "memories": [],
     }
 
 

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from llm_manager import (
     LLMStreamWorker,
+    NonStreamWorker,
     ResponsesStreamWorker,
     build_system_prompt,
     parse_action_tags,
@@ -58,8 +59,11 @@ from database_manager import DatabaseManager
 from i18n_manager import tr as _tr
 from relationship_memory import (
     analyze_interaction,
+    build_memory_extraction_messages,
     build_relationship_context,
     format_character_status,
+    parse_memory_extraction_response,
+    parse_relationship_analysis_response,
     user_key_from_config,
 )
 from action_bus import publish_lip_sync
@@ -197,6 +201,7 @@ class CompactAIWindow(QWidget):
         self._db = DatabaseManager()
         self._worker = None
         self._cancelled_workers = []
+        self._memory_workers: list[NonStreamWorker] = []
         self._conv_id: int | None = None
         self._history = []
         self._last_user_text = ""
@@ -829,7 +834,7 @@ class CompactAIWindow(QWidget):
 
     def _build_messages(self) -> list[dict]:
         system_prompt = build_system_prompt(self._character, self._cfg)
-        system_prompt += "\n\n" + build_relationship_context(
+        dynamic_context = build_relationship_context(
             self._db,
             self._character,
             self._user_memory_key(),
@@ -838,16 +843,25 @@ class CompactAIWindow(QWidget):
         if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
             external_context = self._db.external_chat_context_text()
             if external_context:
-                system_prompt += "\n\n" + external_context
+                dynamic_context += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         now = datetime.now().strftime("%Y-%m-%d %I:%M %p")
-        for i in range(len(history) - 1, -1, -1):
-            if history[i].get("role") == "user":
-                history[i]["content"] = history[i].get("content", "") + f"\n\n【后置提示词】\n当前时间：{now}"
-                break
         messages.extend(history)
+        dynamic_context += f"\n\n【后置提示词】\n当前时间：{now}"
+        self._append_dynamic_context_to_last_user(messages, dynamic_context)
         return messages
+
+    @staticmethod
+    def _append_dynamic_context_to_last_user(messages: list[dict], context: str):
+        context = str(context or "").strip()
+        if not context:
+            return
+        suffix = "\n\n【动态上下文】\n" + context
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                messages[i]["content"] = str(messages[i].get("content", "")) + suffix
+                break
 
     def _tool_config_snapshot(self) -> dict:
         if not self._cfg:
@@ -1037,27 +1051,98 @@ class CompactAIWindow(QWidget):
     def _apply_relationship_update(self, assistant_text: str, actions: list[str]):
         if not self._last_user_text.strip():
             return
-        analysis = analyze_interaction(self._last_user_text, assistant_text, actions)
+        user_key = self._user_memory_key()
+        fallback_analysis = analyze_interaction(self._last_user_text, assistant_text, actions)
+        if self._start_memory_extraction(user_key, self._last_user_text, assistant_text, self._last_user_message_id, fallback_analysis):
+            return
+        self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
+
+    def _apply_relationship_analysis(self, user_key: str, analysis: dict, event_type: str):
         self._db.apply_relationship_delta(
             self._character,
-            self._user_memory_key(),
+            user_key,
             affection_delta=analysis["affection_delta"],
             trust_delta=analysis["trust_delta"],
             familiarity_delta=analysis["familiarity_delta"],
             mood=analysis["mood"],
             mood_intensity=analysis["mood_intensity"],
-            event_type="compact_chat",
+            event_type=event_type,
             reason=analysis["reason"],
         )
-        for memory in analysis.get("memories", []):
+
+    def _memory_extraction_api_config(self) -> tuple[str, str, str]:
+        if not self._cfg:
+            return "", "", ""
+        api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or str(self._cfg.get("llm_api_url", "") or "").strip()
+        api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or str(self._cfg.get("llm_api_key", "") or "").strip()
+        model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip() or str(self._cfg.get("llm_model_id", "") or "").strip()
+        if self._use_responses_api(api_url):
+            api_url = self._chat_completions_api_url(api_url)
+        return api_url, api_key, model_id
+
+    def _start_memory_extraction(
+        self,
+        user_key: str,
+        user_text: str,
+        assistant_text: str,
+        source_message_id: int | None,
+        fallback_analysis: dict,
+    ) -> bool:
+        api_url, api_key, model_id = self._memory_extraction_api_config()
+        if not api_url or not api_key or not model_id:
+            return False
+        existing = self._db.get_character_memories(self._character, user_key, limit=12)
+        messages = build_memory_extraction_messages(user_text, assistant_text, existing)
+        worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
+        self._memory_workers.append(worker)
+        worker.finished.connect(
+            lambda content, _reasoning, _actions, worker=worker, user_key=user_key,
+            source_message_id=source_message_id, fallback_analysis=fallback_analysis:
+                self._on_memory_extraction_finished(worker, user_key, content, source_message_id, fallback_analysis)
+        )
+        worker.error.connect(
+            lambda _error, worker=worker, user_key=user_key, fallback_analysis=fallback_analysis:
+                self._on_memory_extraction_error(worker, user_key, fallback_analysis)
+        )
+        worker.start()
+        return True
+
+    def _on_memory_extraction_finished(
+        self,
+        worker: NonStreamWorker,
+        user_key: str,
+        content: str,
+        source_message_id: int | None,
+        fallback_analysis: dict,
+    ):
+        self._forget_memory_worker(worker)
+        relationship_analysis = parse_relationship_analysis_response(content) or fallback_analysis
+        self._apply_relationship_analysis(
+            user_key,
+            relationship_analysis,
+            "compact_chat_model",
+        )
+        for memory in parse_memory_extraction_response(content):
             self._db.add_character_memory(
                 self._character,
-                self._user_memory_key(),
+                user_key,
                 memory["kind"],
                 memory["content"],
                 memory["importance"],
-                source_message_id=self._last_user_message_id,
+                source_message_id=source_message_id,
             )
+
+    def _forget_memory_worker(self, worker: NonStreamWorker):
+        self._memory_workers = [item for item in self._memory_workers if item is not worker]
+
+    def _on_memory_extraction_error(
+        self,
+        worker: NonStreamWorker,
+        user_key: str,
+        fallback_analysis: dict,
+    ):
+        self._forget_memory_worker(worker)
+        self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
 
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
