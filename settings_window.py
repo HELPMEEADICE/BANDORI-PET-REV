@@ -3921,28 +3921,6 @@ class SettingsWindow(QWidget):
         ), page))
         layout.addWidget(custom_system_hint)
 
-        data_title = SubtitleLabel(_tr("SettingsWindow.chat_data_title"), page)
-        layout.addWidget(data_title)
-
-        data_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.chat_data_hint"), page))
-        layout.addWidget(data_hint)
-
-        data_btn_row = QHBoxLayout()
-        data_btn_row.setSpacing(8)
-
-        export_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.chat_data_export"), page)
-        export_btn.setFixedHeight(36)
-        export_btn.clicked.connect(self._export_chat_database)
-        data_btn_row.addWidget(export_btn)
-
-        import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.chat_data_import"), page)
-        import_btn.setFixedHeight(36)
-        import_btn.clicked.connect(self._import_chat_database)
-        data_btn_row.addWidget(import_btn)
-
-        data_btn_row.addStretch()
-        layout.addLayout(data_btn_row)
-
         layout.addStretch()
 
         btn_row = QHBoxLayout()
@@ -6019,6 +5997,24 @@ class SettingsWindow(QWidget):
         action_row.addWidget(import_btn)
         action_row.addStretch()
         layout.addLayout(action_row)
+
+        chat_title = SubtitleLabel(_tr("SettingsWindow.chat_data_title"), page)
+        layout.addWidget(chat_title)
+        layout.addWidget(_wrap_label(BodyLabel(_tr("SettingsWindow.chat_data_hint"), page)))
+
+        chat_action_row = QHBoxLayout()
+        chat_action_row.setContentsMargins(0, 0, 0, 0)
+        chat_action_row.setSpacing(8)
+        chat_export_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.chat_data_export"), page)
+        chat_export_btn.setFixedHeight(36)
+        chat_export_btn.clicked.connect(self._export_chat_database)
+        chat_import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.chat_data_import"), page)
+        chat_import_btn.setFixedHeight(36)
+        chat_import_btn.clicked.connect(self._import_chat_database)
+        chat_action_row.addWidget(chat_export_btn)
+        chat_action_row.addWidget(chat_import_btn)
+        chat_action_row.addStretch()
+        layout.addLayout(chat_action_row)
 
         layout.addStretch()
 
