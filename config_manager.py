@@ -152,6 +152,7 @@ DEFAULTS = {
     "llm_web_search_enabled": False,
     "llm_web_search_engine": "bing_cn",
     "llm_web_search_show_sources": True,
+    "llm_custom_system_prompt_enabled": True,
     "llm_custom_system_prompt": "",
     "llm_hide_tool_call_details": True,
     "llm_mcp_enabled": False,
@@ -430,6 +431,7 @@ class ConfigManager:
         )
         for key in (
             "llm_hide_tool_call_details",
+            "llm_custom_system_prompt_enabled",
             "llm_mcp_enabled",
             "llm_mcp_use_native",
             "computer_use_enabled",
