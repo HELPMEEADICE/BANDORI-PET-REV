@@ -76,7 +76,7 @@ def main():
         prompt_download_model_resources()
         return 0
 
-    mgr = ModelManager()
+    mgr = ModelManager(scan_models=False)
     valid_characters = set(mgr.characters)
     characters = _parse_group_characters(args.group_characters, valid_characters, args.character)
     if not characters:
