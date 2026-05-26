@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from app_theme import BANDORI_PRIMARY
@@ -8,6 +9,8 @@ from process_utils import app_base_dir
 
 BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
+DEFAULT_USER_PROFILE_KEY = "__default__"
+ROLE_USER_KEY_PREFIX = "__role__:"
 
 BUILTIN_LLM_API_PROFILES = [
     {
@@ -172,6 +175,8 @@ DEFAULTS = {
     "user_name": "",
     "user_avatar_color": BANDORI_PRIMARY,
     "user_avatar_path": "",
+    "user_profiles": [],
+    "active_user_profile": "",
     "chat_avatar_paths": {},
     "chat_display_names": {},
     "pinned_chat_keys": [],
@@ -315,6 +320,46 @@ def _merge_builtin_llm_api_profiles(profiles: list[dict]) -> list[dict]:
     return profiles
 
 
+def _clean_user_profile_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    key = re.sub(r"[\r\n\t]+", " ", key).strip()
+    if key.startswith(ROLE_USER_KEY_PREFIX):
+        key = key.replace(ROLE_USER_KEY_PREFIX, "role-", 1)
+    return key[:80]
+
+
+def make_user_profile_key(name: str = "", existing_keys=None) -> str:
+    existing = {str(key or "") for key in (existing_keys or [])}
+    base = _clean_user_profile_key(name)
+    if not base or base == DEFAULT_USER_PROFILE_KEY:
+        base = "user"
+    key = base
+    index = 2
+    while key in existing:
+        key = f"{base}#{index}"
+        index += 1
+    return key
+
+
+def _normalize_user_profile(profile, fallback_key: str = "") -> dict | None:
+    if not isinstance(profile, dict):
+        return None
+    name = str(profile.get("name", "") or profile.get("display_name", "") or "").strip()
+    key = _clean_user_profile_key(profile.get("key", "") or profile.get("id", "") or fallback_key or name)
+    if not key:
+        key = DEFAULT_USER_PROFILE_KEY
+    avatar_color = str(profile.get("avatar_color", "") or "").strip() or BANDORI_PRIMARY
+    avatar_path = str(profile.get("avatar_path", "") or "").strip()
+    return {
+        "key": key,
+        "name": name,
+        "avatar_color": avatar_color,
+        "avatar_path": avatar_path,
+    }
+
+
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
@@ -363,6 +408,7 @@ class ConfigManager:
             self._data.get("fluent_chat_window_enabled", False)
         )
         self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "")).strip()
+        self._normalize_user_profiles()
         self._normalize_llm_api_profiles()
         self._normalize_mcp_servers()
         self._normalize_computer_use_settings()
@@ -371,6 +417,73 @@ class ConfigManager:
         )
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
+
+    def _normalize_user_profiles(self):
+        raw_profiles = self._data.get("user_profiles", [])
+        if not isinstance(raw_profiles, list):
+            raw_profiles = []
+
+        legacy_name = str(self._data.get("user_name", "") or "").strip()
+        legacy_profile = {
+            "key": legacy_name or DEFAULT_USER_PROFILE_KEY,
+            "name": legacy_name,
+            "avatar_color": self._data.get("user_avatar_color", BANDORI_PRIMARY),
+            "avatar_path": self._data.get("user_avatar_path", ""),
+        }
+
+        profiles = []
+        seen = set()
+        for raw in raw_profiles:
+            item = _normalize_user_profile(raw)
+            if not item or item["key"] in seen:
+                continue
+            profiles.append(item)
+            seen.add(item["key"])
+
+        if not profiles:
+            profiles.append(_normalize_user_profile(legacy_profile))
+        elif legacy_name and legacy_name not in seen and not str(self._data.get("active_user_profile", "") or "").strip():
+            item = _normalize_user_profile(legacy_profile)
+            if item:
+                profiles.insert(0, item)
+                seen.add(item["key"])
+
+        profiles = [item for item in profiles if item]
+        if not profiles:
+            profiles = [_normalize_user_profile(legacy_profile)]
+
+        active = _clean_user_profile_key(self._data.get("active_user_profile", ""))
+        keys = {item["key"] for item in profiles}
+        if active not in keys:
+            if legacy_name and legacy_name in keys:
+                active = legacy_name
+            else:
+                active = profiles[0]["key"]
+
+        self._data["user_profiles"] = profiles
+        self._data["active_user_profile"] = active
+        self._sync_top_level_user_from_active_profile()
+
+    def _active_user_profile_index(self) -> int:
+        active = str(self._data.get("active_user_profile", "") or "").strip()
+        profiles = self._data.get("user_profiles", [])
+        if not isinstance(profiles, list):
+            return -1
+        for index, profile in enumerate(profiles):
+            if isinstance(profile, dict) and profile.get("key") == active:
+                return index
+        return 0 if profiles else -1
+
+    def _sync_top_level_user_from_active_profile(self):
+        index = self._active_user_profile_index()
+        profiles = self._data.get("user_profiles", [])
+        if index < 0 or index >= len(profiles):
+            return
+        profile = profiles[index]
+        self._data["active_user_profile"] = profile["key"]
+        self._data["user_name"] = profile.get("name", "")
+        self._data["user_avatar_color"] = profile.get("avatar_color", BANDORI_PRIMARY) or BANDORI_PRIMARY
+        self._data["user_avatar_path"] = profile.get("avatar_path", "")
 
     def _normalize_llm_api_profiles(self):
         profiles = self._data.get("llm_api_profiles", [])
@@ -556,6 +669,84 @@ class ConfigManager:
 
     def update(self, d: dict):
         self._data.update(d)
+
+    def get_user_profiles(self) -> list[dict]:
+        self._normalize_user_profiles()
+        return [dict(profile) for profile in self._data.get("user_profiles", [])]
+
+    def active_user_profile(self) -> dict:
+        self._normalize_user_profiles()
+        index = self._active_user_profile_index()
+        profiles = self._data.get("user_profiles", [])
+        if index < 0 or index >= len(profiles):
+            return {}
+        return dict(profiles[index])
+
+    def legacy_chat_user_key(self) -> str:
+        self._normalize_user_profiles()
+        profiles = self._data.get("user_profiles", [])
+        if isinstance(profiles, list) and profiles:
+            first = profiles[0]
+            if isinstance(first, dict):
+                key = str(first.get("key", "") or "").strip()
+                if key:
+                    return key
+        active = str(self._data.get("active_user_profile", "") or "").strip()
+        return active or DEFAULT_USER_PROFILE_KEY
+
+    def set_active_user_profile(self, key: str):
+        key = _clean_user_profile_key(key)
+        profiles = self.get_user_profiles()
+        if any(profile["key"] == key for profile in profiles):
+            self._data["active_user_profile"] = key
+            self._sync_top_level_user_from_active_profile()
+
+    def upsert_user_profile(self, profile: dict, make_active: bool = False):
+        item = _normalize_user_profile(profile)
+        if not item:
+            return
+        profiles = self.get_user_profiles()
+        replaced = False
+        for index, existing in enumerate(profiles):
+            if existing["key"] == item["key"]:
+                profiles[index] = item
+                replaced = True
+                break
+        if not replaced:
+            profiles.append(item)
+        self._data["user_profiles"] = profiles
+        if make_active:
+            self._data["active_user_profile"] = item["key"]
+        self._normalize_user_profiles()
+
+    def sync_active_user_profile(self, name: str, avatar_color: str, avatar_path: str):
+        profile = self.active_user_profile()
+        if not profile:
+            profile = {
+                "key": make_user_profile_key(name),
+                "name": "",
+                "avatar_color": BANDORI_PRIMARY,
+                "avatar_path": "",
+            }
+        profile["name"] = str(name or "").strip()
+        profile["avatar_color"] = str(avatar_color or "").strip() or BANDORI_PRIMARY
+        profile["avatar_path"] = str(avatar_path or "").strip()
+        self.upsert_user_profile(profile, make_active=True)
+
+    def delete_user_profile(self, key: str):
+        key = _clean_user_profile_key(key)
+        profiles = [profile for profile in self.get_user_profiles() if profile["key"] != key]
+        if not profiles:
+            profiles = [{
+                "key": DEFAULT_USER_PROFILE_KEY,
+                "name": "",
+                "avatar_color": BANDORI_PRIMARY,
+                "avatar_path": "",
+            }]
+        self._data["user_profiles"] = profiles
+        if self._data.get("active_user_profile") == key:
+            self._data["active_user_profile"] = profiles[0]["key"]
+        self._normalize_user_profiles()
 
     def get_model_action_profile(self, character: str, costume: str) -> dict:
         profiles = self._data.get("model_action_settings", {})

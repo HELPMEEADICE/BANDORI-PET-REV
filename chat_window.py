@@ -2102,14 +2102,16 @@ class ChatWindow(QWidget):
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
         self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip() if self._cfg else ""
+        self._chat_user_key = self._user_memory_key()
         avatar_paths = self._cfg.get("chat_avatar_paths", {}) if self._cfg else {}
         self._chat_avatar_paths = avatar_paths if isinstance(avatar_paths, dict) else {}
         self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True)) if self._cfg else True
 
         from database_manager import DatabaseManager
         self._db = DatabaseManager()
+        self._assign_legacy_chat_history()
         if not self._is_group_chat:
-            self._db.delete_empty_conversations(self._conversation_key)
+            self._db.delete_empty_conversations(self._conversation_key, self._chat_user_key)
         self._display_name = self._chat_display_name()
 
         icon_path = os.path.join(app_base_dir(), "logo.ico")
@@ -2135,6 +2137,14 @@ class ChatWindow(QWidget):
         qconfig.themeChanged.connect(self._apply_theme)
 
         self._load_or_create_conversation()
+
+    def _assign_legacy_chat_history(self):
+        if not self._cfg or not hasattr(self._cfg, "legacy_chat_user_key"):
+            return
+        try:
+            self._db.assign_legacy_chat_history_user(self._cfg.legacy_chat_user_key())
+        except Exception:
+            pass
 
     def _normalized_group_sidebar_ratio(self, value) -> float:
         try:
@@ -2301,7 +2311,7 @@ class ChatWindow(QWidget):
     def _group_chats(self) -> list[dict]:
         result = []
         seen = set()
-        for chat in self._db.get_group_chats():
+        for chat in self._db.get_group_chats(self._chat_user_key):
             characters = self._characters_for_group_key(chat.get("group_key", ""))
             if len(characters) <= 1:
                 continue
@@ -2762,7 +2772,7 @@ class ChatWindow(QWidget):
             for item in models:
                 if isinstance(item, dict):
                     add(item.get("character", ""))
-        for conv in self._db.get_conversations():
+        for conv in self._db.get_conversations(user_key=self._chat_user_key):
             add(conv.get("character", ""))
         for character in self._model_manager.characters:
             add(character)
@@ -2771,7 +2781,7 @@ class ChatWindow(QWidget):
     def _private_chat_characters_with_history(self) -> list[str]:
         result = []
         seen = set()
-        for conv in self._db.get_conversations():
+        for conv in self._db.get_conversations(user_key=self._chat_user_key):
             character = str(conv.get("character", "") or "").strip()
             if character and character in self._model_manager.characters and character not in seen:
                 result.append(character)
@@ -2779,7 +2789,7 @@ class ChatWindow(QWidget):
         return result
 
     def _private_chat_preview(self, character: str) -> tuple[str, str]:
-        conversations = self._db.get_conversations(character)
+        conversations = self._db.get_conversations(character, self._chat_user_key)
         if not conversations:
             return _tr("ChatWindow.private_empty_preview", default="开始私聊"), ""
         conv = conversations[0]
@@ -3569,7 +3579,7 @@ class ChatWindow(QWidget):
         history_scrolls: list[QScrollArea] = []
 
         if self._is_group_chat:
-            conversations = self._db.get_group_conversations(self._conversation_key)
+            conversations = self._db.get_group_conversations(self._conversation_key, self._chat_user_key)
             title = Action(FluentIcon.HISTORY, _tr("ChatWindow.history_title"), menu)
             menu.addAction(title)
             title.setEnabled(False)
@@ -3658,7 +3668,7 @@ class ChatWindow(QWidget):
         title.setEnabled(False)
         menu.addSeparator()
 
-        conversations = self._db.get_conversations(self._conversation_key)
+        conversations = self._db.get_conversations(self._conversation_key, self._chat_user_key)
         if not conversations:
             empty = menu.addAction(_tr("ChatWindow.no_convs"))
             empty.setEnabled(False)
@@ -3965,7 +3975,7 @@ class ChatWindow(QWidget):
         if len(characters) <= 1:
             character = characters[0]
             was_current = not self._is_group_chat and character == self._character
-            for conv in self._db.get_conversations(character):
+            for conv in self._db.get_conversations(character, self._chat_user_key):
                 self._db.delete_conversation(conv["id"])
             self._chat_display_names.pop(character, None)
             self._save_chat_display_names()
@@ -3982,8 +3992,8 @@ class ChatWindow(QWidget):
                 self._title_label.setText(self._display_name)
         else:
             was_current = self._is_group_chat and chat_key == self._conversation_key
-            for conv in self._db.get_group_conversations(chat_key):
-                self._db.delete_group_conversation(chat_key, conv["conversation_id"])
+            for conv in self._db.get_group_conversations(chat_key, self._chat_user_key):
+                self._db.delete_group_conversation(chat_key, conv["conversation_id"], self._chat_user_key)
             self._db.set_group_display_name(chat_key, "")
             if was_current:
                 self._stream_flush_timer.stop()
@@ -4025,7 +4035,7 @@ class ChatWindow(QWidget):
         if not was_current:
             return
 
-        conversations = self._db.get_conversations(self._conversation_key)
+        conversations = self._db.get_conversations(self._conversation_key, self._chat_user_key)
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._visible_stream_text = ""
@@ -4043,13 +4053,13 @@ class ChatWindow(QWidget):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
             return
         was_current = conversation_id == self._group_conv_id
-        self._db.delete_group_conversation(self._conversation_key, conversation_id)
+        self._db.delete_group_conversation(self._conversation_key, conversation_id, self._chat_user_key)
         self._refresh_group_list()
 
         if not was_current:
             return
 
-        conversations = self._db.get_group_conversations(self._conversation_key)
+        conversations = self._db.get_group_conversations(self._conversation_key, self._chat_user_key)
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._visible_stream_text = ""
@@ -4136,11 +4146,11 @@ class ChatWindow(QWidget):
 
     def _load_or_create_conversation(self):
         if self._is_group_chat:
-            conversations = self._db.get_group_conversations(self._conversation_key)
+            conversations = self._db.get_group_conversations(self._conversation_key, self._chat_user_key)
             self._group_conv_id = conversations[0]["conversation_id"] if conversations else ""
             self._load_messages()
             return
-        last = self._db.get_last_conversation(self._conversation_key)
+        last = self._db.get_last_conversation(self._conversation_key, self._chat_user_key)
         if last:
             self._conv_id = last["id"]
         self._load_messages()
@@ -4171,7 +4181,7 @@ class ChatWindow(QWidget):
         if self._is_group_chat:
             if not self._group_conv_id:
                 return
-            messages = self._db.get_group_messages(self._conversation_key, self._group_conv_id)
+            messages = self._db.get_group_messages(self._conversation_key, self._group_conv_id, user_key=self._chat_user_key)
         elif self._conv_id is None:
             return
         else:
@@ -4881,6 +4891,11 @@ class ChatWindow(QWidget):
             "computer_use_allow_keyboard",
             "computer_use_allow_clipboard",
             "computer_use_allow_wait",
+            "user_name",
+            "user_profiles",
+            "active_user_profile",
+            "pov_mode",
+            "pov_role_character",
         )
         snapshot = {key: self._cfg.get(key) for key in keys}
         snapshot["_latest_user_text"] = self._last_user_text
@@ -4891,6 +4906,7 @@ class ChatWindow(QWidget):
 
     def _reload_runtime_config(self):
         if self._cfg and hasattr(self._cfg, "load"):
+            previous_user_key = getattr(self, "_chat_user_key", "")
             try:
                 self._cfg.load()
             except Exception:
@@ -4899,6 +4915,17 @@ class ChatWindow(QWidget):
             self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT)
             self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip()
             self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True))
+            next_user_key = self._user_memory_key()
+            if next_user_key != previous_user_key:
+                self._chat_user_key = next_user_key
+                self._conv_id = None
+                self._group_conv_id = ""
+                self._group_queue = []
+                self._group_spoken = []
+                self._current_bubble = None
+                self._clear_message_widgets()
+                self._load_or_create_conversation()
+                self._refresh_group_list()
 
     def _history_user_label(self) -> str:
         return self._user_name or _tr("ChatWindow.you")
@@ -4964,7 +4991,7 @@ class ChatWindow(QWidget):
 
         for member in related:
             display = self._model_manager.get_display_name(member)
-            for conv in self._db.get_conversations(member)[:3]:
+            for conv in self._db.get_conversations(member, self._chat_user_key)[:3]:
                 for message in self._db.get_messages(conv["id"], limit=6):
                     if message["role"] == "assistant":
                         label = f"{display}/私聊"
@@ -4975,13 +5002,13 @@ class ChatWindow(QWidget):
                     self._append_unified_history_item(items, seen, "private", message, label, message["content"])
 
         related_set = set(related)
-        for chat in self._db.get_group_chats()[:24]:
+        for chat in self._db.get_group_chats(self._chat_user_key)[:24]:
             group_key = chat.get("group_key", "")
             group_members = self._characters_for_group_key(group_key)
             if not group_members or not (related_set & set(group_members)):
                 continue
             conversation_id = chat.get("conversation_id", "")
-            for message in self._db.get_group_messages(group_key, conversation_id, limit=8):
+            for message in self._db.get_group_messages(group_key, conversation_id, limit=8, user_key=self._chat_user_key):
                 if message["role"] == "assistant":
                     speaker, body = self._split_group_history_message(message["content"])
                     label = f"{speaker}/群聊"
@@ -5023,6 +5050,7 @@ class ChatWindow(QWidget):
                 self._conversation_key,
                 self._group_conv_id,
                 limit=max_history * 2,
+                user_key=self._chat_user_key,
             ) if self._group_conv_id else []
             for m in history:
                 messages.append({
@@ -5075,10 +5103,11 @@ class ChatWindow(QWidget):
             self._composer_hint.setText(_tr("ChatWindow.busy_interrupt_hint", default="当前回复还在进行中；输入 @stop 或 @停止 可以中断。"))
             return
 
+        self._reload_runtime_config()
+
         if not attachments and self._handle_local_memory_command(text):
             return
 
-        self._reload_runtime_config()
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         model_id = self._cfg.get("llm_model_id", "")
@@ -5230,11 +5259,11 @@ class ChatWindow(QWidget):
 
     def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
         if self._is_group_chat:
-            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments)
+            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments, user_key=self._chat_user_key)
             self._last_user_message_id = None
         else:
             if self._conv_id is None:
-                self._conv_id = self._db.create_conversation(self._conversation_key)
+                self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
             self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
             self._last_group_user_message_id = None
         self._last_user_text = text
@@ -5267,6 +5296,7 @@ class ChatWindow(QWidget):
             self._conversation_key,
             self._group_conv_id,
             limit=12,
+            user_key=self._chat_user_key,
         ) if self._group_conv_id else []
         for m in history:
             recent.append({"role": m["role"], "content": m["content"]})
@@ -5486,7 +5516,7 @@ class ChatWindow(QWidget):
         stored = self._assistant_content(self._active_response_character, clean)
         tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
+            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace, user_key=self._chat_user_key)
             self._refresh_group_list()
         elif self._conv_id:
             self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
@@ -5533,7 +5563,7 @@ class ChatWindow(QWidget):
         stored = self._assistant_content(self._active_response_character, clean)
         tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
         if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace)
+            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace, user_key=self._chat_user_key)
             self._refresh_group_list()
         elif self._conv_id:
             self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)

@@ -199,10 +199,12 @@ class CompactAIWindow(QWidget):
         self._model_manager = model_manager
         self._cfg = config_manager
         self._db = DatabaseManager()
+        self._assign_legacy_chat_history()
         self._worker = None
         self._cancelled_workers = []
         self._memory_workers: list[NonStreamWorker] = []
         self._conv_id: int | None = None
+        self._chat_user_key = user_key_from_config(self._cfg)
         self._history = []
         self._last_user_text = ""
         self._last_user_message_id: int | None = None
@@ -236,6 +238,14 @@ class CompactAIWindow(QWidget):
         self.refresh_theme()
         self._load_last_conversation()
         self._update_output_height(animated=False)
+
+    def _assign_legacy_chat_history(self):
+        if not self._cfg or not hasattr(self._cfg, "legacy_chat_user_key"):
+            return
+        try:
+            self._db.assign_legacy_chat_history_user(self._cfg.legacy_chat_user_key())
+        except Exception:
+            pass
 
     def _init_ui(self):
         self.setWindowFlags(
@@ -655,7 +665,7 @@ class CompactAIWindow(QWidget):
     def _load_last_conversation(self):
         self._history = []
         self._conv_id = None
-        last = self._db.get_last_conversation(self._character)
+        last = self._db.get_last_conversation(self._character, self._chat_user_key)
         if not last:
             return
         self._conv_id = last["id"]
@@ -669,7 +679,11 @@ class CompactAIWindow(QWidget):
 
     def _ensure_conversation(self) -> int:
         if self._conv_id is None:
-            self._conv_id = self._db.create_conversation(self._character, _tr("CompactAIWindow.history_title", default="悬浮窗聊天"))
+            self._conv_id = self._db.create_conversation(
+                self._character,
+                _tr("CompactAIWindow.history_title", default="悬浮窗聊天"),
+                self._chat_user_key,
+            )
         return self._conv_id
 
     def apply_ai_event(self, event: dict):
@@ -769,14 +783,18 @@ class CompactAIWindow(QWidget):
             self._thinking_text = ""
             self._set_output_text("")
             return
-        if self._handle_local_memory_command(text):
-            return
         if self._worker is not None:
             self._input.setPlaceholderText(_tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断"))
             return
 
         if self._cfg:
             self._cfg.load()
+            next_user_key = user_key_from_config(self._cfg)
+            if next_user_key != self._chat_user_key:
+                self._chat_user_key = next_user_key
+                self._load_last_conversation()
+        if self._handle_local_memory_command(text):
+            return
         api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
         api_key = self._cfg.get("llm_api_key", "") if self._cfg else ""
         model_id = self._cfg.get("llm_model_id", "") if self._cfg else ""

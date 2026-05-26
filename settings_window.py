@@ -61,7 +61,7 @@ from app_theme import (
     apply_app_theme,
 )
 from database_manager import DatabaseManager
-from config_manager import BUILTIN_LLM_API_PROFILES
+from config_manager import BUILTIN_LLM_API_PROFILES, DEFAULT_USER_PROFILE_KEY, make_user_profile_key
 from relationship_memory import (
     MEMORY_KIND_LABELS,
     affection_label,
@@ -173,6 +173,8 @@ DATA_CONFIG_KEYS = {
         "user_name",
         "user_avatar_color",
         "user_avatar_path",
+        "user_profiles",
+        "active_user_profile",
         "chat_avatar_paths",
         "group_chat_sidebar_ratio",
         "group_chat_sidebar_collapsed",
@@ -193,6 +195,8 @@ DATA_CONFIG_KEYS = {
         "pov_custom_prompt",
         "pov_custom_personas",
         "pov_role_character",
+        "user_profiles",
+        "active_user_profile",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",
@@ -1375,6 +1379,7 @@ class SettingsWindow(QWidget):
         )
         self._saved_user_name = ""
         self._user_avatar_path_pending = ""
+        self._loading_user_profile = False
         self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
 
@@ -4121,6 +4126,28 @@ class SettingsWindow(QWidget):
         profile_title = SubtitleLabel(_tr("SettingsWindow.llm_profile"), page)
         layout.addWidget(profile_title)
 
+        user_profile_label = BodyLabel(_tr("SettingsWindow.pov_user_profile", default="当前用户"), page)
+        layout.addWidget(user_profile_label)
+        user_profile_row = QHBoxLayout()
+        user_profile_row.setSpacing(8)
+        self._user_profile_combo = OpaqueDropDownComboBox(page)
+        self._user_profile_combo.setFixedHeight(36)
+        self._user_profile_combo.currentIndexChanged.connect(self._on_user_profile_selected)
+        user_profile_row.addWidget(self._user_profile_combo, 1)
+        new_user_btn = PushButton(FluentIcon.ADD, _tr("SettingsWindow.pov_user_profile_new", default="新增"), page)
+        new_user_btn.setFixedHeight(36)
+        new_user_btn.clicked.connect(self._create_user_profile)
+        user_profile_row.addWidget(new_user_btn)
+        self._save_user_profile_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.pov_user_profile_save", default="保存用户"), page)
+        self._save_user_profile_btn.setFixedHeight(36)
+        self._save_user_profile_btn.clicked.connect(lambda: self._save_active_user_profile(show_info=True))
+        user_profile_row.addWidget(self._save_user_profile_btn)
+        self._delete_user_profile_btn = PushButton(FluentIcon.DELETE, _tr("SettingsWindow.pov_user_profile_delete", default="删除"), page)
+        self._delete_user_profile_btn.setFixedHeight(36)
+        self._delete_user_profile_btn.clicked.connect(self._delete_active_user_profile)
+        user_profile_row.addWidget(self._delete_user_profile_btn)
+        layout.addLayout(user_profile_row)
+
         name_label = BodyLabel(_tr("SettingsWindow.llm_display_name"), page)
         layout.addWidget(name_label)
         self._user_name = FluentContextLineEdit(page)
@@ -4540,6 +4567,10 @@ class SettingsWindow(QWidget):
         if role_character:
             role_name = self._model_manager.get_display_name(role_character)
             return _tr("Relationship.role_user_display", role=role_name)
+        if self._cfg and hasattr(self._cfg, "get_user_profiles"):
+            for profile in self._cfg.get_user_profiles():
+                if profile.get("key") == user_key:
+                    return profile.get("name", "") or _tr("SettingsWindow.memory_default_user")
         return display_user_name(user_key)
 
     def _set_memory_kind(self, kind: str):
@@ -6970,6 +7001,9 @@ class SettingsWindow(QWidget):
                 "_llm_custom_system_prompt",
                 "_llm_enable_thinking",
                 "_llm_show_reasoning",
+                "_user_profile_combo",
+                "_save_user_profile_btn",
+                "_delete_user_profile_btn",
                 "_user_name",
                 "_pov_mode",
                 "_pov_custom_prompt",
@@ -7091,6 +7125,169 @@ class SettingsWindow(QWidget):
         self._tts_temperature.setStyleSheet(style)
         self._tts_test_text.setStyleSheet(style)
 
+    def _user_profile_label(self, profile: dict) -> str:
+        key = str(profile.get("key", "") or "").strip()
+        name = str(profile.get("name", "") or "").strip()
+        label = name or _tr("SettingsWindow.memory_default_user", default="当前用户")
+        if key and key != DEFAULT_USER_PROFILE_KEY and key != name:
+            label = f"{label} - {key}"
+        return label
+
+    def _normalized_user_profiles(self) -> list[dict]:
+        if not self._cfg:
+            return [{
+                "key": DEFAULT_USER_PROFILE_KEY,
+                "name": "",
+                "avatar_color": BANDORI_PRIMARY,
+                "avatar_path": "",
+            }]
+        if hasattr(self._cfg, "get_user_profiles"):
+            return self._cfg.get_user_profiles()
+        profiles = self._cfg.get("user_profiles", [])
+        return profiles if isinstance(profiles, list) else []
+
+    def _current_profile_key(self) -> str:
+        if hasattr(self, "_user_profile_combo"):
+            key = self._user_profile_combo.itemData(self._user_profile_combo.currentIndex())
+            if key:
+                return str(key)
+        if self._cfg:
+            return str(self._cfg.get("active_user_profile", "") or "")
+        return ""
+
+    def _reload_user_profile_combo(self, selected_key: str = ""):
+        if not hasattr(self, "_user_profile_combo"):
+            return
+        profiles = self._normalized_user_profiles()
+        active_key = selected_key or (self._cfg.get("active_user_profile", "") if self._cfg else "")
+        self._loading_user_profile = True
+        self._user_profile_combo.blockSignals(True)
+        self._user_profile_combo.clear()
+        selected_index = 0
+        for profile in profiles:
+            self._user_profile_combo.addItem(self._user_profile_label(profile), userData=profile.get("key", ""))
+            if profile.get("key") == active_key:
+                selected_index = self._user_profile_combo.count() - 1
+        self._user_profile_combo.setCurrentIndex(selected_index)
+        self._user_profile_combo.blockSignals(False)
+        self._loading_user_profile = False
+        self._delete_user_profile_btn.setEnabled(len(profiles) > 1)
+
+    def _active_profile_form_name(self) -> str:
+        mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) if hasattr(self, "_pov_mode") else "off"
+        if mode == "role":
+            return self._saved_user_name.strip()
+        return self._user_name.text().strip()
+
+    def _profile_avatar_file_key(self) -> str:
+        key = self._current_profile_key() or DEFAULT_USER_PROFILE_KEY
+        safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in key)
+        return safe[:48] or "default"
+
+    def _load_user_profile_fields(self, profile: dict):
+        self._saved_user_name = str(profile.get("name", "") or "").strip()
+        self._user_avatar_path_pending = str(profile.get("avatar_path", "") or "").strip()
+        saved_color = profile.get("avatar_color", BANDORI_PRIMARY)
+        matched = False
+        for btn in self._avatar_color_btns:
+            checked = btn.property("avatar_color") == saved_color
+            btn.setChecked(checked)
+            matched = matched or checked
+        if not matched and self._avatar_color_btns:
+            self._avatar_color_btns[0].setChecked(True)
+        mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) if hasattr(self, "_pov_mode") else "off"
+        if mode == "role":
+            self._sync_role_display_name()
+        else:
+            self._user_name.setText(self._saved_user_name)
+        self._style_avatar_buttons()
+        self._update_user_avatar_preview()
+
+    def _save_active_user_profile(self, show_info: bool = False, persist: bool = True):
+        if not self._cfg:
+            return
+        name = self._active_profile_form_name()
+        self._saved_user_name = name
+        self._cfg.sync_active_user_profile(
+            name,
+            self._selected_avatar_color(),
+            self._user_avatar_path_pending,
+        )
+        self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+        if persist:
+            try:
+                self._cfg.save()
+            except Exception:
+                return
+        self._refresh_memory_page()
+        if show_info:
+            InfoBar.success(
+                _tr("SettingsWindow.pov_user_profile_saved_title", default="已保存"),
+                _tr("SettingsWindow.pov_user_profile_saved_content", default="当前用户档案已保存。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+    def _on_user_profile_selected(self, index: int):
+        if self._loading_user_profile or not self._cfg:
+            return
+        selected_key = self._user_profile_combo.itemData(index) or ""
+        current_key = self._cfg.get("active_user_profile", "")
+        if selected_key == current_key:
+            return
+        self._save_active_user_profile(persist=False)
+        self._cfg.set_active_user_profile(selected_key)
+        profile = self._cfg.active_user_profile()
+        if profile:
+            self._load_user_profile_fields(profile)
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+        self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+        self._refresh_memory_page()
+
+    def _create_user_profile(self):
+        if not self._cfg:
+            return
+        self._save_active_user_profile(persist=False)
+        existing = {profile.get("key", "") for profile in self._normalized_user_profiles()}
+        name = _tr("SettingsWindow.pov_user_profile_new_name", default="新用户")
+        key = make_user_profile_key(name, existing)
+        profile = {
+            "key": key,
+            "name": name,
+            "avatar_color": BANDORI_PRIMARY,
+            "avatar_path": "",
+        }
+        self._cfg.upsert_user_profile(profile, make_active=True)
+        self._load_user_profile_fields(profile)
+        self._reload_user_profile_combo(key)
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+        self._user_name.setFocus()
+        self._user_name.selectAll()
+
+    def _delete_active_user_profile(self):
+        if not self._cfg:
+            return
+        key = self._current_profile_key()
+        if not key:
+            return
+        self._cfg.delete_user_profile(key)
+        profile = self._cfg.active_user_profile()
+        if profile:
+            self._load_user_profile_fields(profile)
+        self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+        self._refresh_memory_page()
+
     def _style_avatar_buttons(self):
         for btn in self._avatar_color_btns:
             color = btn.property("avatar_color")
@@ -7134,7 +7331,7 @@ class SettingsWindow(QWidget):
         try:
             target_dir = self._avatar_storage_dir()
             target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"user_avatar{ext}"
+            target = target_dir / f"user_avatar_{self._profile_avatar_file_key()}{ext}"
             if os.path.abspath(path) != os.path.abspath(str(target)):
                 shutil.copyfile(path, target)
             self._user_avatar_path_pending = str(target)
@@ -7239,13 +7436,18 @@ class SettingsWindow(QWidget):
             )
             self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
             self._on_llm_api_mode_changed(self._llm_api_mode.currentIndex())
-            self._saved_user_name = self._cfg.get("user_name", "")
-            self._user_name.setText(self._saved_user_name)
-            self._user_avatar_path_pending = str(self._cfg.get("user_avatar_path", "") or "").strip()
-            saved_color = self._cfg.get("user_avatar_color", BANDORI_PRIMARY)
-            for btn in self._avatar_color_btns:
-                btn.setChecked(btn.property("avatar_color") == saved_color)
-            self._update_user_avatar_preview()
+            profile = self._cfg.active_user_profile() if hasattr(self._cfg, "active_user_profile") else {}
+            self._reload_user_profile_combo(profile.get("key", self._cfg.get("active_user_profile", "")))
+            if profile:
+                self._load_user_profile_fields(profile)
+            else:
+                self._saved_user_name = self._cfg.get("user_name", "")
+                self._user_name.setText(self._saved_user_name)
+                self._user_avatar_path_pending = str(self._cfg.get("user_avatar_path", "") or "").strip()
+                saved_color = self._cfg.get("user_avatar_color", BANDORI_PRIMARY)
+                for btn in self._avatar_color_btns:
+                    btn.setChecked(btn.property("avatar_color") == saved_color)
+                self._update_user_avatar_preview()
             thinking_val = self._cfg.get("llm_enable_thinking", None)
             if thinking_val is True:
                 self._llm_enable_thinking.setCurrentIndex(1)
@@ -7644,6 +7846,8 @@ class SettingsWindow(QWidget):
         self._pov_role_character.setEnabled(mode == "role")
         self._user_name.setEnabled(mode != "role")
         if mode == "role":
+            if self._user_name.text().strip():
+                self._saved_user_name = self._user_name.text().strip()
             self._sync_role_display_name()
         else:
             self._user_name.setText(self._saved_user_name)
@@ -7777,20 +7981,22 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_custom_system_prompt_enabled", self._llm_custom_system_prompt_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt", self._llm_custom_system_prompt.toPlainText().strip())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"
+            avatar_color = self._selected_avatar_color()
             if pov_mode == "role":
+                profile_user_name = self._saved_user_name.strip()
                 user_name = self._pov_role_character.currentText().strip()
             else:
                 self._saved_user_name = self._user_name.text().strip()
-                user_name = self._saved_user_name
+                profile_user_name = self._saved_user_name
+                user_name = profile_user_name
+            if hasattr(self._cfg, "sync_active_user_profile"):
+                self._cfg.sync_active_user_profile(profile_user_name, avatar_color, self._user_avatar_path_pending)
             self._cfg.set("user_name", user_name)
             self._cfg.set("pov_mode", pov_mode)
             self._cfg.set("pov_custom_prompt", self._pov_custom_prompt.toPlainText().strip())
             self._cfg.set("pov_role_character", self._pov_role_character.itemData(self._pov_role_character.currentIndex()) or "")
             self._cfg.set("user_avatar_path", self._user_avatar_path_pending)
-            for btn in self._avatar_color_btns:
-                if btn.isChecked():
-                    self._cfg.set("user_avatar_color", btn.property("avatar_color"))
-                    break
+            self._cfg.set("user_avatar_color", avatar_color)
             thinking_idx = self._llm_enable_thinking.currentIndex()
             if thinking_idx == 1:
                 self._cfg.set("llm_enable_thinking", True)
@@ -7803,6 +8009,8 @@ class SettingsWindow(QWidget):
             self._cfg.set("llm_active_api_profile", active_profile)
             try:
                 self._cfg.save()
+                self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+                self._refresh_memory_page()
                 self._reload_llm_api_profiles(active_profile)
                 self._update_current_llm_api_profile_label()
                 if show_info:
@@ -8825,6 +9033,8 @@ class SettingsWindow(QWidget):
             "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
             "user_avatar_path": self._cfg.get("user_avatar_path", "") if self._cfg else "",
+            "user_profiles": self._cfg.get("user_profiles", []) if self._cfg else [],
+            "active_user_profile": self._cfg.get("active_user_profile", "") if self._cfg else "",
             "models": [dict(item) for item in self._configured_models],
             "model_action_settings": self._cfg.get("model_action_settings", {}) if self._cfg else {},
         }
