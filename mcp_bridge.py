@@ -22,6 +22,18 @@ _LOCK = threading.RLock()
 _thread_local = threading.local()
 
 
+def _hidden_subprocess_kwargs() -> dict:
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
+
+
 @dataclass
 class McpTool:
     public_name: str
@@ -488,6 +500,7 @@ class StdioMcpClient:
             cwd=cwd,
             text=False,
             bufsize=0,
+            **_hidden_subprocess_kwargs(),
         )
         self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
         self._reader.start()
