@@ -39,6 +39,13 @@ else:
 
 WM_NCHITTEST = 0x0084
 WM_NCCALCSIZE = 0x0083
+WM_DISPLAYCHANGE = 0x007E
+WM_POWERBROADCAST = 0x0218
+WM_WTSSESSION_CHANGE = 0x02B1
+PBT_APMRESUMECRITICAL = 0x0006
+PBT_APMRESUMESUSPEND = 0x0007
+PBT_APMRESUMEAUTOMATIC = 0x0012
+WTS_SESSION_UNLOCK = 0x0008
 HTTRANSPARENT = -1
 HTCLIENT = 1
 GWL_EXSTYLE = -20
@@ -184,6 +191,7 @@ LIVE2D_MOUSE_APPROACH_DWELL_SECONDS = 4.0
 LIVE2D_MOUSE_APPROACH_RADIUS = 180
 LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
+TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 
 
 def _clamp_live2d_scale(value: object) -> int:
@@ -326,6 +334,7 @@ class PetWindow(QWidget):
         self._last_context_idle_action_at = 0.0
         self._last_mouse_approach_action_at = 0.0
         self._last_topmost_interaction_refresh_at = 0.0
+        self._topmost_recovery_token = 0
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
@@ -430,6 +439,23 @@ class PetWindow(QWidget):
                 msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
+                if (
+                    msg.message == WM_POWERBROADCAST
+                    and int(msg.wParam)
+                    in {
+                        PBT_APMRESUMECRITICAL,
+                        PBT_APMRESUMESUSPEND,
+                        PBT_APMRESUMEAUTOMATIC,
+                    }
+                ):
+                    self._schedule_windows_topmost_recovery()
+                elif (
+                    msg.message == WM_WTSSESSION_CHANGE
+                    and int(msg.wParam) == WTS_SESSION_UNLOCK
+                ):
+                    self._schedule_windows_topmost_recovery()
+                elif msg.message == WM_DISPLAYCHANGE:
+                    self._schedule_windows_topmost_recovery()
                 if msg.message == WM_NCHITTEST and self._use_native_hit_test_passthrough:
                     lparam = int(msg.lParam)
                     x = ctypes.c_short(lparam & 0xFFFF).value
@@ -519,6 +545,21 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+
+    def _schedule_windows_topmost_recovery(self):
+        if os.name != "nt":
+            return
+        self._topmost_recovery_token += 1
+        token = self._topmost_recovery_token
+
+        def recover():
+            if token != self._topmost_recovery_token or not self.isVisible():
+                return
+            self._apply_windows_frameless_fix()
+            self._enforce_game_topmost()
+
+        for delay_ms in TOPMOST_RECOVERY_DELAYS_MS:
+            QTimer.singleShot(delay_ms, recover)
 
     def _refresh_topmost_for_interaction(self, *, force: bool = False):
         if os.name != "nt" or not self.isVisible():
