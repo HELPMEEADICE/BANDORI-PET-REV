@@ -2081,6 +2081,7 @@ class ChatWindow(QWidget):
         self._group_toggle_btn = None
         self._group_sidebar_toggle_btn = None
         self._group_splitter_adjusting = False
+        self._collapsed_chat_size: QSize | None = None
         self._group_sidebar_ratio = self._normalized_group_sidebar_ratio(
             self._cfg.get("group_chat_sidebar_ratio", _GROUP_SIDEBAR_DEFAULT_RATIO)
         ) if self._cfg else _GROUP_SIDEBAR_DEFAULT_RATIO
@@ -2145,16 +2146,46 @@ class ChatWindow(QWidget):
     def _chat_sidebar_enabled(self) -> bool:
         return bool(self._modern_chat_ui_enabled or self._is_group_chat)
 
-    def _chat_minimum_size(self) -> tuple[int, int]:
-        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
+    def _chat_minimum_size_for(self, sidebar_collapsed: bool | None = None) -> tuple[int, int]:
+        if sidebar_collapsed is None:
+            sidebar_collapsed = self._group_sidebar_collapsed
+        if self._chat_sidebar_enabled() and not sidebar_collapsed:
             return 720, 600
         return 360, 520
+
+    def _chat_minimum_size(self) -> tuple[int, int]:
+        return self._chat_minimum_size_for()
 
     def _apply_chat_window_minimum_size(self, ensure_visible_size: bool = False):
         min_width, min_height = self._chat_minimum_size()
         self.setMinimumSize(min_width, min_height)
         if ensure_visible_size and (self.width() < min_width or self.height() < min_height):
             self.resize(max(self.width(), min_width), max(self.height(), min_height))
+
+    def _valid_collapsed_chat_size(self, size: QSize | None) -> QSize | None:
+        if size is None or not size.isValid() or size.isEmpty():
+            return None
+        min_width, min_height = self._chat_minimum_size_for(sidebar_collapsed=True)
+        return QSize(max(min_width, size.width()), max(min_height, size.height()))
+
+    def _fallback_collapsed_chat_size(self) -> QSize:
+        content_width = 0
+        if self._group_splitter is not None:
+            sizes = self._group_splitter.sizes()
+            if len(sizes) > 1:
+                content_width = sizes[1]
+        if content_width <= 0:
+            sidebar_width = self._group_sidebar.width() if self._group_sidebar is not None else 0
+            handle_width = self._group_splitter.handleWidth() if self._group_splitter is not None else 0
+            content_width = self.width() - sidebar_width - handle_width
+        min_width, min_height = self._chat_minimum_size_for(sidebar_collapsed=True)
+        return QSize(max(min_width, content_width), max(min_height, self.height()))
+
+    def _restore_collapsed_chat_size(self, size: QSize):
+        size = self._valid_collapsed_chat_size(size) or self._fallback_collapsed_chat_size()
+        if self.size() == size:
+            return
+        self.resize(size)
 
     def _normalize_group_characters(self, characters: list[str]) -> list[str]:
         result = []
@@ -2558,11 +2589,22 @@ class ChatWindow(QWidget):
     def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
         if not self._chat_sidebar_enabled() or not self._group_splitter or not self._group_sidebar:
             return
+        was_collapsed = self._group_sidebar_collapsed
+        collapsed = bool(collapsed)
+        collapsed_size = None
+        if was_collapsed and not collapsed:
+            self._collapsed_chat_size = self.size()
+        elif not was_collapsed and collapsed:
+            collapsed_size = self._valid_collapsed_chat_size(self._collapsed_chat_size)
+            if collapsed_size is None:
+                collapsed_size = self._fallback_collapsed_chat_size()
         self._group_sidebar_collapsed = bool(collapsed)
         self._apply_chat_window_minimum_size(ensure_visible_size=not self._group_sidebar_collapsed)
         self._group_sidebar.setVisible(not self._group_sidebar_collapsed)
         if self._group_sidebar_collapsed:
             self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
+            if collapsed_size is not None:
+                self._restore_collapsed_chat_size(collapsed_size)
         else:
             self._schedule_group_sidebar_ratio_apply()
         self._sync_group_sidebar_toggle_buttons()
