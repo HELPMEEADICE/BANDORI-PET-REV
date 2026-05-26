@@ -7,11 +7,6 @@ import urllib.error
 import urllib.request
 from collections import deque
 
-import numpy as np
-import requests
-import sounddevice as sd
-import soundfile as sf
-
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
 from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
@@ -21,6 +16,42 @@ from process_utils import app_base_dir
 _ACTION_TAG_RE = re.compile(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]")
 _DIALOG_GROUPS_KEY = "__groups"
 _WORD_RE = re.compile(r"[A-Za-z']+")
+_NUMPY_MODULE = None
+_REQUESTS_MODULE = None
+_SOUNDDEVICE_MODULE = None
+_SOUNDFILE_MODULE = None
+
+
+def _numpy():
+    global _NUMPY_MODULE
+    if _NUMPY_MODULE is None:
+        import numpy as module
+        _NUMPY_MODULE = module
+    return _NUMPY_MODULE
+
+
+def _requests():
+    global _REQUESTS_MODULE
+    if _REQUESTS_MODULE is None:
+        import requests as module
+        _REQUESTS_MODULE = module
+    return _REQUESTS_MODULE
+
+
+def _sounddevice():
+    global _SOUNDDEVICE_MODULE
+    if _SOUNDDEVICE_MODULE is None:
+        import sounddevice as module
+        _SOUNDDEVICE_MODULE = module
+    return _SOUNDDEVICE_MODULE
+
+
+def _soundfile():
+    global _SOUNDFILE_MODULE
+    if _SOUNDFILE_MODULE is None:
+        import soundfile as module
+        _SOUNDFILE_MODULE = module
+    return _SOUNDFILE_MODULE
 
 
 CHARACTER_TRILINGUAL_NAMES = {
@@ -360,7 +391,7 @@ class TTSRequestWorker(QThread):
                 payload["prompt_text"] = prompt_text
             self._apply_qwen_lora(payload)
 
-            response = requests.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+            response = _requests().post(self._tts_url(), json=payload, stream=streaming, timeout=120)
             if response.status_code != 200:
                 self.error.emit(f"TTS HTTP {response.status_code}: {response.text[:240]}")
                 return
@@ -447,7 +478,7 @@ class TTSRequestWorker(QThread):
 
     def _available_qwen_loras(self) -> dict | None:
         try:
-            response = requests.get(self._tts_url() + "lora/list", timeout=5)
+            response = _requests().get(self._tts_url() + "lora/list", timeout=5)
             if response.status_code != 200:
                 return None
             loras = response.json().get("loras")
@@ -457,7 +488,7 @@ class TTSRequestWorker(QThread):
 
     def _unload_qwen_lora(self):
         try:
-            requests.post(self._tts_url() + "lora/unload", timeout=5)
+            _requests().post(self._tts_url() + "lora/unload", timeout=5)
         except Exception:
             pass
 
@@ -587,7 +618,8 @@ class TTSPlayer(QObject):
             return
         del media_type
         try:
-            data, sample_rate = sf.read(io.BytesIO(audio), dtype="float32")
+            data, sample_rate = _soundfile().read(io.BytesIO(audio), dtype="float32")
+            _numpy()
         except Exception as exc:
             self.error.emit(f"TTS audio decode failed: {exc}")
             return
@@ -637,7 +669,7 @@ class TTSPlayer(QObject):
         self._sample_rate = sample_rate
         self._channels = max(1, channels)
         try:
-            self._stream = sd.OutputStream(
+            self._stream = _sounddevice().OutputStream(
                 samplerate=sample_rate,
                 channels=self._channels,
                 dtype="float32",
@@ -666,6 +698,7 @@ class TTSPlayer(QObject):
             available = len(self._current_chunk) - self._current_pos
             take = min(available, frames - filled)
             chunk = self._current_chunk[self._current_pos:self._current_pos + take]
+            np = _numpy()
             rms = float(np.sqrt(np.mean(chunk * chunk)))
             peak = float(np.max(np.abs(chunk)))
             self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))

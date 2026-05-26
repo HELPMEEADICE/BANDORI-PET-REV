@@ -46,14 +46,41 @@ class ModelManager:
     _model_paths: dict[tuple[str, str], str] = {}
     _character_images: dict[str, str] = {}
 
-    def __init__(self):
+    def __init__(self, scan_models: bool = True):
         self._characters: dict[str, dict] = {}
         self._costume_names: dict[str, dict[str, str]] = {}
         self._bands: list[dict] = []
         self._advanced_roleplay_cache: dict[str, bool] | None = None
-        self._scan()
+        if scan_models:
+            self._scan()
+        else:
+            self._scan_model_keys()
         self._parse_outfit_json()
         self._parse_band_json()
+
+    def _scan_model_keys(self):
+        ModelManager._model_paths = {}
+        ModelManager._character_images = {}
+        if not models_dir_exists():
+            return
+        for entry in sorted(MODELS_DIR.iterdir()):
+            if entry.name.startswith("_"):
+                continue
+            if entry.is_dir():
+                character = entry.name
+                image_path = self._find_dir_character_image(entry)
+            elif entry.is_file() and entry.suffix.lower() == ".zst":
+                character = entry.stem
+                try:
+                    files = list_archive_files(entry)
+                    image_path = self._find_archive_character_image(entry, files, character)
+                except Exception:
+                    image_path = ""
+            else:
+                continue
+            if image_path:
+                ModelManager._character_images[character] = image_path
+            self._characters.setdefault(character, {"costumes": [{"id": "default", "path": ""}]})
 
     def _scan_advanced_roleplay_support(self) -> dict[str, bool]:
         support = {character: False for character in self.characters}
