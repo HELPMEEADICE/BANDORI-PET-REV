@@ -173,6 +173,9 @@ DEFAULTS = {
     "user_avatar_color": BANDORI_PRIMARY,
     "user_avatar_path": "",
     "chat_avatar_paths": {},
+    "chat_display_names": {},
+    "pinned_chat_keys": [],
+    "fluent_chat_window_enabled": False,
     "group_chat_sidebar_ratio": 0.28,
     "group_chat_sidebar_collapsed": False,
     "pov_mode": "off",
@@ -342,6 +345,23 @@ class ConfigManager:
             self._seed_model_action_settings_from_models()
         if not isinstance(self._data.get("chat_avatar_paths"), dict):
             self._data["chat_avatar_paths"] = {}
+        if not isinstance(self._data.get("chat_display_names"), dict):
+            self._data["chat_display_names"] = {}
+        pinned_chat_keys = self._data.get("pinned_chat_keys", [])
+        if isinstance(pinned_chat_keys, list):
+            seen_pinned = set()
+            normalized_pinned = []
+            for key in pinned_chat_keys:
+                key = str(key or "").strip()
+                if key and key not in seen_pinned:
+                    normalized_pinned.append(key)
+                    seen_pinned.add(key)
+            self._data["pinned_chat_keys"] = normalized_pinned
+        else:
+            self._data["pinned_chat_keys"] = []
+        self._data["fluent_chat_window_enabled"] = bool(
+            self._data.get("fluent_chat_window_enabled", False)
+        )
         self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "")).strip()
         self._normalize_llm_api_profiles()
         self._normalize_mcp_servers()

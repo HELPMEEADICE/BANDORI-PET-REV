@@ -239,6 +239,9 @@ DATA_CONFIG_KEYS = {
         "drag_locked",
         "live2d_quality",
         "live2d_scale",
+        "fluent_chat_window_enabled",
+        "chat_display_names",
+        "pinned_chat_keys",
         "live2d_hit_alpha_threshold",
         "live2d_lip_sync_max_open",
         "window_x",
@@ -1366,6 +1369,9 @@ class SettingsWindow(QWidget):
         )
         self._live2d_scale = _clamp_live2d_scale(
             self._cfg.get("live2d_scale", 0) if self._cfg else 0
+        )
+        self._fluent_chat_window_enabled = (
+            bool(self._cfg.get("fluent_chat_window_enabled", False)) if self._cfg else False
         )
         self._saved_user_name = ""
         self._user_avatar_path_pending = ""
@@ -6108,14 +6114,15 @@ class SettingsWindow(QWidget):
             self._save_chat_integration_config(show_info=False, emit_update=False)
         if self._mcp_computer_widgets_ready():
             self._save_mcp_computer_config(show_info=False)
-        if hasattr(self, "_fps_slider"):
-            self._cfg.set("fps", self._fps_slider.value())
+        if hasattr(self, "_opacity_slider"):
+            self._cfg.set("fps", self._current_fps_setting())
             self._cfg.set("opacity", self._opacity_slider.value() / 100.0)
             self._cfg.set("dark_theme", self._theme_switch.isChecked())
-            self._cfg.set("vsync", self._vsync_switch.isChecked())
+            self._cfg.set("vsync", self._current_vsync_setting())
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
             self._cfg.set("hide_live2d_model", self._hide_live2d_model_switch.isChecked())
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
+            self._cfg.set("fluent_chat_window_enabled", self._fluent_chat_window_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.save()
@@ -6397,6 +6404,7 @@ class SettingsWindow(QWidget):
             self._selected_list_character = self._current_char or self._configured_models[0]["character"]
         self._live2d_quality = normalize_live2d_quality(self._cfg.get("live2d_quality", "balanced"))
         self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 0))
+        self._fluent_chat_window_enabled = bool(self._cfg.get("fluent_chat_window_enabled", False))
         self._fps = int(self._cfg.get("fps", self._fps) or self._fps)
         self._opacity = float(self._cfg.get("opacity", self._opacity) or self._opacity)
         self._vsync = bool(self._cfg.get("vsync", self._vsync))
@@ -6439,18 +6447,28 @@ class SettingsWindow(QWidget):
             self._live2d_scale_slider.setValue(self._live2d_scale)
             self._live2d_scale_slider.blockSignals(False)
             self._live2d_scale_input.setText(str(self._live2d_scale))
+        if hasattr(self, "_fluent_chat_window_switch"):
+            self._fluent_chat_window_switch.blockSignals(True)
+            self._fluent_chat_window_switch.setChecked(self._fluent_chat_window_enabled)
+            self._fluent_chat_window_switch.blockSignals(False)
         if hasattr(self, "_fps_slider"):
+            self._fps_slider.blockSignals(True)
             self._fps_slider.setValue(max(30, min(240, self._fps)))
+            self._fps_slider.blockSignals(False)
+            self._fps_value.setText(_tr("SettingsWindow.fps_value", v=self._fps_slider.value()))
+            if hasattr(self, "_vsync_switch"):
+                self._vsync_switch.blockSignals(True)
+                self._vsync_switch.setChecked(self._vsync)
+                self._vsync_switch.blockSignals(False)
+            self._on_vsync_changed(self._vsync)
+        if hasattr(self, "_opacity_slider"):
             self._opacity_slider.setValue(max(20, min(100, int(self._opacity * 100))))
-            self._vsync_switch.setChecked(self._vsync)
             self._game_topmost_switch.setChecked(self._game_topmost)
             self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
             self._auto_start_switch.setChecked(bool(self._cfg.get("auto_start", False)) if self._cfg else False)
             if hasattr(self, "_live2d_idle_actions_switch"):
                 self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
-            self._fps_value.setText(_tr("SettingsWindow.fps_value", v=self._fps_slider.value()))
             self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=self._opacity_slider.value()))
-            self._on_vsync_changed(self._vsync)
         if hasattr(self, "_lang_combo"):
             language = str(self._cfg.get("language", "") or current_language()) if self._cfg else current_language()
             for index in range(self._lang_combo.count()):
@@ -6496,8 +6514,11 @@ class SettingsWindow(QWidget):
         layout.setSpacing(16)
 
         title = TitleLabel(_tr("SettingsWindow.quality_title"), page)
+        title.setObjectName("QualityPageTitle")
         layout.addWidget(title)
         subtitle = SubtitleLabel(_tr("SettingsWindow.quality_subtitle"), page)
+        subtitle.setObjectName("QualityPageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         quality_label = BodyLabel(_tr("SettingsWindow.quality_profile"), page)
@@ -6517,6 +6538,30 @@ class SettingsWindow(QWidget):
         self._quality_detail = BodyLabel(self._quality_detail_text(self._live2d_quality), page)
         self._quality_detail.setWordWrap(True)
         layout.addWidget(self._quality_detail)
+
+        fps_label = BodyLabel(_tr("SettingsWindow.side_fps"), page)
+        layout.addWidget(fps_label)
+        self._fps_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._fps_slider.setRange(30, 240)
+        self._fps_slider.setValue(max(30, min(240, self._fps)))
+        self._fps_slider.setSingleStep(10)
+        self._fps_value = BodyLabel(_tr("SettingsWindow.fps_value", v=self._fps_slider.value()), page)
+        self._fps_slider.valueChanged.connect(self._on_fps_changed)
+        layout.addWidget(self._fps_slider)
+        layout.addWidget(self._fps_value)
+
+        vsync_label = BodyLabel(_tr("SettingsWindow.side_vsync"), page)
+        self._vsync_switch = SwitchButton(page)
+        self._vsync_switch.setChecked(self._vsync)
+        self._vsync_switch.checkedChanged.connect(self._on_vsync_changed)
+        vsync_row = QHBoxLayout()
+        vsync_row.setContentsMargins(0, 0, 0, 0)
+        vsync_row.setSpacing(10)
+        vsync_row.addWidget(vsync_label)
+        vsync_row.addStretch()
+        vsync_row.addWidget(self._vsync_switch)
+        layout.addLayout(vsync_row)
+        self._on_vsync_changed(self._vsync)
 
         scale_label = BodyLabel(_tr("SettingsWindow.live2d_scale"), page)
         layout.addWidget(scale_label)
@@ -8146,33 +8191,6 @@ class SettingsWindow(QWidget):
         settings_title = StrongBodyLabel(_tr("SettingsWindow.side_settings"), panel)
         layout.addWidget(settings_title)
 
-        fps_label = BodyLabel(_tr("SettingsWindow.side_fps"), panel)
-        layout.addWidget(fps_label)
-        self._fps_slider = Slider(Qt.Orientation.Horizontal, panel)
-        self._fps_slider.setRange(30, 240)
-        self._fps_slider.setValue(self._fps)
-        self._fps_slider.setSingleStep(10)
-        self._fps_value = BodyLabel(_tr("SettingsWindow.fps_value", v=self._fps), panel)
-        self._fps_slider.valueChanged.connect(
-            lambda v: self._fps_value.setText(_tr("SettingsWindow.fps_value", v=v))
-        )
-        layout.addWidget(self._fps_slider)
-        layout.addWidget(self._fps_value)
-
-        vsync_label = BodyLabel(_tr("SettingsWindow.side_vsync"), panel)
-        self._vsync_switch = SwitchButton(panel)
-        self._vsync_switch.setChecked(self._vsync)
-        self._vsync_switch.checkedChanged.connect(self._on_vsync_changed)
-        vsync_row = QHBoxLayout()
-        vsync_row.addWidget(vsync_label)
-        vsync_row.addStretch()
-        vsync_row.addWidget(self._vsync_switch)
-        layout.addLayout(vsync_row)
-
-        if self._vsync:
-            self._fps_slider.setEnabled(False)
-            self._fps_value.setEnabled(False)
-
         game_topmost_label = BodyLabel(_tr("SettingsWindow.side_game_topmost"), panel)
         self._game_topmost_switch = SwitchButton(panel)
         self._game_topmost_switch.setChecked(self._game_topmost)
@@ -8203,6 +8221,28 @@ class SettingsWindow(QWidget):
         auto_start_row.addStretch()
         auto_start_row.addWidget(self._auto_start_switch)
         layout.addLayout(auto_start_row)
+
+        fluent_chat_label = BodyLabel(
+            _tr("SettingsWindow.fluent_chat_window", default="现代 Fluent 聊天窗口"),
+            panel,
+        )
+        self._fluent_chat_window_switch = SwitchButton(panel)
+        self._fluent_chat_window_switch.setChecked(self._fluent_chat_window_enabled)
+        self._fluent_chat_window_switch.setToolTip(
+            _tr(
+                "SettingsWindow.fluent_chat_window_hint",
+                default="开启后聊天窗口左侧会显示可收起的私聊/群聊列表；关闭则使用原有界面。",
+            )
+        )
+        fluent_chat_label.setToolTip(self._fluent_chat_window_switch.toolTip())
+        self._fluent_chat_window_switch.checkedChanged.connect(
+            lambda checked: setattr(self, "_fluent_chat_window_enabled", bool(checked))
+        )
+        fluent_chat_row = QHBoxLayout()
+        fluent_chat_row.addWidget(fluent_chat_label)
+        fluent_chat_row.addStretch()
+        fluent_chat_row.addWidget(self._fluent_chat_window_switch)
+        layout.addLayout(fluent_chat_row)
 
         opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), panel)
         layout.addWidget(opacity_label)
@@ -8685,10 +8725,17 @@ class SettingsWindow(QWidget):
         self._selecting_model = True
         self._populate_bands()
 
+    def _on_fps_changed(self, value: int):
+        self._fps = int(value)
+        if hasattr(self, "_fps_value"):
+            self._fps_value.setText(_tr("SettingsWindow.fps_value", v=value))
+
     def _on_vsync_changed(self, checked: bool):
         self._vsync = checked
-        self._fps_slider.setEnabled(not checked)
-        self._fps_value.setEnabled(not checked)
+        if hasattr(self, "_fps_slider"):
+            self._fps_slider.setEnabled(not checked)
+        if hasattr(self, "_fps_value"):
+            self._fps_value.setEnabled(not checked)
 
     def _apply_auto_start_setting(self) -> bool:
         enabled = bool(self._auto_start_switch.isChecked())
@@ -8711,6 +8758,16 @@ class SettingsWindow(QWidget):
                 parent=self,
             )
             return False
+
+    def _current_fps_setting(self) -> int:
+        if hasattr(self, "_fps_slider"):
+            return int(self._fps_slider.value())
+        return int(self._fps)
+
+    def _current_vsync_setting(self) -> bool:
+        if hasattr(self, "_vsync_switch"):
+            return bool(self._vsync_switch.isChecked())
+        return bool(self._vsync)
 
     def _on_apply(self):
         if self._launched:
@@ -8741,16 +8798,17 @@ class SettingsWindow(QWidget):
         self._save_configured_models()
         settings = {
             "language": current_language(),
-            "fps": self._fps_slider.value(),
+            "fps": self._current_fps_setting(),
             "opacity": self._opacity_slider.value() / 100.0,
             "dark_theme": self._theme_switch.isChecked(),
-            "vsync": self._vsync_switch.isChecked(),
+            "vsync": self._current_vsync_setting(),
             "game_topmost": self._game_topmost_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
             "live2d_idle_actions_enabled": self._live2d_idle_actions_switch.isChecked(),
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
+            "fluent_chat_window_enabled": self._fluent_chat_window_enabled,
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False) if self._cfg else False,
             "compact_ai_window_opacity": self._cfg.get("compact_ai_window_opacity", 44) if self._cfg else 44,
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12) if self._cfg else 12,
@@ -8784,6 +8842,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
+            self._cfg.set("fluent_chat_window_enabled", settings["fluent_chat_window_enabled"])
             self._cfg.save()
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)

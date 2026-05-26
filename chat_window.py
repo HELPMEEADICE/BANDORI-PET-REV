@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
     QApplication, QGraphicsOpacityEffect, QWidgetAction,
     QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
-    QSplitter, QSplitterHandle,
+    QSplitter, QSplitterHandle, QCheckBox,
 )
 
 from i18n_manager import tr as _tr
@@ -315,10 +315,10 @@ class FluentContextLabel(QLabel):
 
 
 class GroupRenameDialog(MessageBoxBase):
-    def __init__(self, current_name: str, parent=None):
+    def __init__(self, current_name: str, parent=None, title: str = "", label: str = ""):
         super().__init__(parent)
-        self.title_label = StrongBodyLabel(_tr("ChatWindow.rename_group_title"), self.widget)
-        self.desc_label = BodyLabel(_tr("ChatWindow.rename_group_label"), self.widget)
+        self.title_label = StrongBodyLabel(title or _tr("ChatWindow.rename_group_title"), self.widget)
+        self.desc_label = BodyLabel(label or _tr("ChatWindow.rename_group_label"), self.widget)
         self.desc_label.setWordWrap(True)
         self.name_edit = LineEdit(self.widget)
         self.name_edit.setClearButtonEnabled(True)
@@ -881,31 +881,47 @@ class GroupChatListRow(QWidget):
     selected = Signal(object)
     context_menu_requested = Signal(object, object)
 
-    def __init__(self, characters: list[str], title: str, preview: str, current: bool, parent=None):
+    def __init__(
+        self,
+        characters: list[str],
+        title: str,
+        preview: str,
+        current: bool,
+        parent=None,
+        avatar_pixmap: QPixmap | None = None,
+        kind_text: str = "",
+        pinned: bool = False,
+    ):
         super().__init__(parent)
         self._characters = list(characters)
         self._title_text = title
         self._preview_text = preview
+        self._kind_text = kind_text
+        self._pinned = bool(pinned)
         self._current = current
         self._hovered = False
         self._pressed = False
+        self._avatar_has_pixmap = avatar_pixmap is not None and not avatar_pixmap.isNull()
         self._bg_color = QColor("transparent")
         self._indicator_color = QColor("transparent")
         self._border_color = QColor("transparent")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(60)
+        self.setFixedHeight(64)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 7, 10, 7)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(9)
 
         avatar = QLabel(title[:1].upper(), self)
         avatar.setObjectName("GroupListAvatar")
-        avatar.setFixedSize(32, 32)
+        avatar.setFixedSize(34, 34)
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if self._avatar_has_pixmap:
+            avatar.setText("")
+            avatar.setPixmap(avatar_pixmap)
         layout.addWidget(avatar)
 
         text_stack = QVBoxLayout()
@@ -931,9 +947,30 @@ class GroupChatListRow(QWidget):
         text_stack.addWidget(preview_label)
         layout.addLayout(text_stack, 1)
 
+        meta_stack = QVBoxLayout()
+        meta_stack.setContentsMargins(0, 0, 0, 0)
+        meta_stack.setSpacing(2)
+        pin_label = QLabel("★" if self._pinned else "", self)
+        pin_label.setObjectName("GroupListPin")
+        pin_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pin_label.setFixedHeight(16)
+        pin_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        pin_label.setVisible(self._pinned)
+        badge_label = QLabel(kind_text, self)
+        badge_label.setObjectName("GroupListBadge")
+        badge_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        badge_label.setFixedHeight(18)
+        badge_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge_label.setVisible(bool(kind_text))
+        meta_stack.addWidget(pin_label)
+        meta_stack.addWidget(badge_label)
+        layout.addLayout(meta_stack)
+
         self._avatar = avatar
         self._title_label = title_label
         self._preview_label = preview_label
+        self._pin_label = pin_label
+        self._badge_label = badge_label
         self.apply_theme()
         self._update_elided_texts()
 
@@ -975,6 +1012,9 @@ class GroupChatListRow(QWidget):
 
         title = "#f8f8fb" if dark else "#1f2328"
         preview = "#a9b0c3" if dark else "#657089"
+        badge_bg = "#303849" if dark else "#eaf0fb"
+        badge_fg = "#cfd8ec" if dark else "#5c6a84"
+        pin_fg = "#f6c344" if dark else "#a15c00"
         avatar_bg = accent_color(dark) if self._current else ("#2d3444" if dark else "#edf2f9")
         avatar_fg = "#ffffff" if self._current else ("#dce4f7" if dark else "#4f5d74")
         self._bg_color = QColor(bg)
@@ -987,7 +1027,7 @@ class GroupChatListRow(QWidget):
             QLabel#GroupListAvatar {{
                 background: {avatar_bg};
                 color: {avatar_fg};
-                border-radius: 16px;
+                border-radius: 17px;
                 font-weight: 700;
             }}
             QLabel#GroupListTitle {{
@@ -999,6 +1039,19 @@ class GroupChatListRow(QWidget):
                 color: {preview};
                 background: transparent;
                 font-size: 11px;
+            }}
+            QLabel#GroupListPin {{
+                color: {pin_fg};
+                background: transparent;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QLabel#GroupListBadge {{
+                color: {badge_fg};
+                background: {badge_bg};
+                border-radius: 8px;
+                padding: 1px 6px;
+                font-size: 10px;
             }}
         """)
         self._update_elided_texts()
@@ -1049,6 +1102,155 @@ class GroupChatListRow(QWidget):
     def contextMenuEvent(self, event):
         self.context_menu_requested.emit(list(self._characters), event.globalPos())
         event.accept()
+
+
+class ChatCharacterPickerPanel(QWidget):
+    open_requested = Signal(object)
+
+    def __init__(self, characters: list[str], display_name_for, selected=None, parent=None):
+        super().__init__(parent)
+        self._characters = list(characters)
+        self._display_name_for = display_name_for
+        self._checks: dict[str, QCheckBox] = {}
+        selected_set = set(selected or [])
+        self.setObjectName("ChatCharacterPickerPanel")
+        self.setMinimumWidth(260)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        title = StrongBodyLabel(_tr("ChatWindow.new_chat_picker_title", default="选择角色"), self)
+        title.setObjectName("ChatPickerTitle")
+        layout.addWidget(title)
+
+        scroll = QScrollArea(self)
+        scroll.setObjectName("ChatPickerScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setMaximumHeight(320)
+
+        list_widget = QWidget(scroll)
+        list_widget.setObjectName("ChatPickerList")
+        list_layout = QVBoxLayout(list_widget)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(2)
+        for character in self._characters:
+            check = QCheckBox(self._display_name_for(character), list_widget)
+            check.setObjectName("ChatPickerCheck")
+            check.setChecked(character in selected_set)
+            check.stateChanged.connect(self._sync_action_button)
+            self._checks[character] = check
+            list_layout.addWidget(check)
+        list_layout.addStretch()
+        scroll.setWidget(list_widget)
+        layout.addWidget(scroll)
+
+        self._open_btn = QToolButton(self)
+        self._open_btn.setObjectName("ChatPickerOpenButton")
+        self._open_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._open_btn.setIcon(FluentIcon.ADD.icon())
+        self._open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._open_btn.clicked.connect(self._emit_open_requested)
+        layout.addWidget(self._open_btn)
+
+        self.apply_theme()
+        self._sync_action_button()
+
+    def _selected_characters(self) -> list[str]:
+        return [
+            character
+            for character in self._characters
+            if self._checks.get(character) is not None and self._checks[character].isChecked()
+        ]
+
+    def _sync_action_button(self):
+        count = len(self._selected_characters())
+        self._open_btn.setEnabled(count > 0)
+        if count <= 1:
+            self._open_btn.setText(_tr("ChatWindow.open_private_chat", default="打开私聊"))
+        else:
+            self._open_btn.setText(_tr("ChatWindow.open_group_chat", default="打开群聊"))
+
+    def _emit_open_requested(self):
+        characters = self._selected_characters()
+        if characters:
+            self.open_requested.emit(characters)
+
+    def apply_theme(self):
+        dark = isDarkTheme()
+        bg = "#1b1f29" if dark else "#ffffff"
+        text = "#f7f7fb" if dark else "#1f2328"
+        muted = "#a9b0c3" if dark else "#657089"
+        hover = "#252c3a" if dark else "#f3f7ff"
+        button_bg = accent_color(dark)
+        button_hover = BANDORI_PRIMARY_DARK_HOVER if dark else BANDORI_PRIMARY_HOVER
+        button_pressed = BANDORI_PRIMARY_DARK_PRESSED if dark else BANDORI_PRIMARY_PRESSED
+        handle = "#4c5569" if dark else "#c7d0e3"
+        self.setStyleSheet(f"""
+            QWidget#ChatCharacterPickerPanel {{
+                background: {bg};
+            }}
+            QLabel#ChatPickerTitle {{
+                color: {text};
+                background: transparent;
+                font-size: 13px;
+                font-weight: 700;
+            }}
+            QScrollArea#ChatPickerScroll {{
+                background: {bg};
+                border: none;
+            }}
+            QWidget#ChatPickerList {{
+                background: {bg};
+            }}
+            QCheckBox#ChatPickerCheck {{
+                color: {text};
+                background: transparent;
+                border-radius: 7px;
+                padding: 7px 8px;
+                font-size: 13px;
+            }}
+            QCheckBox#ChatPickerCheck:hover {{
+                background: {hover};
+            }}
+            QCheckBox#ChatPickerCheck::indicator {{
+                width: 16px;
+                height: 16px;
+            }}
+            QToolButton#ChatPickerOpenButton {{
+                background: {button_bg};
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-weight: 700;
+            }}
+            QToolButton#ChatPickerOpenButton:hover {{
+                background: {button_hover};
+            }}
+            QToolButton#ChatPickerOpenButton:pressed {{
+                background: {button_pressed};
+            }}
+            QToolButton#ChatPickerOpenButton:disabled {{
+                background: {'#2a2f3b' if dark else '#e6ebf3'};
+                color: {muted};
+            }}
+            QScrollBar:vertical {{
+                background: {bg};
+                width: 6px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {handle};
+                border-radius: 3px;
+                min-height: 30px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
 
 
 class PlanDivider(QWidget):
@@ -1810,6 +2012,17 @@ class ChatWindow(QWidget):
         self._model_manager = model_manager
         self._live2d = live2d_module
         self._cfg = config_manager
+        self._modern_chat_ui_enabled = bool(
+            self._cfg.get("fluent_chat_window_enabled", False)
+        ) if self._cfg else False
+        display_names = self._cfg.get("chat_display_names", {}) if self._cfg else {}
+        self._chat_display_names = display_names if isinstance(display_names, dict) else {}
+        pinned_chat_keys = self._cfg.get("pinned_chat_keys", []) if self._cfg else []
+        self._pinned_chat_keys = [
+            str(key)
+            for key in pinned_chat_keys
+            if str(key or "").strip()
+        ] if isinstance(pinned_chat_keys, list) else []
         self._parent_pet = parent_pet
         self._conv_id: int | None = None
         self._group_conv_id = ""
@@ -1873,7 +2086,7 @@ class ChatWindow(QWidget):
         ) if self._cfg else _GROUP_SIDEBAR_DEFAULT_RATIO
         self._group_sidebar_collapsed = bool(
             self._cfg.get("group_chat_sidebar_collapsed", False)
-        ) if self._is_group_chat and self._cfg else False
+        ) if (self._modern_chat_ui_enabled or self._is_group_chat) and self._cfg else False
         self._group_sidebar_save_timer = QTimer(self)
         self._group_sidebar_save_timer.setSingleShot(True)
         self._group_sidebar_save_timer.timeout.connect(self._save_group_sidebar_settings)
@@ -1902,11 +2115,10 @@ class ChatWindow(QWidget):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
-        if self._is_group_chat:
-            self.setMinimumSize(720, 600)
+        self._apply_chat_window_minimum_size()
+        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
             self.resize(880, 680)
         else:
-            self.setMinimumSize(360, 520)
             self.resize(420, 620)
 
         self.setWindowFlags(
@@ -1930,6 +2142,20 @@ class ChatWindow(QWidget):
             ratio = _GROUP_SIDEBAR_DEFAULT_RATIO
         return max(_GROUP_SIDEBAR_MIN_RATIO, min(_GROUP_SIDEBAR_MAX_RATIO, ratio))
 
+    def _chat_sidebar_enabled(self) -> bool:
+        return bool(self._modern_chat_ui_enabled or self._is_group_chat)
+
+    def _chat_minimum_size(self) -> tuple[int, int]:
+        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
+            return 720, 600
+        return 360, 520
+
+    def _apply_chat_window_minimum_size(self, ensure_visible_size: bool = False):
+        min_width, min_height = self._chat_minimum_size()
+        self.setMinimumSize(min_width, min_height)
+        if ensure_visible_size and (self.width() < min_width or self.height() < min_height):
+            self.resize(max(self.width(), min_width), max(self.height(), min_height))
+
     def _normalize_group_characters(self, characters: list[str]) -> list[str]:
         result = []
         seen = set()
@@ -1939,6 +2165,38 @@ class ChatWindow(QWidget):
             result.append(character)
             seen.add(character)
         return result
+
+    def _private_display_name(self, character: str) -> str:
+        custom_name = str(self._chat_display_names.get(character, "") or "").strip()
+        return custom_name or self._model_manager.get_display_name(character)
+
+    def _save_chat_display_names(self):
+        if not self._cfg:
+            return
+        self._cfg.set("chat_display_names", dict(self._chat_display_names))
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+
+    def _is_chat_pinned(self, chat_key: str) -> bool:
+        return chat_key in set(self._pinned_chat_keys)
+
+    def _set_chat_pinned(self, chat_key: str, pinned: bool):
+        chat_key = str(chat_key or "").strip()
+        if not chat_key:
+            return
+        pinned_keys = [key for key in self._pinned_chat_keys if key != chat_key]
+        if pinned:
+            pinned_keys.insert(0, chat_key)
+        self._pinned_chat_keys = pinned_keys
+        if self._cfg:
+            self._cfg.set("pinned_chat_keys", list(self._pinned_chat_keys))
+            try:
+                self._cfg.save()
+            except Exception:
+                pass
+        self._refresh_group_list()
 
     def _conversation_key_for(self, characters: list[str]) -> str:
         normalized = self._normalize_group_characters(characters)
@@ -1951,19 +2209,6 @@ class ChatWindow(QWidget):
             return []
         allowed = set(self._model_manager.characters)
         return [character for character in group_key[len("__group__:"):].split("|") if character in allowed]
-
-    def _resolve_character_reference(self, text: str) -> str:
-        query = str(text or "").strip()
-        if not query:
-            return ""
-        lowered = query.casefold()
-        for character in self._model_manager.characters:
-            display = self._model_manager.get_display_name(character)
-            if query == character or query == display:
-                return character
-            if lowered in {character.casefold(), display.casefold()}:
-                return character
-        return ""
 
     def _set_available_group_characters(self, characters: list[str]):
         merged = list(self._available_group_characters)
@@ -1984,13 +2229,43 @@ class ChatWindow(QWidget):
 
     def _group_default_display_name(self, characters: list[str]) -> str:
         names = [self._model_manager.get_display_name(character) for character in characters]
-        return "、".join(names)
+        members = "、".join(names)
+        return _tr(
+            "ChatWindow.group_default_name",
+            default="{members}：{name}",
+            members=members,
+            name=self._auto_group_name(characters),
+        )
+
+    def _auto_group_name(self, characters: list[str]) -> str:
+        normalized = self._normalize_group_characters(characters)
+        bands = {
+            self._model_manager.get_character_band(character)
+            for character in normalized
+            if self._model_manager.get_character_band(character)
+        }
+        if len(bands) == 1:
+            band_id = next(iter(bands))
+            if band_id and band_id != "others":
+                return _tr(
+                    "ChatWindow.group_auto_band_room",
+                    default="{band}练习室",
+                    band=self._model_manager.get_band_display_name(band_id),
+                )
+        count = len(normalized)
+        if count <= 2:
+            return _tr("ChatWindow.group_auto_duo", default="双人练习室")
+        if count == 3:
+            return _tr("ChatWindow.group_auto_trio", default="三人聊天室")
+        if count == 4:
+            return _tr("ChatWindow.group_auto_quartet", default="四人排练室")
+        return _tr("ChatWindow.group_auto_band", default="联合乐队群")
 
     def _chat_display_name(self) -> str:
         if self._is_group_chat:
             members = self._group_display_name(self._group_characters)
             return _tr("ChatWindow.group_chat_named", members=members)
-        return self._model_manager.get_display_name(self._character)
+        return self._private_display_name(self._character)
 
     def _group_chats(self) -> list[dict]:
         result = []
@@ -2007,6 +2282,17 @@ class ChatWindow(QWidget):
             entry["characters"] = characters
             entry["group_key"] = group_key
             result.append(entry)
+        current_characters = self._normalize_group_characters(self._group_characters)
+        current_key = self._conversation_key_for(current_characters)
+        if len(current_characters) > 1 and current_key not in seen:
+            result.insert(0, {
+                "group_key": current_key,
+                "conversation_id": "",
+                "content": "",
+                "created_at": "",
+                "characters": current_characters,
+            })
+            seen.add(current_key)
         live2d_characters = self._normalize_group_characters(self._available_group_characters)
         live2d_key = self._conversation_key_for(live2d_characters)
         if len(live2d_characters) > 1 and live2d_key not in seen:
@@ -2142,7 +2428,7 @@ class ChatWindow(QWidget):
         main_layout.addWidget(self._shell)
         self._resize_grip = None
 
-        if self._is_group_chat:
+        if self._chat_sidebar_enabled():
             shell_layout = QHBoxLayout(self._shell)
             shell_layout.setContentsMargins(0, 0, 0, 0)
             shell_layout.setSpacing(0)
@@ -2203,7 +2489,7 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._is_group_chat and not self._group_sidebar_collapsed:
+        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
             self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
         self._relayout_message_bubbles()
@@ -2270,9 +2556,10 @@ class ChatWindow(QWidget):
         self._schedule_group_relayout()
 
     def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
-        if not self._is_group_chat or not self._group_splitter or not self._group_sidebar:
+        if not self._chat_sidebar_enabled() or not self._group_splitter or not self._group_sidebar:
             return
         self._group_sidebar_collapsed = bool(collapsed)
+        self._apply_chat_window_minimum_size(ensure_visible_size=not self._group_sidebar_collapsed)
         self._group_sidebar.setVisible(not self._group_sidebar_collapsed)
         if self._group_sidebar_collapsed:
             self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
@@ -2288,17 +2575,21 @@ class ChatWindow(QWidget):
         self._set_group_sidebar_collapsed(not self._group_sidebar_collapsed)
 
     def _sync_group_sidebar_toggle_buttons(self):
+        collapse_text = _tr(
+            "ChatWindow.chat_list_collapse",
+            default="收起聊天列表",
+        ) if self._modern_chat_ui_enabled else _tr("ChatWindow.group_list_collapse")
+        expand_text = _tr(
+            "ChatWindow.chat_list_expand",
+            default="展开聊天列表",
+        ) if self._modern_chat_ui_enabled else _tr("ChatWindow.group_list_expand")
         if self._group_toggle_btn is not None:
             icon = FluentIcon.MENU if self._group_sidebar_collapsed else FluentIcon.CARE_LEFT_SOLID
             self._group_toggle_btn.setIcon(icon.icon())
-            self._group_toggle_btn.setToolTip(
-                _tr("ChatWindow.group_list_expand")
-                if self._group_sidebar_collapsed
-                else _tr("ChatWindow.group_list_collapse")
-            )
+            self._group_toggle_btn.setToolTip(expand_text if self._group_sidebar_collapsed else collapse_text)
         if self._group_sidebar_toggle_btn is not None:
             self._group_sidebar_toggle_btn.setIcon(FluentIcon.CARE_LEFT_SOLID.icon())
-            self._group_sidebar_toggle_btn.setToolTip(_tr("ChatWindow.group_list_collapse"))
+            self._group_sidebar_toggle_btn.setToolTip(collapse_text)
 
     def _schedule_group_sidebar_settings_save(self):
         if self._cfg:
@@ -2326,7 +2617,12 @@ class ChatWindow(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = StrongBodyLabel(_tr("ChatWindow.group_list"), sidebar)
+        title = StrongBodyLabel(
+            _tr("ChatWindow.chat_list", default="聊天列表")
+            if self._modern_chat_ui_enabled
+            else _tr("ChatWindow.group_list"),
+            sidebar,
+        )
         title.setObjectName("GroupSidebarTitle")
         title.setMinimumWidth(0)
         header.addWidget(title, 1)
@@ -2335,7 +2631,15 @@ class ChatWindow(QWidget):
         collapse_btn.setFixedSize(28, 28)
         collapse_btn.clicked.connect(lambda: self._set_group_sidebar_collapsed(True))
         header.addWidget(collapse_btn)
-        subtitle = BodyLabel(_tr("ChatWindow.group_list_hint"), sidebar)
+        subtitle = BodyLabel(
+            _tr(
+                "ChatWindow.chat_list_hint",
+                default="快速切换私聊和群聊；右键可管理名称、头像和置顶。",
+            )
+            if self._modern_chat_ui_enabled
+            else _tr("ChatWindow.group_list_hint"),
+            sidebar,
+        )
         subtitle.setObjectName("GroupSidebarSubtitle")
         subtitle.setWordWrap(True)
         layout.addLayout(header)
@@ -2355,6 +2659,19 @@ class ChatWindow(QWidget):
         list_layout.setSpacing(4)
         scroll.setWidget(list_widget)
         layout.addWidget(scroll, 1)
+
+        if self._modern_chat_ui_enabled:
+            new_chat_btn = QToolButton(sidebar)
+            new_chat_btn.setObjectName("NewChatPickerButton")
+            new_chat_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            new_chat_btn.setIcon(FluentIcon.ADD.icon())
+            new_chat_btn.setText(_tr("ChatWindow.new_chat_picker", default="新建聊天"))
+            new_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            new_chat_btn.clicked.connect(self._show_new_chat_picker)
+            layout.addWidget(new_chat_btn)
+            self._new_chat_picker_btn = new_chat_btn
+        else:
+            self._new_chat_picker_btn = None
 
         self._group_sidebar_title = title
         self._group_sidebar_subtitle = subtitle
@@ -2377,6 +2694,142 @@ class ChatWindow(QWidget):
         time_text = created_at[5:16] if len(created_at) >= 16 else created_at
         return f"{time_text}  {preview}".strip()
 
+    def _chat_avatar_pixmap_for_characters(self, characters: list[str], size: int = 34) -> QPixmap:
+        for character in self._normalize_group_characters(characters):
+            path, data, focus = self._avatar_info_for_character(character)
+            pixmap = _rounded_avatar_pixmap(path, data, size, focus)
+            if not pixmap.isNull():
+                return pixmap
+        return QPixmap()
+
+    def _chat_picker_characters(self) -> list[str]:
+        result = []
+        seen = set()
+
+        def add(character: str):
+            character = str(character or "").strip()
+            if character and character in self._model_manager.characters and character not in seen:
+                result.append(character)
+                seen.add(character)
+
+        add(self._character)
+        for character in self._available_group_characters:
+            add(character)
+        models = self._cfg.get("models", []) if self._cfg else []
+        if isinstance(models, list):
+            for item in models:
+                if isinstance(item, dict):
+                    add(item.get("character", ""))
+        for conv in self._db.get_conversations():
+            add(conv.get("character", ""))
+        for character in self._model_manager.characters:
+            add(character)
+        return result
+
+    def _private_chat_characters_with_history(self) -> list[str]:
+        result = []
+        seen = set()
+        for conv in self._db.get_conversations():
+            character = str(conv.get("character", "") or "").strip()
+            if character and character in self._model_manager.characters and character not in seen:
+                result.append(character)
+                seen.add(character)
+        return result
+
+    def _private_chat_preview(self, character: str) -> tuple[str, str]:
+        conversations = self._db.get_conversations(character)
+        if not conversations:
+            return _tr("ChatWindow.private_empty_preview", default="开始私聊"), ""
+        conv = conversations[0]
+        return self._conversation_title(conv), str(conv.get("last_message_at") or conv.get("created_at") or "")
+
+    def _private_chat_entries(self) -> list[dict]:
+        entries = []
+        for index, character in enumerate(self._private_chat_characters_with_history()):
+            preview, last_at = self._private_chat_preview(character)
+            chat_key = self._conversation_key_for([character])
+            entries.append({
+                "characters": [character],
+                "chat_key": chat_key,
+                "title": self._private_display_name(character),
+                "preview": preview,
+                "last_at": last_at,
+                "order": index,
+                "pinned": self._is_chat_pinned(chat_key),
+            })
+        entries.sort(key=lambda item: (0 if item["pinned"] else 1, item["order"]))
+        return entries
+
+    def _group_chat_entries(self) -> list[dict]:
+        entries = []
+        for index, chat in enumerate(self._group_chats()):
+            characters = chat["characters"]
+            chat_key = self._conversation_key_for(characters)
+            entries.append({
+                "characters": characters,
+                "chat_key": chat_key,
+                "title": self._group_display_name(characters),
+                "preview": self._group_preview(chat),
+                "last_at": str(chat.get("created_at", "")),
+                "order": index,
+                "pinned": self._is_chat_pinned(chat_key),
+            })
+        entries.sort(key=lambda item: (0 if item["pinned"] else 1, item["order"]))
+        return entries
+
+    def _add_chat_sidebar_section(self, text: str):
+        label = BodyLabel(text, self._group_list_widget)
+        label.setObjectName("GroupListSection")
+        self._group_list_layout.addWidget(label)
+
+    def _refresh_modern_chat_list(self):
+        current_key = self._conversation_key
+        private_entries = self._private_chat_entries()
+        group_entries = self._group_chat_entries()
+
+        self._add_chat_sidebar_section(_tr("ChatWindow.private_chats", default="私聊"))
+        if not private_entries:
+            empty = BodyLabel(_tr("ChatWindow.no_private_chats", default="暂无私聊记录"), self._group_list_widget)
+            empty.setObjectName("GroupListEmpty")
+            empty.setWordWrap(True)
+            self._group_list_layout.addWidget(empty)
+        for entry in private_entries:
+            row = GroupChatListRow(
+                entry["characters"],
+                entry["title"],
+                entry["preview"],
+                entry["chat_key"] == current_key and not self._is_group_chat,
+                self._group_list_widget,
+                avatar_pixmap=self._chat_avatar_pixmap_for_characters(entry["characters"]),
+                kind_text=_tr("ChatWindow.private_chat_short", default="私聊"),
+                pinned=entry["pinned"],
+            )
+            row.selected.connect(self._switch_group_chat)
+            row.context_menu_requested.connect(self._show_group_chat_context_menu)
+            self._group_list_layout.addWidget(row)
+
+        self._add_chat_sidebar_section(_tr("ChatWindow.group_chats", default="群聊"))
+        if not group_entries:
+            empty = BodyLabel(_tr("ChatWindow.no_group_chats", default="暂无群聊"), self._group_list_widget)
+            empty.setObjectName("GroupListEmpty")
+            empty.setWordWrap(True)
+            self._group_list_layout.addWidget(empty)
+        for entry in group_entries:
+            row = GroupChatListRow(
+                entry["characters"],
+                entry["title"],
+                entry["preview"],
+                entry["chat_key"] == current_key and self._is_group_chat,
+                self._group_list_widget,
+                avatar_pixmap=self._chat_avatar_pixmap_for_characters(entry["characters"]),
+                kind_text=_tr("ChatWindow.group_chat_short", default="群聊"),
+                pinned=entry["pinned"],
+            )
+            row.selected.connect(self._switch_group_chat)
+            row.context_menu_requested.connect(self._show_group_chat_context_menu)
+            self._group_list_layout.addWidget(row)
+        self._group_list_layout.addStretch()
+
     def _refresh_group_list(self):
         if not hasattr(self, "_group_list_layout"):
             return
@@ -2387,6 +2840,10 @@ class ChatWindow(QWidget):
                 widget.deleteLater()
             if item:
                 del item
+
+        if self._modern_chat_ui_enabled:
+            self._refresh_modern_chat_list()
+            return
 
         current_key = self._conversation_key_for(self._group_characters)
         chats = self._group_chats()
@@ -2411,6 +2868,49 @@ class ChatWindow(QWidget):
             row.context_menu_requested.connect(self._show_group_chat_context_menu)
             self._group_list_layout.addWidget(row)
         self._group_list_layout.addStretch()
+
+    def _show_new_chat_picker(self):
+        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+            return
+        characters = self._chat_picker_characters()
+        if not characters:
+            return
+        menu = QMenu(self)
+        _prepare_rounded_menu(menu, 10)
+        menu.setObjectName("NewChatPickerMenu")
+        dark = isDarkTheme()
+        bg = "#1b1f29" if dark else "#ffffff"
+        border = "#303849" if dark else "#d8deea"
+        menu.setStyleSheet(f"""
+            QMenu#NewChatPickerMenu {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 10px;
+                padding: 0px;
+            }}
+        """)
+        current_selection = self._group_characters if self._is_group_chat else [self._character]
+        panel = ChatCharacterPickerPanel(
+            characters,
+            lambda character: self._model_manager.get_display_name(character),
+            selected=current_selection,
+            parent=menu,
+        )
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(panel)
+        menu.addAction(action)
+
+        def open_chat(selected_characters):
+            menu.close()
+            self._switch_group_chat(list(selected_characters))
+
+        panel.open_requested.connect(open_chat)
+        button = getattr(self, "_new_chat_picker_btn", None)
+        if button is not None:
+            pos = button.mapToGlobal(button.rect().topLeft())
+            menu.exec(pos)
+        else:
+            menu.exec(self.mapToGlobal(self.rect().center()))
 
     def _build_titlebar(self):
         bar = RoundedPanel()
@@ -2442,7 +2942,7 @@ class ChatWindow(QWidget):
         layout.addLayout(title_stack)
         layout.addStretch()
 
-        if self._is_group_chat:
+        if self._chat_sidebar_enabled():
             group_toggle_btn = IconButton(FluentIcon.CARE_LEFT_SOLID, bar)
             group_toggle_btn.setFixedSize(32, 32)
             group_toggle_btn.clicked.connect(self._toggle_group_sidebar)
@@ -2489,7 +2989,9 @@ class ChatWindow(QWidget):
         return bar
 
     def _title_avatar_character(self) -> str:
-        return "" if self._is_group_chat else self._character
+        if self._is_group_chat:
+            return self._group_characters[0] if self._group_characters else ""
+        return self._character
 
     def _avatar_info_for_character(self, character: str) -> tuple[str, bytes, str]:
         if not character:
@@ -2582,6 +3084,7 @@ class ChatWindow(QWidget):
 
     def _refresh_avatar_views(self):
         self._update_title_avatar()
+        self._refresh_group_list()
         if self._is_group_chat or self._conv_id is not None:
             self._clear_message_widgets()
             self._load_messages()
@@ -2721,7 +3224,7 @@ class ChatWindow(QWidget):
 
         self._shell.set_panel_style(bg, border, 14, 1)
         group_sidebar_visible = (
-            self._is_group_chat
+            self._chat_sidebar_enabled()
             and self._group_sidebar is not None
             and not self._group_sidebar_collapsed
         )
@@ -2769,6 +3272,28 @@ class ChatWindow(QWidget):
                     color: {muted};
                     background: transparent;
                     padding: 10px;
+                }}
+                QLabel#GroupListSection {{
+                    color: {muted};
+                    background: transparent;
+                    font-size: 11px;
+                    font-weight: 700;
+                    padding: 8px 8px 3px 8px;
+                }}
+                QToolButton#NewChatPickerButton {{
+                    background: {'#252c3a' if dark else '#ffffff'};
+                    color: {text_color};
+                    border: 1px solid {sidebar_border};
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    font-weight: 700;
+                    text-align: left;
+                }}
+                QToolButton#NewChatPickerButton:hover {{
+                    background: {'#2a3244' if dark else '#f3f7ff'};
+                }}
+                QToolButton#NewChatPickerButton:pressed {{
+                    background: {'#202838' if dark else '#e7eefb'};
                 }}
                 QFrame#GroupListSeparator {{
                     background: {sidebar_border};
@@ -3204,18 +3729,13 @@ class ChatWindow(QWidget):
         self._last_group_user_message_id = None
 
     def _sync_chat_mode_chrome(self):
-        if self._is_group_chat:
-            self.setMinimumSize(720, 600)
-            if self.width() < 720 or self.height() < 600:
-                self.resize(max(self.width(), 880), max(self.height(), 680))
-        else:
-            self.setMinimumSize(360, 520)
+        self._apply_chat_window_minimum_size(ensure_visible_size=True)
         if self._group_toggle_btn is not None:
-            self._group_toggle_btn.setVisible(self._is_group_chat)
+            self._group_toggle_btn.setVisible(self._chat_sidebar_enabled())
         if self._group_sidebar is not None:
-            self._group_sidebar.setVisible(self._is_group_chat and not self._group_sidebar_collapsed)
+            self._group_sidebar.setVisible(self._chat_sidebar_enabled() and not self._group_sidebar_collapsed)
         if self._group_splitter is not None:
-            if self._is_group_chat:
+            if self._chat_sidebar_enabled():
                 self._schedule_group_sidebar_ratio_apply()
             else:
                 self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
@@ -3276,9 +3796,10 @@ class ChatWindow(QWidget):
     def _show_group_chat_context_menu(self, characters: list[str], global_pos):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
             return
-        group_key = self._conversation_key_for(characters)
-        if not group_key.startswith("__group__:"):
+        characters = self._normalize_group_characters(characters)
+        if not characters:
             return
+        group_key = self._conversation_key_for(characters)
         menu = QMenu(self)
         _prepare_rounded_menu(menu, 8)
         menu.setObjectName("GroupChatContextMenu")
@@ -3304,10 +3825,79 @@ class ChatWindow(QWidget):
                 background: {hover};
             }}
         """)
-        rename_action = Action(FluentIcon.EDIT, _tr("ChatWindow.rename_group"), menu)
-        rename_action.triggered.connect(lambda: self._rename_group_chat(characters))
-        menu.addAction(rename_action)
+        if len(characters) == 1:
+            character = characters[0]
+            rename_action = Action(
+                FluentIcon.EDIT,
+                _tr("ChatWindow.rename_private", default="修改聊天名称"),
+                menu,
+            )
+            rename_action.triggered.connect(lambda: self._rename_private_chat(character))
+            menu.addAction(rename_action)
+
+            change_action = Action(FluentIcon.PHOTO, _tr("ChatWindow.avatar_change"), menu)
+            change_action.triggered.connect(lambda: self._set_character_avatar(character))
+            menu.addAction(change_action)
+
+            reset_action = Action(FluentIcon.RETURN, _tr("ChatWindow.avatar_reset"), menu)
+            reset_action.setEnabled(bool(self._chat_avatar_paths.get(character)))
+            reset_action.triggered.connect(lambda: self._reset_character_avatar(character))
+            menu.addAction(reset_action)
+        else:
+            rename_action = Action(FluentIcon.EDIT, _tr("ChatWindow.rename_group"), menu)
+            rename_action.triggered.connect(lambda: self._rename_group_chat(characters))
+            menu.addAction(rename_action)
+
+            change_menu = QMenu(_tr("ChatWindow.avatar_change_menu"), menu)
+            change_menu.setIcon(FluentIcon.PHOTO.icon())
+            reset_menu = QMenu(_tr("ChatWindow.avatar_reset_menu"), menu)
+            reset_menu.setIcon(FluentIcon.RETURN.icon())
+            for character in characters:
+                display = self._model_manager.get_display_name(character)
+                change_action = change_menu.addAction(display)
+                change_action.triggered.connect(lambda checked=False, c=character: self._set_character_avatar(c))
+                reset_action = reset_menu.addAction(display)
+                reset_action.setEnabled(bool(self._chat_avatar_paths.get(character)))
+                reset_action.triggered.connect(lambda checked=False, c=character: self._reset_character_avatar(c))
+            menu.addMenu(change_menu)
+            menu.addMenu(reset_menu)
+
+        pinned = self._is_chat_pinned(group_key)
+        pin_action = menu.addAction(
+            _tr("ChatWindow.unpin_chat", default="取消置顶")
+            if pinned
+            else _tr("ChatWindow.pin_chat", default="置顶聊天")
+        )
+        pin_action.triggered.connect(lambda: self._set_chat_pinned(group_key, not pinned))
+        delete_action = Action(FluentIcon.DELETE, _tr("ChatWindow.delete_chat", default="删除聊天"), menu)
+        delete_action.triggered.connect(lambda: self._delete_chat_entry(characters))
+        menu.addSeparator()
+        menu.addAction(delete_action)
         menu.exec(global_pos)
+
+    def _rename_private_chat(self, character: str):
+        default_name = self._model_manager.get_display_name(character)
+        current_name = str(self._chat_display_names.get(character, "") or "").strip() or default_name
+        dialog = GroupRenameDialog(
+            current_name,
+            self,
+            title=_tr("ChatWindow.rename_private_title", default="修改聊天名称"),
+            label=_tr("ChatWindow.rename_private_label", default="输入新的聊天显示名称，留空恢复角色默认名称："),
+        )
+        if not dialog.exec():
+            return
+        new_name = dialog.group_name()
+        if new_name and new_name != default_name:
+            self._chat_display_names[character] = new_name
+        else:
+            self._chat_display_names.pop(character, None)
+        self._save_chat_display_names()
+        if not self._is_group_chat and character == self._character:
+            self._display_name = self._chat_display_name()
+            self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
+            self._title_label.setText(self._display_name)
+            self._update_title_avatar()
+        self._refresh_group_list()
 
     def _rename_group_chat(self, characters: list[str]):
         group_key = self._conversation_key_for(characters)
@@ -3324,6 +3914,49 @@ class ChatWindow(QWidget):
             self._title_label.setText(self._display_name)
             self._update_title_avatar()
         self._refresh_group_list()
+
+    def _delete_chat_entry(self, characters: list[str]):
+        characters = self._normalize_group_characters(characters)
+        if not characters:
+            return
+        chat_key = self._conversation_key_for(characters)
+        if len(characters) <= 1:
+            character = characters[0]
+            was_current = not self._is_group_chat and character == self._character
+            for conv in self._db.get_conversations(character):
+                self._db.delete_conversation(conv["id"])
+            self._chat_display_names.pop(character, None)
+            self._save_chat_display_names()
+            if was_current:
+                self._stream_flush_timer.stop()
+                self._stream_buffer = ""
+                self._visible_stream_text = ""
+                self._reasoning_stream_text = ""
+                self._current_bubble = None
+                self._clear_message_widgets()
+                self._conv_id = None
+                self._display_name = self._chat_display_name()
+                self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
+                self._title_label.setText(self._display_name)
+        else:
+            was_current = self._is_group_chat and chat_key == self._conversation_key
+            for conv in self._db.get_group_conversations(chat_key):
+                self._db.delete_group_conversation(chat_key, conv["conversation_id"])
+            self._db.set_group_display_name(chat_key, "")
+            if was_current:
+                self._stream_flush_timer.stop()
+                self._stream_buffer = ""
+                self._visible_stream_text = ""
+                self._reasoning_stream_text = ""
+                self._current_bubble = None
+                self._group_queue = []
+                self._group_spoken = []
+                self._clear_message_widgets()
+                self._group_conv_id = ""
+
+        self._set_chat_pinned(chat_key, False)
+        self._refresh_avatar_views()
+        self._input.setFocus()
 
     def _switch_conversation(self, conv_id: int):
         if conv_id == self._conv_id:
@@ -3775,84 +4408,9 @@ class ChatWindow(QWidget):
     def _current_chat_members(self) -> list[str]:
         return list(self._group_characters) if self._is_group_chat else [self._character]
 
-    def _add_chat_member(self, text: str):
-        character = self._resolve_character_reference(text)
-        if not character:
-            self._show_local_assistant_message(_tr("ChatWindow.group_add_unknown", "没有找到这个角色。请输入角色 key 或显示名，例如：@添加 高松灯"))
-            return
-        members = self._current_chat_members()
-        if character in members:
-            self._show_local_assistant_message(
-                _tr(
-                    "ChatWindow.group_add_exists",
-                    "{name} 已经在当前聊天里。",
-                    name=self._model_manager.get_display_name(character),
-                )
-            )
-            return
-        next_members = self._normalize_group_characters(members + [character])
-        self._switch_chat_members(next_members)
-        self._show_local_assistant_message(
-            _tr(
-                "ChatWindow.group_add_done",
-                "已把 {name} 加入聊天。这个命令只改变聊天成员，不会创建新的 live2d 形象。",
-                name=self._model_manager.get_display_name(character),
-            )
-        )
-
-    def _remove_chat_member(self, text: str):
-        character = self._resolve_character_reference(text)
-        if not character:
-            self._show_local_assistant_message(_tr("ChatWindow.group_remove_unknown", "没有找到这个角色。请输入角色 key 或显示名，例如：@踢出 高松灯"))
-            return
-        members = self._current_chat_members()
-        if character not in members:
-            self._show_local_assistant_message(
-                _tr(
-                    "ChatWindow.group_remove_absent",
-                    "{name} 不在当前聊天里。",
-                    name=self._model_manager.get_display_name(character),
-                )
-            )
-            return
-        if len(members) <= 1:
-            self._show_local_assistant_message(_tr("ChatWindow.group_remove_private", "当前已经是私聊了。"))
-            return
-        next_members = [item for item in members if item != character]
-        removed_name = self._model_manager.get_display_name(character)
-        self._switch_chat_members(next_members)
-        if len(next_members) == 1:
-            self._show_local_assistant_message(
-                _tr(
-                    "ChatWindow.group_remove_to_private",
-                    "已踢出 {name}，现在进入 {remaining} 的私聊。",
-                    name=removed_name,
-                    remaining=self._model_manager.get_display_name(next_members[0]),
-                )
-            )
-        else:
-            self._show_local_assistant_message(
-                _tr("ChatWindow.group_remove_done", "已把 {name} 移出当前群聊。", name=removed_name)
-            )
-
-    def _handle_chat_member_command(self, stripped: str) -> bool:
-        for prefix in ("@添加 ", "/添加 ", "@加入 ", "/加入 ", "@拉入 ", "/拉入 ", "@add ", "/add "):
-            if stripped.startswith(prefix):
-                self._input.clear()
-                self._add_chat_member(stripped[len(prefix):])
-                return True
-        for prefix in ("@踢出 ", "/踢出 ", "@移除 ", "/移除 ", "@kick ", "/kick ", "@remove ", "/remove "):
-            if stripped.startswith(prefix):
-                self._input.clear()
-                self._remove_chat_member(stripped[len(prefix):])
-                return True
-        return False
-
     def _handle_local_memory_command(self, text: str) -> bool:
         stripped = text.strip()
         lowered = stripped.lower()
-        if self._handle_chat_member_command(stripped):
-            return True
         if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
             self._input.clear()
             self._show_local_assistant_message(self._relationship_status_text())
