@@ -1952,6 +1952,28 @@ class ChatWindow(QWidget):
         allowed = set(self._model_manager.characters)
         return [character for character in group_key[len("__group__:"):].split("|") if character in allowed]
 
+    def _resolve_character_reference(self, text: str) -> str:
+        query = str(text or "").strip()
+        if not query:
+            return ""
+        lowered = query.casefold()
+        for character in self._model_manager.characters:
+            display = self._model_manager.get_display_name(character)
+            if query == character or query == display:
+                return character
+            if lowered in {character.casefold(), display.casefold()}:
+                return character
+        return ""
+
+    def _set_available_group_characters(self, characters: list[str]):
+        merged = list(self._available_group_characters)
+        seen = set(merged)
+        for character in characters:
+            if character and character not in seen:
+                merged.append(character)
+                seen.add(character)
+        self._available_group_characters = self._normalize_group_characters(merged)
+
     def _group_display_name(self, characters: list[str]) -> str:
         group_key = self._conversation_key_for(characters)
         if group_key.startswith("__group__:"):
@@ -3166,12 +3188,11 @@ class ChatWindow(QWidget):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
             return
         normalized = self._normalize_group_characters(characters)
-        if len(normalized) <= 1:
+        if not normalized:
             return
-        next_key = self._conversation_key_for(normalized)
-        if next_key == self._conversation_key:
-            return
+        self._switch_chat_members(normalized)
 
+    def _reset_chat_switch_state(self):
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._visible_stream_text = ""
@@ -3179,15 +3200,58 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
-        self._group_characters = normalized
-        self._is_group_chat = True
+        self._last_user_message_id = None
+        self._last_group_user_message_id = None
+
+    def _sync_chat_mode_chrome(self):
+        if self._is_group_chat:
+            self.setMinimumSize(720, 600)
+            if self.width() < 720 or self.height() < 600:
+                self.resize(max(self.width(), 880), max(self.height(), 680))
+        else:
+            self.setMinimumSize(360, 520)
+        if self._group_toggle_btn is not None:
+            self._group_toggle_btn.setVisible(self._is_group_chat)
+        if self._group_sidebar is not None:
+            self._group_sidebar.setVisible(self._is_group_chat and not self._group_sidebar_collapsed)
+        if self._group_splitter is not None:
+            if self._is_group_chat:
+                self._schedule_group_sidebar_ratio_apply()
+            else:
+                self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
+        self._sync_group_sidebar_toggle_buttons()
+        self._apply_theme()
+
+    def _switch_chat_members(self, characters: list[str]):
+        normalized = self._normalize_group_characters(characters)
+        if not normalized:
+            return
+        next_is_group = len(normalized) > 1
+        next_key = self._conversation_key_for(normalized)
+        if next_key == self._conversation_key and next_is_group == self._is_group_chat:
+            return
+
+        self._reset_chat_switch_state()
+        self._set_available_group_characters(normalized)
+        self._is_group_chat = next_is_group
+        if next_is_group:
+            self._group_characters = normalized
+            if self._character not in normalized:
+                self._character = normalized[0]
+        else:
+            self._character = normalized[0]
+            self._group_characters = []
+        self._active_response_character = self._character
+        self._pending_action_character = self._character
         self._conversation_key = next_key
         self._display_name = self._chat_display_name()
         self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
         self._title_label.setText(self._display_name)
         self._update_title_avatar()
+        self._sync_chat_mode_chrome()
         self._clear_message_widgets()
         self._conv_id = None
+        self._group_conv_id = ""
         self._load_or_create_conversation()
         self._refresh_group_list()
         self._input.setFocus()
@@ -3708,9 +3772,87 @@ class ChatWindow(QWidget):
         self._show_local_assistant_message(
             _tr("ChatWindow.relationship_set", "{field} 已设置为：{value}/100", field=field_cn, value=value))
 
+    def _current_chat_members(self) -> list[str]:
+        return list(self._group_characters) if self._is_group_chat else [self._character]
+
+    def _add_chat_member(self, text: str):
+        character = self._resolve_character_reference(text)
+        if not character:
+            self._show_local_assistant_message(_tr("ChatWindow.group_add_unknown", "没有找到这个角色。请输入角色 key 或显示名，例如：@添加 高松灯"))
+            return
+        members = self._current_chat_members()
+        if character in members:
+            self._show_local_assistant_message(
+                _tr(
+                    "ChatWindow.group_add_exists",
+                    "{name} 已经在当前聊天里。",
+                    name=self._model_manager.get_display_name(character),
+                )
+            )
+            return
+        next_members = self._normalize_group_characters(members + [character])
+        self._switch_chat_members(next_members)
+        self._show_local_assistant_message(
+            _tr(
+                "ChatWindow.group_add_done",
+                "已把 {name} 加入聊天。这个命令只改变聊天成员，不会创建新的 live2d 形象。",
+                name=self._model_manager.get_display_name(character),
+            )
+        )
+
+    def _remove_chat_member(self, text: str):
+        character = self._resolve_character_reference(text)
+        if not character:
+            self._show_local_assistant_message(_tr("ChatWindow.group_remove_unknown", "没有找到这个角色。请输入角色 key 或显示名，例如：@踢出 高松灯"))
+            return
+        members = self._current_chat_members()
+        if character not in members:
+            self._show_local_assistant_message(
+                _tr(
+                    "ChatWindow.group_remove_absent",
+                    "{name} 不在当前聊天里。",
+                    name=self._model_manager.get_display_name(character),
+                )
+            )
+            return
+        if len(members) <= 1:
+            self._show_local_assistant_message(_tr("ChatWindow.group_remove_private", "当前已经是私聊了。"))
+            return
+        next_members = [item for item in members if item != character]
+        removed_name = self._model_manager.get_display_name(character)
+        self._switch_chat_members(next_members)
+        if len(next_members) == 1:
+            self._show_local_assistant_message(
+                _tr(
+                    "ChatWindow.group_remove_to_private",
+                    "已踢出 {name}，现在进入 {remaining} 的私聊。",
+                    name=removed_name,
+                    remaining=self._model_manager.get_display_name(next_members[0]),
+                )
+            )
+        else:
+            self._show_local_assistant_message(
+                _tr("ChatWindow.group_remove_done", "已把 {name} 移出当前群聊。", name=removed_name)
+            )
+
+    def _handle_chat_member_command(self, stripped: str) -> bool:
+        for prefix in ("@添加 ", "/添加 ", "@加入 ", "/加入 ", "@拉入 ", "/拉入 ", "@add ", "/add "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._add_chat_member(stripped[len(prefix):])
+                return True
+        for prefix in ("@踢出 ", "/踢出 ", "@移除 ", "/移除 ", "@kick ", "/kick ", "@remove ", "/remove "):
+            if stripped.startswith(prefix):
+                self._input.clear()
+                self._remove_chat_member(stripped[len(prefix):])
+                return True
+        return False
+
     def _handle_local_memory_command(self, text: str) -> bool:
         stripped = text.strip()
         lowered = stripped.lower()
+        if self._handle_chat_member_command(stripped):
+            return True
         if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
             self._input.clear()
             self._show_local_assistant_message(self._relationship_status_text())
@@ -4158,6 +4300,105 @@ class ChatWindow(QWidget):
             self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip()
             self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True))
 
+    def _history_user_label(self) -> str:
+        return self._user_name or _tr("ChatWindow.you")
+
+    @staticmethod
+    def _compact_history_text(content: str, attachments=None) -> str:
+        text = str(content or "").strip()
+        if isinstance(attachments, str) and attachments:
+            try:
+                attachments = json.loads(attachments)
+            except (TypeError, ValueError):
+                attachments = []
+        if isinstance(attachments, list) and attachments:
+            count = sum(1 for item in attachments if isinstance(item, dict) and item.get("type") == "image")
+            if count:
+                text = (text + "\n" if text else "") + f"[图片 {count} 张]"
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) > 420:
+            text = text[:420].rstrip() + "..."
+        return text
+
+    def _split_group_history_message(self, content: str) -> tuple[str, str]:
+        text = str(content or "").strip()
+        first_line = text.splitlines()[0].strip() if text else ""
+        if first_line.startswith("【") and "】" in first_line:
+            speaker = first_line[1:first_line.index("】")].strip()
+            body = "\n".join(text.splitlines()[1:]).strip()
+            return speaker or _tr("ChatWindow.ai", default="AI"), body
+        for character in self._model_manager.characters:
+            display = self._model_manager.get_display_name(character)
+            for prefix in (f"【{display}】", f"{display}：", f"{display}:"):
+                if text.startswith(prefix):
+                    return display, text[len(prefix):].strip()
+        return _tr("ChatWindow.ai", default="AI"), text
+
+    def _append_unified_history_item(self, items: list[dict], seen: set[tuple[str, int]], source: str, message: dict, label: str, content: str):
+        msg_id = message.get("id")
+        if msg_id is None:
+            return
+        key = (source, int(msg_id))
+        if key in seen:
+            return
+        text = self._compact_history_text(content, message.get("attachments_json"))
+        if not text:
+            return
+        seen.add(key)
+        items.append({
+            "created_at": message.get("created_at", ""),
+            "id": int(msg_id),
+            "label": label,
+            "content": text,
+        })
+
+    def _unified_history_context(self, character: str, limit: int = 18) -> str:
+        related = self._current_chat_members() if self._is_group_chat else [character]
+        related = self._normalize_group_characters(related)
+        if character and character not in related:
+            related.append(character)
+
+        items: list[dict] = []
+        seen: set[tuple[str, int]] = set()
+        user_label = self._history_user_label()
+
+        for member in related:
+            display = self._model_manager.get_display_name(member)
+            for conv in self._db.get_conversations(member)[:3]:
+                for message in self._db.get_messages(conv["id"], limit=6):
+                    if message["role"] == "assistant":
+                        label = f"{display}/私聊"
+                    elif message["role"] == "user":
+                        label = f"{user_label}/{display}"
+                    else:
+                        continue
+                    self._append_unified_history_item(items, seen, "private", message, label, message["content"])
+
+        related_set = set(related)
+        for chat in self._db.get_group_chats()[:24]:
+            group_key = chat.get("group_key", "")
+            group_members = self._characters_for_group_key(group_key)
+            if not group_members or not (related_set & set(group_members)):
+                continue
+            conversation_id = chat.get("conversation_id", "")
+            for message in self._db.get_group_messages(group_key, conversation_id, limit=8):
+                if message["role"] == "assistant":
+                    speaker, body = self._split_group_history_message(message["content"])
+                    label = f"{speaker}/群聊"
+                    content = body
+                elif message["role"] == "user":
+                    label = f"{user_label}/群聊"
+                    content = message["content"]
+                else:
+                    continue
+                self._append_unified_history_item(items, seen, "group", message, label, content)
+
+        items.sort(key=lambda item: (item["created_at"], item["id"]))
+        recent = items[-limit:]
+        if not recent:
+            return ""
+        return "\n".join(f"{item['label']}：{item['content']}" for item in recent)
+
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
         dynamic_context = build_relationship_context(
@@ -4166,6 +4407,9 @@ class ChatWindow(QWidget):
             self._user_memory_key(),
             self._user_name or _tr("ChatWindow.you"),
         )
+        unified_history = self._unified_history_context(character)
+        if unified_history:
+            dynamic_context += "\n\n【跨聊天记录】\n" + unified_history
         if self._is_group_chat and spoken_names:
             dynamic_context += "\n\n【群聊发言顺序】\n你是在" + "、".join(spoken_names) + "之后发言，请自然承接前面角色的内容。"
         if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
