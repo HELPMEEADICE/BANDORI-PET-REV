@@ -266,8 +266,7 @@ class Live2DWidget(QOpenGLWidget):
             self._update_render_timer()
 
     def _prepare_custom_hit_areas(self, model):
-        config = model.modelSetting.json
-        areas = config.get("hit_areas_custom") or {}
+        areas = model.modelSetting.getCustomHitAreas()
         if not isinstance(areas, dict):
             return ()
 

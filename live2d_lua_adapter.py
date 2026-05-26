@@ -1,5 +1,3 @@
-import io
-import json
 import os
 import random
 import time
@@ -9,8 +7,6 @@ try:
     from lupa.luajit21 import LuaRuntime
 except ModuleNotFoundError:
     from lupa.lua import LuaRuntime
-from PIL import Image
-
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
@@ -101,10 +97,6 @@ def _load_model_bytes(path: str) -> bytes:
     return fs_path.read_bytes()
 
 
-def _load_model_json(path: str) -> dict:
-    return json.loads(_load_model_bytes(path).decode("utf-8"))
-
-
 def _texture_options(profile: str) -> tuple[float, bool, int]:
     options = LIVE2D_QUALITY_PROFILES[normalize_live2d_quality(profile)]
     return (
@@ -112,89 +104,6 @@ def _texture_options(profile: str) -> tuple[float, bool, int]:
         bool(options["use_mipmap"]),
         int(options["bleed_passes"]),
     )
-
-
-def _bleed_transparent_edges(image: Image.Image, passes: int) -> Image.Image:
-    if passes <= 0:
-        return image
-
-    pixels = image.load()
-    width, height = image.size
-    for _ in range(passes):
-        updates = []
-        for y in range(height):
-            for x in range(width):
-                alpha = pixels[x, y][3]
-                if alpha != 0:
-                    continue
-
-                red = green = blue = count = 0
-                for nx, ny in (
-                    (x - 1, y),
-                    (x + 1, y),
-                    (x, y - 1),
-                    (x, y + 1),
-                ):
-                    if nx < 0 or ny < 0 or nx >= width or ny >= height:
-                        continue
-                    nr, ng, nb, na = pixels[nx, ny]
-                    if na <= 0:
-                        continue
-                    red += nr
-                    green += ng
-                    blue += nb
-                    count += 1
-
-                if count:
-                    updates.append((x, y, red // count, green // count, blue // count, alpha))
-
-        if not updates:
-            break
-        for x, y, red, green, blue, alpha in updates:
-            pixels[x, y] = (red, green, blue, alpha)
-    return image
-
-
-def _resize_for_quality(image: Image.Image, scale: float) -> Image.Image:
-    if scale >= 1.0:
-        return image
-    width = max(1, int(image.width * scale))
-    height = max(1, int(image.height * scale))
-    resampling = getattr(Image, "Resampling", Image).BILINEAR
-    data = bytearray(image.tobytes())
-    for i in range(0, len(data), 4):
-        alpha = data[i + 3]
-        data[i] = (data[i] * alpha + 127) // 255
-        data[i + 1] = (data[i + 1] * alpha + 127) // 255
-        data[i + 2] = (data[i + 2] * alpha + 127) // 255
-
-    premultiplied = Image.frombytes("RGBA", image.size, bytes(data))
-    resized = premultiplied.resize((width, height), resampling)
-    premultiplied.close()
-    data = bytearray(resized.tobytes())
-    resized.close()
-    for i in range(0, len(data), 4):
-        alpha = data[i + 3]
-        if alpha <= 0:
-            continue
-        data[i] = min(255, (data[i] * 255 + alpha // 2) // alpha)
-        data[i + 1] = min(255, (data[i + 1] * 255 + alpha // 2) // alpha)
-        data[i + 2] = min(255, (data[i + 2] * 255 + alpha // 2) // alpha)
-    return Image.frombytes("RGBA", (width, height), bytes(data))
-
-
-def _texture_rgba(path: str, profile: str) -> tuple[int, int, bytes, bool]:
-    scale, use_mipmap, bleed_passes = _texture_options(profile)
-    source = io.BytesIO(load_virtual_bytes(path)) if is_virtual_path(path) else Path(path)
-    with Image.open(source) as image:
-        if image.mode != "RGBA":
-            image = image.convert("RGBA")
-        try:
-            image = _resize_for_quality(image, scale)
-            image = _bleed_transparent_edges(image, bleed_passes)
-            return image.width, image.height, image.tobytes(), use_mipmap
-        finally:
-            image.close()
 
 
 def _fix_mtn_path(path: str) -> str:
@@ -209,14 +118,18 @@ def _fix_mtn_path(path: str) -> str:
 
 
 class _ModelSetting:
-    def __init__(self, data: dict):
-        self.json = data
+    def __init__(self, data):
+        self._motion_names = _lua_array(data[b"motion_names"] or [])
+        motions = data[b"motions"] or {}
+        self._motions = {}
+        for name in self._motion_names:
+            group = motions[name.encode("utf-8")] or motions[name] or []
+            self._motions[name] = _lua_array(group)
+        self._hit_area_count = int(data[b"hit_area_count"] or 0)
+        self._custom_hit_areas = _lua_custom_hit_areas(data[b"hit_areas_custom"] or {})
 
     def getMotionNames(self) -> list[str]:
-        motions = self.json.get("motions") or {}
-        if not isinstance(motions, dict):
-            return []
-        return [str(name) for name in motions if name]
+        return list(self._motion_names)
 
     def getMotionNum(self, name: str) -> int:
         group = self._motion_group(name)
@@ -229,30 +142,41 @@ class _ModelSetting:
 
         target = Path(str(name).replace("\\", "/")).name.lower()
         target_stem = Path(target).stem
-        motions = self.json.get("motions") or {}
-        if not isinstance(motions, dict):
-            return None
-        for group_name, group in motions.items():
-            if not isinstance(group, list):
-                continue
+        for group_name, group in self._motions.items():
             for idx, item in enumerate(group):
-                if not isinstance(item, dict):
-                    continue
-                motion_file = Path(str(item.get("file", "")).replace("\\", "/")).name.lower()
+                motion_file = Path(str(item).replace("\\", "/")).name.lower()
                 if motion_file == target or Path(motion_file).stem == target_stem:
-                    return str(group_name), idx
+                    return group_name, idx
         return None
 
     def _motion_group(self, name: str) -> list:
-        motions = self.json.get("motions") or {}
-        if not isinstance(motions, dict):
-            return []
-        group = motions.get(name) or []
-        return group if isinstance(group, list) else []
+        return self._motions.get(name, [])
 
     def getHitAreaNum(self) -> int:
-        hit_areas = self.json.get("hit_areas") or []
-        return len(hit_areas) if isinstance(hit_areas, list) else 0
+        return self._hit_area_count
+
+    def getCustomHitAreas(self) -> dict[str, list[float]]:
+        return dict(self._custom_hit_areas)
+
+
+def _decode_lua_string(value) -> str:
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def _lua_array(table) -> list[str]:
+    return [_decode_lua_string(table[index]) for index in range(1, len(table) + 1) if table[index]]
+
+
+def _lua_custom_hit_areas(table) -> dict[str, list[float]]:
+    areas = {}
+    for key, value in table.items():
+        try:
+            first = float(value[1])
+            second = float(value[2])
+        except (TypeError, ValueError, KeyError):
+            continue
+        areas[_decode_lua_string(key)] = [first, second]
+    return areas
 
 
 class MotionPriority:
@@ -291,6 +215,7 @@ class LuaLive2DModule:
         self._hit_test = None
         self._set_parameter = None
         self._apply_texture_quality = None
+        self._model_info = None
         self.MotionPriority = MotionPriority
 
     def glInit(self):
@@ -315,6 +240,9 @@ class LuaLive2DModule:
         lua = LuaRuntime(unpack_returned_tuples=True, encoding=None)
         lua.execute(b'assert(require("ffi"), "lupa must be built with LuaJIT FFI")')
         _install_lazy_lua_module_loader(lua, LIVE2D_LUA_DIR)
+        base_dir = BASE_DIR.as_posix().encode("utf-8")
+        lua.execute(b"local root = ...; package.path = package.path .. ';' .. root .. '/?.lua;' .. root .. '/?/init.lua'", base_dir)
+        lua.execute(b'package.loaded["live2d.platform_manager"] = require("live2d_platform_manager_override")')
         lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
         lua.execute(
             b"local root = ...; "
@@ -366,6 +294,28 @@ class LuaLive2DModule:
             b"end "
             b"end)()"
         )
+        self._model_info = lua.eval(
+            b"function(renderer) "
+            b"local info = { motion_names = {}, motions = {}, expressions = {}, hit_area_count = 0 }; "
+            b"local model = renderer:get_model(); "
+            b"local setting = model and model.modelSetting; "
+            b"if setting == nil then return info end; "
+            b"local names = setting:getMotionNames() or {}; "
+            b"for i = 1, #names do "
+            b"local name = names[i]; info.motion_names[#info.motion_names + 1] = name; "
+            b"local group = {}; local count = setting:getMotionNum(name); "
+            b"for no = 0, count - 1 do group[#group + 1] = setting:getMotionFile(name, no) or ''; end; "
+            b"info.motions[name] = group; "
+            b"end; "
+            b"for j = 0, setting:getExpressionNum() - 1 do "
+            b"local name = setting:getExpressionName(j); if name ~= nil and name ~= '' then info.expressions[name] = true end; "
+            b"end; "
+            b"local json = setting._json or {}; "
+            b"if type(json.hit_areas_custom) == 'table' then info.hit_areas_custom = json.hit_areas_custom; end; "
+            b"info.hit_area_count = setting:getHitAreaNum(); "
+            b"return info "
+            b"end"
+        )
         self._start_motion = lua.eval(
             b"function(renderer, name, no, priority) return renderer:start_motion(name, no, priority) end"
         )
@@ -402,13 +352,15 @@ class LuaLive2DModule:
 
         def texture_loader(no, path):
             profile = get_live2d_texture_quality()
-            w, h, rgba, use_mipmap = _texture_rgba(_normalize_lua_path(path), profile)
+            normalized_path = _normalize_lua_path(path)
+            scale, use_mipmap, bleed_passes = _texture_options(profile)
             entry = lua.table()
-            entry[b"width"] = w
-            entry[b"height"] = h
-            entry[b"data"] = rgba
+            entry[b"path"] = normalized_path.encode("utf-8")
+            if is_virtual_path(normalized_path):
+                entry[b"bytes"] = load_virtual_bytes(normalized_path)
+            entry[b"scale"] = scale
             entry[b"mipmap"] = use_mipmap
-            entry[b"edge_bleed"] = False
+            entry[b"bleed_passes"] = bleed_passes
             return entry
 
         resources = lua.table()
@@ -439,9 +391,6 @@ class LuaLAppModel:
 
     def LoadModelJson(self, model_json_path: str, disable_precision=False):
         del disable_precision
-        model_json = _load_model_json(model_json_path)
-        self.modelSetting = _ModelSetting(model_json)
-        self.expressions = self._read_expression_names(model_json)
         self._renderer = self._module._new_renderer(self._width, self._height)
         opts = self._module._new_options(model_json_path)
         self._module._load_model(
@@ -451,6 +400,9 @@ class LuaLAppModel:
             self._height,
             opts,
         )
+        info = self._module._model_info(self._renderer)
+        self.modelSetting = _ModelSetting(info)
+        self.expressions = self._read_expression_names(info)
         self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
         self._draw_opts = self._module._lua.table()
         self._draw_opts[b"clear"] = False
@@ -541,14 +493,11 @@ class LuaLAppModel:
         self._module._reset_expression(self._renderer)
 
     @staticmethod
-    def _read_expression_names(model_json: dict) -> dict[str, None]:
-        expressions = model_json.get("expressions") or []
-        if not isinstance(expressions, list):
-            return {}
+    def _read_expression_names(info) -> dict[str, None]:
+        expressions = info[b"expressions"] or {}
         names = {}
-        for item in expressions:
-            if isinstance(item, dict) and item.get("name"):
-                names[str(item["name"])] = None
+        for name in expressions.keys():
+            names[_decode_lua_string(name)] = None
         return names
 
 
