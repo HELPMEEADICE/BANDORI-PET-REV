@@ -4214,6 +4214,7 @@ class ChatWindow(QWidget):
                     messages[i]["content"] = str(content) + suffix
                 break
 
+
     def _send_message(self):
         text = self._input.toPlainText().strip()
         attachments = list(self._pending_attachments)
