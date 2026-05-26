@@ -485,6 +485,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character TEXT NOT NULL,
+                user_key TEXT NOT NULL DEFAULT '',
                 title TEXT DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
@@ -507,6 +508,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_key TEXT NOT NULL,
                 conversation_id TEXT NOT NULL DEFAULT 'default',
+                user_key TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
                 reasoning_content TEXT NOT NULL DEFAULT '',
@@ -595,13 +597,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
         """)
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_conv_id ON group_messages(group_key, conversation_id, id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_thread ON external_chat_messages(platform, thread_id, id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_unread ON external_chat_messages(unread, id)")
-        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_external_id ON external_chat_messages(platform, thread_id, external_message_id)")
         columns = [r[1] for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()]
         if "reasoning_content" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
@@ -609,19 +604,45 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT ''")
         if "tool_trace_json" not in columns:
             self._conn.execute("ALTER TABLE messages ADD COLUMN tool_trace_json TEXT NOT NULL DEFAULT ''")
+        conversation_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(conversations)").fetchall()]
+        if "user_key" not in conversation_columns:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN user_key TEXT NOT NULL DEFAULT ''")
         group_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(group_messages)").fetchall()]
         if "conversation_id" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN conversation_id TEXT NOT NULL DEFAULT 'default'")
+        if "user_key" not in group_columns:
+            self._conn.execute("ALTER TABLE group_messages ADD COLUMN user_key TEXT NOT NULL DEFAULT ''")
         if "reasoning_content" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
         if "attachments_json" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT ''")
         if "tool_trace_json" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN tool_trace_json TEXT NOT NULL DEFAULT ''")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_character_user ON conversations(character, user_key, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_user_conv_id ON group_messages(group_key, user_key, conversation_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_thread ON external_chat_messages(platform, thread_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_unread ON external_chat_messages(unread, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_external_id ON external_chat_messages(platform, thread_id, external_message_id)")
         self._conn.commit()
 
     def _normalize_user_key(self, user_key: str) -> str:
         return (user_key or "__default__").strip() or "__default__"
+
+    def assign_legacy_chat_history_user(self, user_key: str) -> int:
+        user_key = self._normalize_user_key(user_key)
+        conv_cur = self._conn.execute(
+            "UPDATE conversations SET user_key=? WHERE user_key='' OR user_key IS NULL",
+            (user_key,),
+        )
+        group_cur = self._conn.execute(
+            "UPDATE group_messages SET user_key=? WHERE user_key='' OR user_key IS NULL",
+            (user_key,),
+        )
+        self._conn.commit()
+        return int(conv_cur.rowcount or 0) + int(group_cur.rowcount or 0)
 
     def get_relationship_state(self, character: str, user_key: str = "") -> dict:
         user_key = self._normalize_user_key(user_key)
@@ -881,33 +902,47 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
-    def create_conversation(self, character: str, title: str = "") -> int:
+    def create_conversation(self, character: str, title: str = "", user_key: str = "") -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_key = self._normalize_user_key(user_key)
         cur = self._conn.execute(
-            "INSERT INTO conversations (character, title, created_at) VALUES (?, ?, ?)",
-            (character, title, now)
+            "INSERT INTO conversations (character, user_key, title, created_at) VALUES (?, ?, ?, ?)",
+            (character, user_key, title, now)
         )
         self._conn.commit()
         return cur.lastrowid
 
-    def get_conversations(self, character: str = "") -> list[dict]:
+    def get_conversations(self, character: str = "", user_key: str | None = None) -> list[dict]:
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         if character:
+            where = "WHERE conversations.character=?"
+            params: tuple = (character,)
+            if user_filter is not None:
+                where += " AND conversations.user_key=?"
+                params = (character, user_filter)
             rows = self._conn.execute(
-                "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+                "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
                 "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
                 "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
-                "WHERE conversations.character=? "
-                "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
+                f"{where} "
+                "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
                 "ORDER BY last_message_id DESC",
-                (character,)
+                params,
             ).fetchall()
         else:
+            where = ""
+            params = ()
+            if user_filter is not None:
+                where = "WHERE conversations.user_key=?"
+                params = (user_filter,)
             rows = self._conn.execute(
-                "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+                "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
                 "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
                 "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
-                "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
-                "ORDER BY last_message_id DESC"
+                f"{where} "
+                "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
+                "ORDER BY last_message_id DESC",
+                params,
             ).fetchall()
         result = []
         for r in rows:
@@ -917,21 +952,28 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             result.append({
                 "id": conv_id,
                 "character": _db_text(r[1]),
-                "title": _db_text(r[2]),
-                "created_at": _db_text(r[3]),
-                "last_message_at": _db_text(r[4]) if len(r) > 4 else _db_text(r[3]),
+                "user_key": _db_text(r[2]),
+                "title": _db_text(r[3]),
+                "created_at": _db_text(r[4]),
+                "last_message_at": _db_text(r[5]) if len(r) > 5 else _db_text(r[4]),
             })
         return result
 
-    def get_last_conversation(self, character: str) -> dict | None:
+    def get_last_conversation(self, character: str, user_key: str | None = None) -> dict | None:
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        where = "WHERE conversations.character=?"
+        params: tuple = (character,)
+        if user_filter is not None:
+            where += " AND conversations.user_key=?"
+            params = (character, user_filter)
         row = self._conn.execute(
-            "SELECT conversations.id, conversations.character, conversations.title, conversations.created_at, "
+            "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
             "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
             "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
-            "WHERE conversations.character=? "
-            "GROUP BY conversations.id, conversations.character, conversations.title, conversations.created_at "
+            f"{where} "
+            "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
             "ORDER BY last_message_id DESC LIMIT 1",
-            (character,)
+            params,
         ).fetchone()
         if row:
             conv_id = _db_int(row[0])
@@ -940,9 +982,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             return {
                 "id": conv_id,
                 "character": _db_text(row[1]),
-                "title": _db_text(row[2]),
-                "created_at": _db_text(row[3]),
-                "last_message_at": _db_text(row[4]) if len(row) > 4 else _db_text(row[3]),
+                "user_key": _db_text(row[2]),
+                "title": _db_text(row[3]),
+                "created_at": _db_text(row[4]),
+                "last_message_at": _db_text(row[5]) if len(row) > 5 else _db_text(row[4]),
             }
         return None
 
@@ -996,31 +1039,37 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         ).fetchone()
         return _db_text(row[0]).strip() if row else ""
 
-    def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
+    def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None, user_key: str = "") -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_key = self._normalize_user_key(user_key)
         attachments_json = _json_text(_sanitize_attachments_payload(attachments))
         tool_trace_json = _json_text(tool_trace)
         cur = self._conn.execute(
-            "INSERT INTO group_messages (group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (group_key, conversation_id or "default", role, content, reasoning_content, attachments_json, tool_trace_json, now)
+            "INSERT INTO group_messages (group_key, conversation_id, user_key, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (group_key, conversation_id or "default", user_key, role, content, reasoning_content, attachments_json, tool_trace_json, now)
         )
         self._conn.commit()
         return cur.lastrowid
 
-    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None) -> list[dict]:
+    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None, user_key: str | None = None) -> list[dict]:
         conversation_id = conversation_id or "default"
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        where = "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
         params: tuple = (group_key, conversation_id, conversation_id)
+        if user_filter is not None:
+            where += " AND user_key=?"
+            params = (group_key, conversation_id, conversation_id, user_filter)
         order = "ASC"
         limit_sql = ""
         if limit is not None:
             limit = _clamp_int(limit, 1, 1000, 1000)
-            params = (group_key, conversation_id, conversation_id, limit)
+            params = (*params, limit)
             order = "DESC"
             limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
-            f"WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ORDER BY id {order}{limit_sql}",
+            f"{where} ORDER BY id {order}{limit_sql}",
             params,
         ).fetchall()
         if limit is not None:
@@ -1032,23 +1081,36 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 result.append(message)
         return result
 
-    def delete_group_conversation(self, group_key: str, conversation_id: str):
+    def delete_group_conversation(self, group_key: str, conversation_id: str, user_key: str | None = None):
         conversation_id = conversation_id or "default"
-        self._conn.execute(
-            "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
-            (group_key, conversation_id, conversation_id),
-        )
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        if user_filter is None:
+            self._conn.execute(
+                "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
+                (group_key, conversation_id, conversation_id),
+            )
+        else:
+            self._conn.execute(
+                "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) AND user_key=?",
+                (group_key, conversation_id, conversation_id, user_filter),
+            )
         self._conn.commit()
 
-    def get_group_conversations(self, group_key: str) -> list[dict]:
+    def get_group_conversations(self, group_key: str, user_key: str | None = None) -> list[dict]:
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        where = "WHERE group_key=?"
+        params: tuple = (group_key,)
+        if user_filter is not None:
+            where += " AND user_key=?"
+            params = (group_key, user_filter)
         rows = self._conn.execute(
-            "SELECT conversation_id, id, role, content, created_at FROM group_messages "
-            "WHERE group_key=? ORDER BY id DESC",
-            (group_key,)
+            "SELECT conversation_id, user_key, id, role, content, created_at FROM group_messages "
+            f"{where} ORDER BY id DESC",
+            params,
         ).fetchall()
         result = []
         seen = set()
-        for conversation_id, msg_id, role, content, created_at in rows:
+        for conversation_id, row_user_key, msg_id, role, content, created_at in rows:
             conversation_id = _db_text(conversation_id, "default") or "default"
             if _db_text(role).strip() not in _VALID_MESSAGE_ROLES:
                 continue
@@ -1061,6 +1123,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             result.append({
                 "group_key": group_key,
                 "conversation_id": conversation_id,
+                "user_key": _db_text(row_user_key),
                 "message_id": msg_id,
                 "role": _db_text(role).strip(),
                 "content": _db_text(content),
@@ -1068,14 +1131,21 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             })
         return result
 
-    def get_group_chats(self) -> list[dict]:
+    def get_group_chats(self, user_key: str | None = None) -> list[dict]:
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        where = ""
+        params: tuple = ()
+        if user_filter is not None:
+            where = "WHERE user_key=?"
+            params = (user_filter,)
         rows = self._conn.execute(
-            "SELECT group_key, conversation_id, id, role, content, created_at FROM group_messages "
-            "ORDER BY id DESC"
+            "SELECT group_key, conversation_id, user_key, id, role, content, created_at FROM group_messages "
+            f"{where} ORDER BY id DESC",
+            params,
         ).fetchall()
         result = []
         seen = set()
-        for group_key, conversation_id, msg_id, role, content, created_at in rows:
+        for group_key, conversation_id, row_user_key, msg_id, role, content, created_at in rows:
             group_key = _db_text(group_key)
             conversation_id = _db_text(conversation_id, "default") or "default"
             if _db_text(role).strip() not in _VALID_MESSAGE_ROLES:
@@ -1089,6 +1159,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             result.append({
                 "group_key": group_key,
                 "conversation_id": conversation_id,
+                "user_key": _db_text(row_user_key),
                 "message_id": msg_id,
                 "role": _db_text(role).strip(),
                 "content": _db_text(content),
@@ -1121,13 +1192,19 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
         self._conn.commit()
 
-    def delete_empty_conversations(self, character: str = ""):
+    def delete_empty_conversations(self, character: str = "", user_key: str | None = None):
+        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         if character:
+            where = "character=?"
+            params: tuple = (character,)
+            if user_filter is not None:
+                where += " AND user_key=?"
+                params = (character, user_filter)
             self._conn.execute(
-                "DELETE FROM conversations WHERE character=? AND NOT EXISTS ("
+                f"DELETE FROM conversations WHERE {where} AND NOT EXISTS ("
                 "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
                 ")",
-                (character,),
+                params,
             )
         else:
             self._conn.execute(

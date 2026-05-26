@@ -118,6 +118,15 @@ def user_key_from_config(config_manager) -> str:
         role_character = str(config_manager.get("pov_role_character", "") or "").strip()
         if role_character:
             return ROLE_USER_KEY_PREFIX + role_character
+    active_profile = str(config_manager.get("active_user_profile", "") or "").strip()
+    profiles = config_manager.get("user_profiles", [])
+    if active_profile and isinstance(profiles, list):
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            key = str(profile.get("key", "") or "").strip()
+            if key == active_profile:
+                return key or DEFAULT_USER_KEY
     user_name = str(config_manager.get("user_name", "") or "").strip()
     return user_name or DEFAULT_USER_KEY
 

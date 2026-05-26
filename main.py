@@ -413,7 +413,19 @@ def main():
             cfg.set("language", language)
         for cfg_key, ref_key, _default in _SETTINGS_MAP:
             cfg.set(cfg_key, pet_window_ref[ref_key])
-        for key in ("user_avatar_color", "user_avatar_path", "model_action_settings", "models"):
+        for key in (
+            "user_name",
+            "user_avatar_color",
+            "user_avatar_path",
+            "user_profiles",
+            "active_user_profile",
+            "pov_mode",
+            "pov_custom_prompt",
+            "pov_custom_personas",
+            "pov_role_character",
+            "model_action_settings",
+            "models",
+        ):
             value = data.get(key)
             if value is not None:
                 cfg.set(key, value)
