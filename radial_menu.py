@@ -263,21 +263,14 @@ class RadialMenu(QWidget):
         self._apply_windows_11_border_fix()
         QTimer.singleShot(0, self._apply_windows_11_border_fix)
         if macos_patch is not None:
-            QTimer.singleShot(0, self._apply_macos_window_polish)
-
-    def _apply_macos_window_polish(self):
-        if macos_patch is None:
-            return
-        macos_patch.set_window_no_shadow(self)
-        # Use status-bar level so the menu stays above the floating pet window.
-        macos_patch.set_window_level_above_menu_bar(self)
+            QTimer.singleShot(0, lambda: macos_patch.apply_popup_window_polish(self))
 
     def prepare_for_show(self):
         # Force native window creation during idle time so first popup stays responsive.
         self.winId()
         self._apply_windows_11_border_fix()
         if macos_patch is not None:
-            self._apply_macos_window_polish()
+            macos_patch.apply_popup_window_polish(self)
         self._prewarm_paint_cache()
 
     def _prewarm_paint_cache(self):

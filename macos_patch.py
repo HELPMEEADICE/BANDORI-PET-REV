@@ -169,6 +169,35 @@ def set_collection_behavior(widget, mask: int) -> bool:
     return True
 
 
+def apply_floating_tool_window_polish(widget, *, join_all_spaces: bool = False):
+    if widget is None:
+        return
+    set_window_no_shadow(widget)
+    set_window_level_floating(widget)
+    set_hides_on_deactivate(widget, False)
+    if join_all_spaces:
+        set_collection_behavior(widget, PET_COLLECTION_BEHAVIOR)
+
+
+def apply_pet_window_polish(widget, *, game_topmost: bool = False):
+    if widget is None:
+        return
+    set_window_no_shadow(widget)
+    if game_topmost:
+        set_window_level_above_menu_bar(widget)
+    else:
+        set_window_level_status_bar(widget)
+    set_hides_on_deactivate(widget, False)
+    set_collection_behavior(widget, PET_COLLECTION_BEHAVIOR)
+
+
+def apply_popup_window_polish(widget):
+    if widget is None:
+        return
+    set_window_no_shadow(widget)
+    set_window_level_above_menu_bar(widget)
+
+
 def hide_dock_icon():
     if sys.platform != "darwin":
         return

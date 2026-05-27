@@ -5,7 +5,7 @@ import re
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QThread, QTimer, Signal, QRect, QRectF
+from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect, QRectF
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +27,11 @@ from llm_manager import (
 )
 from llm_api_compat import chat_completions_api_url
 from llm_error_hints import format_llm_error_message
+from chat_config_snapshots import (
+    memory_extraction_api_config,
+    tool_config_snapshot,
+    tts_config_snapshot,
+)
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -42,16 +47,7 @@ except (ImportError, OSError):
         def enqueue(self, audio, media_type): pass
         def stop(self): pass
         def is_idle(self): return True
-
-    class TTSRequestWorker(QThread):
-        audio_ready = Signal(int, int, bytes, str)
-        error = Signal(str)
-        finished = Signal()
-        def __init__(self, *args, **kwargs):
-            super().__init__(kwargs.get("parent"))
-            self.sequence = args[0] if args else 0
-            self.generation = args[1] if len(args) > 1 else 0
-        def run(self): pass
+    TTSRequestWorker = None
 
     def strip_tts_action_tags(text: str) -> str:
         return re.sub(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]", "", text).strip()
@@ -586,17 +582,7 @@ class CompactAIWindow(QWidget):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
         if macos_patch is not None:
-            QTimer.singleShot(0, self._apply_macos_window_polish)
-
-    def _apply_macos_window_polish(self):
-        if macos_patch is None:
-            return
-        macos_patch.set_window_no_shadow(self)
-        macos_patch.set_window_level_floating(self)
-        # Tool window = NSPanel; default hidesOnDeactivate makes it disappear
-        # whenever the user clicks another app. Pin it visible.
-        macos_patch.set_hides_on_deactivate(self, False)
-        macos_patch.set_collection_behavior(self, macos_patch.PET_COLLECTION_BEHAVIOR)
+            QTimer.singleShot(0, lambda: macos_patch.apply_floating_tool_window_polish(self, join_all_spaces=True))
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -778,7 +764,7 @@ class CompactAIWindow(QWidget):
 
         messages = self._build_messages()
         enable_thinking = self._cfg.get("llm_enable_thinking", None) if self._cfg else None
-        tool_config = self._tool_config_snapshot()
+        tool_config = tool_config_snapshot(self._cfg)
         web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
         show_sources = bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
         if self._use_responses_api(api_url) and not web_search:
@@ -842,35 +828,6 @@ class CompactAIWindow(QWidget):
             if messages[i].get("role") == "user":
                 messages[i]["content"] = str(messages[i].get("content", "")) + suffix
                 break
-
-    def _tool_config_snapshot(self) -> dict:
-        if not self._cfg:
-            return {}
-        keys = (
-            "llm_hide_tool_call_details",
-            "llm_api_url",
-            "llm_api_key",
-            "llm_model_id",
-            "llm_aux_api_url",
-            "llm_aux_api_key",
-            "llm_aux_model_id",
-            "llm_aux_enable_thinking",
-            "llm_aux_vision_fallback_enabled",
-            "llm_web_search_engine",
-            "llm_mcp_enabled",
-            "llm_mcp_use_native",
-            "llm_mcp_servers",
-            "computer_use_enabled",
-            "computer_use_auto_detect",
-            "computer_use_send_screenshots",
-            "computer_use_max_screenshot_width",
-            "computer_use_allow_screenshot",
-            "computer_use_allow_mouse",
-            "computer_use_allow_keyboard",
-            "computer_use_allow_clipboard",
-            "computer_use_allow_wait",
-        )
-        return {key: self._cfg.get(key) for key in keys}
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         return "api.openai.com" in (api_url or "").lower()
@@ -1050,16 +1007,6 @@ class CompactAIWindow(QWidget):
             reason=analysis["reason"],
         )
 
-    def _memory_extraction_api_config(self) -> tuple[str, str, str]:
-        if not self._cfg:
-            return "", "", ""
-        api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or str(self._cfg.get("llm_api_url", "") or "").strip()
-        api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or str(self._cfg.get("llm_api_key", "") or "").strip()
-        model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip() or str(self._cfg.get("llm_model_id", "") or "").strip()
-        if self._use_responses_api(api_url):
-            api_url = self._chat_completions_api_url(api_url)
-        return api_url, api_key, model_id
-
     def _start_memory_extraction(
         self,
         user_key: str,
@@ -1068,7 +1015,11 @@ class CompactAIWindow(QWidget):
         source_message_id: int | None,
         fallback_analysis: dict,
     ) -> bool:
-        api_url, api_key, model_id = self._memory_extraction_api_config()
+        api_url, api_key, model_id = memory_extraction_api_config(
+            self._cfg,
+            self._use_responses_api,
+            self._chat_completions_api_url,
+        )
         if not api_url or not api_key or not model_id:
             return False
         existing = self._db.get_character_memories(self._character, user_key, limit=12)
@@ -1127,24 +1078,6 @@ class CompactAIWindow(QWidget):
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
 
-    def _tts_config_snapshot(self) -> dict:
-        keys = (
-            "tts_api_url",
-            "tts_language",
-            "tts_reference_character",
-            "tts_streaming",
-            "tts_temperature",
-            "tts_translate_to_selected_language",
-            "llm_api_url",
-            "llm_api_key",
-            "llm_model_id",
-            "llm_aux_api_url",
-            "llm_aux_api_key",
-            "llm_aux_model_id",
-            "llm_aux_enable_thinking",
-        )
-        return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
-
     def _clean_tts_payload(self, text: str) -> str:
         text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
         return strip_tts_action_tags(text).strip()
@@ -1171,7 +1104,7 @@ class CompactAIWindow(QWidget):
         self._reset_tts(stop_player=True)
         generation = self._tts_generation
         self._tts_playing_character = character
-        config = self._tts_config_snapshot()
+        config = tts_config_snapshot(self._cfg)
         worker = TTSRequestWorker(0, generation, payload, character, config, self)
         self._tts_worker = worker
         worker.audio_ready.connect(self._on_tts_audio_ready)

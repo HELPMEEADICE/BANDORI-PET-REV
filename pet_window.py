@@ -499,25 +499,6 @@ class PetWindow(QWidget):
         self._last_topmost_interaction_refresh_at = now
         self._enforce_game_topmost()
 
-    def _apply_macos_window_polish(self):
-        if sys.platform != "darwin" or macos_patch is None:
-            return
-        macos_patch.set_window_no_shadow(self)
-        # Status-bar level (25) bypasses macOS's auto-constrain so the user can
-        # drag the pet anywhere on screen — the Live2D widget has transparent
-        # padding around the visible character that would otherwise hit the
-        # menu bar before the character does.
-        if self._game_topmost:
-            macos_patch.set_window_level_above_menu_bar(self)
-        else:
-            macos_patch.set_window_level_status_bar(self)
-        # Qt.Tool windows are NSPanels, which AppKit hides whenever the app
-        # deactivates — clicking any other window would otherwise make the pet
-        # vanish. Force the panel to stay visible across app focus changes and
-        # across all Spaces.
-        macos_patch.set_hides_on_deactivate(self, False)
-        macos_patch.set_collection_behavior(self, macos_patch.PET_COLLECTION_BEHAVIOR)
-
     def eventFilter(self, obj, event):
         if self._is_radial_menu_visible():
             event_type = event.type()
@@ -2520,7 +2501,7 @@ class PetWindow(QWidget):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
         if sys.platform == "darwin" and macos_patch is not None:
-            QTimer.singleShot(0, self._apply_macos_window_polish)
+            QTimer.singleShot(0, lambda: macos_patch.apply_pet_window_polish(self, game_topmost=self._game_topmost))
         # _apply_game_topmost_state reads isVisible(), so call it after show
         # — and on macOS it depends on the NSWindow already existing, so defer
         # to the next event loop tick alongside the polish call above.

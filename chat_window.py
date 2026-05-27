@@ -56,6 +56,11 @@ from llm_manager import (
 from llm_api_compat import chat_completions_api_url
 from llm_error_hints import format_llm_error_message
 from vision_fallback import analyze_images_with_aux_model
+from chat_config_snapshots import (
+    memory_extraction_api_config,
+    tool_config_snapshot,
+    tts_config_snapshot,
+)
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -71,18 +76,8 @@ except (ImportError, OSError):
         def enqueue(self, audio, media_type): pass
         def stop(self): pass
         def is_idle(self): return True
-
-    class TTSRequestWorker(QThread):
-        audio_ready = Signal(int, int, bytes, str)
-        error = Signal(str)
-        finished = Signal()
-        def run(self): pass
-
-    class TTSTranslationWorker(QThread):
-        translated = Signal(int, int, str, str)
-        error = Signal(str)
-        finished = Signal()
-        def run(self): pass
+    TTSRequestWorker = None
+    TTSTranslationWorker = None
 
     def flush_tts_sentence(buffer: str) -> str:
         return buffer.strip()
@@ -2330,19 +2325,10 @@ class ChatWindow(QWidget):
         super().showEvent(event)
         self._apply_windows_11_border_fix()
         if macos_patch is not None:
-            QTimer.singleShot(0, self._apply_macos_window_polish)
+            QTimer.singleShot(0, lambda: macos_patch.apply_floating_tool_window_polish(self))
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
             QTimer.singleShot(0, self._play_entrance)
-
-    def _apply_macos_window_polish(self):
-        if macos_patch is None:
-            return
-        macos_patch.set_window_no_shadow(self)
-        macos_patch.set_window_level_floating(self)
-        # Tool window = NSPanel; default hidesOnDeactivate makes it disappear
-        # whenever the user clicks another app. Pin the chat visible.
-        macos_patch.set_hides_on_deactivate(self, False)
 
     def _apply_windows_11_border_fix(self):
         hwnd = int(self.winId())
@@ -4484,16 +4470,6 @@ class ChatWindow(QWidget):
             reason=analysis["reason"],
         )
 
-    def _memory_extraction_api_config(self) -> tuple[str, str, str]:
-        if not self._cfg:
-            return "", "", ""
-        api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or str(self._cfg.get("llm_api_url", "") or "").strip()
-        api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or str(self._cfg.get("llm_api_key", "") or "").strip()
-        model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip() or str(self._cfg.get("llm_model_id", "") or "").strip()
-        if self._use_responses_api(api_url):
-            api_url = self._chat_completions_api_url(api_url)
-        return api_url, api_key, model_id
-
     def _start_memory_extraction(
         self,
         character: str,
@@ -4504,7 +4480,11 @@ class ChatWindow(QWidget):
         source_group_message_id: int | None,
         fallback_analysis: dict,
     ) -> bool:
-        api_url, api_key, model_id = self._memory_extraction_api_config()
+        api_url, api_key, model_id = memory_extraction_api_config(
+            self._cfg,
+            self._use_responses_api,
+            self._chat_completions_api_url,
+        )
         if not api_url or not api_key or not model_id:
             return False
         existing = self._db.get_character_memories(character, user_key, limit=12)
@@ -4819,42 +4799,6 @@ class ChatWindow(QWidget):
         if not self._cfg or self._cfg.get("llm_api_mode", "chat_completions") != "responses":
             return False
         return self._supports_openai_responses_api(api_url or self._cfg.get("llm_api_url", ""))
-
-    def _tool_config_snapshot(self) -> dict:
-        if not self._cfg:
-            return {}
-        keys = (
-            "llm_hide_tool_call_details",
-            "llm_api_url",
-            "llm_api_key",
-            "llm_model_id",
-            "llm_aux_api_url",
-            "llm_aux_api_key",
-            "llm_aux_model_id",
-            "llm_aux_enable_thinking",
-            "llm_aux_vision_fallback_enabled",
-            "llm_web_search_engine",
-            "llm_mcp_enabled",
-            "llm_mcp_use_native",
-            "llm_mcp_servers",
-            "computer_use_enabled",
-            "computer_use_auto_detect",
-            "computer_use_send_screenshots",
-            "computer_use_max_screenshot_width",
-            "computer_use_allow_screenshot",
-            "computer_use_allow_mouse",
-            "computer_use_allow_keyboard",
-            "computer_use_allow_clipboard",
-            "computer_use_allow_wait",
-            "user_name",
-            "user_profiles",
-            "active_user_profile",
-            "pov_mode",
-            "pov_role_character",
-        )
-        snapshot = {key: self._cfg.get(key) for key in keys}
-        snapshot["_latest_user_text"] = self._last_user_text
-        return snapshot
 
     def _chat_completions_api_url(self, api_url: str) -> str:
         return chat_completions_api_url(api_url)
@@ -5358,7 +5302,11 @@ class ChatWindow(QWidget):
 
         messages = self._build_messages_for_character(character, spoken_names)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
-        tool_config = self._tool_config_snapshot()
+        tool_config = tool_config_snapshot(
+            self._cfg,
+            include_chat_keys=True,
+            latest_user_text=self._last_user_text,
+        )
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
         show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
         if self._use_responses_api(api_url) and not web_search:
@@ -5567,24 +5515,6 @@ class ChatWindow(QWidget):
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
 
-    def _tts_config_snapshot(self) -> dict:
-        keys = (
-            "tts_api_url",
-            "tts_language",
-            "tts_reference_character",
-            "tts_streaming",
-            "tts_temperature",
-            "tts_translate_to_selected_language",
-            "llm_api_url",
-            "llm_api_key",
-            "llm_model_id",
-            "llm_aux_api_url",
-            "llm_aux_api_key",
-            "llm_aux_model_id",
-            "llm_aux_enable_thinking",
-        )
-        return {key: self._cfg.get(key, None) for key in keys} if self._cfg else {}
-
     def _reset_tts_stream(self, stop_player: bool = True):
         self._tts_text_buffer = ""
         self._tts_tag_buffer = ""
@@ -5645,7 +5575,7 @@ class ChatWindow(QWidget):
         if not text:
             return
         if self._tts_should_translate():
-            worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, self._tts_config_snapshot(), self)
+            worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, tts_config_snapshot(self._cfg), self)
             self._tts_translation_workers[sequence] = worker
             worker.translated.connect(self._on_tts_translation_ready)
             worker.error.connect(self._on_tts_error)
@@ -5701,7 +5631,7 @@ class ChatWindow(QWidget):
         if next_index is None:
             return
         sequence, text, character = self._tts_queue.pop(next_index)
-        config = self._tts_config_snapshot()
+        config = tts_config_snapshot(self._cfg)
         config["tts_translate_to_selected_language"] = False
         worker = TTSRequestWorker(sequence, self._tts_generation, text, character, config, self)
         self._tts_active_workers[sequence] = worker
