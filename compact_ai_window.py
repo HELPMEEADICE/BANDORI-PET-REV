@@ -212,6 +212,7 @@ class CompactAIWindow(QWidget):
         self._panel_border_color = QColor(255, 255, 255, 160)
         self._shadow_color = QColor(0, 0, 0, 42)
         self._output = None
+        self._input_shell = None
         self._input = None
         self._send_button = None
 
@@ -257,6 +258,7 @@ class CompactAIWindow(QWidget):
 
         self._input_shell = QFrame(self)
         self._input_shell.setObjectName("compactComposer")
+        self._input_shell.installEventFilter(self)
         row = QHBoxLayout(self._input_shell)
         row.setContentsMargins(9, 4, 4, 4)
         row.setSpacing(6)
@@ -279,6 +281,7 @@ class CompactAIWindow(QWidget):
         self._send_button.clicked.connect(self.send_message)
         row.addWidget(self._send_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self._sync_scaled_controls()
+        self.installEventFilter(self)
 
     def refresh_theme(self):
         background_color = ""
@@ -542,23 +545,43 @@ class CompactAIWindow(QWidget):
         y = max(screen_geo.top() + margin, min(y, screen_geo.bottom() - self.height() - margin))
         return x, y
 
+    def _drag_targets(self) -> tuple[QObject, ...]:
+        targets = [self]
+        if self._output is not None:
+            targets.append(self._output.viewport())
+        if self._input_shell is not None:
+            targets.append(self._input_shell)
+        return tuple(targets)
+
+    def _begin_drag(self, global_pos: QPoint):
+        if self._geometry_anim is not None:
+            self._geometry_anim.stop()
+            self._geometry_anim = None
+        self._dragging = True
+        self._drag_start = global_pos
+        self._drag_window_start = self.pos()
+
+    def _update_drag(self, global_pos: QPoint):
+        delta = global_pos - self._drag_start
+        self.move(self._drag_window_start + delta)
+        if not self._pet_geo.isNull():
+            self._manual_offset = self.pos() - self._pet_geo.topLeft()
+
+    def _end_drag(self):
+        self._dragging = False
+        if not self._pet_geo.isNull():
+            self._manual_offset = self.pos() - self._pet_geo.topLeft()
+
     def eventFilter(self, obj, event):
-        if obj is self._output.viewport():
+        if obj in self._drag_targets():
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                self._dragging = True
-                self._drag_start = event.globalPosition().toPoint()
-                self._drag_window_start = self.pos()
+                self._begin_drag(event.globalPosition().toPoint())
                 return True
             if event.type() == QEvent.Type.MouseMove and self._dragging:
-                delta = event.globalPosition().toPoint() - self._drag_start
-                self.move(self._drag_window_start + delta)
-                if not self._pet_geo.isNull():
-                    self._manual_offset = self.pos() - self._pet_geo.topLeft()
+                self._update_drag(event.globalPosition().toPoint())
                 return True
             if event.type() == QEvent.Type.MouseButtonRelease and self._dragging:
-                self._dragging = False
-                if not self._pet_geo.isNull():
-                    self._manual_offset = self.pos() - self._pet_geo.topLeft()
+                self._end_drag()
                 return True
         return super().eventFilter(obj, event)
 
