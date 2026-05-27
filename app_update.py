@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import platform
@@ -15,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app_info import APP_NAME, APP_REPOSITORY, APP_VERSION, MAIN_EXECUTABLE
-from process_utils import app_base_dir
+from process_utils import app_base_dir, hidden_subprocess_kwargs
 
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+){0,3}")
@@ -109,14 +107,6 @@ def _is_newer_version(latest: str, current: str) -> bool:
     return bool(latest and latest.strip().lstrip("v") != current.strip().lstrip("v"))
 
 
-def _hidden_subprocess_kwargs() -> dict:
-    if sys.platform != "win32":
-        return {}
-    return {
-        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    }
-
-
 def _run_git(args: list[str], cwd: Path, timeout: int = 60) -> str:
     git = shutil.which("git")
     if not git:
@@ -130,7 +120,7 @@ def _run_git(args: list[str], cwd: Path, timeout: int = 60) -> str:
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        **_hidden_subprocess_kwargs(),
+        **hidden_subprocess_kwargs(),
     )
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout or "git command failed").strip()
@@ -217,7 +207,7 @@ def _apply_git_update(cwd: Path) -> UpdateResult:
             errors="replace",
             timeout=300,
             check=True,
-            **_hidden_subprocess_kwargs(),
+            **hidden_subprocess_kwargs(),
         )
 
     return UpdateResult(
@@ -381,7 +371,7 @@ def _launch_powershell_script(script_path: Path) -> None:
             str(script_path),
         ],
         cwd=str(app_base_dir()),
-        **_hidden_subprocess_kwargs(),
+        **hidden_subprocess_kwargs(),
     )
 
 

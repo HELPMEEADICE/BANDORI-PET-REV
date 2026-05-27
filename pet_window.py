@@ -29,6 +29,16 @@ from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
 from process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from process_utils import clamp_float as _clamp_float, clamp_int as _clamp_int
+from win32_dwm import (
+    SWP_FRAMECHANGED,
+    SWP_NOACTIVATE,
+    SWP_NOMOVE,
+    SWP_NOSIZE,
+    SWP_NOZORDER,
+    apply_no_rounding,
+    frame_changed,
+)
 from zst_model_archive import prefetch_virtual_action_resources
 
 if sys.platform == "darwin":
@@ -52,21 +62,12 @@ GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
 WS_EX_NOACTIVATE = 0x08000000
-DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWCP_DONOTROUND = 1
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-SWP_NOZORDER = 0x0004
-SWP_NOACTIVATE = 0x0010
-SWP_FRAMECHANGED = 0x0020
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
     _get_window_long = _user32.GetWindowLongPtrW
     _set_window_long = _user32.SetWindowLongPtrW
     _set_window_pos = _user32.SetWindowPos
-    _dwmapi = ctypes.windll.dwmapi
-    _rtl_get_version = ctypes.windll.ntdll.RtlGetVersion
     _get_window_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
     _get_window_long.restype = ctypes.c_ssize_t
     _set_window_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -81,37 +82,10 @@ if os.name == "nt":
         ctypes.c_uint,
     ]
     _set_window_pos.restype = ctypes.wintypes.BOOL
-
-    class _OSVERSIONINFOEXW(ctypes.Structure):
-        _fields_ = [
-            ("dwOSVersionInfoSize", ctypes.wintypes.DWORD),
-            ("dwMajorVersion", ctypes.wintypes.DWORD),
-            ("dwMinorVersion", ctypes.wintypes.DWORD),
-            ("dwBuildNumber", ctypes.wintypes.DWORD),
-            ("dwPlatformId", ctypes.wintypes.DWORD),
-            ("szCSDVersion", ctypes.wintypes.WCHAR * 128),
-            ("wServicePackMajor", ctypes.wintypes.WORD),
-            ("wServicePackMinor", ctypes.wintypes.WORD),
-            ("wSuiteMask", ctypes.wintypes.WORD),
-            ("wProductType", ctypes.wintypes.BYTE),
-            ("wReserved", ctypes.wintypes.BYTE),
-        ]
-
-    _rtl_get_version.argtypes = [ctypes.POINTER(_OSVERSIONINFOEXW)]
-    _rtl_get_version.restype = ctypes.wintypes.LONG
-    _dwm_set_window_attribute = _dwmapi.DwmSetWindowAttribute
-    _dwm_set_window_attribute.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.wintypes.DWORD,
-    ]
-    _dwm_set_window_attribute.restype = ctypes.c_long
 else:
     _get_window_long = None
     _set_window_long = None
     _set_window_pos = None
-    _dwm_set_window_attribute = None
 
 _x11 = None
 _xext = None
@@ -169,16 +143,6 @@ if sys.platform.startswith("linux"):
         _xext = None
 
 
-def _is_windows_11_or_later() -> bool:
-    if os.name != "nt":
-        return False
-    version = _OSVERSIONINFOEXW()
-    version.dwOSVersionInfoSize = ctypes.sizeof(version)
-    if _rtl_get_version(ctypes.byref(version)) != 0:
-        return False
-    return version.dwMajorVersion >= 10 and version.dwBuildNumber >= 22000
-
-
 LIVE2D_BASE_WIDTH = 400
 LIVE2D_BASE_HEIGHT = 500
 LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
@@ -192,26 +156,6 @@ LIVE2D_MOUSE_APPROACH_RADIUS = 180
 LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
-
-
-def _clamp_live2d_scale(value: object) -> int:
-    return clamp_live2d_scale(value)
-
-
-def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(minimum, min(number, maximum))
-
-
-def _clamp_float(value: object, minimum: float, maximum: float, default: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = default
-    return max(minimum, min(number, maximum))
 
 
 _PIXEL_PET_WIDGET_CLASS = None
@@ -281,7 +225,7 @@ class PetWindow(QWidget):
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
             )
-            self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
+            self._live2d_scale = clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
             self._live2d_hit_alpha_threshold = _clamp_int(
                 self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
                 0,
@@ -475,26 +419,8 @@ class PetWindow(QWidget):
         hwnd = int(self.winId())
         if not hwnd:
             return
-        if _is_windows_11_or_later() and _dwm_set_window_attribute is not None:
-            preference = ctypes.c_int(DWMWCP_DONOTROUND)
-            try:
-                _dwm_set_window_attribute(
-                    hwnd,
-                    DWMWA_WINDOW_CORNER_PREFERENCE,
-                    ctypes.byref(preference),
-                    ctypes.sizeof(preference),
-                )
-            except Exception:
-                pass
-        _set_window_pos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        )
+        apply_no_rounding(hwnd, windows_11_only=True)
+        frame_changed(hwnd)
         self._apply_no_activate_to_hwnd(hwnd)
         self._enforce_game_topmost()
 
@@ -1381,7 +1307,7 @@ class PetWindow(QWidget):
         return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(LIVE2D_BASE_HEIGHT * scale))
 
     def set_live2d_scale(self, value: object):
-        self._live2d_scale = _clamp_live2d_scale(value)
+        self._live2d_scale = clamp_live2d_scale(value)
         if not self._pixel_mode:
             self.resize(*self._live2d_size())
         self._sync_compact_ai_window()

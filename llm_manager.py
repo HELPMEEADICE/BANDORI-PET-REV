@@ -9,6 +9,10 @@ from llm_api_compat import (
     responses_api_url,
     sanitize_chat_body_for_url,
 )
+from llm_thinking import (
+    apply_responses_thinking_options as _apply_responses_thinking_options,
+    apply_thinking_options as _apply_thinking_options,
+)
 from local_tools import (
     chat_completion_tools,
     responses_native_tools,
@@ -982,21 +986,6 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
 
 
 _THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
-
-
-def _apply_thinking_options(body: dict, enable_thinking):
-    if enable_thinking is None:
-        return
-    body["enable_thinking"] = enable_thinking
-    body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
-    if enable_thinking:
-        body["reasoning_effort"] = "medium"
-
-
-def _apply_responses_thinking_options(body: dict, enable_thinking):
-    if enable_thinking is None:
-        return
-    body["reasoning"] = {"effort": "medium" if enable_thinking else "none"}
 
 
 def _responses_api_url(api_url: str) -> str:

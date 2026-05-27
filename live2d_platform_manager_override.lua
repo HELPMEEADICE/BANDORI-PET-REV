@@ -382,11 +382,7 @@ function PlatformManager:loadBytes(path)
     if stream ~= nil then
         return streamData(stream, normalized)
     end
-    local f = io.open(path, "rb")
-    if not f then error("Cannot open file: " .. path) end
-    local content = f:read("*all")
-    f:close()
-    return content
+    error("No resource stream registered for: " .. tostring(path))
 end
 
 function PlatformManager:loadLive2DModel(path)
@@ -406,9 +402,7 @@ function PlatformManager:loadTexture(live2DModel, no, path)
         uploadTexture(live2DModel, no, w, h, data, useMipmap, isPremultiplied, allowInPlace)
         return
     end
-    local w, h, data = imageLoader.loadImage(path)
-    data = fillTransparentEdges(w, h, data, 1)
-    uploadTexture(live2DModel, no, w, h, data, false, false, true)
+    error("No texture stream registered for: " .. tostring(path))
 end
 
 function PlatformManager:jsonParseFromBytes(data)

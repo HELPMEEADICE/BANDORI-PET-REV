@@ -2,6 +2,18 @@ import os
 
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap
+from PySide6.QtWidgets import QTextEdit
+from qfluentwidgets.components.widgets.menu import TextEditMenu
+
+
+AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
+
+
+class FluentContextTextEdit(QTextEdit):
+    def contextMenuEvent(self, event):
+        menu = TextEditMenu(self)
+        menu.exec(event.globalPos(), ani=True)
 
 
 def circular_pixmap(source: QPixmap, size: int) -> QPixmap:

@@ -67,25 +67,10 @@ from relationship_memory import (
     user_key_from_config,
 )
 from action_bus import publish_lip_sync
+from ui_helpers import INTERRUPT_COMMANDS
+from win32_dwm import apply_windows_11_border_fix
 
-DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWA_BORDER_COLOR = 34
-DWMWCP_DONOTROUND = 1
-DWMWA_COLOR_NONE = 0xFFFFFFFE
-_INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
-
-if os.name == "nt":
-    _dwmapi = ctypes.windll.dwmapi
-    _dwm_set_window_attribute = _dwmapi.DwmSetWindowAttribute
-    _dwm_set_window_attribute.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.wintypes.DWORD,
-    ]
-    _dwm_set_window_attribute.restype = ctypes.c_long
-else:
-    _dwm_set_window_attribute = None
+_INTERRUPT_COMMANDS = INTERRUPT_COMMANDS
 
 if sys.platform == "darwin":
     import macos_patch
@@ -624,31 +609,8 @@ class CompactAIWindow(QWidget):
         return super().nativeEvent(event_type, message)
 
     def _apply_windows_frameless_fix(self):
-        if os.name != "nt" or _dwm_set_window_attribute is None:
-            return
         hwnd = int(self.winId())
-        if not hwnd:
-            return
-        preference = ctypes.c_int(DWMWCP_DONOTROUND)
-        try:
-            _dwm_set_window_attribute(
-                hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                ctypes.byref(preference),
-                ctypes.sizeof(preference),
-            )
-        except Exception:
-            pass
-        border_color = ctypes.c_int(DWMWA_COLOR_NONE)
-        try:
-            _dwm_set_window_attribute(
-                hwnd,
-                DWMWA_BORDER_COLOR,
-                ctypes.byref(border_color),
-                ctypes.sizeof(border_color),
-            )
-        except Exception:
-            pass
+        apply_windows_11_border_fix(hwnd)
 
     def set_character(self, character: str):
         if character == self._character:

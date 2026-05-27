@@ -1,17 +1,9 @@
 import json
 import re
-import urllib.error
 import urllib.request
 
 from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
-
-
-def _apply_thinking_options(body: dict, enable_thinking):
-    if enable_thinking not in (True, False):
-        return
-    body["enable_thinking"] = enable_thinking
-    body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
-    body["reasoning"] = {"effort": "medium" if enable_thinking else "none"}
+from llm_thinking import apply_thinking_options
 
 
 def _strip_thinking_text(text: str) -> str:
@@ -47,7 +39,7 @@ def analyze_images_with_aux_model(
         ],
         "stream": False,
     }
-    _apply_thinking_options(body, enable_thinking)
+    apply_thinking_options(body, enable_thinking)
     request_url = chat_completions_api_url(api_url)
     sanitize_chat_body_for_url(body, request_url)
     req = urllib.request.Request(

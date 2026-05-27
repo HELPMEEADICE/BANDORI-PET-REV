@@ -1,6 +1,7 @@
 import os
 import sys
 import hashlib
+import subprocess
 from pathlib import Path
 
 
@@ -47,3 +48,33 @@ def ipc_server_name() -> str:
         return override
     digest = hashlib.sha1(str(app_base_dir()).encode("utf-8")).hexdigest()[:12]
     return f"BandoriPet-{digest}"
+
+
+def clamp_int(value: object, minimum: int, maximum: int, default: int | None = None) -> int:
+    if default is None:
+        default = minimum
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def clamp_float(value: object, minimum: float, maximum: float, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def hidden_subprocess_kwargs() -> dict:
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }

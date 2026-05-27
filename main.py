@@ -489,12 +489,12 @@ def main():
             process.setProgram(program)
             process.setArguments(arguments)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-            process.readyReadStandardError.connect(lambda p=process: read_pet_error(p))
+            process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
             process.finished.connect(lambda *args, p=process: clear_pet_process(p))
             pet_window_ref["processes"].append(process)
             process.start()
 
-    def read_pet_error(process):
+    def _read_process_error(process):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
         if data:
             print(data)
@@ -531,11 +531,6 @@ def main():
         elif line == "LAUNCH":
             launch_pet()
 
-    def read_settings_error(process):
-        data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
-        if data:
-            print(data)
-
     def clear_settings_process(process):
         if not isValid(process):
             return
@@ -564,7 +559,7 @@ def main():
         process.setProgram(program)
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-        process.readyReadStandardError.connect(lambda p=process: read_settings_error(p))
+        process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
         process.finished.connect(lambda *args, p=process: clear_settings_process(p))
         settings_process_ref["process"] = process
         settings_process_ref["show_launch"] = show_launch

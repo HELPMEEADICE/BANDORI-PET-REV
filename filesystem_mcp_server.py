@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+from process_utils import clamp_int as _clamp_int
+
 
 PROTOCOL_VERSION = "2025-06-18"
 MAX_READ_CHARS = 100_000
@@ -243,14 +245,6 @@ def _display_path(path: Path, roots: list[Path]) -> str:
         except ValueError:
             continue
     return str(path)
-
-
-def _clamp_int(value, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = minimum
-    return max(minimum, min(maximum, parsed))
 
 
 def _result(request_id, result: dict) -> dict:

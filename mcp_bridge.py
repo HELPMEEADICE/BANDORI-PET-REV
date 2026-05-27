@@ -8,11 +8,13 @@ import threading
 import time
 import urllib.error
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEventLoop, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from i18n_manager import tr as _tr
+from process_utils import app_base_dir, hidden_subprocess_kwargs
 
 _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
@@ -20,18 +22,9 @@ _TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
 _CLIENTS: dict[str, "StdioMcpClient"] = {}
 _LOCK = threading.RLock()
 _thread_local = threading.local()
-
-
-def _hidden_subprocess_kwargs() -> dict:
-    if os.name != "nt":
-        return {}
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startupinfo.wShowWindow = subprocess.SW_HIDE
-    return {
-        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        "startupinfo": startupinfo,
-    }
+_APP_DIR = Path(app_base_dir()).resolve()
+_BUNDLED_STDIO_MCP_SCRIPT = (_APP_DIR / "filesystem_mcp_server.py").resolve()
+_ALLOWED_STDIO_PYTHON_COMMANDS = {"python", "python.exe", "pythonw.exe", "py", "py.exe"}
 
 
 @dataclass
@@ -346,6 +339,46 @@ def _resolve_command(command: str) -> str:
     return command
 
 
+def _validated_stdio_command(server: dict) -> tuple[str, list[str], str]:
+    command = str(server.get("command", "") or "").strip()
+    if not command:
+        raise ValueError(_tr("McpBridge.stdio_command_empty", default="stdio MCP command is empty"))
+    command = _resolve_command(command)
+    command_name = os.path.basename(command).lower()
+    if command_name not in _ALLOWED_STDIO_PYTHON_COMMANDS:
+        raise ValueError(_tr(
+            "McpBridge.stdio_command_not_allowed",
+            default="stdio MCP command is not allowed: {command}",
+            command=server.get("command", ""),
+        ))
+
+    args = _server_args(server)
+    script_index = 0
+    if command_name in {"py", "py.exe"} and args and re.fullmatch(r"-\d+(\.\d+)?", args[0]):
+        script_index = 1
+    if len(args) <= script_index:
+        raise ValueError(_tr(
+            "McpBridge.stdio_script_missing",
+            default="stdio MCP script is missing.",
+        ))
+
+    script_path = Path(args[script_index]).expanduser()
+    if not script_path.is_absolute():
+        cwd = Path(str(server.get("cwd", "") or _APP_DIR)).expanduser()
+        script_path = cwd / script_path
+    script_path = script_path.resolve()
+    if script_path != _BUNDLED_STDIO_MCP_SCRIPT:
+        raise ValueError(_tr(
+            "McpBridge.stdio_script_not_allowed",
+            default="stdio MCP script is not allowed: {script}",
+            script=str(args[script_index]),
+        ))
+
+    args = list(args)
+    args[script_index] = str(_BUNDLED_STDIO_MCP_SCRIPT)
+    return command, args, str(_APP_DIR)
+
+
 def _stdio_client(server: dict) -> "StdioMcpClient":
     key = _client_key(server)
     with _LOCK:
@@ -484,14 +517,7 @@ class StdioMcpClient:
         self._responses: queue.Queue[dict] = queue.Queue()
         self._next_id = 1
         self._initialized = False
-        command = str(server.get("command", "") or "").strip()
-        if not command:
-            raise ValueError(_tr("McpBridge.stdio_command_empty", default="stdio MCP command is empty"))
-        command = _resolve_command(command)
-        args = _server_args(server)
-        cwd = str(server.get("cwd", "") or os.getcwd())
-        if cwd and not os.path.isdir(cwd):
-            raise FileNotFoundError(_tr("McpBridge.stdio_cwd_missing", default="stdio MCP cwd does not exist: {cwd}", cwd=cwd))
+        command, args, cwd = _validated_stdio_command(server)
         self._process = subprocess.Popen(
             [command, *args],
             stdin=subprocess.PIPE,
@@ -500,7 +526,7 @@ class StdioMcpClient:
             cwd=cwd,
             text=False,
             bufsize=0,
-            **_hidden_subprocess_kwargs(),
+            **hidden_subprocess_kwargs(),
         )
         self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
         self._reader.start()

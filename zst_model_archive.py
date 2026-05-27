@@ -11,6 +11,8 @@ VIRTUAL_SEP = "::"
 INDEX_MEMBER = ".bandori_zst_index.json"
 _VIRTUAL_BYTE_CACHE_MAX_ITEMS = 128
 _VIRTUAL_BYTE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_VIRTUAL_MEMBER_MAX_BYTES = 64 * 1024 * 1024
+_INDEX_MEMBER_MAX_BYTES = 4 * 1024 * 1024
 _VIRTUAL_BYTE_CACHE: OrderedDict[str, bytes] = OrderedDict()
 _VIRTUAL_BYTE_CACHE_BYTES = 0
 _CACHE_LOCK = threading.RLock()
@@ -42,12 +44,16 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
 
     with _open_tar_zst(archive_path) as archive:
         for member in archive:
-            if not member.isfile() or _normalize_member(member.name) != member_path:
+            try:
+                member_name = _normalize_member(member.name)
+            except ValueError:
+                continue
+            if not member.isfile() or member_name != member_path:
                 continue
             extracted = archive.extractfile(member)
             if extracted is None:
                 break
-            data = extracted.read()
+            data = _read_member_bytes(extracted, member)
             if cache:
                 with _CACHE_LOCK:
                     _store_virtual_bytes(cache_key, data)
@@ -117,13 +123,16 @@ def prefetch_virtual_model_resources(model_json_path: str, include_deferred_expr
 
     with _open_tar_zst(archive_path) as archive:
         for member in archive:
-            member_name = _normalize_member(member.name)
+            try:
+                member_name = _normalize_member(member.name)
+            except ValueError:
+                continue
             if not member.isfile() or member_name not in target_members:
                 continue
             extracted = archive.extractfile(member)
             if extracted is None:
                 continue
-            data = extracted.read()
+            data = _read_member_bytes(extracted, member)
             with _CACHE_LOCK:
                 _store_virtual_bytes(
                     make_virtual_path(archive_path, member_name),
@@ -170,13 +179,16 @@ def prefetch_virtual_action_resources(
 
     with _open_tar_zst(archive_path) as archive:
         for member in archive:
-            member_name = _normalize_member(member.name)
+            try:
+                member_name = _normalize_member(member.name)
+            except ValueError:
+                continue
             if not member.isfile() or member_name not in target_members:
                 continue
             extracted = archive.extractfile(member)
             if extracted is None:
                 continue
-            data = extracted.read()
+            data = _read_member_bytes(extracted, member)
             with _CACHE_LOCK:
                 _store_virtual_bytes(make_virtual_path(archive_path, member_name), data)
             target_members.remove(member_name)
@@ -257,19 +269,31 @@ def list_archive_files(archive_path: Path | str) -> list[str]:
         members = iter(archive)
         first = next(members, None)
         if first is not None:
-            first_name = _normalize_member(first.name)
+            try:
+                first_name = _normalize_member(first.name)
+            except ValueError:
+                first_name = ""
             if first.isfile() and first_name == INDEX_MEMBER:
                 extracted = archive.extractfile(first)
                 if extracted is not None:
-                    data = json.loads(extracted.read().decode("utf-8"))
+                    data = json.loads(_read_member_bytes(extracted, first, _INDEX_MEMBER_MAX_BYTES).decode("utf-8"))
                     indexed_files = data.get("files", [])
                     if isinstance(indexed_files, list):
-                        return sorted(str(path) for path in indexed_files)
-            elif first.isfile():
+                        files = []
+                        for path in indexed_files:
+                            try:
+                                files.append(_normalize_member(path))
+                            except ValueError:
+                                continue
+                        return sorted(files)
+            elif first.isfile() and first_name:
                 files.append(first_name)
         for member in members:
             if member.isfile():
-                files.append(_normalize_member(member.name))
+                try:
+                    files.append(_normalize_member(member.name))
+                except ValueError:
+                    continue
     return sorted(files)
 
 
@@ -290,5 +314,22 @@ def _normalize_member(path: str) -> str:
     normalized = str(path).replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
+    if not normalized or normalized.startswith("/"):
+        raise ValueError(f"Unsafe archive member path: {path}")
+    raw_parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise ValueError(f"Unsafe archive member path: {path}")
     normalized = posixpath.normpath(normalized.lstrip("/"))
-    return "" if normalized == "." else normalized
+    if normalized == "." or normalized.startswith("../") or normalized == "..":
+        raise ValueError(f"Unsafe archive member path: {path}")
+    return normalized
+
+
+def _read_member_bytes(extracted, member, max_bytes: int = _VIRTUAL_MEMBER_MAX_BYTES) -> bytes:
+    size = getattr(member, "size", None)
+    if size is not None and size > max_bytes:
+        raise ValueError(f"Archive member too large: {member.name}")
+    data = extracted.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"Archive member too large: {member.name}")
+    return data

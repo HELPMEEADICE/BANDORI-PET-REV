@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 
 from i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, TransparentToolButton, isDarkTheme
-from qfluentwidgets.components.widgets.menu import TextEditMenu
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
 from app_theme import (
@@ -29,9 +28,9 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import circular_pixmap
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, circular_pixmap
+from win32_dwm import apply_windows_11_border_fix
 
-import ctypes
 import base64
 import math
 import mimetypes
@@ -44,9 +43,6 @@ from datetime import datetime
 import json
 import re
 from pathlib import Path
-
-if os.name == "nt":
-    import ctypes.wintypes
 
 if sys.platform == "darwin":
     import macos_patch
@@ -154,7 +150,7 @@ _ASSIST_BUBBLE_LIGHT = "#ffffff"
 _ASSIST_BUBBLE_DARK = "#1b1f29"
 _TEAMS_ACCENT = "#6264a7"
 _TELEGRAM_ACCENT = BANDORI_PRIMARY
-_AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_AVATAR_EXTENSIONS = AVATAR_EXTENSIONS
 _CHAT_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _AVATAR_PIXMAP_CACHE = {}
 _AVATAR_PIXMAP_CACHE_LIMIT = 96
@@ -164,25 +160,7 @@ _HISTORY_SCROLL_WIDTH = _HISTORY_ROW_WIDTH + 24
 _GROUP_SIDEBAR_DEFAULT_RATIO = 0.28
 _GROUP_SIDEBAR_MIN_RATIO = 0.18
 _GROUP_SIDEBAR_MAX_RATIO = 0.46
-_INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
-
-DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWA_BORDER_COLOR = 34
-DWMWCP_DONOTROUND = 1
-DWMWA_COLOR_NONE = 0xFFFFFFFE
-
-if os.name == "nt":
-    _dwmapi = ctypes.windll.dwmapi
-    _dwm_set_window_attribute = _dwmapi.DwmSetWindowAttribute
-    _dwm_set_window_attribute.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.wintypes.DWORD,
-    ]
-    _dwm_set_window_attribute.restype = ctypes.c_long
-else:
-    _dwm_set_window_attribute = None
+_INTERRUPT_COMMANDS = INTERRUPT_COMMANDS
 
 
 def _avatar_cache_key(path: str, data: bytes, size: int, focus: str):
@@ -285,12 +263,6 @@ def _rounded_avatar_pixmap(path: str = "", data: bytes = b"", size: int = 28, fo
     if len(_AVATAR_PIXMAP_CACHE) > _AVATAR_PIXMAP_CACHE_LIMIT:
         _AVATAR_PIXMAP_CACHE.pop(next(iter(_AVATAR_PIXMAP_CACHE)))
     return rounded
-
-
-class FluentContextTextEdit(QTextEdit):
-    def contextMenuEvent(self, event):
-        menu = TextEditMenu(self)
-        menu.exec(event.globalPos(), ani=True)
 
 
 class FluentContextLabel(QLabel):
@@ -2373,25 +2345,8 @@ class ChatWindow(QWidget):
         macos_patch.set_hides_on_deactivate(self, False)
 
     def _apply_windows_11_border_fix(self):
-        if os.name != "nt" or _dwm_set_window_attribute is None:
-            return
         hwnd = int(self.winId())
-        if not hwnd:
-            return
-        for attr, value in (
-            (DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND),
-            (DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE),
-        ):
-            value_ref = ctypes.c_int(value)
-            try:
-                _dwm_set_window_attribute(
-                    hwnd,
-                    attr,
-                    ctypes.byref(value_ref),
-                    ctypes.sizeof(value_ref),
-                )
-            except Exception:
-                pass
+        apply_windows_11_border_fix(hwnd)
 
     def _play_entrance(self):
         target = self.geometry()

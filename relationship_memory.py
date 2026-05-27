@@ -2,9 +2,10 @@ import json
 import re
 
 from i18n_manager import tr as _tr
+from config_manager import DEFAULT_USER_PROFILE_KEY
 
 
-DEFAULT_USER_KEY = "__default__"
+DEFAULT_USER_KEY = DEFAULT_USER_PROFILE_KEY
 ROLE_USER_KEY_PREFIX = "__role__:"
 
 MOOD_LABELS = {

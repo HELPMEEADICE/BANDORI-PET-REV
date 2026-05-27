@@ -21,48 +21,17 @@ from PySide6.QtWidgets import (
 )
 
 from app_theme import BANDORI_UI_FONT_FAMILY
+from win32_dwm import apply_windows_11_border_fix, frame_changed
 
-
-DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWA_BORDER_COLOR = 34
-DWMWCP_DONOTROUND = 1
-DWMWA_COLOR_NONE = 0xFFFFFFFE
 WM_NCCALCSIZE = 0x0083
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-SWP_NOZORDER = 0x0004
-SWP_NOACTIVATE = 0x0010
-SWP_FRAMECHANGED = 0x0020
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
-    _set_window_pos = _user32.SetWindowPos
-    _set_window_pos.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.HWND,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_uint,
-    ]
-    _set_window_pos.restype = ctypes.wintypes.BOOL
     _get_async_key_state = _user32.GetAsyncKeyState
     _get_async_key_state.argtypes = [ctypes.c_int]
     _get_async_key_state.restype = ctypes.c_short
-    _dwmapi = ctypes.windll.dwmapi
-    _dwm_set_window_attribute = _dwmapi.DwmSetWindowAttribute
-    _dwm_set_window_attribute.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.wintypes.DWORD,
-    ]
-    _dwm_set_window_attribute.restype = ctypes.c_long
 else:
-    _set_window_pos = None
     _get_async_key_state = None
-    _dwm_set_window_attribute = None
 
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
@@ -285,35 +254,9 @@ class RadialMenu(QWidget):
         return super().nativeEvent(event_type, message)
 
     def _apply_windows_11_border_fix(self):
-        if os.name != "nt" or _dwm_set_window_attribute is None:
-            return
         hwnd = int(self.winId())
-        if not hwnd:
-            return
-        for attr, value in (
-            (DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND),
-            (DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE),
-        ):
-            value_ref = ctypes.c_int(value)
-            try:
-                _dwm_set_window_attribute(
-                    hwnd,
-                    attr,
-                    ctypes.byref(value_ref),
-                    ctypes.sizeof(value_ref),
-                )
-            except Exception:
-                pass
-        if _set_window_pos is not None:
-            _set_window_pos(
-                hwnd,
-                None,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            )
+        apply_windows_11_border_fix(hwnd)
+        frame_changed(hwnd)
 
     def showEvent(self, event):
         super().showEvent(event)

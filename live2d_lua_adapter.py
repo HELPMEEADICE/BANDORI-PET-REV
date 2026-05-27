@@ -10,7 +10,7 @@ except ModuleNotFoundError:
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
-from zst_model_archive import is_virtual_path, load_virtual_bytes
+from zst_model_archive import is_virtual_path, load_virtual_bytes, split_virtual_path
 
 
 BASE_DIR = Path(app_base_dir())
@@ -81,19 +81,21 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
 def _load_model_bytes(path: str) -> bytes:
     path = _normalize_lua_path(path)
     if is_virtual_path(path):
+        archive_path, _member_path = split_virtual_path(path)
+        _safe_model_file_path(archive_path)
         try:
             return load_virtual_bytes(path)
         except KeyError:
             fixed = _fix_mtn_path(path)
             if fixed:
-                return Path(fixed).read_bytes()
+                return _safe_model_file_path(fixed).read_bytes()
             raise
 
-    fs_path = Path(path)
+    fs_path = _safe_model_file_path(path)
     if not fs_path.exists():
         fixed = _fix_mtn_path(path)
         if fixed:
-            fs_path = Path(fixed)
+            fs_path = _safe_model_file_path(fixed)
     return fs_path.read_bytes()
 
 
@@ -115,6 +117,17 @@ def _fix_mtn_path(path: str) -> str:
         if basename in files:
             return str(Path(root) / basename)
     return ""
+
+
+def _safe_model_file_path(path: str | Path) -> Path:
+    fs_path = Path(path)
+    if not fs_path.is_absolute():
+        fs_path = MODELS_DIR / fs_path
+    fs_path = fs_path.resolve()
+    models_dir = MODELS_DIR.resolve()
+    if not fs_path.is_relative_to(models_dir):
+        raise ValueError(f"Model resource path is outside models directory: {path}")
+    return fs_path
 
 
 class _ModelSetting:
@@ -355,9 +368,13 @@ class LuaLive2DModule:
             normalized_path = _normalize_lua_path(path)
             scale, use_mipmap, bleed_passes = _texture_options(profile)
             entry = lua.table()
-            entry[b"path"] = normalized_path.encode("utf-8")
             if is_virtual_path(normalized_path):
+                archive_path, _member_path = split_virtual_path(normalized_path)
+                _safe_model_file_path(archive_path)
+                entry[b"path"] = normalized_path.encode("utf-8")
                 entry[b"bytes"] = load_virtual_bytes(normalized_path)
+            else:
+                entry[b"path"] = _safe_model_file_path(normalized_path).as_posix().encode("utf-8")
             entry[b"scale"] = scale
             entry[b"mipmap"] = use_mipmap
             entry[b"bleed_passes"] = bleed_passes

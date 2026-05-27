@@ -9,7 +9,7 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from types import FunctionType
-from process_utils import app_base_dir
+from process_utils import app_base_dir, clamp_int as _clamp_int
 
 BASE_DIR = app_base_dir()
 DB_PATH = os.path.join(BASE_DIR, "data.db")
@@ -207,14 +207,6 @@ def _clean_external_text(value, default: str = "") -> str:
 def _clean_external_content(value) -> str:
     text = _db_text(value).strip()
     return text[:20_000]
-
-
-def _clamp_int(value, low: int, high: int, default: int = 0) -> int:
-    try:
-        number = int(round(float(value)))
-    except (TypeError, ValueError):
-        number = default
-    return max(low, min(high, number))
 
 
 def _now_text() -> str:

@@ -161,6 +161,49 @@ def _aux_model_enable_thinking(config: dict):
     return value if value in (True, False, None) else None
 
 
+def _language_name(language: str) -> str:
+    names = {
+        "Japanese": "日语",
+        "ja": "日语",
+        "日文": "日语",
+        "English": "英语",
+        "en": "英语",
+        "英文": "英语",
+    }
+    return names.get(language, language)
+
+
+def _translate_to_selected_language(config: dict, text: str, target_language: str) -> str:
+    api_url = str(config.get("llm_aux_api_url", "") or "").strip() or str(config.get("llm_api_url", "") or "").strip()
+    api_key = str(config.get("llm_aux_api_key", "") or "").strip() or str(config.get("llm_api_key", "") or "").strip()
+    model_id = str(config.get("llm_aux_model_id", "") or "").strip() or str(config.get("llm_model_id", "") or "").strip()
+    if not api_url or not api_key or not model_id:
+        return ""
+    body = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": _build_translation_system_prompt(_language_name(target_language), text)},
+            {"role": "user", "content": text},
+        ],
+        "stream": False,
+    }
+    enable_thinking = _aux_model_enable_thinking(config)
+    if enable_thinking is not None:
+        body["enable_thinking"] = enable_thinking
+        body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
+    request_url = chat_completions_api_url(api_url)
+    sanitize_chat_body_for_url(body, request_url)
+    req = urllib.request.Request(
+        request_url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+
 _VISEME_POSES = {
     "aa": (0.55, 0.0),
     "ow": (0.34, -0.72),
@@ -282,7 +325,7 @@ class TTSTranslationWorker(QThread):
             if not text:
                 return
             if self._should_translate(selected_language):
-                translated = self._translate_to_selected_language(text, selected_language)
+                translated = _translate_to_selected_language(self._config, text, selected_language)
                 if translated:
                     text = translated
             self.translated.emit(self.sequence, self.generation, text, self._character)
@@ -296,49 +339,6 @@ class TTSTranslationWorker(QThread):
         if not self._config.get("tts_translate_to_selected_language", True):
             return False
         return text_language not in {"Chinese", "zh", "中文"}
-
-    def _translate_to_selected_language(self, text: str, target_language: str) -> str:
-        api_url = str(self._config.get("llm_aux_api_url", "") or "").strip() or str(self._config.get("llm_api_url", "") or "").strip()
-        api_key = str(self._config.get("llm_aux_api_key", "") or "").strip() or str(self._config.get("llm_api_key", "") or "").strip()
-        model_id = str(self._config.get("llm_aux_model_id", "") or "").strip() or str(self._config.get("llm_model_id", "") or "").strip()
-        if not api_url or not api_key or not model_id:
-            return ""
-        body = {
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": _build_translation_system_prompt(self._language_name(target_language), text)},
-                {"role": "user", "content": text},
-            ],
-            "stream": False,
-        }
-        enable_thinking = _aux_model_enable_thinking(self._config)
-        if enable_thinking is not None:
-            body["enable_thinking"] = enable_thinking
-            body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
-        request_url = chat_completions_api_url(api_url)
-        sanitize_chat_body_for_url(body, request_url)
-        req = urllib.request.Request(
-            request_url,
-            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-
-    @staticmethod
-    def _language_name(language: str) -> str:
-        names = {
-            "Japanese": "日语",
-            "ja": "日语",
-            "日文": "日语",
-            "English": "英语",
-            "en": "英语",
-            "英文": "英语",
-        }
-        return names.get(language, language)
-
 
 class TTSRequestWorker(QThread):
     audio_ready = Signal(int, int, bytes, str)
@@ -362,7 +362,7 @@ class TTSRequestWorker(QThread):
             if not text:
                 return
             if self._should_translate(selected_language):
-                translated = self._translate_to_selected_language(text, selected_language)
+                translated = _translate_to_selected_language(self._config, text, selected_language)
                 if translated:
                     text = translated
             self.prepared_text = text
@@ -514,49 +514,6 @@ class TTSRequestWorker(QThread):
         if not self._config.get("tts_translate_to_selected_language", True):
             return False
         return text_language not in {"Chinese", "zh", "中文"}
-
-    def _translate_to_selected_language(self, text: str, target_language: str) -> str:
-        api_url = str(self._config.get("llm_aux_api_url", "") or "").strip() or str(self._config.get("llm_api_url", "") or "").strip()
-        api_key = str(self._config.get("llm_aux_api_key", "") or "").strip() or str(self._config.get("llm_api_key", "") or "").strip()
-        model_id = str(self._config.get("llm_aux_model_id", "") or "").strip() or str(self._config.get("llm_model_id", "") or "").strip()
-        if not api_url or not api_key or not model_id:
-            return ""
-        body = {
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": _build_translation_system_prompt(self._language_name(target_language), text)},
-                {"role": "user", "content": text},
-            ],
-            "stream": False,
-        }
-        enable_thinking = _aux_model_enable_thinking(self._config)
-        if enable_thinking is not None:
-            body["enable_thinking"] = enable_thinking
-            body["thinking"] = {"type": "enabled" if enable_thinking else "disabled"}
-        request_url = chat_completions_api_url(api_url)
-        sanitize_chat_body_for_url(body, request_url)
-        req = urllib.request.Request(
-            request_url,
-            data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-
-    @staticmethod
-    def _language_name(language: str) -> str:
-        names = {
-            "Japanese": "日语",
-            "ja": "日语",
-            "日文": "日语",
-            "English": "英语",
-            "en": "英语",
-            "英文": "英语",
-        }
-        return names.get(language, language)
-
 
 class TTSPlayer(QObject):
     error = Signal(str)
