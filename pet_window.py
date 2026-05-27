@@ -155,6 +155,7 @@ LIVE2D_MOUSE_APPROACH_DWELL_SECONDS = 4.0
 LIVE2D_MOUSE_APPROACH_RADIUS = 180
 LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
+TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 
 
@@ -306,6 +307,9 @@ class PetWindow(QWidget):
         self._position_save_timer.setSingleShot(True)
         self._position_save_timer.setInterval(250)
         self._position_save_timer.timeout.connect(self._save_config)
+        self._windows_topmost_guard_timer = QTimer(self)
+        self._windows_topmost_guard_timer.setInterval(TOPMOST_GUARD_INTERVAL_MS)
+        self._windows_topmost_guard_timer.timeout.connect(self._tick_windows_topmost_guard)
 
         self._init_ui()
         if self._enable_tray:
@@ -443,10 +447,8 @@ class PetWindow(QWidget):
 
     def _apply_game_topmost_state(self):
         if os.name == "nt":
-            # Re-applying HWND_TOPMOST periodically pushes the pet to the front
-            # of the topmost z-order, covering menus and system overlays. Apply
-            # it only when the window appears or the setting changes.
             self._enforce_game_topmost()
+            self._sync_windows_topmost_guard()
         elif sys.platform == "darwin" and macos_patch is not None and self.isVisible():
             # macOS: bump to pop-up-menu level (above almost everything) when
             # game_topmost is on; otherwise sit at status-bar level so the
@@ -471,6 +473,25 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
+
+    def _sync_windows_topmost_guard(self):
+        if os.name != "nt":
+            return
+        should_run = self._game_topmost and self.isVisible()
+        if should_run and not self._windows_topmost_guard_timer.isActive():
+            self._windows_topmost_guard_timer.start()
+        elif not should_run and self._windows_topmost_guard_timer.isActive():
+            self._windows_topmost_guard_timer.stop()
+
+    def _tick_windows_topmost_guard(self):
+        if os.name != "nt":
+            return
+        if not self._game_topmost or not self.isVisible():
+            self._sync_windows_topmost_guard()
+            return
+        if self._is_radial_menu_visible():
+            return
+        self._enforce_game_topmost()
 
     def _schedule_windows_topmost_recovery(self):
         if os.name != "nt":
