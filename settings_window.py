@@ -686,15 +686,6 @@ class RoleplayStatusDot(QWidget):
         painter.drawEllipse(1, 1, self.width() - 2, self.height() - 2)
 
 
-def _theme_color(key: str) -> QColor:
-    colors = {
-        "bg": QColor(_BG_DARK if isDarkTheme() else _BG_LIGHT),
-        "text": QColor("#ffffff" if isDarkTheme() else "#000000"),
-        "dim": QColor("#999999" if isDarkTheme() else "#888888"),
-    }
-    return colors.get(key, QColor(_BG_LIGHT))
-
-
 def _wrap_label(label: QLabel):
     label.setWordWrap(True)
     label.setMinimumWidth(0)

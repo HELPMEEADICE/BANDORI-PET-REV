@@ -194,10 +194,6 @@ TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 
 
-def _clamp_live2d_scale(value: object) -> int:
-    return clamp_live2d_scale(value)
-
-
 def _clamp_int(value: object, minimum: int, maximum: int, default: int) -> int:
     try:
         number = int(value)
@@ -281,7 +277,7 @@ class PetWindow(QWidget):
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
             )
-            self._live2d_scale = _clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
+            self._live2d_scale = clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
             self._live2d_hit_alpha_threshold = _clamp_int(
                 self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
                 0,
@@ -1381,7 +1377,7 @@ class PetWindow(QWidget):
         return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(LIVE2D_BASE_HEIGHT * scale))
 
     def set_live2d_scale(self, value: object):
-        self._live2d_scale = _clamp_live2d_scale(value)
+        self._live2d_scale = clamp_live2d_scale(value)
         if not self._pixel_mode:
             self.resize(*self._live2d_size())
         self._sync_compact_ai_window()

@@ -1,6 +1,5 @@
 import json
 import re
-import urllib.error
 import urllib.request
 
 from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url

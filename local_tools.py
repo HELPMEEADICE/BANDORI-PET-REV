@@ -1,7 +1,6 @@
 import base64
 import json
 import re
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -162,10 +161,6 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     max_results = max(1, min(8, max_results))
     engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
     return {"content": web_search(query, max_results=max_results, engine=engine), "extra_messages": []}
-
-
-def run_local_tool(name: str, arguments, tool_config: dict | None = None) -> str:
-    return str(run_local_tool_call(name, arguments, tool_config).get("content", ""))
 
 
 def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str:
