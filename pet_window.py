@@ -18,13 +18,6 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayI
 
 from app_theme import apply_app_theme
 from i18n_manager import tr as _tr, set_language
-from live2d_click_actions import (
-    CLICK_MOTION_NONE,
-    CLICK_MOTION_RANDOM,
-    click_motion_auto_buckets,
-    click_motion_region_for_point,
-    normalize_click_motion_actions,
-)
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
@@ -39,7 +32,6 @@ from win32_dwm import (
     apply_no_rounding,
     frame_changed,
 )
-from zst_model_archive import prefetch_virtual_action_resources
 
 if sys.platform == "darwin":
     import macos_patch
@@ -867,6 +859,7 @@ class PetWindow(QWidget):
             return
         self._live2d_prewarm_prefetched = True
         try:
+            from zst_model_archive import prefetch_virtual_action_resources
             prefetch_virtual_action_resources(
                 self._live2d_widget.model_path,
                 self._live2d_prewarm_motion_queue,
@@ -876,6 +869,7 @@ class PetWindow(QWidget):
             pass
 
     def _build_live2d_prewarm_motion_queue(self) -> list[str]:
+        from live2d_click_actions import normalize_click_motion_actions
         model = self._live2d_widget.model
         if model is None:
             return []
@@ -906,6 +900,7 @@ class PetWindow(QWidget):
         return ordered
 
     def _build_live2d_prewarm_expression_queue(self) -> list[str]:
+        from live2d_click_actions import normalize_click_motion_actions
         expression_names = self._current_expression_names()
         expression_set = set(expression_names)
         ordered = []
@@ -1370,6 +1365,7 @@ class PetWindow(QWidget):
         self._trigger_click_motion(float(x), float(y), area_name)
 
     def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
+        from live2d_click_actions import CLICK_MOTION_NONE, CLICK_MOTION_RANDOM, click_motion_region_for_point
         model = self._live2d_widget.model
         if model is None:
             return
@@ -1414,6 +1410,7 @@ class PetWindow(QWidget):
         return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
 
     def _configured_click_motion_feedback(self, region: str) -> dict[str, str]:
+        from live2d_click_actions import normalize_click_motion_actions
         motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
         expression_names = self._current_expression_names()
         actions = normalize_click_motion_actions(
@@ -1484,6 +1481,7 @@ class PetWindow(QWidget):
         model.SetExpression(expression)
 
     def _choose_click_action_motion(self, region: str) -> str:
+        from live2d_click_actions import click_motion_auto_buckets
         motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
         if not motion_names:
             return ""

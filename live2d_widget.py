@@ -4,10 +4,6 @@ import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
-from lua_hit_area_projection import LuaCustomHitAreaState
-from platform_patch import set_live2d_texture_quality
-from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
 
 
 DEFAULT_HIT_ALPHA_THRESHOLD = 8
@@ -93,7 +89,7 @@ class Live2DWidget(QOpenGLWidget):
         
         self._hit_clock = QElapsedTimer()
         self._hit_clock.start()
-        self._custom_hit_areas = LuaCustomHitAreaState()
+        self._custom_hit_areas = None
         
         # 定时器设置
         self._render_timer = QTimer(self)
@@ -158,6 +154,8 @@ class Live2DWidget(QOpenGLWidget):
             self.update()
 
     def set_render_quality(self, profile: str):
+        from live2d_quality import normalize_live2d_quality
+        from platform_patch import set_live2d_texture_quality
         profile = normalize_live2d_quality(profile)
         if profile == self._quality_profile:
             return
@@ -232,10 +230,16 @@ class Live2DWidget(QOpenGLWidget):
     # --------------------------------------------------------------------------
 
     def _load_model_internal(self, model_json_path: str):
+        from live2d_quality import LIVE2D_QUALITY_PROFILES
+        from lua_hit_area_projection import LuaCustomHitAreaState
+        from platform_patch import set_live2d_texture_quality
+        from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
         if not model_json_path or not self._live2d:
             return
         self._safe_make_current()
         try:
+            if self._custom_hit_areas is None:
+                self._custom_hit_areas = LuaCustomHitAreaState()
             if is_virtual_path(model_json_path):
                 clear_virtual_byte_cache()
                 prefetch_virtual_model_resources(model_json_path)
@@ -262,7 +266,8 @@ class Live2DWidget(QOpenGLWidget):
             print(f"Failed to load model: {e}", file=sys.stderr)
             self._model = None
             self._model_path = ""
-            self._custom_hit_areas.clear()
+            if self._custom_hit_areas is not None:
+                self._custom_hit_areas.clear()
             self._update_render_timer()
 
     def _prepare_custom_hit_areas(self, model):
@@ -287,8 +292,9 @@ class Live2DWidget(QOpenGLWidget):
 
     def _update_custom_hit_area_projection(self):
         model = self._model
-        if not model or not self._custom_hit_areas.has_scene_areas():
-            self._custom_hit_areas.clear_projected()
+        if not model or self._custom_hit_areas is None or not self._custom_hit_areas.has_scene_areas():
+            if self._custom_hit_areas is not None:
+                self._custom_hit_areas.clear_projected()
             return
         matrix = model.matrixManager
         if not self._custom_hit_areas.project(
@@ -569,10 +575,11 @@ class Live2DWidget(QOpenGLWidget):
 
     def hit_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
-        if not area_name: return None
+        if not area_name or self._custom_hit_areas is None: return None
         return self._custom_hit_areas.bounds_for(area_name)
 
     def hit_area_union_bounds(self):
+        if self._custom_hit_areas is None: return None
         return self._custom_hit_areas.union_bounds()
 
     def _is_model_hit_at(self, x: float, y: float, *, sync: bool = False) -> bool:
@@ -621,7 +628,7 @@ class Live2DWidget(QOpenGLWidget):
         return self._is_in_sdk_hit_area(x, y) or self._is_in_custom_hit_area(x, y)
 
     def _has_model_hit_areas(self) -> bool:
-        return self._has_sdk_hit_areas() or self._custom_hit_areas.has_projected_areas()
+        return self._has_sdk_hit_areas() or (self._custom_hit_areas is not None and self._custom_hit_areas.has_projected_areas())
 
     def _has_sdk_hit_areas(self) -> bool:
         return self._model and self._model.modelSetting.getHitAreaNum() > 0
@@ -637,6 +644,7 @@ class Live2DWidget(QOpenGLWidget):
         return bool(self._custom_hit_area_name_at(x, y))
 
     def _custom_hit_area_name_at(self, x: float, y: float) -> str:
+        if self._custom_hit_areas is None: return ""
         return self._custom_hit_areas.hit_test_name(x, y).strip().lower()
 
     # --------------------------------------------------------------------------
