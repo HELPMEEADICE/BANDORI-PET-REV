@@ -1,8 +1,10 @@
 import base64
+import gzip
 import json
 import re
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime
 from html import unescape
 
@@ -11,6 +13,14 @@ from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_pr
 
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+_FORCE_WEB_SEARCH_PATTERN = re.compile(
+    r"(联网|上网|搜(?:索|一下)?|查(?:一下|找)?|帮我(?:搜|查|找)|"
+    r"最新|实时|现在|当前|今天|今日|昨天|明天|新闻|价格|股价|汇率|"
+    r"日程|赛程|天气|版本|发布|公告|官网|文档|API|api|"
+    r"latest|current|today|news|price|version|release|weather|schedule)",
+    re.IGNORECASE,
+)
+_MAX_PAGE_EXCERPT_CHARS = 700
 
 WEB_SEARCH_ENGINE_LABELS = {
     "bing": "Bing",
@@ -64,7 +74,7 @@ def web_search_system_hint(include_sources: bool = True) -> str:
         "只有当搜索结果会明显提升正确性时才调用。"
         "调用 web_search 时，query 必须直接包含用户真正想查询的主体、时间或关键词，不要使用“你/我/它/这个”等代词，也不要把整段提示词原样塞进去。"
         f"{source_rule}"
-        "如果没有收到真实工具结果，不要声称自己已经联网搜索。"
+        "如果没有收到真实工具结果，不要声称自己已经联网搜索；如果工具结果显示搜索失败或结果不足，必须直接说明没有查到可靠结果。"
     )
 
 
@@ -163,6 +173,33 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     return {"content": web_search(query, max_results=max_results, engine=engine), "extra_messages": []}
 
 
+def should_prefetch_web_search(text: str) -> bool:
+    text = str(text or "").strip()
+    if not text:
+        return False
+    return bool(_FORCE_WEB_SEARCH_PATTERN.search(text))
+
+
+def web_search_prefetch_context(latest_user_text: str, tool_config: dict | None = None, max_results: int = 5) -> str:
+    query = _normalize_web_search_query(latest_user_text, latest_user_text)
+    if not query:
+        return ""
+    engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
+    result = web_search(query, max_results=max_results, engine=engine)
+    if result.startswith(("搜索失败：", "没有找到")):
+        return (
+            "【程序已尝试联网搜索，但没有拿到可靠结果】\n"
+            f"{result}\n"
+            "回答时不要声称已经查到外部资料；请明确说明当前联网检索没有可用结果。"
+        )
+    return (
+        "【程序已实际执行联网搜索】\n"
+        "下面是本次问题对应的真实搜索结果。回答实时、最新或外部事实时必须优先依据这些结果；"
+        "不要编造这些结果之外的来源，也不要声称打开了未出现在结果中的网页。\n"
+        f"{result}"
+    )
+
+
 def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str:
     query = str(query or "").strip()
     if not query:
@@ -176,6 +213,7 @@ def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str
         errors.append(str(exc))
         results = []
     if results:
+        _enrich_results_with_page_excerpts(results)
         return _format_search_results(query, results[:max_results], engine)
     for fallback in (_search_duckduckgo_html, _search_duckduckgo_instant_answer):
         if fallback is searcher:
@@ -186,6 +224,7 @@ def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str
             errors.append(str(exc))
             results = []
         if results:
+            _enrich_results_with_page_excerpts(results)
             return _format_search_results(query, results[:max_results], "duckduckgo")
     if errors:
         return "搜索失败：" + "；".join(errors[:2])
@@ -252,7 +291,7 @@ def _extract_search_query(text: str) -> str:
     patterns = (
         r"(?:什么是|啥是|何为)\s*([^？?。！!，,\n]{2,80})",
         r"(?:知道|了解|听说过)\s*(?:什么是|啥是)?\s*([^？?。！!，,\n]{2,80})",
-        r"(?:查一下|查找|搜索|搜一下|帮我查|帮我搜|找一下|查|搜)\s*([^？?。！!，,\n]{2,80})",
+        r"(?:帮我查一下|帮我搜一下|查一下|查找|搜索|搜一下|帮我查|帮我搜|找一下|查|搜)\s*([^？?。！!，,\n]{2,80})",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -260,6 +299,9 @@ def _extract_search_query(text: str) -> str:
             return _clean_search_query(match.group(1))
 
     latin_tokens = re.findall(r"[A-Za-z][A-Za-z0-9_.+\-]{1,80}", text)
+    cleaned = _clean_search_query(text)
+    if len(latin_tokens) >= 2 or re.search(r"\d", cleaned):
+        return cleaned[:120]
     if latin_tokens:
         return max(latin_tokens, key=len)
     return ""
@@ -268,6 +310,12 @@ def _extract_search_query(text: str) -> str:
 def _clean_search_query(query: str) -> str:
     query = _strip_prompt_suffix(query)
     query = re.sub(r"^[\s，,。？?！!：:;；]+|[\s，,。？?！!：:;；]+$", "", query)
+    query = re.sub(
+        r"^(?:请|麻烦)?(?:帮我)?(?:查一下|查找|搜索|搜一下|帮我查一下|帮我搜一下|帮我查|帮我搜|找一下|查|搜)\s*",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    )
     query = re.sub(r"^(?:你知道|知道|请问|问一下|这个|那个|啥是|什么是)\s*", "", query)
     query = re.sub(r"(?:是什么|是啥|吗|么|呢)$", "", query).strip()
     return query
@@ -297,6 +345,63 @@ def _request_text(url: str, timeout: int = 12) -> str:
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         return resp.read().decode(charset, errors="replace")
+
+
+def _enrich_results_with_page_excerpts(results: list[dict], max_pages: int = 2):
+    enriched = 0
+    for result in results:
+        if enriched >= max_pages:
+            return
+        url = str(result.get("url", "") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            continue
+        excerpt = _fetch_page_excerpt(url)
+        if excerpt:
+            result["page_excerpt"] = excerpt
+            enriched += 1
+
+
+def _fetch_page_excerpt(url: str) -> str:
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+                "Accept-Encoding": "identity",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if content_type and not any(token in content_type for token in ("text/", "html", "xml", "json")):
+                return ""
+            charset = resp.headers.get_content_charset() or "utf-8"
+            raw = resp.read(250_000)
+            if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+        text = raw.decode(charset, errors="replace")
+    except (OSError, UnicodeError, urllib.error.URLError, urllib.error.HTTPError):
+        return ""
+    return _extract_readable_excerpt(text)
+
+
+def _extract_readable_excerpt(text: str) -> str:
+    text = str(text or "")
+    if not text:
+        return ""
+    text = re.sub(r"(?is)<(script|style|noscript|svg|canvas|template)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?is)<!--.*?-->", " ", text)
+    text = re.sub(r"(?is)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>", "\n", text)
+    text = _clean_html(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) < 80:
+        return ""
+    return text[:_MAX_PAGE_EXCERPT_CHARS].rstrip()
 
 
 def _search_duckduckgo_html(query: str, max_results: int = 5) -> list[dict]:
@@ -502,4 +607,7 @@ def _format_search_results(query: str, results: list[dict], engine: str = "bing_
             f"   URL: {result.get('url', '').strip()}\n"
             f"   摘要：{result.get('snippet', '').strip()}"
         )
+        page_excerpt = str(result.get("page_excerpt", "") or "").strip()
+        if page_excerpt:
+            lines.append(f"   正文摘录：{page_excerpt}")
     return "\n".join(lines)

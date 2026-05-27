@@ -17,8 +17,10 @@ from local_tools import (
     chat_completion_tools,
     responses_native_tools,
     run_local_tool_call,
+    should_prefetch_web_search,
     with_local_tool_system_hint,
     with_web_search_system_hint,
+    web_search_prefetch_context,
 )
 
 
@@ -529,6 +531,10 @@ class LLMStreamWorker(QThread):
                 messages = with_local_tool_system_hint(messages, self._tool_config)
             if use_tools and self._web_search:
                 messages = with_web_search_system_hint(messages, self._show_search_sources)
+                prefetch_context = self._prefetch_web_search_context()
+                if prefetch_context:
+                    self._remember_search_sources(prefetch_context)
+                    messages.append({"role": "system", "content": prefetch_context})
             max_tool_rounds = 8 if self._tool_config.get("computer_use_enabled", False) else 3
             for round_index in range(max_tool_rounds):
                 self._stream_tool_calls = []
@@ -592,6 +598,12 @@ class LLMStreamWorker(QThread):
             self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
         except Exception as e:
             self.error.emit(str(e))
+
+    def _prefetch_web_search_context(self) -> str:
+        latest_user_text = str(self._tool_config.get("_latest_user_text", "") or "").strip()
+        if not should_prefetch_web_search(latest_user_text):
+            return ""
+        return web_search_prefetch_context(latest_user_text, self._tool_config)
 
     def _stream_once(self, messages: list[dict], use_tools: bool):
         body = {
