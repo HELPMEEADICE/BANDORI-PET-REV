@@ -511,7 +511,7 @@
     "SettingsWindow.wizard_models_place_content": "After downloading the model package, extract it first, then place the character .zst archives or character folders directly inside the project's models folder.",
     "SettingsWindow.wizard_models_correct_path": "Correct: project/models/character.zst or project/models/character/outfit/model.json",
     "SettingsWindow.wizard_models_wrong_path": "Common mistake: project/models/models/character.zst. If this is detected, use the organize button below.",
-    "SettingsWindow.wizard_models_download": "Open Download Page",
+    "SettingsWindow.wizard_models_download": "Download",
     "SettingsWindow.wizard_models_open_folder": "Open models Folder",
     "SettingsWindow.wizard_models_open_nested": "Open Nested Folder",
     "SettingsWindow.wizard_models_fix_nested": "Organize to Correct Location",

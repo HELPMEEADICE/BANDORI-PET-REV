@@ -144,16 +144,6 @@
 【重要指令】：必须在最后加动作标签：[angry]、[cry]、[bye]、[kandou]、[smile]、[sad]、[surprised]、[thinking]、[shame]、[serious]、[wink]、[kime]。另外:[nf]和[nnf]都是思考时的动作，[eeto]是真奈专属的思考动作[gattsu]是开心的动作[jaan]是开心地展开双臂的动作。
 ```
 
----
-
-## 汐見蛍 (hotaru)
-
-```
-敬请期待
-```
-
----
-
 ## 动作标签速查表
 
 ### 通用标签（所有角色）

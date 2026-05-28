@@ -511,7 +511,7 @@
     "SettingsWindow.wizard_models_place_content": "下載模型包後請先解壓縮，然後把解壓出的角色 .zst 壓縮包或角色資料夾直接放進專案目錄的 models 資料夾。",
     "SettingsWindow.wizard_models_correct_path": "正確範例：專案目錄/models/角色.zst 或 專案目錄/models/角色/服裝/model.json",
     "SettingsWindow.wizard_models_wrong_path": "常見錯誤：專案目錄/models/models/角色.zst。偵測到這種情況時可以使用下方的一鍵整理。",
-    "SettingsWindow.wizard_models_download": "開啟下載頁面",
+    "SettingsWindow.wizard_models_download": "一鍵下載",
     "SettingsWindow.wizard_models_open_folder": "開啟 models 資料夾",
     "SettingsWindow.wizard_models_open_nested": "開啟錯誤巢狀目錄",
     "SettingsWindow.wizard_models_fix_nested": "一鍵整理到正確位置",

@@ -527,7 +527,10 @@ def main():
             except json.JSONDecodeError:
                 pass
         elif line == "LAUNCH":
+            settings_process_ref["launched"] = True
             launch_pet()
+        elif line == "EXIT":
+            quit_all()
 
     def clear_settings_process(process):
         if not isValid(process):
@@ -535,7 +538,20 @@ def main():
         if settings_process_ref.get("process") is process:
             settings_process_ref.pop("process", None)
             settings_process_ref.pop("show_launch", None)
+            settings_process_ref.pop("first_run_wizard", None)
+            settings_process_ref.pop("launched", None)
         process.deleteLater()
+
+    def on_settings_process_finished(process):
+        should_quit = (
+            settings_process_ref.get("process") is process
+            and settings_process_ref.get("show_launch", False)
+            and settings_process_ref.get("first_run_wizard", False)
+            and not settings_process_ref.get("launched", False)
+        )
+        clear_settings_process(process)
+        if should_quit:
+            quit_all()
 
     def launch_settings_process(show_launch=True):
         nonlocal mgr
@@ -567,9 +583,11 @@ def main():
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
-        process.finished.connect(lambda *args, p=process: clear_settings_process(p))
+        process.finished.connect(lambda *args, p=process: on_settings_process_finished(p))
         settings_process_ref["process"] = process
         settings_process_ref["show_launch"] = show_launch
+        settings_process_ref["first_run_wizard"] = first_run_wizard
+        settings_process_ref["launched"] = False
         process.start()
 
     model_valid = bool(

@@ -2,8 +2,12 @@ import os
 import secrets
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import ssl
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import fluent_bootstrap
@@ -23,7 +27,7 @@ from qfluentwidgets import (
     CardWidget, PushButton, PrimaryPushButton, TransparentPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
     FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
-    isDarkTheme, InfoBar, InfoBarPosition,
+    isDarkTheme, InfoBar, InfoBarPosition, ProgressBar,
 )
 from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
 from qfluentwidgets.components.widgets.menu import (
@@ -42,7 +46,7 @@ from llm_api_compat import (
     sanitize_chat_body_for_url,
 )
 from process_utils import app_base_dir
-from model_manager import MODELS_DIR, MODELS_DOWNLOAD_URL, ModelManager
+from model_manager import MODELS_DIR, ModelManager
 from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
 from app_update import detect_update_channel
 from app_theme import (
@@ -109,6 +113,7 @@ from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, rounded_avatar_
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"
 _AVATAR_EXTENSIONS = AVATAR_EXTENSIONS
+MODEL_PACKAGE_BASE_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models"
 
 _ROLEPLAY_STATUS_COLORS = {
     "green": "#2ecc71",
@@ -1268,6 +1273,7 @@ class SettingsWindow(QWidget):
     model_selected = Signal(str, str)
     settings_changed = Signal(dict)
     launch_requested = Signal()
+    exit_requested = Signal()
 
     def __init__(self, model_manager, current_char="", current_costume="",
                  current_fps=120, current_opacity=1.0, show_launch=True,
@@ -1314,6 +1320,8 @@ class SettingsWindow(QWidget):
         self._first_run_wizard = bool(first_run_wizard)
         self._wizard_step = 0
         self._wizard_step_labels: list[BodyLabel] = []
+        self._model_download_worker = None
+        self._model_download_running = False
         self._wizard_pages: dict[str, QWidget] = {}
         self._theme_widgets: list[QWidget] = []
         self._pages: dict[str, QWidget] = {}
@@ -1599,6 +1607,9 @@ class SettingsWindow(QWidget):
                 self._cfg.save()
 
     def closeEvent(self, event):
+        should_exit_app = self._first_run_wizard and self._show_launch and not self._launched
+        if should_exit_app:
+            self.exit_requested.emit()
         self._dispose_live2d_preview()
         self._cleanup_workers()
         if self._memory_db is not None:
@@ -1692,11 +1703,14 @@ class SettingsWindow(QWidget):
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_model_download_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
+                worker.requestInterruption()
                 worker.quit()
-                worker.wait(2000)
+                if not worker.wait(2000):
+                    worker.terminate()
+                    worker.wait(1000)
         player = getattr(self, '_tts_test_player', None)
         if player is not None:
             player.stop()
@@ -1891,30 +1905,24 @@ class SettingsWindow(QWidget):
         layout.addWidget(title)
         subtitle = _wrap_label(SubtitleLabel(_tr(
             "SettingsWindow.wizard_models_subtitle",
-            default="先确认 Live2D 模型资源已经放在正确位置。",
+            default="自动检测 models 文件夹中的角色包，缺失时可一键下载全部模型包。",
         ), page))
         layout.addWidget(subtitle)
 
         guide = CardWidget(page)
         guide_layout = QVBoxLayout(guide)
         guide_layout.setContentsMargins(16, 14, 16, 14)
-        guide_layout.setSpacing(8)
+        guide_layout.setSpacing(10)
         guide_layout.addWidget(StrongBodyLabel(_tr("SettingsWindow.wizard_models_place_title", default="正确放置方式"), guide))
         guide_text = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.wizard_models_place_content",
-            default="下载模型包后请先解压，然后把解压出的角色 .zst 压缩包或角色文件夹直接放进项目目录的 models 文件夹。",
+            default="下载模型包后请先解压，然后把解压出的角色 .zst 压缩包或角色文件夹直接放进项目目录的 models 文件夹，或使用下方的自动下载功能。",
         ), guide))
         guide_layout.addWidget(guide_text)
-        correct = _wrap_label(BodyLabel(_tr(
-            "SettingsWindow.wizard_models_correct_path",
-            default="正确示例：项目目录/models/角色.zst 或 项目目录/models/角色/服装/model.json",
-        ), guide))
-        wrong = _wrap_label(BodyLabel(_tr(
-            "SettingsWindow.wizard_models_wrong_path",
-            default="常见错误：项目目录/models/models/角色.zst。检测到这种情况时可以使用下方的一键整理。",
-        ), guide))
-        guide_layout.addWidget(correct)
-        guide_layout.addWidget(wrong)
+        self._wizard_model_detect_label = _wrap_label(BodyLabel("", guide))
+        self._wizard_model_missing_label = _wrap_label(BodyLabel("", guide))
+        guide_layout.addWidget(self._wizard_model_detect_label)
+        guide_layout.addWidget(self._wizard_model_missing_label)
         layout.addWidget(guide)
 
         self._wizard_model_status_card = CardWidget(page)
@@ -1927,14 +1935,26 @@ class SettingsWindow(QWidget):
         status_layout.addWidget(self._wizard_model_status_title)
         status_layout.addWidget(self._wizard_model_status_label)
         status_layout.addWidget(self._wizard_model_nested_label)
+        self._wizard_model_progress = ProgressBar(self._wizard_model_status_card)
+        self._wizard_model_progress.setRange(0, 100)
+        self._wizard_model_progress.setValue(0)
+        self._wizard_model_progress.hide()
+        self._wizard_model_download_label = _wrap_label(BodyLabel("", self._wizard_model_status_card))
+        self._wizard_model_download_label.hide()
+        status_layout.addWidget(self._wizard_model_progress)
+        status_layout.addWidget(self._wizard_model_download_label)
         layout.addWidget(self._wizard_model_status_card)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        download_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.wizard_models_download", default="打开下载页面"), page)
-        download_btn.setFixedHeight(36)
-        download_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(MODELS_DOWNLOAD_URL)))
-        btn_row.addWidget(download_btn)
+        self._wizard_download_missing_btn = PrimaryPushButton(
+            FluentIcon.DOWNLOAD,
+            _tr("SettingsWindow.wizard_models_download", default="一键下载"),
+            page,
+        )
+        self._wizard_download_missing_btn.setFixedHeight(36)
+        self._wizard_download_missing_btn.clicked.connect(self._start_download_model_packages)
+        btn_row.addWidget(self._wizard_download_missing_btn)
         open_models_btn = PushButton(_tr("SettingsWindow.wizard_models_open_folder", default="打开 models 文件夹"), page)
         open_models_btn.setFixedHeight(36)
         open_models_btn.clicked.connect(self._open_models_dir)
@@ -2015,7 +2035,7 @@ class SettingsWindow(QWidget):
             if not self._has_available_model_resources():
                 InfoBar.warning(
                     _tr("SettingsWindow.wizard_models_missing_title", default="还没有检测到模型"),
-                    _tr("SettingsWindow.wizard_models_missing_content", default="请先下载并解压模型资源，确认角色文件直接位于 models 文件夹内。"),
+                    _tr("SettingsWindow.wizard_models_missing_content", default="请先点击一键下载模型包，或把角色 .zst 文件放入 models 文件夹。"),
                     duration=3500,
                     position=InfoBarPosition.TOP,
                     parent=self,
@@ -2049,6 +2069,7 @@ class SettingsWindow(QWidget):
     def _update_wizard_footer(self):
         self._wizard_back_btn.setEnabled(self._wizard_step > 0)
         self._wizard_skip_ai_btn.setVisible(self._wizard_step == 2)
+        self._wizard_next_btn.setEnabled(not self._model_download_running)
         if self._wizard_step == 2:
             self._wizard_next_btn.setText(_tr("SettingsWindow.wizard_save_launch", default="保存并启动"))
         else:
@@ -2092,6 +2113,28 @@ class SettingsWindow(QWidget):
             return []
         return [entry for entry in nested.iterdir() if not entry.name.startswith(".")]
 
+    def _expected_model_package_keys(self) -> list[str]:
+        outfit_path = app_base_dir() / "outfit.json"
+        try:
+            data = json.loads(outfit_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        characters = data.get("characters", {})
+        if not isinstance(characters, dict):
+            return []
+        return sorted(str(key) for key in characters if str(key).strip())
+
+    def _installed_model_package_keys(self) -> set[str]:
+        return {
+            character
+            for character in self._model_manager.characters
+            if self._model_manager.get_costumes(character)
+        }
+
+    def _missing_model_package_keys(self) -> list[str]:
+        installed = self._installed_model_package_keys()
+        return [key for key in self._expected_model_package_keys() if key not in installed]
+
     def _open_models_dir(self):
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(MODELS_DIR.resolve())))
@@ -2124,7 +2167,7 @@ class SettingsWindow(QWidget):
             content = (
                 _tr("SettingsWindow.wizard_models_ready_content", default="可以继续选择角色和服装。")
                 if self._has_available_model_resources()
-                else _tr("SettingsWindow.wizard_models_missing_content", default="请先下载并解压模型资源，确认角色文件直接位于 models 文件夹内。")
+                else _tr("SettingsWindow.wizard_models_missing_content", default="请先点击一键下载模型包，或把角色 .zst 文件放入 models 文件夹。")
             )
             bar = InfoBar.success if self._has_available_model_resources() else InfoBar.warning
             bar(title, content, duration=3000, position=InfoBarPosition.TOP, parent=self)
@@ -2135,6 +2178,30 @@ class SettingsWindow(QWidget):
             return
         count = self._available_model_count()
         nested_entries = self._nested_models_entries()
+        expected_keys = self._expected_model_package_keys()
+        installed_keys = self._installed_model_package_keys()
+        missing_keys = [key for key in expected_keys if key not in installed_keys]
+        if hasattr(self, "_wizard_model_detect_label"):
+            self._wizard_model_detect_label.setText(_tr(
+                "SettingsWindow.wizard_models_detect_detail",
+                default="已检测到 {installed}/{total} 个角色模型包。",
+                installed=len(installed_keys),
+                total=len(expected_keys),
+            ))
+        if hasattr(self, "_wizard_model_missing_label"):
+            if missing_keys:
+                self._wizard_model_missing_label.setText(_tr(
+                    "SettingsWindow.wizard_models_missing_packages",
+                    default="缺失 {count} 个：{items}{more}",
+                    count=len(missing_keys),
+                    items=", ".join(missing_keys[:10]),
+                    more=" ..." if len(missing_keys) > 10 else "",
+                ))
+            else:
+                self._wizard_model_missing_label.setText(_tr(
+                    "SettingsWindow.wizard_models_all_packages_ready",
+                    default="全部角色模型包已就绪。",
+                ))
         if count:
             self._wizard_model_status_title.setText(_tr("SettingsWindow.wizard_models_ready_title", default="已检测到模型"))
             self._wizard_model_status_label.setText(_tr(
@@ -2162,6 +2229,124 @@ class SettingsWindow(QWidget):
             ))
         self._wizard_open_nested_btn.setVisible(bool(nested_entries))
         self._wizard_fix_nested_btn.setVisible(bool(nested_entries))
+        if hasattr(self, "_wizard_download_missing_btn"):
+            self._wizard_download_missing_btn.setEnabled(bool(missing_keys) and not self._model_download_running)
+            self._wizard_download_missing_btn.setText(
+                _tr("SettingsWindow.wizard_models_downloading", default="正在下载...")
+                if self._model_download_running
+                else _tr("SettingsWindow.wizard_models_download", default="一键下载")
+            )
+
+    def _start_download_model_packages(self):
+        if self._model_download_running:
+            return
+        missing_keys = self._missing_model_package_keys()
+        if not missing_keys:
+            InfoBar.success(
+                _tr("SettingsWindow.wizard_models_ready_title", default="已检测到模型"),
+                _tr("SettingsWindow.wizard_models_all_packages_ready", default="全部角色模型包已就绪。"),
+                duration=2500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        self._model_download_running = True
+        self._wizard_model_progress.setRange(0, 0)
+        self._wizard_model_progress.setValue(0)
+        self._wizard_model_progress.show()
+        self._wizard_model_download_label.setText(_tr(
+            "SettingsWindow.wizard_models_download_start",
+            default="准备下载 {count} 个模型包...",
+            count=len(missing_keys),
+        ))
+        self._wizard_model_download_label.show()
+        self._update_wizard_model_status()
+        self._update_wizard_footer()
+
+        worker = ModelPackageDownloadWorker(missing_keys, MODELS_DIR, parent=self)
+        self._model_download_worker = worker
+        worker.progress.connect(self._on_model_download_progress)
+        worker.finished.connect(self._on_model_download_finished)
+        worker.error.connect(self._on_model_download_error)
+        worker.start()
+
+    def _on_model_download_progress(self, info: dict):
+        total_bytes = int(info.get("total_bytes") or 0)
+        downloaded_bytes = int(info.get("downloaded_bytes") or 0)
+        known_count = int(info.get("known_count") or 0)
+        total_count = int(info.get("total") or 0)
+        if total_bytes > 0 and known_count > 0 and total_count > 0:
+            estimated_total = max(total_bytes / known_count * total_count, total_bytes)
+            self._wizard_model_progress.setRange(0, 100)
+            self._wizard_model_progress.setValue(min(99, int(downloaded_bytes * 100 / estimated_total)))
+        else:
+            self._wizard_model_progress.setRange(0, 0)
+        speed = self._format_download_speed(float(info.get("speed") or 0.0))
+        self._wizard_model_download_label.setText(_tr(
+            "SettingsWindow.wizard_models_download_progress",
+            default="已完成 {done}/{total} 个，下载速度 {speed}，正在处理：{current}",
+            done=int(info.get("done") or 0),
+            total=int(info.get("total") or 0),
+            speed=speed,
+            current=str(info.get("current") or "-"),
+        ))
+
+    def _on_model_download_finished(self, result: dict):
+        self._model_download_running = False
+        self._model_download_worker = None
+        self._wizard_model_progress.setRange(0, 100)
+        self._wizard_model_progress.setValue(100)
+        failed = result.get("failed", []) or []
+        downloaded = int(result.get("downloaded") or 0)
+        self._recheck_model_resources(show_message=False)
+        self._wizard_model_download_label.setText(_tr(
+            "SettingsWindow.wizard_models_download_done_detail",
+            default="下载完成：成功 {downloaded} 个，失败 {failed} 个。",
+            downloaded=downloaded,
+            failed=len(failed),
+        ))
+        if failed:
+            InfoBar.warning(
+                _tr("SettingsWindow.wizard_models_download_partial", default="部分模型下载失败"),
+                "; ".join(failed[:3]),
+                duration=6000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        else:
+            InfoBar.success(
+                _tr("SettingsWindow.wizard_models_download_done", default="模型包下载完成"),
+                _tr("SettingsWindow.wizard_models_ready_content", default="可以继续选择角色和服装。"),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        self._update_wizard_footer()
+
+    def _on_model_download_error(self, message: str):
+        self._model_download_running = False
+        self._model_download_worker = None
+        self._wizard_model_progress.setRange(0, 100)
+        self._wizard_model_progress.setValue(0)
+        self._wizard_model_download_label.setText(message)
+        self._update_wizard_model_status()
+        self._update_wizard_footer()
+        InfoBar.error(
+            _tr("SettingsWindow.wizard_models_download_failed", default="模型包下载失败"),
+            message,
+            duration=6000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    @staticmethod
+    def _format_download_speed(bytes_per_second: float) -> str:
+        if bytes_per_second >= 1024 * 1024:
+            return f"{bytes_per_second / 1024 / 1024:.1f} MB/s"
+        if bytes_per_second >= 1024:
+            return f"{bytes_per_second / 1024:.1f} KB/s"
+        return f"{bytes_per_second:.0f} B/s"
 
     def _fix_nested_models_dir(self):
         nested = self._nested_models_dir()
@@ -9049,6 +9234,7 @@ class SettingsWindow(QWidget):
         self.model_selected.connect(lambda char, costume: send_line(f"MODEL\t{char}\t{costume}"))
         self.settings_changed.connect(lambda data: send_line(f"SETTINGS\t{json.dumps(data, ensure_ascii=False)}"))
         self.launch_requested.connect(lambda: send_line("LAUNCH"))
+        self.exit_requested.connect(lambda: send_line("EXIT"))
 
 
 def _responses_api_url(api_url: str) -> str:
@@ -9108,6 +9294,110 @@ class McpConnectionTestWorker(QThread):
                 self.error.emit(details)
         except Exception as exc:
             self.error.emit(str(exc))
+
+
+class ModelPackageDownloadWorker(QThread):
+    progress = Signal(dict)
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, package_keys: list[str], models_dir, parent=None):
+        super().__init__(parent)
+        self._package_keys = list(package_keys)
+        self._models_dir = models_dir
+        self._downloaded_bytes = 0
+        self._total_bytes = 0
+        self._known_sizes: dict[str, int] = {}
+        self._done = 0
+        self._total = len(self._package_keys)
+        self._started_at = 0.0
+        self._lock = threading.Lock()
+
+    def run(self):
+        if not self._package_keys:
+            self.finished.emit({"downloaded": 0, "failed": []})
+            return
+        self._started_at = time.monotonic()
+        downloaded = 0
+        failed = []
+        try:
+            with ThreadPoolExecutor(max_workers=min(8, len(self._package_keys))) as executor:
+                futures = {
+                    executor.submit(self._download_one, package_key): package_key
+                    for package_key in self._package_keys
+                }
+                for future in as_completed(futures):
+                    if self.isInterruptionRequested():
+                        break
+                    package_key = futures[future]
+                    try:
+                        future.result()
+                        downloaded += 1
+                    except Exception as exc:
+                        failed.append(f"{package_key}: {exc}")
+                    with self._lock:
+                        self._done += 1
+                    self._emit_progress(package_key)
+        except Exception as exc:
+            self.error.emit(str(exc))
+            return
+        self.finished.emit({"downloaded": downloaded, "failed": failed})
+
+    def _download_one(self, package_key: str):
+        if self.isInterruptionRequested():
+            return
+        url = f"{MODEL_PACKAGE_BASE_URL}/{urllib.parse.quote(package_key, safe='')}.zst"
+        target = self._models_dir / f"{package_key}.zst"
+        part = self._models_dir / f"{package_key}.zst.part"
+        if target.exists() and target.stat().st_size > 0:
+            return
+        if part.exists():
+            try:
+                part.unlink()
+            except OSError:
+                pass
+        req = urllib.request.Request(url, headers={"User-Agent": "Bandori-Pet/1.0"}, method="GET")
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+            length = int(resp.headers.get("Content-Length") or 0)
+            if length:
+                with self._lock:
+                    self._known_sizes[package_key] = length
+                    self._total_bytes = sum(self._known_sizes.values())
+                self._emit_progress(package_key)
+            with part.open("wb") as file:
+                while True:
+                    if self.isInterruptionRequested():
+                        raise RuntimeError("cancelled")
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    file.write(chunk)
+                    with self._lock:
+                        self._downloaded_bytes += len(chunk)
+                    self._emit_progress(package_key)
+        if part.stat().st_size <= 0:
+            raise RuntimeError("empty response")
+        if target.exists():
+            target.unlink()
+        part.replace(target)
+
+    def _emit_progress(self, current: str):
+        elapsed = max(time.monotonic() - self._started_at, 0.001)
+        with self._lock:
+            downloaded_bytes = self._downloaded_bytes
+            total_bytes = self._total_bytes
+            done = self._done
+            known_count = len(self._known_sizes)
+        self.progress.emit({
+            "downloaded_bytes": downloaded_bytes,
+            "total_bytes": total_bytes,
+            "known_count": known_count,
+            "done": done,
+            "total": self._total,
+            "speed": downloaded_bytes / elapsed,
+            "current": current,
+        })
 
 
 class TestConnectionWorker(QThread):

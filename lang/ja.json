@@ -511,7 +511,7 @@
     "SettingsWindow.wizard_models_place_content": "モデルパッケージをダウンロードしたら先に解凍し、キャラクターの .zst アーカイブまたはキャラクターフォルダをプロジェクトの models フォルダ直下に置いてください。",
     "SettingsWindow.wizard_models_correct_path": "正しい例：project/models/character.zst または project/models/character/outfit/model.json",
     "SettingsWindow.wizard_models_wrong_path": "よくある誤り：project/models/models/character.zst。検出された場合は下の整理ボタンを使えます。",
-    "SettingsWindow.wizard_models_download": "ダウンロードページを開く",
+    "SettingsWindow.wizard_models_download": "ワンクリックダウンロード",
     "SettingsWindow.wizard_models_open_folder": "models フォルダを開く",
     "SettingsWindow.wizard_models_open_nested": "入れ子フォルダを開く",
     "SettingsWindow.wizard_models_fix_nested": "正しい場所へ整理",

@@ -57,7 +57,7 @@
     {
       "id": "others",
       "display": "其他角色",
-      "characters": ["mana", "asuka", "mahoro", "natsume", "hotaru", "houka", "nagi"]
+      "characters": ["mana", "asuka"]
     }
   ]
 }
