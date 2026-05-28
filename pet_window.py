@@ -208,6 +208,13 @@ class PetWindow(QWidget):
         self._live2d_head_tracking_enabled = (
             bool(config_manager.get("live2d_head_tracking_enabled", True))
         )
+        self._live2d_mutual_gaze_enabled = (
+            bool(config_manager.get("live2d_mutual_gaze_enabled", False))
+        )
+        self._peer_window_positions = {}  # {character: (x, y)}
+        self._peer_pos_broadcast_timer = QTimer(self)
+        self._peer_pos_broadcast_timer.setInterval(200)
+        self._peer_pos_broadcast_timer.timeout.connect(self._broadcast_window_position)
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
         self._live2d_hit_alpha_threshold = DEFAULT_HIT_ALPHA_THRESHOLD
@@ -662,12 +669,83 @@ class PetWindow(QWidget):
             return
         self._live2d_head_tracking_enabled = enabled
         self._live2d_widget.set_head_tracking_enabled(enabled)
+        # 关闭看向鼠标时，联动关闭对视功能
+        if not enabled and self._live2d_mutual_gaze_enabled:
+            self.set_live2d_mutual_gaze_enabled(False)
+
+    def set_live2d_mutual_gaze_enabled(self, enabled: bool):
+        """设置对视功能开关"""
+        enabled = bool(enabled)
+        if self._live2d_mutual_gaze_enabled == enabled:
+            return
+        self._live2d_mutual_gaze_enabled = enabled
+        # 开启对视时，联动开启看向鼠标
+        if enabled and not self._live2d_head_tracking_enabled:
+            self.set_live2d_head_tracking_enabled(True)
+        if enabled:
+            self._peer_pos_broadcast_timer.start()
+            self._update_mutual_gaze()
+        else:
+            self._peer_pos_broadcast_timer.stop()
+            self._live2d_widget.clear_gaze_target()
+
+    def _broadcast_window_position(self):
+        """广播自己的窗口位置给其他角色"""
+        if not self._ipc_socket or not self._ipc_socket.isOpen():
+            return
+        center = self.geometry().center()
+        payload = json.dumps({
+            "character": self._current_char,
+            "x": center.x(),
+            "y": center.y(),
+        }, ensure_ascii=False)
+        msg = f"PEER_POS\t{payload}"
+        self._ipc_socket.write((msg + "\n").encode("utf-8"))
+        self._ipc_socket.flush()
+
+    def _handle_peer_pos(self, data: dict):
+        """处理其他角色的窗口位置信息"""
+        char = data.get("character", "")
+        if not char or char == self._current_char:
+            return
+        x, y = data.get("x", 0), data.get("y", 0)
+        self._peer_window_positions[char] = (x, y)
+        self._update_mutual_gaze()
+
+    def _update_mutual_gaze(self):
+        """更新对视状态，让角色看向最近的另一个角色"""
+        if not self._live2d_mutual_gaze_enabled:
+            self._live2d_widget.clear_gaze_target()
+            return
+        if not self._peer_window_positions:
+            self._live2d_widget.clear_gaze_target()
+            return
+        # 获取自己窗口中心位置
+        my_center = self.geometry().center()
+        my_x, my_y = my_center.x(), my_center.y()
+        # 计算与所有其他角色的距离，选择最近的
+        nearest_pos = None
+        nearest_dist_sq = float('inf')
+        for char, (tx, ty) in self._peer_window_positions.items():
+            dx = tx - my_x
+            dy = ty - my_y
+            dist_sq = dx * dx + dy * dy
+            if dist_sq < nearest_dist_sq:
+                nearest_dist_sq = dist_sq
+                nearest_pos = (tx, ty)
+        if nearest_pos:
+            self._live2d_widget.set_gaze_target(*nearest_pos)
+        else:
+            self._live2d_widget.clear_gaze_target()
 
     def moveEvent(self, event):
         super().moveEvent(event)
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
             self._sync_compact_ai_window()
         self._schedule_position_save()
+        # 窗口移动时更新对视目标（最近优先）
+        if self._live2d_mutual_gaze_enabled:
+            self._update_mutual_gaze()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -677,6 +755,7 @@ class PetWindow(QWidget):
     def hideEvent(self, event):
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
+        self._peer_pos_broadcast_timer.stop()
         super().hideEvent(event)
 
     def closeEvent(self, event):
@@ -1251,6 +1330,8 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_idle_actions_enabled", bool(data["live2d_idle_actions_enabled"]))
             if "live2d_head_tracking_enabled" in data:
                 self._cfg.set("live2d_head_tracking_enabled", bool(data["live2d_head_tracking_enabled"]))
+            if "live2d_mutual_gaze_enabled" in data:
+                self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
             if "user_avatar_path" in data:
@@ -1283,6 +1364,8 @@ class PetWindow(QWidget):
             self.set_live2d_idle_actions_enabled(data["live2d_idle_actions_enabled"])
         if "live2d_head_tracking_enabled" in data:
             self.set_live2d_head_tracking_enabled(data["live2d_head_tracking_enabled"])
+        if "live2d_mutual_gaze_enabled" in data:
+            self.set_live2d_mutual_gaze_enabled(data["live2d_mutual_gaze_enabled"])
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -1810,6 +1893,11 @@ class PetWindow(QWidget):
         elif line.startswith("REMINDER_EVENT\t"):
             try:
                 self._handle_reminder_event(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+        elif line.startswith("PEER_POS\t"):
+            try:
+                self._handle_peer_pos(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
         elif line.startswith("OPEN_CHAT"):
@@ -2614,6 +2702,8 @@ class PetWindow(QWidget):
         # — and on macOS it depends on the NSWindow already existing, so defer
         # to the next event loop tick alongside the polish call above.
         QTimer.singleShot(0, self._apply_game_topmost_state)
+        if self._live2d_mutual_gaze_enabled:
+            self._peer_pos_broadcast_timer.start()
         if self._show_pos_set and self._is_position_on_screen():
             self._sync_compact_ai_window(allow_create=True)
             return

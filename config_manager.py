@@ -2,6 +2,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
@@ -136,6 +137,7 @@ DEFAULTS = {
     "live2d_hit_alpha_threshold": 8,
     "live2d_lip_sync_max_open": 0.55,
     "live2d_head_tracking_enabled": True,
+    "live2d_mutual_gaze_enabled": False,
     "auto_start": False,
     "drag_locked": False,
     "pet_mode": "live2d",
@@ -669,9 +671,22 @@ class ConfigManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2, ensure_ascii=False)
                 f.flush()
-            os.replace(tmp_path, self._path)
+            # Retry on Windows PermissionError when multiple processes
+            # try to replace the same config file simultaneously.
+            for attempt in range(3):
+                try:
+                    os.replace(tmp_path, self._path)
+                    return
+                except PermissionError:
+                    if attempt < 2:
+                        time.sleep(0.1 * (attempt + 1))
+                    else:
+                        raise
         except Exception:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
             raise
 
     def get(self, key, default=None):

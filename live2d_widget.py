@@ -52,6 +52,7 @@ class Live2DWidget(QOpenGLWidget):
         self._drag_locked = False
         self._initialized_gl = False
         self._head_tracking_enabled = True
+        self._gaze_target = None  # (global_x, global_y) or None
         
         self._fps = 120
         self._vsync = True
@@ -224,6 +225,14 @@ class Live2DWidget(QOpenGLWidget):
         if not self._head_tracking_enabled:
             self._last_cursor_x = -1
             self._last_cursor_y = -1
+
+    def set_gaze_target(self, global_x: float, global_y: float):
+        """设置注视目标点（全局坐标），用于对视功能"""
+        self._gaze_target = (global_x, global_y)
+
+    def clear_gaze_target(self):
+        """清除注视目标，恢复鼠标追踪"""
+        self._gaze_target = None
 
     def set_model_path(self, model_json_path: str):
         self._pending_model = model_json_path
@@ -491,6 +500,10 @@ class Live2DWidget(QOpenGLWidget):
 
     def _poll_head_tracking(self):
         if not self._head_tracking_enabled:
+            return
+        # 优先使用注视目标（对视功能）
+        if self._gaze_target is not None:
+            self._track_head_at_global(*self._gaze_target)
             return
         pos = QCursor.pos()
         self._track_head_at_global(pos.x(), pos.y())

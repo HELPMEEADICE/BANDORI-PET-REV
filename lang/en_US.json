@@ -54,6 +54,8 @@
   "SettingsWindow.live2d_idle_actions_hint": "Global setting: when multiple Live2D models are on the desktop, all of them are affected together.",
   "SettingsWindow.live2d_head_tracking": "Look at Mouse",
   "SettingsWindow.live2d_head_tracking_hint": "Global setting: when disabled, the character will not follow the mouse cursor.",
+  "SettingsWindow.live2d_mutual_gaze": "Mutual Gaze",
+  "SettingsWindow.live2d_mutual_gaze_hint": "When enabled, characters will look at the nearest character.",
   "SettingsWindow.model_default": "Default",
   "SettingsWindow.follow_model_default": "Use model default",
   "SettingsWindow.roleplay_status_green": "Advanced roleplay features supported",

@@ -54,6 +54,8 @@
   "SettingsWindow.live2d_idle_actions_hint": "这是全局选项：如果桌面上同时有多个 Live2D 形象，所有形象会一起开启或关闭待机动作。",
   "SettingsWindow.live2d_head_tracking": "看向鼠标",
   "SettingsWindow.live2d_head_tracking_hint": "这是全局选项：关闭后角色将不再跟随鼠标移动视线。",
+  "SettingsWindow.live2d_mutual_gaze": "角色对视",
+  "SettingsWindow.live2d_mutual_gaze_hint": "开启后，角色会看向最近的角色。",
   "SettingsWindow.model_default": "默认",
   "SettingsWindow.follow_model_default": "跟随模型默认",
   "SettingsWindow.roleplay_status_green": "支持高级角色扮演特性",

@@ -54,6 +54,8 @@
   "SettingsWindow.live2d_idle_actions_hint": "グローバル設定：デスクトップに複数の Live2D が表示されている場合、すべて同時にオン/オフされます。",
   "SettingsWindow.live2d_head_tracking": "マウス注視",
   "SettingsWindow.live2d_head_tracking_hint": "グローバル設定：オフにすると、キャラクターはマウスカーソルを追いかけるのをやめます。",
+  "SettingsWindow.live2d_mutual_gaze": "相互注視",
+  "SettingsWindow.live2d_mutual_gaze_hint": "オンにすると、キャラクターは最も近いキャラクターを見ます。",
   "SettingsWindow.model_default": "デフォルト",
   "SettingsWindow.follow_model_default": "モデルのデフォルトに従う",
   "SettingsWindow.roleplay_status_green": "高度なロールプレイ機能対応",
