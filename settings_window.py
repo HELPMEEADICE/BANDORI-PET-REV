@@ -91,6 +91,7 @@ from reminder_core import (
     pomodoro_phase_label,
     repeat_days_label,
 )
+from win32_dwm import apply_windows_11_border_fix, frame_changed
 TTSPlayer = None
 TTSRequestWorker = None
 _SETTINGS_TTS_AVAILABLE = True
@@ -1085,6 +1086,15 @@ class Live2DPreviewBubble(QWidget):
         layout.addWidget(self._live2d_widget)
         qconfig.themeChanged.connect(self._on_theme_changed)
 
+    def _apply_windows_frame_fix(self):
+        if os.name != "nt":
+            return
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+        apply_windows_11_border_fix(hwnd)
+        frame_changed(hwnd)
+
     def _on_theme_changed(self):
         self._apply_live2d_background()
         self.update()
@@ -1151,8 +1161,10 @@ class Live2DPreviewBubble(QWidget):
             pos = QPoint(x, y)
         self.move(pos)
         self._update_window_mask()
+        self._apply_windows_frame_fix()
         if not self.isVisible():
             self.show()
+            self._apply_windows_frame_fix()
         self.raise_()
 
     def resizeEvent(self, event):
@@ -2622,6 +2634,7 @@ class SettingsWindow(QWidget):
         page = self._ensure_page(nav_key)
         if page is None:
             return
+        self._hide_costume_preview()
 
         for key, btn in self._nav_buttons.items():
             btn.setChecked(key == nav_key)
@@ -2648,6 +2661,7 @@ class SettingsWindow(QWidget):
         page = self._ensure_page("characters")
         if page is None:
             return
+        self._hide_costume_preview()
         for key, btn in self._nav_buttons.items():
             btn.setChecked(key == "characters")
         for stacked_page in self._pages.values():
@@ -9641,6 +9655,7 @@ class SettingsWindow(QWidget):
             self._preview_bubble.hide()
 
     def _go_back_to_chars(self):
+        self._hide_costume_preview()
         self._costume_page.hide()
         self._char_page.show()
         self._current_page = "characters"
@@ -9655,6 +9670,7 @@ class SettingsWindow(QWidget):
         self._animate_indicator("characters")
 
     def _go_back_to_bands(self):
+        self._hide_costume_preview()
         self._selecting_model = True
         self._populate_bands()
 
