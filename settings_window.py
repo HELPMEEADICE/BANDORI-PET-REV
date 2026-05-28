@@ -3024,6 +3024,10 @@ class SettingsWindow(QWidget):
         self._detail_action_hint = hint
         self._detail_idle_label = idle_label
         self._detail_idle_hint = idle_hint
+        self._detail_head_track_label = head_track_label
+        self._detail_head_track_hint = head_track_hint
+        self._detail_mutual_gaze_label = mutual_gaze_label
+        self._detail_mutual_gaze_hint = mutual_gaze_hint
         self._detail_motion_label = motion_label
         self._detail_expression_label = expression_label
         self._detail_click_motion_label = click_label
@@ -3052,6 +3056,10 @@ class SettingsWindow(QWidget):
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_idle_label.setStyleSheet(f"color: {hint_color};")
         self._detail_idle_hint.setStyleSheet(f"color: {hint_color};")
+        self._detail_head_track_label.setStyleSheet(f"color: {hint_color};")
+        self._detail_head_track_hint.setStyleSheet(f"color: {hint_color};")
+        self._detail_mutual_gaze_label.setStyleSheet(f"color: {hint_color};")
+        self._detail_mutual_gaze_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
