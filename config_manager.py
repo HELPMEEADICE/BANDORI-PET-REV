@@ -181,7 +181,7 @@ DEFAULTS = {
     "chat_avatar_paths": {},
     "chat_display_names": {},
     "pinned_chat_keys": [],
-    "fluent_chat_window_enabled": False,
+    "fluent_chat_window_enabled": True,
     "group_chat_sidebar_ratio": 0.28,
     "group_chat_sidebar_collapsed": False,
     "pov_mode": "off",
@@ -408,9 +408,7 @@ class ConfigManager:
             self._data["pinned_chat_keys"] = normalized_pinned
         else:
             self._data["pinned_chat_keys"] = []
-        self._data["fluent_chat_window_enabled"] = bool(
-            self._data.get("fluent_chat_window_enabled", False)
-        )
+        self._data["fluent_chat_window_enabled"] = True
         self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "")).strip()
         self._normalize_user_profiles()
         self._normalize_llm_api_profiles()
@@ -674,9 +672,14 @@ class ConfigManager:
         return self._data.get(key, default)
 
     def set(self, key, value):
+        if key == "fluent_chat_window_enabled":
+            value = True
         self._data[key] = value
 
     def update(self, d: dict):
+        if "fluent_chat_window_enabled" in d:
+            d = dict(d)
+            d["fluent_chat_window_enabled"] = True
         self._data.update(d)
 
     def get_user_profiles(self) -> list[dict]:

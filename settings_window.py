@@ -1402,9 +1402,6 @@ class SettingsWindow(QWidget):
             self._cfg.get("live2d_scale", 0) if self._cfg else 0,
             use_device_pixel_ratio_default=True,
         )
-        self._fluent_chat_window_enabled = (
-            bool(self._cfg.get("fluent_chat_window_enabled", False)) if self._cfg else False
-        )
         self._saved_user_name = ""
         self._user_avatar_path_pending = ""
         self._loading_user_profile = False
@@ -6888,7 +6885,6 @@ class SettingsWindow(QWidget):
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
             self._cfg.set("hide_live2d_model", self._hide_live2d_model_switch.isChecked())
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
-            self._cfg.set("fluent_chat_window_enabled", self._fluent_chat_window_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.save()
@@ -7173,7 +7169,6 @@ class SettingsWindow(QWidget):
             self._cfg.get("live2d_scale", 0),
             use_device_pixel_ratio_default=True,
         )
-        self._fluent_chat_window_enabled = bool(self._cfg.get("fluent_chat_window_enabled", False))
         self._fps = int(self._cfg.get("fps", self._fps) or self._fps)
         self._opacity = float(self._cfg.get("opacity", self._opacity) or self._opacity)
         self._vsync = bool(self._cfg.get("vsync", self._vsync))
@@ -7218,10 +7213,6 @@ class SettingsWindow(QWidget):
             self._live2d_scale_slider.setValue(self._live2d_scale)
             self._live2d_scale_slider.blockSignals(False)
             self._live2d_scale_input.setText(str(self._live2d_scale))
-        if hasattr(self, "_fluent_chat_window_switch"):
-            self._fluent_chat_window_switch.blockSignals(True)
-            self._fluent_chat_window_switch.setChecked(self._fluent_chat_window_enabled)
-            self._fluent_chat_window_switch.blockSignals(False)
         if hasattr(self, "_fps_slider"):
             self._fps_slider.blockSignals(True)
             self._fps_slider.setValue(max(30, min(240, self._fps)))
@@ -9172,28 +9163,6 @@ class SettingsWindow(QWidget):
         auto_start_row.addWidget(self._auto_start_switch)
         layout.addLayout(auto_start_row)
 
-        fluent_chat_label = BodyLabel(
-            _tr("SettingsWindow.fluent_chat_window", default="现代 Fluent 聊天窗口"),
-            panel,
-        )
-        self._fluent_chat_window_switch = SwitchButton(panel)
-        self._fluent_chat_window_switch.setChecked(self._fluent_chat_window_enabled)
-        self._fluent_chat_window_switch.setToolTip(
-            _tr(
-                "SettingsWindow.fluent_chat_window_hint",
-                default="开启后聊天窗口左侧会显示可收起的私聊/群聊列表；关闭则使用原有界面。",
-            )
-        )
-        fluent_chat_label.setToolTip(self._fluent_chat_window_switch.toolTip())
-        self._fluent_chat_window_switch.checkedChanged.connect(
-            lambda checked: setattr(self, "_fluent_chat_window_enabled", bool(checked))
-        )
-        fluent_chat_row = QHBoxLayout()
-        fluent_chat_row.addWidget(fluent_chat_label)
-        fluent_chat_row.addStretch()
-        fluent_chat_row.addWidget(self._fluent_chat_window_switch)
-        layout.addLayout(fluent_chat_row)
-
         opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), panel)
         layout.addWidget(opacity_label)
         self._opacity_slider = Slider(Qt.Orientation.Horizontal, panel)
@@ -9761,7 +9730,6 @@ class SettingsWindow(QWidget):
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
-            "fluent_chat_window_enabled": self._fluent_chat_window_enabled,
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False) if self._cfg else False,
             "compact_ai_window_opacity": self._cfg.get("compact_ai_window_opacity", 44) if self._cfg else 44,
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12) if self._cfg else 12,
@@ -9800,7 +9768,6 @@ class SettingsWindow(QWidget):
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
-            self._cfg.set("fluent_chat_window_enabled", settings["fluent_chat_window_enabled"])
             self._cfg.save()
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)
