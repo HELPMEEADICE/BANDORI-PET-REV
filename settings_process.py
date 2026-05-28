@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 
 from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
-from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from model_manager import ModelManager
 from settings_window import SettingsWindow
 from app_theme import apply_app_theme
 
@@ -61,10 +61,6 @@ def main():
     _apply_app_icon(app)
 
     apply_app_theme(cfg.get("dark_theme", False))
-
-    if not models_dir_exists() and args.first_run_wizard != "1":
-        prompt_download_model_resources()
-        return 0
 
     ipc_socket = QLocalSocket(app)
     ipc_socket.connectToServer(ipc_server_name())

@@ -14,7 +14,7 @@ from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from live2d_widget import Live2DWidget
-from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from model_manager import ModelManager
 from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
@@ -64,10 +64,6 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     apply_app_theme(cfg.get("dark_theme", False))
-
-    if not models_dir_exists():
-        prompt_download_model_resources()
-        return 0
 
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
@@ -434,7 +430,9 @@ def main():
         init_chat_integration_server()
 
     def launch_pet():
+        nonlocal mgr
         cfg.load()
+        mgr = ModelManager()
         _sentinel = object()
         language = pet_window_ref.get("language")
         if language:
@@ -540,15 +538,24 @@ def main():
         process.deleteLater()
 
     def launch_settings_process(show_launch=True):
+        nonlocal mgr
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             return
         cfg.load()
-        first_run_wizard = show_launch and not (has_configured_models or model_valid)
+        mgr = ModelManager()
+        current_char = cfg.get("character", char)
+        current_costume = cfg.get("costume", costume)
+        current_model_valid = bool(
+            current_char and current_costume
+            and current_char in mgr.characters
+            and ModelManager.get_model_json_path(current_char, current_costume)
+        )
+        first_run_wizard = not (configured_models() or current_model_valid)
         process = QProcess(app)
         program, arguments = process_program_and_args(BASE_DIR, "settings_process.py", [
-            "--character", cfg.get("character", char),
-            "--costume", cfg.get("costume", costume),
+            "--character", current_char,
+            "--costume", current_costume,
             "--fps", str(cfg.get("fps", 120)),
             "--opacity", str(cfg.get("opacity", 1.0)),
             "--vsync", "1" if cfg.get("vsync", True) else "0",

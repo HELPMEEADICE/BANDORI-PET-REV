@@ -5,9 +5,11 @@ import platform
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import fluent_bootstrap
+from setuptools import Command
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
@@ -20,6 +22,18 @@ from cx_Freeze.command.build_exe import build_exe
 BASE_DIR = Path(__file__).resolve().parent
 BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
 WINDOWS_INSTALLER_UTF8_CODEPAGE = 65001
+INNO_RESOURCE_DIRS = (
+    "audio_reference",
+    "characters",
+    "pixels",
+    "lang",
+    "band_logo",
+)
+PYOPENGL_PLATFORM_MODULES = (
+    "OpenGL.platform.win32",
+    "OpenGL.platform.baseplatform",
+    "OpenGL.platform.ctypesloader",
+)
 
 for module_name in (
     "PySide6.QtCore",
@@ -29,7 +43,7 @@ for module_name in (
 ):
     importlib.import_module(module_name)
 
-from app_info import APP_NAME, APP_VERSION  # noqa: E402
+from app_info import APP_NAME, APP_REPO_URL, APP_VERSION  # noqa: E402
 
 
 class BuildExeWithEmptyModels(build_exe):
@@ -159,7 +173,13 @@ class BuildMacWithResourceLinks(bdist_mac):
             self._codesign(self.bundle_dir)
 
     def _link_root_resource_files(self):
-        for filename in ("logo.ico", "band.json", "outfit.json", "custom_hit_area_state.ljbc"):
+        for filename in (
+            "logo.ico",
+            "band.json",
+            "outfit.json",
+            "custom_hit_area_state.ljbc",
+            "live2d_platform_manager_override.ljbc",
+        ):
             source = Path(self.resources_dir) / filename
             origin = Path(self.bin_dir) / filename
             if not source.exists() or origin.exists():
@@ -170,6 +190,106 @@ class BuildMacWithResourceLinks(bdist_mac):
                 (relative_reference, origin, True),
                 msg=f"linking {origin} -> {relative_reference}",
             )
+
+
+def _find_iscc() -> str:
+    """Locate Inno Setup Compiler (ISCC.exe)."""
+    candidates = [
+        os.environ.get("ISCC_PATH", ""),
+        r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+        r"C:\Program Files\Inno Setup 7\ISCC.exe",
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
+        r"C:\Program Files\Inno Setup 5\ISCC.exe",
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    iscc = shutil.which("ISCC.exe") or shutil.which("iscc")
+    if iscc:
+        return iscc
+    raise RuntimeError(
+        "Inno Setup Compiler (ISCC.exe) not found. "
+        "Install Inno Setup 6+ or set ISCC_PATH environment variable."
+    )
+
+
+def _inno_language_entries(iscc: str) -> str:
+    entries = ['Name: "english"; MessagesFile: "compiler:Default.isl"']
+    chinese_simplified = Path(iscc).resolve().parent / "Languages" / "ChineseSimplified.isl"
+    if chinese_simplified.exists():
+        entries.append(
+            'Name: "chinesesimplified"; MessagesFile: "compiler:Languages\\ChineseSimplified.isl"'
+        )
+    return "\n".join(entries)
+
+
+class BuildInnoAlias(Command):
+    """Build Inno Setup installer via `python setup.py build_inno`."""
+
+    description = "build Inno Setup installer"
+    user_options = [
+        ("iss-template=", None, "Path to .iss template file"),
+    ]
+
+    def initialize_options(self):
+        self.iss_template = None
+
+    def finalize_options(self):
+        if self.iss_template is None:
+            self.iss_template = str(BASE_DIR / "installer" / "bandoripet.iss.tpl")
+
+    def run(self):
+        self.run_command("build")
+
+        template_path = Path(self.iss_template)
+        if not template_path.exists():
+            raise FileNotFoundError(f"IS template not found: {template_path}")
+
+        template = template_path.read_text(encoding="utf-8")
+
+        iscc = _find_iscc()
+        app_guid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "bandoripet.rev")).upper()
+        build_exe_cmd = self.get_finalized_command("build_exe")
+        build_dir = Path(build_exe_cmd.build_exe).resolve()
+        output_dir = BASE_DIR / "BUILD"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_filename = f"BandoriPet-{APP_VERSION}-{release_platform_name().lower()}{release_arch_name().lower()}-setup"
+
+        license_file = BASE_DIR / "LICENSE"
+        icon_file = BASE_DIR / "logo.ico"
+
+        replacements = {
+            "{APP_NAME}": APP_NAME,
+            "{APP_VERSION}": APP_VERSION,
+            "{APP_REPO_URL}": APP_REPO_URL,
+            "{APP_ID}": f"{{{{{app_guid}}}",
+            "{BUILD_DIR}": str(build_dir),
+            "{OUTPUT_DIR}": str(output_dir),
+            "{OUTPUT_FILENAME}": output_filename,
+            "{LICENSE_FILE}": str(license_file) if license_file.exists() else "",
+            "{ICON_FILE}": str(icon_file) if icon_file.exists() else "",
+            "{LANGUAGE_ENTRIES}": _inno_language_entries(iscc),
+        }
+
+        iss_content = template
+        for placeholder, value in replacements.items():
+            iss_content = iss_content.replace(placeholder, value)
+
+        iss_path = output_dir / "BandoriPet.iss"
+        iss_path.write_text(iss_content, encoding="utf-8")
+        print(f"Generated Inno Setup script: {iss_path}")
+
+        print(f"Compiling with: {iscc}")
+        subprocess.run([iscc, "/Q", str(iss_path)], check=True)
+
+        installer_path = output_dir / f"{output_filename}.exe"
+        if installer_path.exists():
+            print(f"Inno Setup installer created: {installer_path}")
+        else:
+            print(f"Warning: Expected installer not found at {installer_path}")
 
 
 def include_if_exists(path: str) -> tuple[str, str] | None:
@@ -334,11 +454,8 @@ include_files = [
     include_if_exists("band.json"),
     include_if_exists("outfit.json"),
     _compiled_lua_include("custom_hit_area_state.lua"),
-    include_if_exists("lang"),
-    include_if_exists("band_logo"),
-    include_if_exists("characters"),
-    include_if_exists("pixels"),
-    include_if_exists("audio_reference"),
+    _compiled_lua_include("live2d_platform_manager_override.lua"),
+    *(include_if_exists(dirname) for dirname in INNO_RESOURCE_DIRS),
     include_package_subdir("_sounddevice_data", "portaudio-binaries"),
     include_package_dir("_soundfile_data"),
 ]
@@ -350,7 +467,7 @@ lupa_runtime = lupa_luajit_runtime_module()
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["tts_manager", lupa_runtime],
+    "includes": ["tts_manager", lupa_runtime, *PYOPENGL_PLATFORM_MODULES],
     "packages": [
         "OpenGL",
         "PIL",
@@ -429,6 +546,7 @@ setup(
     cmdclass={
         "build_exe": BuildExeWithEmptyModels,
         "build_msi": BuildMsiAlias,
+        "build_inno": BuildInnoAlias,
         "bdist_mac": BuildMacWithResourceLinks,
     },
 )

@@ -254,7 +254,11 @@ class LuaLive2DModule:
         lua.execute(b'assert(require("ffi"), "lupa must be built with LuaJIT FFI")')
         _install_lazy_lua_module_loader(lua, LIVE2D_LUA_DIR)
         base_dir = BASE_DIR.as_posix().encode("utf-8")
-        lua.execute(b"local root = ...; package.path = package.path .. ';' .. root .. '/?.lua;' .. root .. '/?/init.lua'", base_dir)
+        lua.execute(
+            b"local root = ...; "
+            b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
+            base_dir,
+        )
         lua.execute(b'package.loaded["live2d.platform_manager"] = require("live2d_platform_manager_override")')
         lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
         lua.execute(
