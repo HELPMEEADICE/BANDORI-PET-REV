@@ -802,6 +802,8 @@
   "SettingsWindow.data_management_category": "カテゴリ",
   "SettingsWindow.data_category_live2d": "Live2D キャラ/衣装/モーション",
   "SettingsWindow.data_category_live2d_desc": "現在表示されているすべてのキャラクター、衣装、カスタムモーション。",
+  "SettingsWindow.data_category_click_profiles": "クリックモーションプリセット",
+  "SettingsWindow.data_category_click_profiles_desc": "保存されたカスタムクリックモーションプリセット；システム組み込みプリセットは含まれません。",
   "SettingsWindow.data_category_llm": "LLM 設定",
   "SettingsWindow.data_category_llm_desc": "カスタム LLM 設定；組み込みプリセットとAPIキーは含まれません。",
   "SettingsWindow.data_category_tts": "TTS 設定",

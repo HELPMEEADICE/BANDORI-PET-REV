@@ -802,6 +802,8 @@
   "SettingsWindow.data_management_category": "Category",
   "SettingsWindow.data_category_live2d": "Live2D Characters/Costumes/Motions",
   "SettingsWindow.data_category_live2d_desc": "All characters, costumes, and custom motions currently on display.",
+  "SettingsWindow.data_category_click_profiles": "Click Motion Presets",
+  "SettingsWindow.data_category_click_profiles_desc": "Saved custom click motion feedback presets; system built-in presets are excluded.",
   "SettingsWindow.data_category_llm": "LLM Config",
   "SettingsWindow.data_category_llm_desc": "Custom LLM settings; excludes built-in presets and API keys.",
   "SettingsWindow.data_category_tts": "TTS Config",

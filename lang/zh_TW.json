@@ -802,6 +802,8 @@
   "SettingsWindow.data_management_category": "設定類別",
   "SettingsWindow.data_category_live2d": "Live2D 角色/服裝/動作",
   "SettingsWindow.data_category_live2d_desc": "目前展示的全部角色、服裝和自訂動作。",
+  "SettingsWindow.data_category_click_profiles": "點擊動作回饋預設",
+  "SettingsWindow.data_category_click_profiles_desc": "已儲存的點擊動作回饋自訂預設檔案，不包含系統內建原版預設。",
   "SettingsWindow.data_category_llm": "LLM 設定",
   "SettingsWindow.data_category_llm_desc": "自訂 LLM 內容；不包含內建預設和 API 金鑰。",
   "SettingsWindow.data_category_tts": "TTS 設定",
