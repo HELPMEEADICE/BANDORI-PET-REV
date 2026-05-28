@@ -669,9 +669,6 @@ class PetWindow(QWidget):
             return
         self._live2d_head_tracking_enabled = enabled
         self._live2d_widget.set_head_tracking_enabled(enabled)
-        # 关闭看向鼠标时，联动关闭对视功能
-        if not enabled and self._live2d_mutual_gaze_enabled:
-            self.set_live2d_mutual_gaze_enabled(False)
 
     def set_live2d_mutual_gaze_enabled(self, enabled: bool):
         """设置对视功能开关"""
@@ -679,9 +676,9 @@ class PetWindow(QWidget):
         if self._live2d_mutual_gaze_enabled == enabled:
             return
         self._live2d_mutual_gaze_enabled = enabled
-        # 开启对视时，联动开启看向鼠标
-        if enabled and not self._live2d_head_tracking_enabled:
-            self.set_live2d_head_tracking_enabled(True)
+        # 开启对视时，联动关闭看向鼠标
+        if enabled and self._live2d_head_tracking_enabled:
+            self.set_live2d_head_tracking_enabled(False)
         if enabled:
             self._peer_pos_broadcast_timer.start()
             self._update_mutual_gaze()
