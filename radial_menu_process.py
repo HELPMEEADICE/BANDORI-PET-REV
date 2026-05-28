@@ -106,6 +106,7 @@ def main():
 
     set_windows_app_user_model_id("BandoriPet.RadialMenu")
     app = QApplication(sys.argv)
+    install_parent_death_watch(app)
     app.setApplicationName("BandoriPet-RadialMenu")
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(False)

@@ -1524,9 +1524,10 @@ class PetWindow(QWidget):
         self._note_user_interaction()
         self._refresh_topmost_for_interaction(force=True)
         self._set_mouse_passthrough(False)
-        if self._is_radial_menu_visible():
-            self._send_radial_menu_command("CLOSE")
-            return
+        # Always SHOW on right-click. The child dismisses on outside-click
+        # already, and toggling here races with the child's hide animation
+        # (parent's _radial_menu_visible can lag the actual menu state by
+        # the hide animation duration, swallowing the next click as CLOSE).
         self._send_radial_menu_command(
             f"SHOW\t{json.dumps(self._radial_menu_payload(gx, gy), ensure_ascii=False)}"
         )
@@ -1583,7 +1584,9 @@ class PetWindow(QWidget):
 
         base_dir = str(app_base_dir())
         process = QProcess(self)
-        self._radial_menu_server_name = f"{ipc_server_name()}-radial-{uuid.uuid4().hex}"
+        # Keep the suffix short: macOS limits Unix-domain socket paths to 104
+        # bytes (sun_path), and Qt prepends a long runtime-folder prefix.
+        self._radial_menu_server_name = f"{ipc_server_name()}-radial-{uuid.uuid4().hex[:8]}"
         program, arguments = process_program_and_args(
             base_dir,
             "radial_menu_process.py",

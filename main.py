@@ -1,7 +1,9 @@
 import sys
 import json
+import signal
 import threading
 import os
+import time
 import uuid
 
 from process_utils import (
@@ -17,10 +19,11 @@ configure_debug_logging()
 BASE_DIR = str(app_base_dir())
 APP_AUMID = "BandoriPet"
 
-from PySide6.QtCore import Qt, QObject, QProcess, Signal
+from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
@@ -94,7 +97,12 @@ def main():
     from i18n_manager import current_language
 
     tray_icon = None
-    tray_ref = {"menu": None, "actions": []}
+    # Qt 6 on macOS needs the tray QMenu parented to a real QWidget so the
+    # NSStatusItem can anchor its popup; without it the menu silently fails to
+    # appear in NSApplicationActivationPolicyAccessory apps.
+    tray_anchor = QWidget()
+    tray_ref = {"menu": None, "actions": [], "anchor": tray_anchor, "last_popup_at": 0.0}
+    quit_ref = {"running": False}
 
     def init_tray():
         nonlocal tray_icon
@@ -102,7 +110,7 @@ def main():
         tray_icon.setIcon(load_tray_icon())
         tray_icon.setToolTip(_tr("MainTray.tooltip"))
 
-        menu = QMenu()
+        menu = QMenu(tray_anchor)
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
         exit_action = menu.addAction(_tr("MainTray.exit"))
@@ -114,12 +122,24 @@ def main():
         keep_tray_icon_visible(tray_icon)
 
     def on_tray_activated(reason: QSystemTrayIcon.ActivationReason):
-        if sys.platform == "darwin":
+        if reason != QSystemTrayIcon.ActivationReason.Trigger:
             return
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            launch_settings_process(show_launch=False)
+        if sys.platform == "darwin":
+            # macOS NSStatusItem already pops the context menu on click, but the
+            # Qt bridge sometimes drops it in accessory apps — manually popup as
+            # a fallback, throttled to avoid double-firing.
+            menu = tray_ref.get("menu")
+            now = time.monotonic()
+            if menu is not None and now - tray_ref.get("last_popup_at", 0.0) > 0.3:
+                tray_ref["last_popup_at"] = now
+                menu.popup(QCursor.pos())
+            return
+        launch_settings_process(show_launch=False)
 
     def quit_all():
+        if quit_ref["running"]:
+            return
+        quit_ref["running"] = True
         notify_chat_processes_shutdown()
         stop_ai_status_server()
         stop_chat_integration_server()
@@ -666,6 +686,26 @@ def main():
     init_ai_status_server()
     init_chat_integration_server()
     init_reminder_scheduler()
+
+    def _handle_signal(_signum, _frame):
+        QTimer.singleShot(0, quit_all)
+
+    for sig_name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except (ValueError, OSError):
+            pass
+
+    # Qt's C++ event loop doesn't yield to Python often enough for pending
+    # signals to fire; a no-op timer keeps the interpreter ticking so handlers
+    # actually run when SIGTERM/SIGHUP arrives.
+    signal_pump_timer = QTimer(app)
+    signal_pump_timer.setInterval(100)
+    signal_pump_timer.timeout.connect(lambda: None)
+    signal_pump_timer.start()
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)

@@ -95,6 +95,7 @@ def main():
     Live2DWidget.configure_default_surface_format()
 
     app = QApplication(sys.argv)
+    install_parent_death_watch(app)
 
     if sys.platform == "darwin":
         import macos_patch
