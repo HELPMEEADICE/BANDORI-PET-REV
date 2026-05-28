@@ -1,3 +1,4 @@
+import importlib
 import importlib.util
 import os
 import platform
@@ -18,6 +19,7 @@ from cx_Freeze.command.build_exe import build_exe
 
 BASE_DIR = Path(__file__).resolve().parent
 BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
+WINDOWS_INSTALLER_UTF8_CODEPAGE = 65001
 
 for module_name in (
     "PySide6.QtCore",
@@ -39,8 +41,112 @@ class BuildExeWithEmptyModels(build_exe):
         models_dir.mkdir(parents=True, exist_ok=True)
 
 
+def _force_msi_database_codepage(db, installer_name: str, codepage: int) -> None:
+    import ctypes
+    import tempfile
+    import _msi
+    from ctypes import wintypes
+
+    db.Commit()
+    db.Close()
+
+    msi = ctypes.WinDLL("msi")
+    msi_handle = wintypes.UINT
+    msi.MsiOpenDatabaseW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.POINTER(msi_handle),
+    ]
+    msi.MsiOpenDatabaseW.restype = wintypes.UINT
+    msi.MsiDatabaseImportW.argtypes = [
+        msi_handle,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+    ]
+    msi.MsiDatabaseImportW.restype = wintypes.UINT
+    msi.MsiDatabaseCommit.argtypes = [msi_handle]
+    msi.MsiDatabaseCommit.restype = wintypes.UINT
+    msi.MsiCloseHandle.argtypes = [msi_handle]
+    msi.MsiCloseHandle.restype = wintypes.UINT
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        force_codepage = Path(temp_dir) / "_ForceCodepage.idt"
+        force_codepage.write_text(
+            f"\r\n\r\n{codepage}\t_ForceCodepage\r\n",
+            encoding="ascii",
+        )
+
+        handle = msi_handle(0)
+        result = msi.MsiOpenDatabaseW(
+            installer_name,
+            ctypes.c_wchar_p(_msi.MSIDBOPEN_TRANSACT),
+            ctypes.byref(handle),
+        )
+        if result != 0:
+            raise RuntimeError(
+                f"Failed to open MSI database for codepage update: {result}"
+            )
+        try:
+            result = msi.MsiDatabaseImportW(
+                handle.value,
+                temp_dir,
+                force_codepage.name,
+            )
+            if result != 0:
+                raise RuntimeError(
+                    f"Failed to import MSI codepage table: {result}"
+                )
+            result = msi.MsiDatabaseCommit(handle.value)
+            if result != 0:
+                raise RuntimeError(
+                    f"Failed to commit MSI codepage update: {result}"
+                )
+        finally:
+            msi.MsiCloseHandle(handle.value)
+
+
+def _init_utf8_msi_database(original_init_database):
+    def init_database_utf8(installer_name, *args, **kwargs):
+        db = original_init_database(installer_name, *args, **kwargs)
+        _force_msi_database_codepage(
+            db,
+            installer_name,
+            WINDOWS_INSTALLER_UTF8_CODEPAGE,
+        )
+
+        import _msi
+
+        db = _msi.OpenDatabase(installer_name, _msi.MSIDBOPEN_TRANSACT)
+        summary_info = db.GetSummaryInformation(20)
+        summary_info.SetProperty(
+            _msi.PID_CODEPAGE,
+            WINDOWS_INSTALLER_UTF8_CODEPAGE,
+        )
+        summary_info.Persist()
+        summary_info = None
+        db.Commit()
+        return db
+
+    return init_database_utf8
+
+
 class BuildMsiAlias(bdist_msi):
     """Expose cx_Freeze's MSI builder as `python setup.py build_msi`."""
+
+    def run(self):
+        if sys.platform != "win32":
+            super().run()
+            return
+
+        bdist_msi_module = importlib.import_module("cx_Freeze.command.bdist_msi")
+        original_init_database = bdist_msi_module.init_database
+        bdist_msi_module.init_database = _init_utf8_msi_database(
+            original_init_database
+        )
+        try:
+            super().run()
+        finally:
+            bdist_msi_module.init_database = original_init_database
 
 
 class BuildMacWithResourceLinks(bdist_mac):
