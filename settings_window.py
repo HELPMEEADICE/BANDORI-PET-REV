@@ -1232,16 +1232,26 @@ class NavButton(QPushButton):
         if dark:
             accent = accent.lighter(118)
 
-        bg = QColor("#2a272b" if dark else "#ffffff")
-        hover_bg = QColor("#332b31" if dark else "#fff6f9")
-        checked_bg = QColor(accent)
-        checked_bg.setAlpha(48 if dark else 28)
-        border = QColor("#40373f" if dark else "#ece5ea")
-        checked_border = QColor(accent)
-        checked_border.setAlpha(170)
-        text = QColor("#ece7ee" if dark else "#242832")
-        checked_text = QColor(accent)
-        muted_text = QColor("#cfc6d0" if dark else "#4f5968")
+        if dark:
+            bg = QColor("#242226")
+            hover_bg = QColor("#2f2930")
+            checked_bg = self._mix_color(QColor("#242226"), accent, 0.24)
+            border = QColor("#413841")
+            checked_border = self._mix_color(QColor("#413841"), accent, 0.55)
+            text = QColor("#f1edf2")
+            checked_text = QColor("#ffffff")
+            muted_text = QColor("#cfc6d0")
+        else:
+            bg = QColor("#ffffff")
+            hover_bg = QColor("#fff6f9")
+            checked_bg = QColor(accent)
+            checked_bg.setAlpha(28)
+            border = QColor("#ece5ea")
+            checked_border = QColor(accent)
+            checked_border.setAlpha(170)
+            text = QColor("#242832")
+            checked_text = QColor(accent)
+            muted_text = QColor("#4f5968")
 
         rect = QRectF(self.rect()).adjusted(2, 1, -2, -1)
         painter.setPen(QPen(checked_border if checked else border, 1))
@@ -1277,6 +1287,16 @@ class NavButton(QPushButton):
         text_rect = QRect(50, 0, max(1, self.width() - 58), self.height())
         label = painter.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, text_rect.width())
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, label)
+
+    @staticmethod
+    def _mix_color(base: QColor, overlay: QColor, amount: float) -> QColor:
+        amount = max(0.0, min(1.0, amount))
+        inv = 1.0 - amount
+        return QColor(
+            int(base.red() * inv + overlay.red() * amount),
+            int(base.green() * inv + overlay.green() * amount),
+            int(base.blue() * inv + overlay.blue() * amount),
+        )
 
     @staticmethod
     def _paint_avatar_icon(painter: QPainter, rect: QRectF, color: QColor):
@@ -2518,12 +2538,38 @@ class SettingsWindow(QWidget):
 
     def _update_sidebar_style(self):
         dark = isDarkTheme()
+        sidebar_bg = "#181818" if dark else "#f5f6f8"
+        sidebar_border = "#404040" if dark else "#d5d5d5"
         self._sidebar.setStyleSheet(f"""
             #sidebar {{
-                background: {'#181818' if dark else '#f5f6f8'};
-                border-right: 1px solid {'#404040' if dark else '#d5d5d5'};
+                background: {sidebar_bg};
+                border-right: 1px solid {sidebar_border};
+            }}
+            QWidget#sidebarNavContent {{
+                background: {sidebar_bg};
             }}
         """)
+        nav_scroll = getattr(self, "_sidebar_nav_scroll", None)
+        if nav_scroll is not None:
+            nav_scroll.setStyleSheet(f"""
+                QScrollArea {{
+                    background: {sidebar_bg};
+                    border: none;
+                }}
+                QScrollArea > QWidget > QWidget {{
+                    background: {sidebar_bg};
+                }}
+            """)
+            pal = nav_scroll.viewport().palette()
+            pal.setColor(QPalette.ColorRole.Window, QColor(sidebar_bg))
+            nav_scroll.viewport().setPalette(pal)
+            nav_scroll.viewport().setAutoFillBackground(True)
+        nav_content = getattr(self, "_sidebar_nav_content", None)
+        if nav_content is not None:
+            pal = nav_content.palette()
+            pal.setColor(QPalette.ColorRole.Window, QColor(sidebar_bg))
+            nav_content.setPalette(pal)
+            nav_content.setAutoFillBackground(True)
 
     def _build_sidebar(self):
         sidebar = QWidget()
@@ -2554,9 +2600,9 @@ class SettingsWindow(QWidget):
         nav_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         nav_content = QWidget(nav_scroll)
         nav_content.setObjectName("sidebarNavContent")
+        nav_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         nav_layout = QVBoxLayout(nav_content)
         nav_layout.setContentsMargins(0, 0, 0, 0)
         nav_layout.setSpacing(6)
@@ -2668,6 +2714,7 @@ class SettingsWindow(QWidget):
             lambda _value: self._position_nav_indicator(self._current_page)
         )
         self._sidebar_nav_scroll = nav_scroll
+        self._sidebar_nav_content = nav_content
         layout.addWidget(nav_scroll, 1)
 
         btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar, "#94a3b8")
@@ -9243,10 +9290,10 @@ class SettingsWindow(QWidget):
         panel = self._make_theme_widget(QWidget())
         panel.setObjectName("settingsSidePanel")
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        panel.setFixedWidth(240)
+        panel.setFixedWidth(260)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(14)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
         settings_title = StrongBodyLabel(_tr("SettingsWindow.side_settings"), panel)
         layout.addWidget(settings_title)
@@ -9255,6 +9302,8 @@ class SettingsWindow(QWidget):
         self._game_topmost_switch = SwitchButton(panel)
         self._game_topmost_switch.setChecked(self._game_topmost)
         game_topmost_row = QHBoxLayout()
+        game_topmost_row.setContentsMargins(0, 0, 0, 0)
+        game_topmost_row.setSpacing(8)
         game_topmost_row.addWidget(game_topmost_label)
         game_topmost_row.addStretch()
         game_topmost_row.addWidget(self._game_topmost_switch)
@@ -9267,6 +9316,8 @@ class SettingsWindow(QWidget):
         self._chat_window_normal_window_switch.setChecked(self._chat_window_normal_window)
         self._chat_window_normal_window_switch.setToolTip(chat_window_hint)
         chat_window_row = QHBoxLayout()
+        chat_window_row.setContentsMargins(0, 0, 0, 0)
+        chat_window_row.setSpacing(8)
         chat_window_row.addWidget(chat_window_label)
         chat_window_row.addStretch()
         chat_window_row.addWidget(self._chat_window_normal_window_switch)
@@ -9276,6 +9327,8 @@ class SettingsWindow(QWidget):
         self._hide_live2d_model_switch = SwitchButton(panel)
         self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
         hide_live2d_row = QHBoxLayout()
+        hide_live2d_row.setContentsMargins(0, 0, 0, 0)
+        hide_live2d_row.setSpacing(8)
         hide_live2d_row.addWidget(hide_live2d_label)
         hide_live2d_row.addStretch()
         hide_live2d_row.addWidget(self._hide_live2d_model_switch)
@@ -9289,6 +9342,8 @@ class SettingsWindow(QWidget):
             self._auto_start_switch.setToolTip(_tr("SettingsWindow.auto_start_unsupported"))
             auto_start_label.setToolTip(_tr("SettingsWindow.auto_start_unsupported"))
         auto_start_row = QHBoxLayout()
+        auto_start_row.setContentsMargins(0, 0, 0, 0)
+        auto_start_row.setSpacing(8)
         auto_start_row.addWidget(auto_start_label)
         auto_start_row.addStretch()
         auto_start_row.addWidget(self._auto_start_switch)
@@ -9306,19 +9361,21 @@ class SettingsWindow(QWidget):
                 self._lang_combo.setCurrentIndex(self._lang_combo.count() - 1)
         self._lang_combo.currentIndexChanged.connect(self._on_language_changed)
         lang_row = QHBoxLayout()
+        lang_row.setContentsMargins(0, 0, 0, 0)
+        lang_row.setSpacing(8)
         lang_row.addWidget(lang_label)
         lang_row.addStretch()
         lang_row.addWidget(self._lang_combo)
         layout.addLayout(lang_row)
 
-        layout.addStretch()
-
         btn_text = _tr("SettingsWindow.apply_launch") if self._show_launch else _tr("SettingsWindow.apply")
         self._apply_btn = PrimaryPushButton(FluentIcon.ACCEPT, btn_text, panel)
         self._apply_btn.clicked.connect(self._on_apply)
+        layout.addSpacing(2)
         layout.addWidget(self._apply_btn)
 
         list_title = StrongBodyLabel(_tr("SettingsWindow.model_list_title"), panel)
+        layout.addSpacing(4)
         layout.addWidget(list_title)
 
         self._model_list_scroll = ScrollArea(panel)
@@ -9332,8 +9389,10 @@ class SettingsWindow(QWidget):
         self._model_list_widget.setObjectName("modelListWidget")
         self._model_list_layout = QVBoxLayout(self._model_list_widget)
         self._model_list_layout.setContentsMargins(0, 0, 0, 0)
-        self._model_list_layout.setSpacing(6)
+        self._model_list_layout.setSpacing(8)
+        self._model_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._model_list_scroll.setWidget(self._model_list_widget)
+        self._model_list_scroll.setMinimumHeight(140)
         layout.addWidget(self._model_list_scroll, 1)
         self._update_model_list_style()
         qconfig.themeChanged.connect(self._update_model_list_style)
