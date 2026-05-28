@@ -21,13 +21,14 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QScrollArea,
     QLineEdit, QGraphicsOpacityEffect, QGraphicsColorizeEffect, QApplication,
     QTextEdit, QPlainTextEdit, QToolButton, QFileDialog, QMessageBox,
-    QTimeEdit, QSpinBox, QCheckBox,
+    QCheckBox,
 )
 
 from qfluentwidgets import (
     CardWidget, PushButton, PrimaryPushButton, TransparentPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
     FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
+    TimeEdit, SpinBox,
     isDarkTheme, InfoBar, InfoBarPosition, ProgressBar,
 )
 from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
@@ -5028,7 +5029,7 @@ class SettingsWindow(QWidget):
         alarm_form.setHorizontalSpacing(10)
         alarm_form.setVerticalSpacing(8)
         alarm_form.addWidget(BodyLabel(_tr("SettingsWindow.alarm_time", default="时间"), alarm_panel), 0, 0)
-        self._alarm_time_edit = QTimeEdit(alarm_panel)
+        self._alarm_time_edit = TimeEdit(alarm_panel)
         self._alarm_time_edit.setDisplayFormat("HH:mm")
         self._alarm_time_edit.setTime(QTime.currentTime().addSecs(3600))
         self._alarm_time_edit.setFixedHeight(34)
@@ -5093,7 +5094,7 @@ class SettingsWindow(QWidget):
         pomo_form.setHorizontalSpacing(10)
         pomo_form.setVerticalSpacing(8)
         pomo_form.addWidget(BodyLabel(_tr("SettingsWindow.pomodoro_repeat_count", default="重复次数"), pomodoro_panel), 0, 0)
-        self._pomodoro_repeat_count = QSpinBox(pomodoro_panel)
+        self._pomodoro_repeat_count = SpinBox(pomodoro_panel)
         self._pomodoro_repeat_count.setRange(1, 24)
         self._pomodoro_repeat_count.setValue(1)
         self._pomodoro_repeat_count.setFixedHeight(34)

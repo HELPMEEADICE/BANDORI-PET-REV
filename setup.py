@@ -482,6 +482,7 @@ build_exe_options = {
         "sounddevice",
         "soundfile",
         "sqlite3",
+        "zstandard",
     ],
     "excludes": ["PyQt5", "PyQt6", "PySide2", "tkinter"],
     "include_msvcr": sys.platform == "win32",

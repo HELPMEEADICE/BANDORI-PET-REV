@@ -523,6 +523,7 @@ class Live2DWidget(QOpenGLWidget):
         if (self._static_render and self._static_render_done) or not self._live2d or not self._model:
             return
 
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
