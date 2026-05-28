@@ -40,7 +40,7 @@ from qfluentwidgets.components.widgets.menu import (
 )
 from qfluentwidgets.common.config import qconfig
 
-from i18n_manager import tr as _tr, set_language, available_languages, current_language
+from i18n_manager import tr as _tr, set_language, available_languages, current_language, normalize_language
 from llm_api_compat import (
     chat_completions_api_url,
     is_google_generative_language_url,
@@ -182,6 +182,8 @@ DATA_CONFIG_KEYS = {
         "models",
         "model_action_settings",
         "live2d_idle_actions_enabled",
+        "live2d_head_tracking_enabled",
+        "live2d_mutual_gaze_enabled",
     ),
     DATA_CATEGORY_LLM: (
         "llm_api_url",
@@ -1384,6 +1386,7 @@ class SettingsWindow(QWidget):
         self._memory_db = None
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
+        self._behavior_page = None
         self._compact_window_page = None
         self._chat_integration_page = None
         self._mcp_computer_page = None
@@ -1653,7 +1656,7 @@ class SettingsWindow(QWidget):
         )
 
     def _on_language_changed(self, index: int):
-        lang = self._lang_combo.itemData(index)
+        lang = normalize_language(self._lang_combo.itemData(index))
         if lang and lang != current_language():
             set_language(lang)
             if self._cfg:
@@ -2482,6 +2485,9 @@ class SettingsWindow(QWidget):
         if key == "reminders":
             self._reminder_page = self._add_lazy_page("reminders", self._build_reminder_page())
             return self._reminder_page
+        if key == "behavior":
+            self._behavior_page = self._add_lazy_page("behavior", self._build_behavior_page())
+            return self._behavior_page
         if key == "compact_window":
             self._compact_window_page = self._add_lazy_page("compact_window", self._build_compact_window_page())
             return self._compact_window_page
@@ -2541,97 +2547,126 @@ class SettingsWindow(QWidget):
         brand_row.addWidget(title, 1)
         layout.addLayout(brand_row)
 
-        btn_chars = NavButton("characters", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_chars"), sidebar, "#e4004f")
+        nav_scroll = ScrollArea(sidebar)
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        nav_content = QWidget(nav_scroll)
+        nav_content.setObjectName("sidebarNavContent")
+        nav_layout = QVBoxLayout(nav_content)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(6)
+
+        btn_chars = NavButton("characters", FluentIcon.PEOPLE, _tr("SettingsWindow.nav_chars"), nav_content, "#e4004f")
         btn_chars.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["characters"] = btn_chars
-        layout.addWidget(btn_chars)
+        nav_layout.addWidget(btn_chars)
 
-        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), sidebar, "#8b5cf6")
+        btn_behavior = NavButton(
+            "behavior",
+            FluentIcon.GAME,
+            _tr("SettingsWindow.nav_behavior", default="角色行为"),
+            nav_content,
+            "#f97316",
+        )
+        btn_behavior.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["behavior"] = btn_behavior
+        nav_layout.addWidget(btn_behavior)
+
+        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), nav_content, "#8b5cf6")
         btn_llm.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["llm"] = btn_llm
-        layout.addWidget(btn_llm)
+        nav_layout.addWidget(btn_llm)
 
-        btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), sidebar, "#f59e0b")
+        btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), nav_content, "#f59e0b")
         btn_tts.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["tts"] = btn_tts
-        layout.addWidget(btn_tts)
+        nav_layout.addWidget(btn_tts)
 
-        btn_pov = NavButton("pov", "avatar", _tr("SettingsWindow.nav_pov"), sidebar, "#ec4899")
+        btn_pov = NavButton("pov", "avatar", _tr("SettingsWindow.nav_pov"), nav_content, "#ec4899")
         btn_pov.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["pov"] = btn_pov
-        layout.addWidget(btn_pov)
+        nav_layout.addWidget(btn_pov)
 
-        btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), sidebar, "#10b981")
+        btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), nav_content, "#10b981")
         btn_memory.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["memory"] = btn_memory
-        layout.addWidget(btn_memory)
+        nav_layout.addWidget(btn_memory)
 
         btn_relationship_guide = NavButton(
             "relationship_guide",
             FluentIcon.QUICK_NOTE,
             _tr("SettingsWindow.nav_relationship_guide"),
-            sidebar,
+            nav_content,
             "#06b6d4",
         )
         btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["relationship_guide"] = btn_relationship_guide
-        layout.addWidget(btn_relationship_guide)
+        nav_layout.addWidget(btn_relationship_guide)
 
         btn_reminders = NavButton(
             "reminders",
             FluentIcon.DATE_TIME,
             _tr("SettingsWindow.nav_reminders", default="闹钟番茄钟"),
-            sidebar,
+            nav_content,
             "#ef4444",
         )
         btn_reminders.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["reminders"] = btn_reminders
-        layout.addWidget(btn_reminders)
+        nav_layout.addWidget(btn_reminders)
 
-        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), sidebar, "#3b82f6")
+        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), nav_content, "#3b82f6")
         btn_compact.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["compact_window"] = btn_compact
-        layout.addWidget(btn_compact)
+        nav_layout.addWidget(btn_compact)
 
         btn_chat_integration = NavButton(
             "chat_integration",
             FluentIcon.MESSAGE,
             _tr("SettingsWindow.nav_chat_integration", default="聊天接入"),
-            sidebar,
+            nav_content,
             "#14b8a6",
         )
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
-        layout.addWidget(btn_chat_integration)
+        nav_layout.addWidget(btn_chat_integration)
 
         btn_mcp_computer = NavButton(
             "mcp_computer",
             FluentIcon.DEVELOPER_TOOLS,
             _tr("SettingsWindow.nav_mcp_computer", default="工具与电脑控制"),
-            sidebar,
+            nav_content,
             "#64748b",
         )
         btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["mcp_computer"] = btn_mcp_computer
-        layout.addWidget(btn_mcp_computer)
+        nav_layout.addWidget(btn_mcp_computer)
 
         btn_data_management = NavButton(
             "data_management",
             FluentIcon.SAVE,
             _tr("SettingsWindow.nav_data_management", default="数据管理"),
-            sidebar,
+            nav_content,
             "#0ea5e9",
         )
         btn_data_management.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["data_management"] = btn_data_management
-        layout.addWidget(btn_data_management)
+        nav_layout.addWidget(btn_data_management)
 
-        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_quality"), sidebar, "#22c55e")
+        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_quality"), nav_content, "#22c55e")
         btn_quality.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["quality"] = btn_quality
-        layout.addWidget(btn_quality)
+        nav_layout.addWidget(btn_quality)
 
-        layout.addStretch()
+        nav_layout.addStretch()
+        nav_scroll.setWidget(nav_content)
+        nav_scroll.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._position_nav_indicator(self._current_page)
+        )
+        self._sidebar_nav_scroll = nav_scroll
+        layout.addWidget(nav_scroll, 1)
 
         btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar, "#94a3b8")
         btn_about.nav_activated.connect(self._on_nav_selected)
@@ -2697,11 +2732,12 @@ class SettingsWindow(QWidget):
         btn = self._nav_buttons.get(nav_key)
         if btn is None:
             return
-        target_y = btn.mapTo(btn.parent(), btn.rect().topLeft()).y()
-        target_y += (btn.height() - self._nav_indicator.height()) // 2
-        target_x = 6
-        target = self._nav_indicator.geometry()
-        target.setRect(target_x, target_y, 4, 28)
+        self._ensure_nav_button_visible(nav_key)
+        target = self._nav_indicator_geometry(nav_key)
+        if target is None:
+            return
+        target_x = target.x()
+        target_y = target.y()
 
         if not self._nav_indicator.isVisible():
             self._nav_indicator.move(target_x, target_y)
@@ -2726,6 +2762,37 @@ class SettingsWindow(QWidget):
         self._indicator_anim.setStartValue(self._nav_indicator.geometry())
         self._indicator_anim.setEndValue(target)
         self._indicator_anim.start()
+
+    def _nav_indicator_geometry(self, nav_key: str) -> QRect | None:
+        btn = self._nav_buttons.get(nav_key)
+        if btn is None or not hasattr(self, "_nav_indicator"):
+            return None
+        nav_scroll = getattr(self, "_sidebar_nav_scroll", None)
+        if nav_scroll is not None and nav_key != "about":
+            viewport_y = btn.mapTo(nav_scroll.viewport(), btn.rect().topLeft()).y()
+            if viewport_y + btn.height() < 0 or viewport_y > nav_scroll.viewport().height():
+                return None
+        target_y = btn.mapTo(self._sidebar, btn.rect().topLeft()).y()
+        target_y += (btn.height() - self._nav_indicator.height()) // 2
+        return QRect(6, target_y, 4, 28)
+
+    def _position_nav_indicator(self, nav_key: str):
+        if not hasattr(self, "_nav_indicator"):
+            return
+        target = self._nav_indicator_geometry(nav_key)
+        if target is None:
+            self._nav_indicator.hide()
+            return
+        self._nav_indicator.setGeometry(target)
+        self._nav_indicator.show()
+
+    def _ensure_nav_button_visible(self, nav_key: str):
+        if nav_key == "about":
+            return
+        btn = self._nav_buttons.get(nav_key)
+        nav_scroll = getattr(self, "_sidebar_nav_scroll", None)
+        if btn is not None and nav_scroll is not None:
+            nav_scroll.ensureWidgetVisible(btn, 0, 8)
 
     def _build_char_page(self):
         page = self._make_theme_widget(QWidget())
@@ -2840,46 +2907,6 @@ class SettingsWindow(QWidget):
         hint = _wrap_label(BodyLabel(_tr("SettingsWindow.model_detail_hint"), action_container))
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(hint)
-
-        idle_row = QHBoxLayout()
-        idle_row.setSpacing(8)
-        idle_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_idle_actions"), action_container))
-        self._live2d_idle_actions_switch = SwitchButton(action_container)
-        self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
-        self._live2d_idle_actions_switch.checkedChanged.connect(self._on_live2d_idle_actions_changed)
-        idle_row.addWidget(idle_label, 1)
-        idle_row.addWidget(self._live2d_idle_actions_switch, 0, Qt.AlignmentFlag.AlignRight)
-        action_col.addLayout(idle_row)
-        idle_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.live2d_idle_actions_hint"), action_container))
-        idle_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        action_col.addWidget(idle_hint)
-
-        head_track_row = QHBoxLayout()
-        head_track_row.setSpacing(8)
-        head_track_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_head_tracking"), action_container))
-        self._live2d_head_tracking_switch = SwitchButton(action_container)
-        self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
-        self._live2d_head_tracking_switch.setEnabled(not self._live2d_mutual_gaze_enabled)
-        self._live2d_head_tracking_switch.checkedChanged.connect(self._on_live2d_head_tracking_changed)
-        head_track_row.addWidget(head_track_label, 1)
-        head_track_row.addWidget(self._live2d_head_tracking_switch, 0, Qt.AlignmentFlag.AlignRight)
-        action_col.addLayout(head_track_row)
-        head_track_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.live2d_head_tracking_hint"), action_container))
-        head_track_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        action_col.addWidget(head_track_hint)
-
-        mutual_gaze_row = QHBoxLayout()
-        mutual_gaze_row.setSpacing(8)
-        mutual_gaze_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_mutual_gaze"), action_container))
-        self._live2d_mutual_gaze_switch = SwitchButton(action_container)
-        self._live2d_mutual_gaze_switch.setChecked(self._live2d_mutual_gaze_enabled)
-        self._live2d_mutual_gaze_switch.checkedChanged.connect(self._on_live2d_mutual_gaze_changed)
-        mutual_gaze_row.addWidget(mutual_gaze_label, 1)
-        mutual_gaze_row.addWidget(self._live2d_mutual_gaze_switch, 0, Qt.AlignmentFlag.AlignRight)
-        action_col.addLayout(mutual_gaze_row)
-        mutual_gaze_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.live2d_mutual_gaze_hint"), action_container))
-        mutual_gaze_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        action_col.addWidget(mutual_gaze_hint)
 
         motion_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.default_motion"), action_container))
         motion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3023,12 +3050,6 @@ class SettingsWindow(QWidget):
         detail_shell.addLayout(detail_center, 1)
 
         self._detail_action_hint = hint
-        self._detail_idle_label = idle_label
-        self._detail_idle_hint = idle_hint
-        self._detail_head_track_label = head_track_label
-        self._detail_head_track_hint = head_track_hint
-        self._detail_mutual_gaze_label = mutual_gaze_label
-        self._detail_mutual_gaze_hint = mutual_gaze_hint
         self._detail_motion_label = motion_label
         self._detail_expression_label = expression_label
         self._detail_click_motion_label = click_label
@@ -3055,12 +3076,6 @@ class SettingsWindow(QWidget):
             }}
         """)
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
-        self._detail_idle_label.setStyleSheet(f"color: {hint_color};")
-        self._detail_idle_hint.setStyleSheet(f"color: {hint_color};")
-        self._detail_head_track_label.setStyleSheet(f"color: {hint_color};")
-        self._detail_head_track_hint.setStyleSheet(f"color: {hint_color};")
-        self._detail_mutual_gaze_label.setStyleSheet(f"color: {hint_color};")
-        self._detail_mutual_gaze_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
@@ -3131,33 +3146,53 @@ class SettingsWindow(QWidget):
                 return item
         return None
 
+    @staticmethod
+    def _set_switch_state(switch, checked: bool, enabled: bool | None = None):
+        if switch is None:
+            return
+        switch.blockSignals(True)
+        switch.setChecked(bool(checked))
+        if enabled is not None:
+            switch.setEnabled(bool(enabled))
+        switch.blockSignals(False)
+
+    def _sync_live2d_behavior_switches(self):
+        for attr in ("_live2d_idle_actions_switch", "_behavior_idle_actions_switch"):
+            self._set_switch_state(getattr(self, attr, None), self._live2d_idle_actions_enabled)
+        for attr in ("_live2d_head_tracking_switch", "_behavior_head_tracking_switch"):
+            self._set_switch_state(
+                getattr(self, attr, None),
+                self._live2d_head_tracking_enabled,
+                not self._live2d_mutual_gaze_enabled,
+            )
+        for attr in ("_live2d_mutual_gaze_switch", "_behavior_mutual_gaze_switch"):
+            self._set_switch_state(getattr(self, attr, None), self._live2d_mutual_gaze_enabled)
+
+    def _save_live2d_behavior_config(self):
+        if not self._cfg:
+            return
+        self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
+        self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
+        self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
+        self._cfg.save()
+
     def _on_live2d_idle_actions_changed(self, checked: bool):
         self._live2d_idle_actions_enabled = bool(checked)
-        if self._cfg:
-            self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
-            self._cfg.save()
+        self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
 
     def _on_live2d_head_tracking_changed(self, checked: bool):
-        self._live2d_head_tracking_enabled = bool(checked)
-        if self._cfg:
-            self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
-            self._cfg.save()
+        checked = bool(checked) and not self._live2d_mutual_gaze_enabled
+        self._live2d_head_tracking_enabled = checked
+        self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
 
     def _on_live2d_mutual_gaze_changed(self, checked: bool):
         self._live2d_mutual_gaze_enabled = bool(checked)
-        if self._cfg:
-            self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
-            self._cfg.save()
-        if hasattr(self, "_live2d_head_tracking_switch"):
-            if checked:
-                self._live2d_head_tracking_switch.setEnabled(False)
-                self._live2d_head_tracking_switch.setChecked(False)
-                self._live2d_head_tracking_enabled = False
-                if self._cfg:
-                    self._cfg.set("live2d_head_tracking_enabled", False)
-                    self._cfg.save()
-            else:
-                self._live2d_head_tracking_switch.setEnabled(True)
+        if self._live2d_mutual_gaze_enabled:
+            self._live2d_head_tracking_enabled = False
+        self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
 
     def _populate_default_motion_combo(self, item: dict):
         combo = self._default_motion_combo
@@ -7194,16 +7229,12 @@ class SettingsWindow(QWidget):
             self._chat_window_normal_window_switch.setChecked(self._chat_window_normal_window)
             self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
             self._auto_start_switch.setChecked(bool(self._cfg.get("auto_start", False)) if self._cfg else False)
-            if hasattr(self, "_live2d_idle_actions_switch"):
-                self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
-            if hasattr(self, "_live2d_head_tracking_switch"):
-                self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
-                self._live2d_head_tracking_switch.setEnabled(not self._live2d_mutual_gaze_enabled)
-            if hasattr(self, "_live2d_mutual_gaze_switch"):
-                self._live2d_mutual_gaze_switch.setChecked(self._live2d_mutual_gaze_enabled)
+            self._sync_live2d_behavior_switches()
             self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=self._opacity_slider.value()))
         if hasattr(self, "_lang_combo"):
-            language = str(self._cfg.get("language", "") or current_language()) if self._cfg else current_language()
+            language = normalize_language(
+                str(self._cfg.get("language", "") or current_language())
+            ) if self._cfg else current_language()
             for index in range(self._lang_combo.count()):
                 if self._lang_combo.itemData(index) == language:
                     self._lang_combo.blockSignals(True)
@@ -7239,6 +7270,93 @@ class SettingsWindow(QWidget):
 
     def _quality_detail_text(self, profile: str) -> str:
         return _tr(f"SettingsWindow.quality_detail_{normalize_live2d_quality(profile)}")
+
+    def _build_behavior_switch_row(
+        self,
+        parent: QWidget,
+        title_key: str,
+        hint_key: str,
+        switch_attr: str,
+        checked: bool,
+        handler,
+        enabled: bool = True,
+    ):
+        row_widget = QWidget(parent)
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        switch_row = QHBoxLayout()
+        switch_row.setContentsMargins(0, 0, 0, 0)
+        switch_row.setSpacing(12)
+        label = StrongBodyLabel(_tr(title_key), row_widget)
+        switch = SwitchButton(row_widget)
+        switch.setChecked(bool(checked))
+        switch.setEnabled(bool(enabled))
+        switch.checkedChanged.connect(handler)
+        setattr(self, switch_attr, switch)
+        switch_row.addWidget(label, 1)
+        switch_row.addWidget(switch, 0, Qt.AlignmentFlag.AlignRight)
+        row_layout.addLayout(switch_row)
+
+        hint = BodyLabel(_tr(hint_key), row_widget)
+        hint.setWordWrap(True)
+        row_layout.addWidget(hint)
+        return row_widget
+
+    def _build_behavior_page(self):
+        page = self._make_theme_widget(QWidget())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        title = TitleLabel(_tr("SettingsWindow.behavior_title", default="角色行为"), page)
+        layout.addWidget(title)
+        subtitle = SubtitleLabel(_tr(
+            "SettingsWindow.behavior_subtitle",
+            default="设置角色的待机动作、视线跟随和多角色互动行为。",
+        ), page)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        section = StrongBodyLabel(_tr("SettingsWindow.behavior_live2d_section", default="Live2D 行为"), page)
+        layout.addWidget(section)
+
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.live2d_idle_actions",
+            "SettingsWindow.live2d_idle_actions_hint",
+            "_behavior_idle_actions_switch",
+            self._live2d_idle_actions_enabled,
+            self._on_live2d_idle_actions_changed,
+        ))
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.live2d_head_tracking",
+            "SettingsWindow.live2d_head_tracking_hint",
+            "_behavior_head_tracking_switch",
+            self._live2d_head_tracking_enabled,
+            self._on_live2d_head_tracking_changed,
+            enabled=not self._live2d_mutual_gaze_enabled,
+        ))
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.live2d_mutual_gaze",
+            "SettingsWindow.live2d_mutual_gaze_hint",
+            "_behavior_mutual_gaze_switch",
+            self._live2d_mutual_gaze_enabled,
+            self._on_live2d_mutual_gaze_changed,
+        ))
+
+        note = BodyLabel(_tr(
+            "SettingsWindow.behavior_apply_hint",
+            default="这些选项会保存为全局设置；点击右侧应用后，当前桌宠会立即刷新。",
+        ), page)
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch()
+        self._sync_live2d_behavior_switches()
+        return page
 
     def _build_quality_page(self):
         page = self._make_theme_widget(QWidget())
@@ -9710,9 +9828,9 @@ class SettingsWindow(QWidget):
             "game_topmost": self._game_topmost_switch.isChecked(),
             "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
-            "live2d_idle_actions_enabled": self._live2d_idle_actions_switch.isChecked(),
-            "live2d_head_tracking_enabled": self._live2d_head_tracking_switch.isChecked(),
-            "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_switch.isChecked(),
+            "live2d_idle_actions_enabled": self._live2d_idle_actions_enabled,
+            "live2d_head_tracking_enabled": self._live2d_head_tracking_enabled,
+            "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_enabled,
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
@@ -9753,6 +9871,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("hide_live2d_model", settings["hide_live2d_model"])
             self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
             self._cfg.set("live2d_head_tracking_enabled", settings["live2d_head_tracking_enabled"])
+            self._cfg.set("live2d_mutual_gaze_enabled", settings["live2d_mutual_gaze_enabled"])
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])

@@ -1294,6 +1294,7 @@ class PetWindow(QWidget):
             "hide_live2d_model",
             "live2d_idle_actions_enabled",
             "live2d_head_tracking_enabled",
+            "live2d_mutual_gaze_enabled",
         }
         if self._cfg and any(key in data for key in compact_keys):
             self._cfg.load()
@@ -2594,6 +2595,7 @@ class PetWindow(QWidget):
             self._cfg.set("hide_live2d_model", self._hide_live2d_model)
             self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
             self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
+            self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)

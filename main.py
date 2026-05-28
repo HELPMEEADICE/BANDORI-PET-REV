@@ -533,7 +533,8 @@ def main():
             cfg.set("dark_theme", True)
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
-            "live2d_idle_actions_enabled", "live2d_quality", "live2d_scale",
+            "live2d_idle_actions_enabled", "live2d_head_tracking_enabled",
+            "live2d_mutual_gaze_enabled", "live2d_quality", "live2d_scale",
             "compact_ai_window_enabled", "compact_ai_window_opacity",
             "compact_ai_window_font_size", "compact_ai_window_background_color",
             "compact_ai_window_text_color", "ai_event_overlay_enabled",

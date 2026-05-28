@@ -3,6 +3,31 @@ import locale
 from process_utils import app_base_dir
 
 
+_LANGUAGE_ALIASES = {
+    "jp": "ja",
+    "ja_jp": "ja",
+    "japanese": "ja",
+    "cn_tw": "zh_TW",
+    "zh_tw": "zh_TW",
+    "zh_hk": "zh_TW",
+    "zh_hant": "zh_TW",
+    "tw": "zh_TW",
+    "cn": "zh_CN",
+    "zh": "zh_CN",
+    "zh_cn": "zh_CN",
+    "zh_hans": "zh_CN",
+    "en": "en_US",
+    "en_us": "en_US",
+}
+
+
+def normalize_language(lang: str) -> str:
+    key = str(lang or "").strip().replace("-", "_")
+    if not key:
+        return ""
+    return _LANGUAGE_ALIASES.get(key.lower(), key)
+
+
 class I18nManager:
     _instance = None
 
@@ -21,7 +46,7 @@ class I18nManager:
         self._lang_dir = app_base_dir() / "lang"
 
     def set_language(self, lang: str):
-        self._current_lang = lang
+        self._current_lang = normalize_language(lang) or "en_US"
         self._load()
 
     def _load(self):
