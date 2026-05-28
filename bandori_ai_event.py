@@ -3,6 +3,9 @@ import json
 import sys
 
 from ai_event_bus import publish_ai_event
+from process_utils import configure_debug_logging
+
+configure_debug_logging()
 
 
 def _build_parser() -> argparse.ArgumentParser:

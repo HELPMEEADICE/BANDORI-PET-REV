@@ -3,7 +3,9 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, ensure_xwayland, install_parent_death_watch, set_windows_app_user_model_id
+from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, set_windows_app_user_model_id
+
+configure_debug_logging()
 
 BASE_DIR = str(app_base_dir())
 

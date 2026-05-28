@@ -2,7 +2,144 @@ import os
 import sys
 import hashlib
 import subprocess
+import threading
+from datetime import datetime
 from pathlib import Path
+
+
+DEBUG_LOG_ENV = "BANDORI_PET_DEBUG_LOG"
+_DEBUG_LOG_LOCK = threading.RLock()
+_DEBUG_LOG_FILE = None
+_DEBUG_LOG_CONFIGURED = False
+
+
+class _BinaryTee:
+    def __init__(self, original, log_file):
+        self._original = original
+        self._log_file = log_file
+
+    def write(self, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8", errors="replace")
+        with _DEBUG_LOG_LOCK:
+            if self._original is not None:
+                try:
+                    self._original.write(data)
+                except Exception:
+                    pass
+            self._log_file.write(data)
+        return len(data)
+
+    def flush(self):
+        with _DEBUG_LOG_LOCK:
+            if self._original is not None:
+                try:
+                    self._original.flush()
+                except Exception:
+                    pass
+            self._log_file.flush()
+
+    def isatty(self):
+        try:
+            return bool(self._original is not None and self._original.isatty())
+        except Exception:
+            return False
+
+    def fileno(self):
+        if self._original is None:
+            raise OSError("no original stream")
+        return self._original.fileno()
+
+
+class _TextTee:
+    encoding = "utf-8"
+    errors = "replace"
+
+    def __init__(self, original, log_file):
+        self._original = original
+        self.buffer = _BinaryTee(getattr(original, "buffer", None), log_file)
+
+    def write(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+        data = text.encode("utf-8", errors="replace")
+        with _DEBUG_LOG_LOCK:
+            if self._original is not None:
+                try:
+                    self._original.write(text)
+                except Exception:
+                    pass
+            self.buffer._log_file.write(data)
+        return len(text)
+
+    def flush(self):
+        with _DEBUG_LOG_LOCK:
+            if self._original is not None:
+                try:
+                    self._original.flush()
+                except Exception:
+                    pass
+            self.buffer._log_file.flush()
+
+    def isatty(self):
+        try:
+            return bool(self._original is not None and self._original.isatty())
+        except Exception:
+            return False
+
+    def fileno(self):
+        if self._original is None:
+            raise OSError("no original stream")
+        return self._original.fileno()
+
+
+def _remove_debug_flag(argv: list[str]) -> bool:
+    found = False
+    index = 1
+    while index < len(argv):
+        if argv[index] == "--debug":
+            del argv[index]
+            found = True
+        else:
+            index += 1
+    return found
+
+
+def _new_debug_log_path() -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = Path.cwd() / f"{timestamp}.log"
+    if not path.exists():
+        return path
+    return Path.cwd() / f"{timestamp}-{os.getpid()}.log"
+
+
+def configure_debug_logging(argv: list[str] | None = None) -> Path | None:
+    """Enable --debug logging and propagate it to child processes via env."""
+    global _DEBUG_LOG_CONFIGURED, _DEBUG_LOG_FILE
+    if argv is None:
+        argv = sys.argv
+    debug_requested = _remove_debug_flag(argv)
+    log_path = os.environ.get(DEBUG_LOG_ENV, "").strip()
+    if debug_requested and not log_path:
+        log_path = str(_new_debug_log_path())
+        os.environ[DEBUG_LOG_ENV] = log_path
+    if not log_path:
+        return None
+    if _DEBUG_LOG_CONFIGURED:
+        return Path(log_path)
+
+    path = Path(log_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _DEBUG_LOG_FILE = open(path, "ab", buffering=0)
+    except OSError:
+        return None
+
+    sys.stdout = _TextTee(sys.stdout, _DEBUG_LOG_FILE)
+    sys.stderr = _TextTee(sys.stderr, _DEBUG_LOG_FILE)
+    _DEBUG_LOG_CONFIGURED = True
+    print(f"[debug] logging to {path}", file=sys.stderr)
+    return path
 
 
 def ensure_xwayland():

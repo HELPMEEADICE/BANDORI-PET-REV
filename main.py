@@ -8,12 +8,14 @@ import uuid
 
 from process_utils import (
     app_base_dir,
+    configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     ipc_server_name,
     process_program_and_args,
     set_windows_app_user_model_id,
 )
 
+configure_debug_logging()
 BASE_DIR = str(app_base_dir())
 APP_AUMID = "BandoriPet"
 

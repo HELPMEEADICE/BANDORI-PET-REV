@@ -2,7 +2,9 @@ import argparse
 import os
 import sys
 
-from process_utils import app_base_dir, install_parent_death_watch, ipc_server_name, set_windows_app_user_model_id
+from process_utils import app_base_dir, configure_debug_logging, ipc_server_name, set_windows_app_user_model_id
+
+configure_debug_logging()
 
 BASE_DIR = str(app_base_dir())
 
