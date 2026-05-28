@@ -3,7 +3,9 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, ensure_xwayland
+from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland
+
+configure_debug_logging()
 
 BASE_DIR = str(app_base_dir())
 

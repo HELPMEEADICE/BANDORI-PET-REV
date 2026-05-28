@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QPlainTextEdit, QToolButton, QFileDialog, QMessageBox,
     QCheckBox,
 )
+from shiboken6 import isValid
 
 from qfluentwidgets import (
     CardWidget, PushButton, PrimaryPushButton, TransparentPushButton,
@@ -1729,6 +1730,8 @@ class SettingsWindow(QWidget):
 
     @staticmethod
     def _animate_button_in(btn):
+        if btn is None or not isValid(btn):
+            return
         effect = QGraphicsOpacityEffect(btn)
         effect.setOpacity(0.0)
         btn.setGraphicsEffect(effect)
@@ -1737,7 +1740,7 @@ class SettingsWindow(QWidget):
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: btn.setGraphicsEffect(None))
+        anim.finished.connect(lambda: btn.setGraphicsEffect(None) if isValid(btn) else None)
         anim.start()
 
     def _cleanup_workers(self):
