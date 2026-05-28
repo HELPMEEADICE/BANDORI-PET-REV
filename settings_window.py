@@ -203,6 +203,7 @@ DATA_CONFIG_KEYS = {
         "chat_avatar_paths",
         "group_chat_sidebar_ratio",
         "group_chat_sidebar_collapsed",
+        "chat_window_always_on_top",
         "llm_enable_thinking",
         "llm_show_reasoning",
     ),

@@ -2072,6 +2072,7 @@ class ChatWindow(QWidget):
         self._chat_avatar_paths = avatar_paths if isinstance(avatar_paths, dict) else {}
         self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True)) if self._cfg else True
         self._normal_window_mode = bool(self._cfg.get("chat_window_normal_window", False)) if self._cfg else False
+        self._chat_window_always_on_top = bool(self._cfg.get("chat_window_always_on_top", False)) if self._cfg else False
 
         from database_manager import DatabaseManager
         self._db = DatabaseManager()
@@ -2111,6 +2112,8 @@ class ChatWindow(QWidget):
             fullscreen_hint = getattr(Qt.WindowType, "WindowFullscreenButtonHint", None)
             if fullscreen_hint is not None:
                 flags |= fullscreen_hint
+            if self._chat_window_always_on_top:
+                flags |= Qt.WindowType.WindowStaysOnTopHint
             self.setWindowFlags(flags)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
@@ -2577,6 +2580,49 @@ class ChatWindow(QWidget):
     def _toggle_group_sidebar(self):
         self._set_group_sidebar_collapsed(not self._group_sidebar_collapsed)
 
+    def _toggle_chat_window_topmost(self):
+        self._set_chat_window_topmost(not self._chat_window_always_on_top)
+
+    def _set_chat_window_topmost(self, enabled: bool, persist: bool = True):
+        if not self._normal_window_mode:
+            return
+        enabled = bool(enabled)
+        if self._chat_window_always_on_top == enabled:
+            self._sync_chat_window_topmost_button()
+            return
+
+        geometry = self.geometry()
+        window_state = self.windowState()
+        was_visible = self.isVisible()
+        self._chat_window_always_on_top = enabled
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
+        self.setGeometry(geometry)
+        self.setWindowState(window_state)
+        if was_visible:
+            self.show()
+            if enabled:
+                self.raise_()
+                self.activateWindow()
+
+        if persist and self._cfg:
+            self._cfg.set("chat_window_always_on_top", self._chat_window_always_on_top)
+            try:
+                self._cfg.save()
+            except Exception:
+                pass
+        self._sync_chat_window_topmost_button()
+
+    def _sync_chat_window_topmost_button(self):
+        if getattr(self, "_topmost_btn", None) is None:
+            return
+        self._topmost_btn.setVisible(self._normal_window_mode)
+        if self._chat_window_always_on_top:
+            self._topmost_btn.setIcon(FluentIcon.UNPIN.icon())
+            self._topmost_btn.setToolTip(_tr("ChatWindow.window_unpin", default="取消窗口置顶"))
+        else:
+            self._topmost_btn.setIcon(FluentIcon.PIN.icon())
+            self._topmost_btn.setToolTip(_tr("ChatWindow.window_pin", default="窗口置顶"))
+
     def _sync_group_sidebar_toggle_buttons(self):
         collapse_text = _tr(
             "ChatWindow.chat_list_collapse",
@@ -2912,6 +2958,13 @@ class ChatWindow(QWidget):
         layout.addLayout(title_stack)
         layout.addStretch()
 
+        topmost_btn = IconButton(FluentIcon.PIN, bar)
+        topmost_btn.setFixedSize(32, 32)
+        topmost_btn.clicked.connect(self._toggle_chat_window_topmost)
+        topmost_btn.setVisible(self._normal_window_mode)
+        layout.addWidget(topmost_btn)
+        self._topmost_btn = topmost_btn
+
         group_toggle_btn = IconButton(FluentIcon.CARE_LEFT_SOLID, bar)
         group_toggle_btn.setFixedSize(32, 32)
         group_toggle_btn.clicked.connect(self._toggle_group_sidebar)
@@ -2935,6 +2988,7 @@ class ChatWindow(QWidget):
         self._title_avatar = avatar
         self._title_label = title
         self._update_title_avatar()
+        self._sync_chat_window_topmost_button()
         self._sync_group_sidebar_toggle_buttons()
 
         self._drag_start = None
@@ -3319,6 +3373,9 @@ class ChatWindow(QWidget):
         self._status_dot.setStyleSheet(f"background: {_TELEGRAM_ACCENT}; border-radius: 3px;")
         self._new_btn.apply_theme()
         self._close_btn.apply_theme()
+        if self._topmost_btn is not None:
+            self._topmost_btn.apply_theme()
+            self._sync_chat_window_topmost_button()
         if self._group_toggle_btn is not None:
             self._group_toggle_btn.apply_theme()
         if self._group_sidebar_toggle_btn is not None:
