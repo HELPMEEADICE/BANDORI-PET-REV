@@ -2,7 +2,9 @@ import json
 import sys
 from pathlib import Path
 
-from process_utils import clamp_int as _clamp_int
+from process_utils import clamp_int as _clamp_int, configure_debug_logging
+
+configure_debug_logging()
 
 
 PROTOCOL_VERSION = "2025-06-18"

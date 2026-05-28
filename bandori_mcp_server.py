@@ -4,7 +4,9 @@ from pathlib import Path
 
 from action_bus import publish_action, publish_lip_sync
 from ai_event_bus import publish_ai_event
-from process_utils import app_base_dir
+from process_utils import app_base_dir, configure_debug_logging
+
+configure_debug_logging()
 
 
 PROTOCOL_VERSION = "2025-06-18"
