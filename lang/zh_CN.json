@@ -664,6 +664,8 @@
     "ChatWindow.rename_private_label": "输入新的聊天显示名称，留空恢复角色默认名称：",
     "ChatWindow.pin_chat": "置顶聊天",
     "ChatWindow.unpin_chat": "取消置顶",
+    "ChatWindow.window_pin": "窗口置顶",
+    "ChatWindow.window_unpin": "取消窗口置顶",
     "ChatWindow.delete_chat": "删除聊天",
     "ChatWindow.rename_group_save": "保存",
     "ChatWindow.rename_group_cancel": "取消",
