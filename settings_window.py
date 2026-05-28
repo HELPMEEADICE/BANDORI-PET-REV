@@ -268,6 +268,7 @@ DATA_CONFIG_KEYS = {
         "dark_theme",
         "vsync",
         "game_topmost",
+        "chat_window_normal_window",
         "hide_live2d_model",
         "auto_start",
         "drag_locked",
@@ -1385,11 +1386,17 @@ class SettingsWindow(QWidget):
         self._selecting_model = False
         self._vsync = vsync
         self._game_topmost = bool(self._cfg.get("game_topmost", False)) if self._cfg else False
+        self._chat_window_normal_window = (
+            bool(self._cfg.get("chat_window_normal_window", False)) if self._cfg else False
+        )
         self._hide_live2d_model = (
             bool(self._cfg.get("hide_live2d_model", False)) if self._cfg else False
         )
         self._live2d_idle_actions_enabled = (
             bool(self._cfg.get("live2d_idle_actions_enabled", True)) if self._cfg else True
+        )
+        self._live2d_head_tracking_enabled = (
+            bool(self._cfg.get("live2d_head_tracking_enabled", True)) if self._cfg else True
         )
         self._auto_start_supported = is_startup_supported()
         self._auto_start_enabled = False
@@ -2836,6 +2843,19 @@ class SettingsWindow(QWidget):
         idle_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(idle_hint)
 
+        head_track_row = QHBoxLayout()
+        head_track_row.setSpacing(8)
+        head_track_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_head_tracking"), action_container))
+        self._live2d_head_tracking_switch = SwitchButton(action_container)
+        self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
+        self._live2d_head_tracking_switch.checkedChanged.connect(self._on_live2d_head_tracking_changed)
+        head_track_row.addWidget(head_track_label, 1)
+        head_track_row.addWidget(self._live2d_head_tracking_switch, 0, Qt.AlignmentFlag.AlignRight)
+        action_col.addLayout(head_track_row)
+        head_track_hint = _wrap_label(BodyLabel(_tr("SettingsWindow.live2d_head_tracking_hint"), action_container))
+        head_track_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        action_col.addWidget(head_track_hint)
+
         motion_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.default_motion"), action_container))
         motion_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(motion_label)
@@ -3057,6 +3077,12 @@ class SettingsWindow(QWidget):
         self._live2d_idle_actions_enabled = bool(checked)
         if self._cfg:
             self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
+            self._cfg.save()
+
+    def _on_live2d_head_tracking_changed(self, checked: bool):
+        self._live2d_head_tracking_enabled = bool(checked)
+        if self._cfg:
+            self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
             self._cfg.save()
 
     def _populate_default_motion_combo(self, item: dict):
@@ -6887,6 +6913,7 @@ class SettingsWindow(QWidget):
             self._cfg.set("dark_theme", self._theme_switch.isChecked())
             self._cfg.set("vsync", self._current_vsync_setting())
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
+            self._cfg.set("chat_window_normal_window", self._chat_window_normal_window_switch.isChecked())
             self._cfg.set("hide_live2d_model", self._hide_live2d_model_switch.isChecked())
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
             self._cfg.set("live2d_quality", self._live2d_quality)
@@ -7177,8 +7204,12 @@ class SettingsWindow(QWidget):
         self._opacity = float(self._cfg.get("opacity", self._opacity) or self._opacity)
         self._vsync = bool(self._cfg.get("vsync", self._vsync))
         self._game_topmost = bool(self._cfg.get("game_topmost", self._game_topmost))
+        self._chat_window_normal_window = bool(
+            self._cfg.get("chat_window_normal_window", self._chat_window_normal_window)
+        )
         self._hide_live2d_model = bool(self._cfg.get("hide_live2d_model", self._hide_live2d_model))
         self._live2d_idle_actions_enabled = bool(self._cfg.get("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled))
+        self._live2d_head_tracking_enabled = bool(self._cfg.get("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled))
 
         self._refresh_model_list()
         if self._selected_list_character:
@@ -7230,10 +7261,13 @@ class SettingsWindow(QWidget):
         if hasattr(self, "_opacity_slider"):
             self._opacity_slider.setValue(max(20, min(100, int(self._opacity * 100))))
             self._game_topmost_switch.setChecked(self._game_topmost)
+            self._chat_window_normal_window_switch.setChecked(self._chat_window_normal_window)
             self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
             self._auto_start_switch.setChecked(bool(self._cfg.get("auto_start", False)) if self._cfg else False)
             if hasattr(self, "_live2d_idle_actions_switch"):
                 self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
+            if hasattr(self, "_live2d_head_tracking_switch"):
+                self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
             self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=self._opacity_slider.value()))
         if hasattr(self, "_lang_combo"):
             language = str(self._cfg.get("language", "") or current_language()) if self._cfg else current_language()
@@ -9145,6 +9179,18 @@ class SettingsWindow(QWidget):
         game_topmost_row.addWidget(self._game_topmost_switch)
         layout.addLayout(game_topmost_row)
 
+        chat_window_label = BodyLabel(_tr("SettingsWindow.side_chat_window_normal"), panel)
+        chat_window_hint = _tr("SettingsWindow.side_chat_window_normal_tip")
+        chat_window_label.setToolTip(chat_window_hint)
+        self._chat_window_normal_window_switch = SwitchButton(panel)
+        self._chat_window_normal_window_switch.setChecked(self._chat_window_normal_window)
+        self._chat_window_normal_window_switch.setToolTip(chat_window_hint)
+        chat_window_row = QHBoxLayout()
+        chat_window_row.addWidget(chat_window_label)
+        chat_window_row.addStretch()
+        chat_window_row.addWidget(self._chat_window_normal_window_switch)
+        layout.addLayout(chat_window_row)
+
         hide_live2d_label = BodyLabel(_tr("SettingsWindow.side_hide_live2d_model"), panel)
         self._hide_live2d_model_switch = SwitchButton(panel)
         self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
@@ -9729,8 +9775,10 @@ class SettingsWindow(QWidget):
             "dark_theme": self._theme_switch.isChecked(),
             "vsync": self._current_vsync_setting(),
             "game_topmost": self._game_topmost_switch.isChecked(),
+            "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
             "live2d_idle_actions_enabled": self._live2d_idle_actions_switch.isChecked(),
+            "live2d_head_tracking_enabled": self._live2d_head_tracking_switch.isChecked(),
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
@@ -9767,8 +9815,10 @@ class SettingsWindow(QWidget):
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("game_topmost", settings["game_topmost"])
+            self._cfg.set("chat_window_normal_window", settings["chat_window_normal_window"])
             self._cfg.set("hide_live2d_model", settings["hide_live2d_model"])
             self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
+            self._cfg.set("live2d_head_tracking_enabled", settings["live2d_head_tracking_enabled"])
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])

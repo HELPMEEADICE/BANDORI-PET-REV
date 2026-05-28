@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland
+from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch
 
 configure_debug_logging()
 

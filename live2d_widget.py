@@ -51,6 +51,7 @@ class Live2DWidget(QOpenGLWidget):
         self._suppress_next_context_menu = False
         self._drag_locked = False
         self._initialized_gl = False
+        self._head_tracking_enabled = True
         
         self._fps = 120
         self._vsync = True
@@ -217,6 +218,12 @@ class Live2DWidget(QOpenGLWidget):
 
     def set_drag_locked(self, locked: bool):
         self._drag_locked = locked
+
+    def set_head_tracking_enabled(self, enabled: bool):
+        self._head_tracking_enabled = bool(enabled)
+        if not self._head_tracking_enabled:
+            self._last_cursor_x = -1
+            self._last_cursor_y = -1
 
     def set_model_path(self, model_json_path: str):
         self._pending_model = model_json_path
@@ -483,6 +490,8 @@ class Live2DWidget(QOpenGLWidget):
         self._model.Drag(local_x, local_y)
 
     def _poll_head_tracking(self):
+        if not self._head_tracking_enabled:
+            return
         pos = QCursor.pos()
         self._track_head_at_global(pos.x(), pos.y())
 

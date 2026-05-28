@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ipc_server_name
+from process_utils import app_base_dir, configure_debug_logging, install_parent_death_watch, ipc_server_name
 
 configure_debug_logging()
 
@@ -66,7 +66,9 @@ def main():
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
 
-    if sys.platform == "darwin":
+    normal_window_mode = bool(cfg.get("chat_window_normal_window", False))
+
+    if sys.platform == "darwin" and not normal_window_mode:
         import macos_patch
         macos_patch.hide_dock_icon()
     app.setApplicationName("BandoriPetChat")
