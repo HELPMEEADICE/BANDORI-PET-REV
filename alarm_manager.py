@@ -11,6 +11,7 @@ _log = logging.getLogger(__name__)
 from action_bus import publish_lip_sync
 from chat_config_snapshots import memory_extraction_api_config, tts_config_snapshot
 from database_manager import DatabaseManager
+from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
 from relationship_memory import build_relationship_context, user_key_from_config
@@ -162,7 +163,7 @@ class ReminderScheduler(QObject):
 
     def _trigger_alarm(self, alarm: dict, scheduled_at):
         character = self._reminder_character(alarm.get("character", ""))
-        title = "闹钟提醒"
+        title = _tr("Reminder.title_alarm", default="闹钟提醒")
         trigger_now = local_now()
         context = {
             "kind": "alarm",
@@ -193,8 +194,8 @@ class ReminderScheduler(QObject):
             pomodoro["phase"] = next_phase
             self._start_text_generation({
                 "kind": "pomodoro_break",
-                "title": "番茄钟休息",
-                "notification_title": "番茄钟提醒",
+                "title": _tr("Reminder.title_pomodoro_break", default="番茄钟休息"),
+                "notification_title": _tr("Reminder.notification_pomodoro", default="番茄钟提醒"),
                 "character": character,
                 "description": description,
                 "completed": completed,
@@ -213,8 +214,8 @@ class ReminderScheduler(QObject):
                 pomodoro["updated_at"] = isoformat(now)
                 self._start_text_generation({
                     "kind": "pomodoro_done",
-                    "title": "番茄钟完成",
-                    "notification_title": "番茄钟提醒",
+                    "title": _tr("Reminder.title_pomodoro_done", default="番茄钟完成"),
+                    "notification_title": _tr("Reminder.notification_pomodoro", default="番茄钟提醒"),
                     "character": character,
                     "description": description,
                     "completed": completed,
@@ -226,8 +227,8 @@ class ReminderScheduler(QObject):
             duration = FOCUS_SECONDS
             self._start_text_generation({
                 "kind": "pomodoro_focus",
-                "title": "番茄钟专注",
-                "notification_title": "番茄钟提醒",
+                "title": _tr("Reminder.title_pomodoro_focus", default="番茄钟专注"),
+                "notification_title": _tr("Reminder.notification_pomodoro", default="番茄钟提醒"),
                 "character": character,
                 "description": description,
                 "completed": completed,
@@ -302,10 +303,11 @@ class ReminderScheduler(QObject):
             display_name,
         ) if character else ""
         system_prompt = build_system_prompt(character, self._cfg) if character else ""
-        instruction = (
-            "你正在为桌宠应用生成闹钟或番茄钟提醒。请严格保持角色口吻，结合好感度、长期记忆、"
-            "当前提醒描述和提醒阶段输出。只输出 1 到 2 句简短中文提醒，不要解释设置过程，"
-            "不要使用 Markdown。可以在末尾保留一个合适动作标签。"
+        instruction = _tr(
+            "Reminder.llm_instruction",
+            default="你正在为桌宠应用生成闹钟或番茄钟提醒。请严格保持角色口吻，结合好感度、长期记忆、"
+                    "当前提醒描述和提醒阶段输出。只输出 1 到 2 句简短中文提醒，不要解释设置过程，"
+                    "不要使用 Markdown。可以在末尾保留一个合适动作标签。",
         )
         payload = {
             "reminder": context,
@@ -397,19 +399,19 @@ class ReminderScheduler(QObject):
         description = str(context.get("description", "") or "").strip()
         kind = context.get("kind", "")
         if kind == "alarm":
-            purpose = description or "时间到了"
-            return f"{display_name}：{purpose}，该准备啦。"
+            purpose = description or _tr("Reminder.fallback_alarm_default_purpose", default="时间到了")
+            return _tr("Reminder.fallback_alarm", default="{name}：{purpose}，该准备啦。", name=display_name, purpose=purpose)
         if kind == "pomodoro_break":
             phase = pomodoro_phase_label(context.get("phase", "short_break"))
-            purpose = f"“{description}”" if description else "这轮专注"
-            return f"{display_name}：{purpose}结束了，进入{phase}。"
+            purpose = f"\u201c{description}\u201d" if description else _tr("Reminder.fallback_break_default_purpose", default="这轮专注")
+            return _tr("Reminder.fallback_break", default="{name}：{purpose}结束了，进入{phase}。", name=display_name, purpose=purpose, phase=phase)
         if kind == "pomodoro_focus":
-            purpose = f"“{description}”" if description else "下一轮"
-            return f"{display_name}：休息结束，{purpose}开始专注吧。"
+            purpose = f"\u201c{description}\u201d" if description else _tr("Reminder.fallback_focus_default_purpose", default="下一轮")
+            return _tr("Reminder.fallback_focus", default="{name}：休息结束，{purpose}开始专注吧。", name=display_name, purpose=purpose)
         if kind == "pomodoro_done":
-            purpose = f"“{description}”" if description else "番茄钟"
-            return f"{display_name}：{purpose}完成了，辛苦啦。"
-        return f"{display_name}：提醒时间到了。"
+            purpose = f"\u201c{description}\u201d" if description else _tr("Reminder.fallback_done_default_purpose", default="番茄钟")
+            return _tr("Reminder.fallback_done", default="{name}：{purpose}完成了，辛苦啦。", name=display_name, purpose=purpose)
+        return _tr("Reminder.fallback_default", default="{name}：提醒时间到了。", name=display_name)
 
     def _show_reminder(self, context: dict, text: str, action: str):
         title = str(context.get("title", "") or "提醒")

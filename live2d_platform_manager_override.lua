@@ -288,7 +288,10 @@ if ffi.os == "Windows" then
 else
     function decodeTextureStream(stream)
         if stream.bytes ~= nil then
-            error("byte texture streams require the Windows GDI+ decoder in this build")
+            local label = stream.path and tostring(stream.path) or "<memory>"
+            local w, h, data = imageLoader.loadImageBytes(stream.bytes, label)
+            data = fillTransparentEdges(w, h, data, stream.bleed_passes or stream.edge_bleed_passes)
+            return w, h, data
         end
         local w, h, data = imageLoader.loadImage(stream.path)
         data = fillTransparentEdges(w, h, data, stream.bleed_passes or stream.edge_bleed_passes)

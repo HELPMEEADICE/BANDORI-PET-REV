@@ -4,6 +4,8 @@ import re
 import uuid
 from datetime import datetime, timedelta
 
+from i18n_manager import tr as _tr
+
 
 ALARM_CONFIG_KEY = "alarms"
 POMODORO_CONFIG_KEY = "pomodoros"
@@ -105,14 +107,23 @@ def normalize_repeat_days(value) -> list[int]:
 def repeat_days_label(days: list[int]) -> str:
     days = normalize_repeat_days(days)
     if not days:
-        return "不重复"
+        return _tr("ReminderCore.repeat_no_repeat", default="不重复")
     if days == list(range(7)):
-        return "每天"
+        return _tr("ReminderCore.repeat_daily", default="每天")
     if days == [0, 1, 2, 3, 4]:
-        return "工作日"
+        return _tr("ReminderCore.repeat_weekdays", default="工作日")
     if days == [5, 6]:
-        return "周末"
-    return "、".join(WEEKDAY_LABELS[day] for day in days)
+        return _tr("ReminderCore.repeat_weekends", default="周末")
+    weekday_labels = (
+        _tr("ReminderCore.weekday_mon", default="周一"),
+        _tr("ReminderCore.weekday_tue", default="周二"),
+        _tr("ReminderCore.weekday_wed", default="周三"),
+        _tr("ReminderCore.weekday_thu", default="周四"),
+        _tr("ReminderCore.weekday_fri", default="周五"),
+        _tr("ReminderCore.weekday_sat", default="周六"),
+        _tr("ReminderCore.weekday_sun", default="周日"),
+    )
+    return "、".join(weekday_labels[day] for day in days)
 
 
 def compute_next_alarm_at(time_text: str, repeat_days=None, after: datetime | None = None, date_text: str = "") -> datetime | None:
@@ -280,10 +291,10 @@ def create_pomodoro(repeat_count=1, description: str = "", character: str = "", 
 
 def pomodoro_phase_label(phase: str) -> str:
     return {
-        "focus": "专注中",
-        "short_break": "短休息",
-        "long_break": "长休息",
-        "completed": "已完成",
+        "focus": _tr("ReminderCore.phase_focus", default="专注中"),
+        "short_break": _tr("ReminderCore.phase_short_break", default="短休息"),
+        "long_break": _tr("ReminderCore.phase_long_break", default="长休息"),
+        "completed": _tr("ReminderCore.phase_completed", default="已完成"),
     }.get(str(phase or ""), str(phase or ""))
 
 
