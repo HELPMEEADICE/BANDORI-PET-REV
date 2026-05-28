@@ -127,7 +127,7 @@ DEFAULTS = {
     "language": "",
     "fps": 120,
     "opacity": 1.0,
-    "dark_theme": False,
+    "dark_theme": "follow_system",
     "vsync": True,
     "game_topmost": False,
     "hide_live2d_model": False,

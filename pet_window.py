@@ -16,7 +16,7 @@ from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
 
-from app_theme import apply_app_theme
+from app_theme import apply_app_theme, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
 from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
@@ -2589,7 +2589,9 @@ class PetWindow(QWidget):
                 self._sync_current_model_entry(path, save=False)
             self._cfg.set("fps", self._fps)
             self._cfg.set("opacity", self._opacity)
-            self._cfg.set("dark_theme", isDarkTheme())
+            current_theme = self._cfg.get("dark_theme", _THEME_FOLLOW_SYSTEM)
+            if isinstance(current_theme, bool) or current_theme in (_THEME_ON, _THEME_OFF):
+                self._cfg.set("dark_theme", _THEME_ON if isDarkTheme() else _THEME_OFF)
             self._cfg.set("vsync", self._vsync)
             self._cfg.set("game_topmost", self._game_topmost)
             self._cfg.set("hide_live2d_model", self._hide_live2d_model)
@@ -2690,7 +2692,8 @@ class PetWindow(QWidget):
 
     @staticmethod
     def _toggle_theme():
-        apply_app_theme(not isDarkTheme())
+        from qfluentwidgets import isDarkTheme as _is_dark
+        apply_app_theme(not _is_dark())
 
     def showEvent(self, event):
         super().showEvent(event)

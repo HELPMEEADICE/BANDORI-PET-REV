@@ -63,6 +63,9 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_HOVER,
     BANDORI_PRIMARY_SOFT_DARK,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
+    _THEME_ON,
+    _THEME_OFF,
+    _THEME_FOLLOW_SYSTEM,
     accent_color,
     apply_app_theme,
 )
@@ -6905,7 +6908,7 @@ class SettingsWindow(QWidget):
         if hasattr(self, "_opacity_slider"):
             self._cfg.set("fps", self._current_fps_setting())
             self._cfg.set("opacity", self._opacity_slider.value() / 100.0)
-            self._cfg.set("dark_theme", self._theme_switch.isChecked())
+            self._cfg.set("dark_theme", self._theme_combo.currentData())
             self._cfg.set("vsync", self._current_vsync_setting())
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
             self._cfg.set("chat_window_normal_window", self._chat_window_normal_window_switch.isChecked())
@@ -7292,11 +7295,16 @@ class SettingsWindow(QWidget):
                     break
             if language and language != current_language():
                 set_language(language)
-        apply_app_theme(bool(self._cfg.get("dark_theme", False)) if self._cfg else isDarkTheme())
-        if hasattr(self, "_theme_switch"):
-            self._theme_switch.blockSignals(True)
-            self._theme_switch.setChecked(bool(self._cfg.get("dark_theme", False)) if self._cfg else isDarkTheme())
-            self._theme_switch.blockSignals(False)
+        theme_value = self._cfg.get("dark_theme", _THEME_FOLLOW_SYSTEM) if self._cfg else _THEME_FOLLOW_SYSTEM
+        apply_app_theme(theme_value)
+        if hasattr(self, "_theme_combo"):
+            self._theme_combo.blockSignals(True)
+            if isinstance(theme_value, bool):
+                theme_value = _THEME_ON if theme_value else _THEME_OFF
+            idx = self._theme_combo.findData(theme_value)
+            if idx >= 0:
+                self._theme_combo.setCurrentIndex(idx)
+            self._theme_combo.blockSignals(False)
 
     def _emit_imported_settings(self, imported_sections: set[str]):
         if not self._cfg:
@@ -7499,17 +7507,31 @@ class SettingsWindow(QWidget):
         layout.addSpacing(8)
 
         theme_label = BodyLabel(_tr("SettingsWindow.side_dark_theme"), page)
-        self._theme_switch = SwitchButton(page)
-        self._theme_switch.setChecked(isDarkTheme())
-        self._theme_switch.checkedChanged.connect(
-            lambda v: apply_app_theme(v)
+        self._theme_combo = OpaqueDropDownComboBox(page)
+        self._theme_combo.setFixedHeight(36)
+        theme_options = [
+            (_THEME_OFF, _tr("SettingsWindow.theme_option_off")),
+            (_THEME_ON, _tr("SettingsWindow.theme_option_on")),
+            (_THEME_FOLLOW_SYSTEM, _tr("SettingsWindow.theme_option_follow_system")),
+        ]
+        current_theme = self._cfg.get("dark_theme", _THEME_FOLLOW_SYSTEM) if self._cfg else _THEME_FOLLOW_SYSTEM
+        if isinstance(current_theme, bool):
+            current_theme = _THEME_ON if current_theme else _THEME_OFF
+        selected_index = 0
+        for index, (value, label) in enumerate(theme_options):
+            self._theme_combo.addItem(label, userData=value)
+            if value == current_theme:
+                selected_index = index
+        self._theme_combo.setCurrentIndex(selected_index)
+        self._theme_combo.currentIndexChanged.connect(
+            lambda _: apply_app_theme(self._theme_combo.currentData())
         )
         theme_row = QHBoxLayout()
         theme_row.setContentsMargins(0, 0, 0, 0)
         theme_row.setSpacing(10)
         theme_row.addWidget(theme_label)
         theme_row.addStretch()
-        theme_row.addWidget(self._theme_switch)
+        theme_row.addWidget(self._theme_combo)
         layout.addLayout(theme_row)
 
         layout.addStretch()
@@ -9886,7 +9908,7 @@ class SettingsWindow(QWidget):
             "language": current_language(),
             "fps": self._current_fps_setting(),
             "opacity": self._opacity_slider.value() / 100.0,
-            "dark_theme": self._theme_switch.isChecked(),
+            "dark_theme": self._theme_combo.currentData(),
             "vsync": self._current_vsync_setting(),
             "game_topmost": self._game_topmost_switch.isChecked(),
             "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
