@@ -664,6 +664,8 @@
     "ChatWindow.rename_private_label": "新しいチャット表示名を入力してください（空欄でキャラクター名に戻ります）：",
     "ChatWindow.pin_chat": "チャットをピン留め",
     "ChatWindow.unpin_chat": "ピン留め解除",
+    "ChatWindow.window_pin": "ウィンドウを最前面に固定",
+    "ChatWindow.window_unpin": "最前面固定を解除",
     "ChatWindow.delete_chat": "チャットを削除",
     "ChatWindow.rename_group_save": "保存",
     "ChatWindow.rename_group_cancel": "キャンセル",

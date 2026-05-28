@@ -184,6 +184,7 @@ DEFAULTS = {
     "pinned_chat_keys": [],
     "fluent_chat_window_enabled": True,
     "chat_window_normal_window": False,
+    "chat_window_always_on_top": False,
     "group_chat_sidebar_ratio": 0.28,
     "group_chat_sidebar_collapsed": False,
     "pov_mode": "off",

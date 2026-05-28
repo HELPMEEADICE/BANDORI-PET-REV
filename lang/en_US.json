@@ -664,6 +664,8 @@
     "ChatWindow.rename_private_label": "Enter a chat display name, or leave it empty to restore the character name:",
     "ChatWindow.pin_chat": "Pin chat",
     "ChatWindow.unpin_chat": "Unpin chat",
+    "ChatWindow.window_pin": "Keep window on top",
+    "ChatWindow.window_unpin": "Stop keeping window on top",
     "ChatWindow.delete_chat": "Delete chat",
     "ChatWindow.rename_group_save": "Save",
     "ChatWindow.rename_group_cancel": "Cancel",
