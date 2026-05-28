@@ -6,6 +6,7 @@ from pathlib import Path
 from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
+from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros
 
 BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -203,6 +204,9 @@ DEFAULTS = {
     "chat_integration_include_context": True,
     "chat_integration_port": 38473,
     "chat_integration_token": "",
+    "alarms": [],
+    "pomodoros": [],
+    "reminder_display_mode": "floating",
     "tts_enabled": False,
     "tts_api_url": "http://127.0.0.1:9880/",
     "tts_language": "Chinese",
@@ -412,6 +416,11 @@ class ConfigManager:
         self._normalize_llm_api_profiles()
         self._normalize_mcp_servers()
         self._normalize_computer_use_settings()
+        self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
+        self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
+        self._data["reminder_display_mode"] = normalize_display_mode(
+            self._data.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
+        )
         self._data["llm_web_search_engine"] = _normalize_web_search_engine(
             self._data.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
         )

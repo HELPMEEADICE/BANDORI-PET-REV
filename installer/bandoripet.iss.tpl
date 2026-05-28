@@ -52,6 +52,8 @@ Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\BandoriPet"; Filen
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BandoriPet"; ValueData: """{app}\BandoriPet.exe"""; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\BandoriPet"; ValueType: string; ValueName: "InstallerType"; ValueData: "inno"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\BandoriPet"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\BandoriPet.exe"; Description: "{cm:LaunchProgram,BandoriPet}"; Flags: nowait postinstall skipifsilent

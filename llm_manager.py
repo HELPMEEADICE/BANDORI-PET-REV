@@ -15,6 +15,7 @@ from llm_thinking import (
 )
 from local_tools import (
     chat_completion_tools,
+    reminder_tools_enabled,
     responses_native_tools,
     run_local_tool_call,
     should_prefetch_web_search,
@@ -526,7 +527,12 @@ class LLMStreamWorker(QThread):
     def run(self):
         try:
             messages = [dict(message) for message in self._messages]
-            use_tools = self._web_search or bool(self._tool_config.get("llm_mcp_enabled", False)) or bool(self._tool_config.get("computer_use_enabled", False))
+            use_tools = (
+                self._web_search
+                or reminder_tools_enabled(self._tool_config)
+                or bool(self._tool_config.get("llm_mcp_enabled", False))
+                or bool(self._tool_config.get("computer_use_enabled", False))
+            )
             if use_tools:
                 messages = with_local_tool_system_hint(messages, self._tool_config)
             if use_tools and self._web_search:

@@ -49,8 +49,10 @@ def detect_update_channel() -> str:
     base_dir = app_base_dir()
     if not getattr(sys, "frozen", False):
         return "source" if _is_git_repo(base_dir) else "source_unmanaged"
-    if sys.platform == "win32" and _looks_like_msi_install(base_dir):
-        return "msi"
+    if sys.platform == "win32":
+        install_type = _detect_windows_install_type(base_dir)
+        if install_type:
+            return install_type
     return "portable"
 
 
@@ -82,6 +84,15 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
     if info.action == "install_msi":
         installer_path = _download_asset(info.download_url, info.asset_name)
         _launch_msi_updater(installer_path)
+        return UpdateResult(
+            True,
+            "The installer has started. BandoriPet will close and reopen after installation.",
+            requires_restart=True,
+            exits_app=True,
+        )
+    if info.action == "install_inno":
+        installer_path = _download_asset(info.download_url, info.asset_name)
+        _launch_inno_updater(installer_path)
         return UpdateResult(
             True,
             "The installer has started. BandoriPet will close and reopen after installation.",
@@ -238,7 +249,8 @@ def _check_release_update(channel: str) -> UpdateInfo:
     if asset is None:
         info.detail = (
             "A newer release exists, but no matching installer asset was found. "
-            "Publish a .zip portable package or .msi installer in the latest GitHub Release."
+            "Publish a .zip portable package, .exe Inno Setup installer, or .msi installer "
+            "in the latest GitHub Release."
         )
         return info
 
@@ -279,6 +291,9 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
         if channel == "msi":
             if not lower.endswith(".msi"):
                 continue
+        elif channel == "inno":
+            if not lower.endswith(".exe"):
+                continue
         elif channel == "portable":
             if not lower.endswith(".zip") and not lower.endswith(".msi"):
                 continue
@@ -296,6 +311,10 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
             score += 6
         if lower.endswith(".msi"):
             score += 5 if channel == "msi" else 1
+        if lower.endswith(".exe") and channel == "inno":
+            score += 5
+            if "setup" in lower or "installer" in lower:
+                score += 2
         candidates.append((score, asset))
 
     if not candidates:
@@ -307,6 +326,8 @@ def _asset_action(asset_name: str, channel: str) -> str:
     lower = asset_name.lower()
     if lower.endswith(".msi"):
         return "install_msi"
+    if lower.endswith(".exe") and channel == "inno":
+        return "install_inno"
     if lower.endswith(".zip") and channel == "portable":
         return "portable_zip"
     return ""
@@ -431,32 +452,47 @@ if (Test-Path -LiteralPath $app) {{
     _launch_powershell_script(_write_update_script("apply-msi", script))
 
 
-def _looks_like_msi_install(base_dir: Path) -> bool:
-    if _registry_points_to_install(base_dir):
-        return True
-    base = str(base_dir.resolve()).lower()
-    installer_roots = [
-        os.environ.get("ProgramFiles", ""),
-        os.environ.get("ProgramFiles(x86)", ""),
-        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs") if os.environ.get("LOCALAPPDATA") else "",
-    ]
-    return any(root and base.startswith(str(Path(root).resolve()).lower()) for root in installer_roots)
+def _launch_inno_updater(installer_path: Path) -> None:
+    target_dir = app_base_dir()
+    app_exe = target_dir / MAIN_EXECUTABLE
+    process_names = ", ".join(_ps_quote(name) for name in _PROCESS_NAMES)
+    args = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$installer = {_ps_quote(installer_path)}
+$target = {_ps_quote(target_dir)}
+$app = {_ps_quote(app_exe)}
+$processNames = @({process_names})
+Start-Sleep -Seconds 1
+Get-Process -ErrorAction SilentlyContinue |
+    Where-Object {{ $processNames -contains $_.ProcessName }} |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $installer -ArgumentList {_ps_quote(args)} -Wait
+if (Test-Path -LiteralPath $app) {{
+    Start-Process -FilePath $app -WorkingDirectory $target
+}}
+"""
+    _launch_powershell_script(_write_update_script("apply-inno", script))
 
 
-def _registry_points_to_install(base_dir: Path) -> bool:
+def _detect_windows_install_type(base_dir: Path) -> str:
     if sys.platform != "win32":
-        return False
+        return ""
     try:
         import winreg
     except Exception:
-        return False
+        return ""
+
+    base = str(base_dir.resolve()).lower()
+    marker_type = _registry_marker_install_type(winreg, base)
+    if marker_type:
+        return marker_type
 
     uninstall_paths = (
         r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
         r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
     )
     hives = (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE)
-    base = str(base_dir.resolve()).lower()
     for hive in hives:
         for root_path in uninstall_paths:
             try:
@@ -471,13 +507,63 @@ def _registry_points_to_install(base_dir: Path) -> bool:
                                     continue
                                 install_location = _reg_value(winreg, subkey, "InstallLocation")
                                 display_icon = _reg_value(winreg, subkey, "DisplayIcon")
-                                if _path_matches_base(install_location, base) or _path_matches_base(display_icon, base):
-                                    return True
+                                inno_app_path = _reg_value(winreg, subkey, "Inno Setup: App Path")
+                                if not (
+                                    _path_matches_base(install_location, base)
+                                    or _path_matches_base(display_icon, base)
+                                    or _path_matches_base(inno_app_path, base)
+                                ):
+                                    continue
+                                return _registry_entry_install_type(winreg, subkey, subkey_name)
                         except OSError:
                             continue
             except OSError:
                 continue
-    return False
+    return ""
+
+
+def _registry_marker_install_type(winreg, base: str) -> str:
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, rf"Software\{APP_NAME}") as key:
+                install_dir = _reg_value(winreg, key, "InstallDir")
+                if not install_dir or not _path_matches_base(install_dir, base):
+                    continue
+                install_type = _normalize_install_type(_reg_value(winreg, key, "InstallerType"))
+                if install_type:
+                    return install_type
+        except OSError:
+            continue
+    return ""
+
+
+def _registry_entry_install_type(winreg, subkey, subkey_name: str) -> str:
+    install_type = _normalize_install_type(_reg_value(winreg, subkey, "InstallerType"))
+    if install_type:
+        return install_type
+
+    uninstall = _reg_value(winreg, subkey, "UninstallString").lower()
+    quiet_uninstall = _reg_value(winreg, subkey, "QuietUninstallString").lower()
+    windows_installer = _reg_value(winreg, subkey, "WindowsInstaller")
+    if windows_installer == "1" or "msiexec" in uninstall or "msiexec" in quiet_uninstall:
+        return "msi"
+
+    if _reg_value(winreg, subkey, "Inno Setup: App Path"):
+        return "inno"
+    if "unins" in uninstall and ".exe" in uninstall:
+        return "inno"
+    if re.fullmatch(r"\{[0-9a-fA-F-]{36}\}", subkey_name):
+        return "msi"
+    return "inno"
+
+
+def _normalize_install_type(value: str) -> str:
+    lower = (value or "").strip().lower()
+    if lower in {"inno", "inno_setup", "inno setup", "exe"}:
+        return "inno"
+    if lower == "msi":
+        return "msi"
+    return ""
 
 
 def _reg_value(winreg, key, name: str) -> str:

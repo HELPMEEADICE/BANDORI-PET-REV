@@ -4,9 +4,16 @@ import threading
 import os
 import uuid
 
-from process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from process_utils import (
+    app_base_dir,
+    ensure_windows_app_user_model_shortcut,
+    ipc_server_name,
+    process_program_and_args,
+    set_windows_app_user_model_id,
+)
 
 BASE_DIR = str(app_base_dir())
+APP_AUMID = "BandoriPet"
 
 from PySide6.QtCore import Qt, QObject, QProcess, Signal
 from PySide6.QtNetwork import QLocalServer
@@ -22,6 +29,7 @@ from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
 from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
+from alarm_manager import ReminderScheduler
 
 
 class AiEventBridge(QObject):
@@ -53,13 +61,18 @@ def main():
     if sys.platform != "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
     Live2DWidget.configure_default_surface_format()
+    icon_path = os.path.join(BASE_DIR, "logo.ico")
+    ensure_windows_app_user_model_shortcut(APP_AUMID, "BandoriPet", icon_path)
+    set_windows_app_user_model_id(APP_AUMID)
 
     app = QApplication(sys.argv)
 
     if sys.platform == "darwin":
         import macos_patch
         macos_patch.hide_dock_icon()
+    app.setWindowIcon(load_tray_icon())
     app.setApplicationName("BandoriPet")
+    app.setApplicationDisplayName("BandoriPet")
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(False)
 
@@ -70,6 +83,7 @@ def main():
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
+    reminder_ref = {"scheduler": None}
     ai_event_bridge = AiEventBridge()
 
     char = cfg.get("character", "")
@@ -149,6 +163,46 @@ def main():
             write_ipc_line(socket, line)
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
+
+    def broadcast_reminder_event(event: dict):
+        payload = json.dumps(event, ensure_ascii=False)
+        broadcast_ipc_line(f"REMINDER_EVENT\t{payload}")
+
+    def show_system_notification(app_title: str, title: str, text: str):
+        if tray_icon is None:
+            return
+        icon = load_tray_icon()
+        if not icon.isNull():
+            app.setWindowIcon(icon)
+            tray_icon.setIcon(icon)
+        set_windows_app_user_model_id(APP_AUMID)
+        app.setApplicationName("BandoriPet")
+        app.setApplicationDisplayName("BandoriPet")
+        tray_icon.showMessage(
+            str(title or "提醒"),
+            str(text or ""),
+            QSystemTrayIcon.MessageIcon.Information,
+            15_000,
+        )
+
+    def init_reminder_scheduler():
+        scheduler = reminder_ref.get("scheduler")
+        if scheduler is not None:
+            scheduler.stop()
+            scheduler.deleteLater()
+        reminder_ref["scheduler"] = ReminderScheduler(
+            cfg,
+            mgr,
+            broadcast_reminder_event,
+            show_system_notification,
+            app,
+        )
+
+    def stop_reminder_scheduler():
+        scheduler = reminder_ref.get("scheduler")
+        if scheduler is not None:
+            scheduler.stop()
+        reminder_ref["scheduler"] = None
 
     def stop_ai_status_server():
         server = ai_status_ref.get("server")
@@ -293,6 +347,8 @@ def main():
             broadcast_ipc_line(line)
         elif line.startswith("CHAT_EVENT\t"):
             broadcast_ipc_line(line)
+        elif line.startswith("REMINDER_EVENT\t"):
+            broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
             if line.startswith("SETTINGS\t"):
@@ -421,6 +477,9 @@ def main():
             "pov_role_character",
             "model_action_settings",
             "models",
+            "alarms",
+            "pomodoros",
+            "reminder_display_mode",
         ):
             value = data.get(key)
             if value is not None:
@@ -428,6 +487,9 @@ def main():
         cfg.save()
         init_ai_status_server()
         init_chat_integration_server()
+        scheduler = reminder_ref.get("scheduler")
+        if scheduler is not None:
+            scheduler.reload()
 
     def launch_pet():
         nonlocal mgr
@@ -527,7 +589,10 @@ def main():
             except json.JSONDecodeError:
                 pass
         elif line == "LAUNCH":
+            settings_process_ref["launched"] = True
             launch_pet()
+        elif line == "EXIT":
+            quit_all()
 
     def clear_settings_process(process):
         if not isValid(process):
@@ -535,7 +600,20 @@ def main():
         if settings_process_ref.get("process") is process:
             settings_process_ref.pop("process", None)
             settings_process_ref.pop("show_launch", None)
+            settings_process_ref.pop("first_run_wizard", None)
+            settings_process_ref.pop("launched", None)
         process.deleteLater()
+
+    def on_settings_process_finished(process):
+        should_quit = (
+            settings_process_ref.get("process") is process
+            and settings_process_ref.get("show_launch", False)
+            and settings_process_ref.get("first_run_wizard", False)
+            and not settings_process_ref.get("launched", False)
+        )
+        clear_settings_process(process)
+        if should_quit:
+            quit_all()
 
     def launch_settings_process(show_launch=True):
         nonlocal mgr
@@ -567,9 +645,11 @@ def main():
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
-        process.finished.connect(lambda *args, p=process: clear_settings_process(p))
+        process.finished.connect(lambda *args, p=process: on_settings_process_finished(p))
         settings_process_ref["process"] = process
         settings_process_ref["show_launch"] = show_launch
+        settings_process_ref["first_run_wizard"] = first_run_wizard
+        settings_process_ref["launched"] = False
         process.start()
 
     model_valid = bool(
@@ -583,10 +663,12 @@ def main():
     init_ipc_server()
     init_ai_status_server()
     init_chat_integration_server()
+    init_reminder_scheduler()
 
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
+    app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(close_settings_process)
     app.aboutToQuit.connect(close_pet_processes)
