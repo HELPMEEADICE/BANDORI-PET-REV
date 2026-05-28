@@ -61,6 +61,7 @@ from chat_config_snapshots import (
     tool_config_snapshot,
     tts_config_snapshot,
 )
+from local_tools import reminder_tools_enabled
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -5309,7 +5310,8 @@ class ChatWindow(QWidget):
         )
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
         show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
-        if self._use_responses_api(api_url) and not web_search:
+        use_reminder_tools = reminder_tools_enabled(tool_config)
+        if self._use_responses_api(api_url) and not web_search and not use_reminder_tools:
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,

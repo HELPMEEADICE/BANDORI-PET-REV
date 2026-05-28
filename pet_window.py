@@ -1785,6 +1785,11 @@ class PetWindow(QWidget):
                 self._handle_chat_event(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
+        elif line.startswith("REMINDER_EVENT\t"):
+            try:
+                self._handle_reminder_event(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
         elif line == "SHUTDOWN":
             self._quit()
 
@@ -1834,6 +1839,37 @@ class PetWindow(QWidget):
         if not isinstance(event, dict):
             return
         if not self._chat_integration_overlay_enabled:
+            return
+        target = str(
+            event.get("character")
+            or event.get("target_character")
+            or ""
+        ).strip()
+        if target and target != self._current_char:
+            return
+
+        action = str(event.get("action", "") or "").strip()
+        if action:
+            self._on_chat_action(action)
+
+        if not self.isVisible():
+            return
+        should_position = (
+            self._compact_ai_window is None
+            or not self._compact_ai_window.isVisible()
+            or bool(event.get("anchor_to_pet"))
+        )
+        self._sync_compact_ai_window(
+            allow_create=True,
+            force_visible=True,
+            reposition=should_position,
+        )
+        if self._compact_ai_window is None:
+            return
+        self._compact_ai_window.apply_ai_event(event)
+
+    def _handle_reminder_event(self, event: dict):
+        if not isinstance(event, dict):
             return
         target = str(
             event.get("character")

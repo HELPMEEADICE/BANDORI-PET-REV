@@ -10,9 +10,22 @@ from html import unescape
 
 from computer_tools import computer_tools, is_computer_tool_name, run_computer_tool
 from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_proxy_tools
+from reminder_core import (
+    ALARM_CONFIG_KEY,
+    POMODORO_CONFIG_KEY,
+    REMINDER_DISPLAY_MODE_KEY,
+    create_alarm,
+    create_pomodoro,
+    default_reminder_character,
+    normalize_alarms,
+    normalize_pomodoros,
+    repeat_days_label,
+)
 
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+CREATE_ALARM_TOOL_NAME = "create_alarm"
+START_POMODORO_TOOL_NAME = "start_pomodoro"
 _FORCE_WEB_SEARCH_PATTERN = re.compile(
     r"(联网|上网|搜(?:索|一下)?|查(?:一下|找)?|帮我(?:搜|查|找)|"
     r"最新|实时|现在|当前|今天|今日|昨天|明天|新闻|价格|股价|汇率|"
@@ -57,6 +70,77 @@ CHAT_COMPLETIONS_WEB_SEARCH_TOOL = {
     },
 }
 
+CHAT_COMPLETIONS_REMINDER_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": CREATE_ALARM_TOOL_NAME,
+            "description": (
+                "Create an alarm/reminder in BandoriPet when the user asks to set an alarm. "
+                "Time is required. Use the user's local current date from context when resolving relative dates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "time": {
+                        "type": "string",
+                        "description": "Required local time, preferably HH:MM in 24-hour format.",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Optional one-time local date as YYYY-MM-DD, for requests like tomorrow or a specific date.",
+                    },
+                    "repeat": {
+                        "type": "string",
+                        "description": "Repeat rule: none, daily, weekdays, weekends, or custom.",
+                    },
+                    "repeat_days": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "For custom weekly repeat, use values such as mon/tue/wed/thu/fri/sat/sun.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional alarm purpose, such as drink water, meeting, wake up, study.",
+                    },
+                    "character": {
+                        "type": "string",
+                        "description": "Optional reminder character key or display name. Omit to use the first visible Live2D character.",
+                    },
+                },
+                "required": ["time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": START_POMODORO_TOOL_NAME,
+            "description": (
+                "Start a Pomodoro timer in BandoriPet when the user asks for a Pomodoro/focus timer. "
+                "Each small cycle is 25 minutes focus plus a break; a 15-minute long break is inserted after every 4 focus cycles."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repeat_count": {
+                        "type": "integer",
+                        "description": "Number of 25-minute focus cycles to run. Default 1.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional Pomodoro purpose, such as writing, coding, homework.",
+                    },
+                    "character": {
+                        "type": "string",
+                        "description": "Optional reminder character key or display name. Omit to use the first visible Live2D character.",
+                    },
+                },
+            },
+        },
+    },
+]
+
 
 def web_search_system_hint(include_sources: bool = True) -> str:
     source_rule = (
@@ -81,9 +165,16 @@ def web_search_system_hint(include_sources: bool = True) -> str:
 def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
     tools = [CHAT_COMPLETIONS_WEB_SEARCH_TOOL] if web_search_enabled else []
     config = tool_config or {}
+    if reminder_tools_enabled(config):
+        tools.extend(CHAT_COMPLETIONS_REMINDER_TOOLS)
     tools.extend(mcp_proxy_tools(config))
     tools.extend(computer_tools(config))
     return tools
+
+
+def reminder_tools_enabled(tool_config: dict | None = None) -> bool:
+    del tool_config
+    return True
 
 
 def responses_native_tools(tool_config: dict | None = None) -> list[dict]:
@@ -101,6 +192,11 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
     if config.get("llm_mcp_enabled", False):
         hints.append(
             "可用外部能力时，优先根据用户意图谨慎调用；不要编造工具执行结果。"
+        )
+    if reminder_tools_enabled(config):
+        hints.append(
+            "当用户表达设置闹钟、提醒、番茄钟、专注计时等明确意图时，可以直接调用对应工具创建；"
+            "时间不明确时先追问，不要凭空编造具体时间。工具成功后，用角色口吻简短确认。"
         )
     if config.get("computer_use_enabled", False):
         if config.get("computer_use_auto_detect", True):
@@ -147,6 +243,8 @@ def with_web_search_system_hint(messages: list[dict], include_sources: bool = Tr
 
 
 def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
+    if name in {CREATE_ALARM_TOOL_NAME, START_POMODORO_TOOL_NAME}:
+        return _run_reminder_tool_call(name, arguments, tool_config or {})
     if name != WEB_SEARCH_TOOL_NAME:
         if is_mcp_tool_name(name):
             return {"content": call_mcp_tool(name, arguments), "extra_messages": []}
@@ -171,6 +269,101 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     max_results = max(1, min(8, max_results))
     engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
     return {"content": web_search(query, max_results=max_results, engine=engine), "extra_messages": []}
+
+
+def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    try:
+        from config_manager import ConfigManager
+        from settings_bus import publish_settings
+    except Exception as exc:
+        return {"content": f"提醒工具不可用：{exc}", "extra_messages": []}
+
+    cfg = ConfigManager()
+    cfg.load()
+    character = _resolve_reminder_character(arguments.get("character", ""), cfg)
+    alarms = normalize_alarms(cfg.get(ALARM_CONFIG_KEY, []))
+    pomodoros = normalize_pomodoros(cfg.get(POMODORO_CONFIG_KEY, []))
+
+    try:
+        if name == CREATE_ALARM_TOOL_NAME:
+            repeat_value = arguments.get("repeat_days")
+            if not repeat_value:
+                repeat_value = arguments.get("repeat", "")
+            alarm = create_alarm(
+                arguments.get("time", ""),
+                repeat_value,
+                arguments.get("description", ""),
+                character,
+                arguments.get("date", ""),
+            )
+            alarms.append(alarm)
+            cfg.set(ALARM_CONFIG_KEY, alarms)
+            cfg.set(POMODORO_CONFIG_KEY, pomodoros)
+            cfg.save()
+            payload = _reminder_settings_payload(cfg, alarms, pomodoros)
+            publish_settings(payload)
+            next_at = alarm.get("next_at", "").replace("T", " ")
+            repeat_label = repeat_days_label(alarm.get("repeat_days", []))
+            desc = alarm.get("description", "") or "无描述"
+            return {
+                "content": f"已创建闹钟：{alarm['time']}，{repeat_label}，下次 {next_at}，描述：{desc}。",
+                "extra_messages": [],
+            }
+        if name == START_POMODORO_TOOL_NAME:
+            pomodoro = create_pomodoro(
+                arguments.get("repeat_count", 1),
+                arguments.get("description", ""),
+                character,
+            )
+            pomodoros.append(pomodoro)
+            cfg.set(ALARM_CONFIG_KEY, alarms)
+            cfg.set(POMODORO_CONFIG_KEY, pomodoros)
+            cfg.save()
+            payload = _reminder_settings_payload(cfg, alarms, pomodoros)
+            publish_settings(payload)
+            desc = pomodoro.get("description", "") or "无描述"
+            return {
+                "content": f"已启动番茄钟：{pomodoro['repeat_count']} 次专注循环，描述：{desc}。",
+                "extra_messages": [],
+            }
+    except Exception as exc:
+        return {"content": f"创建提醒失败：{exc}", "extra_messages": []}
+    return {"content": "未知提醒工具。", "extra_messages": []}
+
+
+def _reminder_settings_payload(cfg, alarms: list[dict], pomodoros: list[dict]) -> dict:
+    return {
+        ALARM_CONFIG_KEY: alarms,
+        POMODORO_CONFIG_KEY: pomodoros,
+        REMINDER_DISPLAY_MODE_KEY: cfg.get(REMINDER_DISPLAY_MODE_KEY, "floating"),
+    }
+
+
+def _resolve_reminder_character(value: str, cfg) -> str:
+    requested = str(value or "").strip()
+    fallback = default_reminder_character(cfg)
+    if not requested:
+        return fallback
+    try:
+        from model_manager import ModelManager
+        manager = ModelManager(scan_models=False)
+        if requested in manager.characters:
+            return requested
+        requested_lower = requested.lower()
+        for character in manager.characters:
+            display = manager.get_display_name(character)
+            if requested == display or requested_lower == str(display).lower():
+                return character
+    except Exception:
+        pass
+    return fallback
 
 
 def should_prefetch_web_search(text: str) -> bool:

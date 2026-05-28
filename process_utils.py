@@ -42,6 +42,71 @@ def set_windows_app_user_model_id(app_id: str) -> None:
         pass
 
 
+def ensure_windows_app_user_model_shortcut(
+    app_id: str,
+    name: str = "BandoriPet",
+    icon_path: str = "",
+    target_path: str = "",
+    arguments: str = "",
+    working_dir: str = "",
+) -> bool:
+    if sys.platform != "win32" or not app_id:
+        return False
+    try:
+        import pythoncom
+        from win32com.propsys import propsys, pscon
+        from win32com.shell import shell
+
+        base_dir = app_base_dir()
+        if not target_path:
+            target_path = sys.executable
+        if not working_dir:
+            working_dir = str(base_dir)
+        if not icon_path:
+            candidate = base_dir / "logo.ico"
+            icon_path = str(candidate) if candidate.exists() else target_path
+        if not arguments and not getattr(sys, "frozen", False):
+            main_py = base_dir / "main.py"
+            if main_py.exists():
+                arguments = f'"{main_py}"'
+
+        programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        programs.mkdir(parents=True, exist_ok=True)
+        shortcut_path = programs / f"{_safe_shortcut_name(name)}.lnk"
+
+        pythoncom.CoInitialize()
+        try:
+            link = pythoncom.CoCreateInstance(
+                shell.CLSID_ShellLink,
+                None,
+                pythoncom.CLSCTX_INPROC_SERVER,
+                shell.IID_IShellLink,
+            )
+            link.SetPath(str(target_path))
+            link.SetArguments(str(arguments or ""))
+            link.SetWorkingDirectory(str(working_dir or ""))
+            if icon_path:
+                link.SetIconLocation(str(icon_path), 0)
+
+            store = link.QueryInterface(propsys.IID_IPropertyStore)
+            store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(str(app_id)))
+            store.Commit()
+
+            persist = link.QueryInterface(pythoncom.IID_IPersistFile)
+            persist.Save(str(shortcut_path), 0)
+        finally:
+            pythoncom.CoUninitialize()
+        return True
+    except Exception:
+        return False
+
+
+def _safe_shortcut_name(name: str) -> str:
+    cleaned = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in str(name or "BandoriPet"))
+    cleaned = cleaned.strip().strip(".")
+    return cleaned or "BandoriPet"
+
+
 def ipc_server_name() -> str:
     override = os.environ.get("BANDORI_PET_IPC_SERVER_NAME", "").strip()
     if override:
