@@ -122,9 +122,11 @@ from startup_manager import (
     set_startup_enabled,
 )
 from live2d_click_actions import (
+    CLICK_MOTION_AUTO,
     CLICK_MOTION_NONE,
     CLICK_MOTION_RANDOM,
     CLICK_MOTION_REGIONS,
+    CLICK_MOTION_SPECIAL_VALUES,
     normalize_click_motion_actions,
 )
 from live2d_quality import LIVE2D_SCALE_MAX, LIVE2D_SCALE_MIN, clamp_live2d_scale, normalize_live2d_quality
@@ -2892,6 +2894,44 @@ class SettingsWindow(QWidget):
         click_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         action_col.addWidget(click_hint)
 
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(8)
+        self._click_motion_profile_combo = OpaqueDropDownComboBox(action_container)
+        self._click_motion_profile_combo.setFixedHeight(36)
+        self._click_motion_profile_combo.currentIndexChanged.connect(self._on_click_motion_profile_selected)
+        profile_row.addWidget(self._click_motion_profile_combo, 1)
+
+        delete_profile_btn = PushButton(FluentIcon.DELETE, _tr("SettingsWindow.click_motion_profile_delete", default="删除"), action_container)
+        delete_profile_btn.setFixedHeight(36)
+        delete_profile_btn.clicked.connect(self._delete_click_motion_profile)
+        profile_row.addWidget(delete_profile_btn)
+        action_col.addLayout(profile_row)
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        self._click_motion_profile_name = FluentContextLineEdit(action_container)
+        self._click_motion_profile_name.setPlaceholderText(_tr("SettingsWindow.click_motion_profile_name_placeholder", default="自定义档案名称"))
+        self._click_motion_profile_name.setFixedHeight(36)
+        name_row.addWidget(self._click_motion_profile_name, 1)
+
+        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.click_motion_profile_save", default="保存"), action_container)
+        save_profile_btn.setFixedHeight(36)
+        save_profile_btn.clicked.connect(self._save_click_motion_profile)
+        name_row.addWidget(save_profile_btn)
+        action_col.addLayout(name_row)
+
+        apply_row = QHBoxLayout()
+        apply_row.setSpacing(8)
+        self._click_motion_apply_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.click_motion_apply", default="应用当前动作反馈"), action_container)
+        self._click_motion_apply_btn.setFixedHeight(36)
+        self._click_motion_apply_btn.clicked.connect(self._apply_click_motion_profile)
+        apply_row.addWidget(self._click_motion_apply_btn, 1)
+
+        self._click_motion_reset_btn = PushButton(_tr("SettingsWindow.click_motion_reset", default="恢复默认"), action_container)
+        self._click_motion_reset_btn.clicked.connect(self._reset_click_motions)
+        apply_row.addWidget(self._click_motion_reset_btn)
+        action_col.addLayout(apply_row)
+
         click_grid_widget = QWidget(action_container)
         click_grid = QGridLayout(click_grid_widget)
         click_grid.setContentsMargins(0, 0, 0, 0)
@@ -2911,11 +2951,17 @@ class SettingsWindow(QWidget):
             combo.currentIndexChanged.connect(
                 lambda index, r=region: self._on_click_motion_changed(r, index)
             )
+            combo.activated.connect(
+                lambda idx, r=region, cb=combo: self._on_click_combo_preview(r, cb, idx)
+            )
             expression_combo = OpaqueDropDownComboBox(click_grid_widget)
             expression_combo.setMinimumWidth(135)
             expression_combo.setMaximumWidth(140)
             expression_combo.currentIndexChanged.connect(
                 lambda index, r=region: self._on_click_expression_changed(r, index)
+            )
+            expression_combo.activated.connect(
+                lambda idx, r=region, cb=expression_combo: self._on_expression_combo_preview(r, cb, idx)
             )
             self._click_motion_combos[region] = combo
             self._click_expression_combos[region] = expression_combo
@@ -2925,10 +2971,6 @@ class SettingsWindow(QWidget):
         click_grid.setColumnStretch(0, 1)
         click_grid.setColumnStretch(1, 1)
         action_col.addWidget(click_grid_widget)
-
-        self._click_motion_reset_btn = PushButton(_tr("SettingsWindow.click_motion_reset"), action_container)
-        self._click_motion_reset_btn.clicked.connect(self._reset_click_motions)
-        action_col.addWidget(self._click_motion_reset_btn, 0, Qt.AlignmentFlag.AlignRight)
 
         click_scope_label = _wrap_label(BodyLabel(_tr("SettingsWindow.click_motion_scope_label"), action_container))
         click_scope_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -3054,6 +3096,7 @@ class SettingsWindow(QWidget):
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
         self._populate_click_motion_combos(item)
+        self._reload_click_motion_profiles()
 
         pixmap = QPixmap(self._model_manager.get_character_image_path(character))
         image_data = self._model_manager.get_character_image_data(character)
@@ -3170,9 +3213,9 @@ class SettingsWindow(QWidget):
             current_expression = current.get("expression", "")
             combo.blockSignals(True)
             combo.clear()
-            combo.addItem(_tr("SettingsWindow.click_motion_auto"), userData="")
-            combo.addItem(_tr("SettingsWindow.click_motion_random"), userData=CLICK_MOTION_RANDOM)
-            combo.addItem(_tr("SettingsWindow.click_motion_none"), userData=CLICK_MOTION_NONE)
+            combo.addItem(_tr("SettingsWindow.click_motion_auto", default="智能匹配"), userData="")
+            combo.addItem(_tr("SettingsWindow.click_motion_random", default="随机"), userData=CLICK_MOTION_RANDOM)
+            combo.addItem(_tr("SettingsWindow.click_motion_none", default="不做反应"), userData=CLICK_MOTION_NONE)
             for motion in motions:
                 combo.addItem(motion, userData=motion)
             for idx in range(combo.count()):
@@ -3183,7 +3226,7 @@ class SettingsWindow(QWidget):
 
             expression_combo.blockSignals(True)
             expression_combo.clear()
-            expression_combo.addItem(_tr("SettingsWindow.click_expression_default"), userData="")
+            expression_combo.addItem(_tr("SettingsWindow.click_expression_default", default="默认"), userData="")
             for expression in expressions:
                 expression_combo.addItem(expression, userData=expression)
             for idx in range(expression_combo.count()):
@@ -3191,6 +3234,239 @@ class SettingsWindow(QWidget):
                     expression_combo.setCurrentIndex(idx)
                     break
             expression_combo.blockSignals(False)
+
+    def _reload_click_motion_profiles(self, select_name: str = ""):
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, preset_combo_label
+
+        if not hasattr(self, "_click_motion_profile_combo"):
+            return
+
+        combo = self._click_motion_profile_combo
+        current_name = select_name or combo.itemData(combo.currentIndex()) or ""
+
+        combo.blockSignals(True)
+        combo.clear()
+
+        for preset in BUILTIN_CLICK_MOTION_PROFILES:
+            label = preset_combo_label(preset, tr_func=_tr)
+            combo.addItem(label, userData=preset["name"])
+
+        custom_profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
+        for profile in custom_profiles:
+            name = profile.get("name", "")
+            if name and name not in BUILTIN_PROFILE_NAMES:
+                combo.addItem(name, userData=name)
+
+        selected_index = 0
+        if current_name:
+            for idx in range(combo.count()):
+                if combo.itemData(idx) == current_name:
+                    selected_index = idx
+                    break
+        combo.setCurrentIndex(selected_index)
+        combo.blockSignals(False)
+
+    def _on_click_motion_profile_selected(self, index: int):
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+
+        if index < 0:
+            return
+
+        combo = self._click_motion_profile_combo
+        name = combo.itemData(index) or ""
+
+        item = self._selected_model_item()
+        if not item:
+            return
+
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+
+        if name in BUILTIN_PROFILE_NAMES:
+            preset = next((p for p in BUILTIN_CLICK_MOTION_PROFILES if p["name"] == name), None)
+            if preset:
+                resolved = resolve_preset_to_actions(preset, motions, expressions, item["character"])
+                item["click_motion_actions"] = resolved
+                self._click_motion_profile_name.clear()
+            else:
+                self._click_motion_profile_name.clear()
+                return
+        elif name:
+            self._click_motion_profile_name.setText(name)
+            profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
+            profile = next((p for p in profiles if p.get("name") == name), None)
+            if profile:
+                actions = profile.get("click_motion_actions", {})
+                item["click_motion_actions"] = normalize_click_motion_actions(actions, motions, expressions)
+            else:
+                return
+        else:
+            self._click_motion_profile_name.clear()
+            return
+
+        self._populate_click_motion_combos(item)
+        if hasattr(self, "_click_motion_profile_name"):
+            self._click_motion_profile_name.setText(name if name not in BUILTIN_PROFILE_NAMES else "")
+
+    def _save_click_motion_profile(self):
+        from click_motion_presets import BUILTIN_PROFILE_NAMES
+
+        if not self._cfg:
+            return
+
+        name = self._click_motion_profile_name.text().strip()
+        if not name:
+            combo = self._click_motion_profile_combo
+            current_data = combo.itemData(combo.currentIndex()) or ""
+            if current_data and current_data not in BUILTIN_PROFILE_NAMES:
+                name = current_data
+        if not name:
+            InfoBar.warning(
+                _tr("SettingsWindow.click_motion_profile_name_required_title", default="需要名称"),
+                _tr("SettingsWindow.click_motion_profile_name_required_content", default="请先填写档案名称。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        if name in BUILTIN_PROFILE_NAMES:
+            InfoBar.warning(
+                _tr("SettingsWindow.click_motion_profile_name_reserved_title", default="名称冲突"),
+                _tr("SettingsWindow.click_motion_profile_name_reserved_content", default="此名称已被内置预设使用，请换一个名称。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+
+        item = self._selected_model_item()
+        if not item:
+            return
+
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        actions = normalize_click_motion_actions(
+            item.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+
+        self._cfg.save_click_motion_profile(name, actions)
+        self._cfg.set_click_motion_active_profile(name)
+        try:
+            self._cfg.save()
+            self._click_motion_profile_name.setText(name)
+            self._reload_click_motion_profiles(select_name=name)
+            InfoBar.success(
+                _tr("SettingsWindow.click_motion_profile_saved_title", default="档案已保存"),
+                _tr("SettingsWindow.click_motion_profile_saved_content", default="当前动作反馈配置已保存为档案。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception:
+            pass
+
+    def _delete_click_motion_profile(self):
+        from click_motion_presets import BUILTIN_PROFILE_NAMES
+
+        if not self._cfg:
+            return
+
+        combo = self._click_motion_profile_combo
+        name = combo.itemData(combo.currentIndex()) or ""
+        if not name or name in BUILTIN_PROFILE_NAMES:
+            return
+
+        self._cfg.delete_click_motion_profile(name)
+        try:
+            self._cfg.save()
+            self._click_motion_profile_name.clear()
+            self._reload_click_motion_profiles()
+            InfoBar.success(
+                _tr("SettingsWindow.click_motion_profile_deleted_title", default="档案已删除"),
+                _tr("SettingsWindow.click_motion_profile_deleted_content", default="自定义档案已删除。"),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception:
+            pass
+
+    def _apply_click_motion_profile(self):
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+
+        scope = self._current_click_motion_scope()
+        item = self._selected_model_item()
+        if not item:
+            return
+
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        actions = normalize_click_motion_actions(
+            item.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+
+        profile_name = self._click_motion_profile_combo.itemData(
+            self._click_motion_profile_combo.currentIndex()
+        ) or ""
+
+        if scope == CLICK_MOTION_SCOPE_ALL:
+            for model_item in self._configured_models:
+                char = model_item.get("character", "")
+                cost = model_item.get("costume", "")
+                if not char or not cost:
+                    continue
+                if profile_name in BUILTIN_PROFILE_NAMES and profile_name:
+                    preset = next((p for p in BUILTIN_CLICK_MOTION_PROFILES if p["name"] == profile_name), None)
+                    if preset:
+                        char_motions = self._model_manager.get_motion_names(char, cost)
+                        char_exprs = self._model_manager.get_expression_names(char, cost)
+                        resolved = resolve_preset_to_actions(preset, char_motions, char_exprs, char)
+                        model_item["click_motion_actions"] = resolved
+                else:
+                    model_item["click_motion_actions"] = dict(actions)
+        elif scope == CLICK_MOTION_SCOPE_CHARACTER:
+            for model_item in self._configured_models:
+                if model_item.get("character") != item["character"]:
+                    continue
+                model_item["click_motion_actions"] = dict(actions)
+        else:
+            item["click_motion_actions"] = dict(actions)
+
+        self._save_configured_models()
+        InfoBar.success(
+            _tr("SettingsWindow.click_motion_applied_title", default="已应用"),
+            _tr("SettingsWindow.click_motion_applied_content", default="动作反馈配置已应用。"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _on_click_combo_preview(self, region: str, combo, index: int):
+        motion = combo.itemData(index) or ""
+        if motion in CLICK_MOTION_SPECIAL_VALUES or not motion:
+            return
+        self._send_preview_motion(motion, "")
+
+    def _on_expression_combo_preview(self, region: str, combo, index: int):
+        expression = combo.itemData(index) or ""
+        if not expression:
+            return
+        self._send_preview_motion("", expression)
+
+    def _send_preview_motion(self, motion: str, expression: str):
+        if not self._ipc_output:
+            return
+        character = (self._selected_model_item() or {}).get("character", "")
+        if not character:
+            return
+        if motion and motion in CLICK_MOTION_SPECIAL_VALUES:
+            motion = ""
+        line = f"PREVIEW_MOTION\t{character}\t{motion}\t{expression}"
+        self._ipc_output(line)
 
     def _on_click_motion_changed(self, region: str, index: int):
         item = self._selected_model_item()
@@ -9850,6 +10126,7 @@ class SettingsWindow(QWidget):
         self.close()
 
     def connect_ipc_output(self, send_line):
+        self._ipc_output = send_line
         self.model_selected.connect(lambda char, costume: send_line(f"MODEL\t{char}\t{costume}"))
         self.settings_changed.connect(lambda data: send_line(f"SETTINGS\t{json.dumps(data, ensure_ascii=False)}"))
         self.launch_requested.connect(lambda: send_line("LAUNCH"))
