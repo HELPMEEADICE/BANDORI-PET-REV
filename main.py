@@ -364,6 +364,8 @@ def main():
             broadcast_ipc_line(line)
         elif line.startswith("REMINDER_EVENT\t"):
             broadcast_ipc_line(line)
+        elif line.startswith("PEER_POS\t"):
+            broadcast_ipc_line(line)
         elif line.startswith("PREVIEW_MOTION\t"):
             broadcast_ipc_line(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
