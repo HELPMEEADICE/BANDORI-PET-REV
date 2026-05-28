@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 from fluent_bootstrap import assert_pyside6_fluent_widgets
@@ -15,6 +16,67 @@ BANDORI_PRIMARY_SOFT_HOVER = "#ffe2ec"
 BANDORI_PRIMARY_SOFT_DARK = "#3a1826"
 BANDORI_PRIMARY_SOFT_DARK_HOVER = "#4a1d2f"
 
+_THEME_FOLLOW_SYSTEM = "follow_system"
+_THEME_ON = "on"
+_THEME_OFF = "off"
+
+
+def _detect_system_dark() -> bool:
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            )
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return value == 0
+        except Exception:
+            return False
+    elif sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.stdout.strip().lower() == "dark"
+        except Exception:
+            return False
+    elif sys.platform.startswith("linux"):
+        try:
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                capture_output=True, text=True, timeout=5
+            )
+            if "prefer-dark" in result.stdout.strip().lower():
+                return True
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
+                capture_output=True, text=True, timeout=5
+            )
+            if "dark" in result.stdout.strip().lower():
+                return True
+        except Exception:
+            pass
+        return False
+    return False
+
+
+def resolve_theme_dark(theme_value) -> bool:
+    if isinstance(theme_value, bool):
+        return theme_value
+    if theme_value == _THEME_ON:
+        return True
+    if theme_value == _THEME_OFF:
+        return False
+    if theme_value == _THEME_FOLLOW_SYSTEM:
+        return _detect_system_dark()
+    return False
+
 
 def _default_ui_font_family() -> str:
     if sys.platform == "darwin":
@@ -31,7 +93,8 @@ def accent_color(dark: bool = False) -> str:
     return BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
 
 
-def apply_app_theme(dark: bool):
+def apply_app_theme(theme_value):
+    dark = resolve_theme_dark(theme_value)
     qfluent = import_qfluentwidgets(lambda: __import__(
         "qfluentwidgets", fromlist=["Theme", "setTheme", "setThemeColor"]
     ))

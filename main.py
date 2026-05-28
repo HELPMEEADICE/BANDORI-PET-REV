@@ -528,9 +528,9 @@ def main():
             set_language(language)
             cfg.set("language", language)
         dark = pet_window_ref.get("dark")
-        if dark:
-            apply_app_theme(True)
-            cfg.set("dark_theme", True)
+        if dark is not None:
+            apply_app_theme(dark)
+            cfg.set("dark_theme", dark)
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
             "live2d_idle_actions_enabled", "live2d_head_tracking_enabled",
