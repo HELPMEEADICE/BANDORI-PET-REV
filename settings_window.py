@@ -1855,6 +1855,8 @@ class SettingsWindow(QWidget):
 
         side_panel = self._build_side_panel()
 
+        self._ensure_page("quality")
+
         right_layout.addWidget(page_scroll, 1)
         right_layout.addWidget(side_panel, 0)
 
@@ -2655,7 +2657,7 @@ class SettingsWindow(QWidget):
         self._nav_buttons["data_management"] = btn_data_management
         nav_layout.addWidget(btn_data_management)
 
-        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_quality"), nav_content, "#22c55e")
+        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_display"), nav_content, "#22c55e")
         btn_quality.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["quality"] = btn_quality
         nav_layout.addWidget(btn_quality)
@@ -7364,11 +7366,11 @@ class SettingsWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.quality_title"), page)
-        title.setObjectName("QualityPageTitle")
+        title = TitleLabel(_tr("SettingsWindow.display_title"), page)
+        title.setObjectName("DisplayPageTitle")
         layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr("SettingsWindow.quality_subtitle"), page)
-        subtitle.setObjectName("QualityPageSubtitle")
+        subtitle = SubtitleLabel(_tr("SettingsWindow.display_subtitle"), page)
+        subtitle.setObjectName("DisplayPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
@@ -7434,6 +7436,34 @@ class SettingsWindow(QWidget):
         scale_row.addWidget(self._live2d_scale_slider, 1)
         scale_row.addWidget(self._live2d_scale_input)
         layout.addLayout(scale_row)
+
+        opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), page)
+        layout.addWidget(opacity_label)
+        self._opacity_slider = Slider(Qt.Orientation.Horizontal, page)
+        self._opacity_slider.setRange(20, 100)
+        self._opacity_slider.setValue(int(self._opacity * 100))
+        self._opacity_value = BodyLabel(_tr("SettingsWindow.opacity_value", v=int(self._opacity * 100)), page)
+        self._opacity_slider.valueChanged.connect(
+            lambda v: self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=v))
+        )
+        layout.addWidget(self._opacity_slider)
+        layout.addWidget(self._opacity_value)
+
+        layout.addSpacing(8)
+
+        theme_label = BodyLabel(_tr("SettingsWindow.side_dark_theme"), page)
+        self._theme_switch = SwitchButton(page)
+        self._theme_switch.setChecked(isDarkTheme())
+        self._theme_switch.checkedChanged.connect(
+            lambda v: apply_app_theme(v)
+        )
+        theme_row = QHBoxLayout()
+        theme_row.setContentsMargins(0, 0, 0, 0)
+        theme_row.setSpacing(10)
+        theme_row.addWidget(theme_label)
+        theme_row.addStretch()
+        theme_row.addWidget(self._theme_switch)
+        layout.addLayout(theme_row)
 
         layout.addStretch()
         return page
@@ -9263,32 +9293,6 @@ class SettingsWindow(QWidget):
         auto_start_row.addStretch()
         auto_start_row.addWidget(self._auto_start_switch)
         layout.addLayout(auto_start_row)
-
-        opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), panel)
-        layout.addWidget(opacity_label)
-        self._opacity_slider = Slider(Qt.Orientation.Horizontal, panel)
-        self._opacity_slider.setRange(20, 100)
-        self._opacity_slider.setValue(int(self._opacity * 100))
-        self._opacity_value = BodyLabel(_tr("SettingsWindow.opacity_value", v=int(self._opacity * 100)), panel)
-        self._opacity_slider.valueChanged.connect(
-            lambda v: self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=v))
-        )
-        layout.addWidget(self._opacity_slider)
-        layout.addWidget(self._opacity_value)
-
-        layout.addSpacing(8)
-
-        theme_label = BodyLabel(_tr("SettingsWindow.side_dark_theme"), panel)
-        self._theme_switch = SwitchButton(panel)
-        self._theme_switch.setChecked(isDarkTheme())
-        self._theme_switch.checkedChanged.connect(
-            lambda v: apply_app_theme(v)
-        )
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(theme_label)
-        theme_row.addStretch()
-        theme_row.addWidget(self._theme_switch)
-        layout.addLayout(theme_row)
 
         lang_label = BodyLabel(_tr("SettingsWindow.language"), panel)
         self._lang_combo = OpaqueDropDownComboBox(panel)
