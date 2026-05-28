@@ -3,11 +3,20 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, install_parent_death_watch, ipc_server_name
+from process_utils import (
+    app_base_dir,
+    configure_debug_logging,
+    install_parent_death_watch,
+    ipc_server_name,
+    set_windows_app_user_model_id,
+)
 
 configure_debug_logging()
 
+BASE_DIR = str(app_base_dir())
+
 from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
@@ -55,13 +64,23 @@ def _parse_group_characters(value: str, valid_characters: set[str], current_char
     return _normalize_characters(parsed, valid_characters, current_character)
 
 
+def _apply_app_icon(app: QApplication) -> QIcon:
+    icon_path = os.path.join(BASE_DIR, "logo.ico")
+    icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+    return icon
+
+
 def main():
-    os.chdir(app_base_dir())
+    os.chdir(BASE_DIR)
     args = _parse_args()
 
     cfg = ConfigManager()
     lang = cfg.get("language", "") or detect_system_language()
     set_language(lang)
+
+    set_windows_app_user_model_id("BandoriPet.Chat")
 
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
@@ -72,8 +91,10 @@ def main():
         import macos_patch
         macos_patch.hide_dock_icon()
     app.setApplicationName("BandoriPetChat")
+    app.setApplicationDisplayName("BandoriPet Chat")
     app.setOrganizationName("BandoriPet")
     app.setQuitOnLastWindowClosed(False)
+    app_icon = _apply_app_icon(app)
 
     apply_app_theme(cfg.get("dark_theme", False))
 
@@ -96,6 +117,8 @@ def main():
         characters = _normalize_characters(model_characters, valid_characters, args.character)
 
     window = ChatWindow(args.character, mgr, None, cfg, group_characters=characters if len(characters) > 1 else None)
+    if not app_icon.isNull():
+        window.setWindowIcon(app_icon)
     window.action_triggered.connect(window.emit_action_for_ipc)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     window.closed.connect(app.quit)
