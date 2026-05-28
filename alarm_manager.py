@@ -74,6 +74,9 @@ class ReminderScheduler(QObject):
             self._tts_player.error.connect(self._on_tts_error)
         self._pending_contexts: list[dict] = []
         self._text_generation_busy = False
+        self._active_worker: NonStreamWorker | None = None
+        self._active_context: dict | None = None
+        self._watchdog_timer: QTimer | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(15_000)
         self._timer.timeout.connect(self._tick)
@@ -96,6 +99,7 @@ class ReminderScheduler(QObject):
         self._timer.stop()
         self._pending_contexts.clear()
         self._text_generation_busy = False
+        self._clear_watchdog()
         for worker in list(self._workers):
             if worker.isRunning():
                 worker.requestInterruption()
@@ -159,6 +163,7 @@ class ReminderScheduler(QObject):
     def _trigger_alarm(self, alarm: dict, scheduled_at):
         character = self._reminder_character(alarm.get("character", ""))
         title = "闹钟提醒"
+        trigger_now = local_now()
         context = {
             "kind": "alarm",
             "title": title,
@@ -168,6 +173,7 @@ class ReminderScheduler(QObject):
             "time": alarm.get("time", ""),
             "scheduled_at": isoformat(scheduled_at),
             "repeat_label": repeat_days_label(alarm.get("repeat_days", [])),
+            "triggered_at": isoformat(trigger_now),
         }
         self._start_text_generation(context)
 
@@ -195,6 +201,7 @@ class ReminderScheduler(QObject):
                 "repeat_count": repeat_count,
                 "phase": next_phase,
                 "is_final_break": completed >= repeat_count,
+                "triggered_at": isoformat(now),
             })
         else:
             if completed >= repeat_count:
@@ -212,6 +219,7 @@ class ReminderScheduler(QObject):
                     "description": description,
                     "completed": completed,
                     "repeat_count": repeat_count,
+                    "triggered_at": isoformat(now),
                 })
                 return
             pomodoro["phase"] = "focus"
@@ -225,6 +233,7 @@ class ReminderScheduler(QObject):
                 "completed": completed,
                 "repeat_count": repeat_count,
                 "phase": "focus",
+                "triggered_at": isoformat(now),
             })
 
         pomodoro["phase_started_at"] = isoformat(now)
@@ -318,8 +327,50 @@ class ReminderScheduler(QObject):
                 self._on_text_generation_failed(worker, context)
         )
         worker.start()
+        self._active_worker = worker
+        self._active_context = dict(context)
+        remaining_ms = self._watchdog_remaining_ms(context)
+        self._watchdog_timer = QTimer(self)
+        self._watchdog_timer.setSingleShot(True)
+        self._watchdog_timer.timeout.connect(self._on_watchdog_timeout)
+        self._watchdog_timer.start(remaining_ms)
+
+    def _watchdog_remaining_ms(self, context: dict) -> int:
+        triggered_at = parse_iso_datetime(context.get("triggered_at"))
+        if triggered_at is None:
+            return 50_000
+        elapsed = max(0.0, (local_now() - triggered_at).total_seconds())
+        return max(1000, int((50.0 - elapsed) * 1000))
+
+    def _on_watchdog_timeout(self):
+        worker = self._active_worker
+        if worker is None or not self._text_generation_busy:
+            return
+        _log.warning("ReminderScheduler: watchdog fired, forcing fallback")
+        context = dict(self._active_context) if self._active_context else {}
+        if worker.isRunning():
+            worker.requestInterruption()
+            worker.quit()
+            worker.wait(1000)
+        self._active_worker = None
+        self._active_context = None
+        if self._watchdog_timer is not None:
+            self._watchdog_timer.stop()
+            self._watchdog_timer = None
+        self._forget_worker(worker)
+        self._show_reminder(context, self._fallback_text(context), "surprised")
+        self._text_generation_busy = False
+        QTimer.singleShot(300, self._drain_pending_contexts)
+
+    def _clear_watchdog(self):
+        if self._watchdog_timer is not None:
+            self._watchdog_timer.stop()
+            self._watchdog_timer = None
+        self._active_worker = None
+        self._active_context = None
 
     def _on_text_generated(self, worker: NonStreamWorker, context: dict, text: str):
+        self._clear_watchdog()
         self._forget_worker(worker)
         actions = parse_action_tags(text)
         clean = strip_action_tags(text).strip()
@@ -330,6 +381,7 @@ class ReminderScheduler(QObject):
         QTimer.singleShot(300, self._drain_pending_contexts)
 
     def _on_text_generation_failed(self, worker: NonStreamWorker, context: dict):
+        self._clear_watchdog()
         self._forget_worker(worker)
         self._show_reminder(context, self._fallback_text(context), "surprised")
         self._text_generation_busy = False
