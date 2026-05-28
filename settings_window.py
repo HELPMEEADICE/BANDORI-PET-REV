@@ -3893,7 +3893,7 @@ class SettingsWindow(QWidget):
     def _build_llm_page(self):
         page = self._make_theme_widget(QWidget())
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 0, 10, 0)
         layout.setSpacing(16)
 
         title = TitleLabel(_tr("SettingsWindow.llm_title"), page)
@@ -9065,6 +9065,8 @@ class SettingsWindow(QWidget):
     def _on_models_fetched(self, models: list[str]):
         target = self._llm_model_fetch_target
         if target is self._llm_aux_model_id:
+            list_widget = self._llm_aux_model_list
+            list_layout = self._llm_aux_model_list_layout
             label = self._llm_aux_model_combo_label
             scroll = self._llm_aux_model_scroll
         else:
