@@ -209,6 +209,8 @@ DEFAULTS = {
     "chat_integration_token": "",
     "alarms": [],
     "pomodoros": [],
+    "click_motion_profiles": [],
+    "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
     "tts_enabled": False,
     "tts_api_url": "http://127.0.0.1:9880/",
@@ -419,6 +421,7 @@ class ConfigManager:
         self._normalize_computer_use_settings()
         self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
         self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
+        self._normalize_click_motion_profiles()
         self._data["reminder_display_mode"] = normalize_display_mode(
             self._data.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
         )
@@ -787,3 +790,64 @@ class ConfigManager:
         else:
             profiles.pop(key, None)
         self._data["model_action_settings"] = profiles
+
+    def _normalize_click_motion_profiles(self):
+        from click_motion_presets import normalize_click_motion_profile, BUILTIN_PROFILE_NAMES
+
+        profiles = self._data.get("click_motion_profiles", [])
+        if not isinstance(profiles, list):
+            profiles = []
+
+        normalized = []
+        seen = set()
+        for profile in profiles:
+            item = normalize_click_motion_profile(profile)
+            if not item:
+                continue
+            name = item["name"]
+            if not name or name in seen or name in BUILTIN_PROFILE_NAMES:
+                continue
+            seen.add(name)
+            normalized.append(item)
+
+        self._data["click_motion_profiles"] = normalized
+
+        active = str(self._data.get("click_motion_active_profile", "")).strip()
+        if active and active not in seen and active not in BUILTIN_PROFILE_NAMES:
+            self._data["click_motion_active_profile"] = ""
+
+    def get_click_motion_profiles(self) -> list[dict]:
+        self._normalize_click_motion_profiles()
+        return list(self._data.get("click_motion_profiles", []))
+
+    def get_click_motion_active_profile(self) -> str:
+        return str(self._data.get("click_motion_active_profile", "")).strip()
+
+    def set_click_motion_active_profile(self, name: str):
+        name = str(name or "").strip()
+        self._data["click_motion_active_profile"] = name
+
+    def save_click_motion_profile(self, name: str, action_map: dict):
+        from click_motion_presets import normalize_click_motion_profile, BUILTIN_PROFILE_NAMES
+
+        name = str(name or "").strip()
+        if not name or name in BUILTIN_PROFILE_NAMES:
+            return
+        profile = normalize_click_motion_profile({
+            "name": name,
+            "click_motion_actions": action_map,
+        })
+        if not profile:
+            return
+        profiles = [p for p in self._data.get("click_motion_profiles", [])
+                     if isinstance(p, dict) and p.get("name") != name]
+        profiles.append(profile)
+        self._data["click_motion_profiles"] = profiles
+
+    def delete_click_motion_profile(self, name: str):
+        name = str(name or "").strip()
+        profiles = [p for p in self._data.get("click_motion_profiles", [])
+                     if isinstance(p, dict) and p.get("name") != name]
+        self._data["click_motion_profiles"] = profiles
+        if self._data.get("click_motion_active_profile") == name:
+            self._data["click_motion_active_profile"] = ""

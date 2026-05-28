@@ -1818,6 +1818,32 @@ class PetWindow(QWidget):
                 self._open_chat()
         elif line == "SHUTDOWN":
             self._quit()
+        elif line.startswith("PREVIEW_MOTION\t"):
+            parts = line.split("\t", 4)
+            if len(parts) >= 4 and parts[1] == self._current_char:
+                motion = parts[2] if len(parts) > 2 else ""
+                expression = parts[3] if len(parts) > 3 else ""
+                self._preview_click_motion(motion, expression)
+
+    def _preview_click_motion(self, motion: str = "", expression: str = ""):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        if expression:
+            self._apply_click_expression(expression)
+        self._motion_guard_token += 1
+        token = self._motion_guard_token
+        started = False
+        if motion:
+            started = self._safe_start_motion(model, motion)
+        else:
+            try:
+                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE)
+                started = True
+            except Exception:
+                pass
+        if started:
+            QTimer.singleShot(3200, lambda t=token: self._restore_default_if_finished(t))
 
     def _handle_ai_event(self, event: dict):
         if not isinstance(event, dict):
