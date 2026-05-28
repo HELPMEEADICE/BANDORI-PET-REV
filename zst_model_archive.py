@@ -304,10 +304,30 @@ def _open_tar_zst(archive_path: str):
     except ImportError as exc:
         raise RuntimeError("Reading .zst models requires zstandard: pip install zstandard") from exc
 
-    with Path(archive_path).open("rb") as raw_file:
-        with zstd.ZstdDecompressor().stream_reader(raw_file) as reader:
-            with tarfile.open(fileobj=reader, mode="r|") as archive:
-                yield archive
+    raw_file = None
+    reader = None
+    archive = None
+    try:
+        raw_file = Path(archive_path).open("rb")
+        reader = zstd.ZstdDecompressor().stream_reader(raw_file)
+        archive = tarfile.open(fileobj=reader, mode="r|")
+        yield archive
+    finally:
+        if archive is not None:
+            try:
+                archive.close()
+            except Exception:
+                pass
+        if reader is not None:
+            try:
+                reader.close()
+            except Exception:
+                pass
+        if raw_file is not None:
+            try:
+                raw_file.close()
+            except Exception:
+                pass
 
 
 def _normalize_member(path: str) -> str:

@@ -201,7 +201,10 @@ def _translate_to_selected_language(config: dict, text: str, target_language: st
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    choices = data.get("choices", [])
+    if not choices:
+        return ""
+    return choices[0].get("message", {}).get("content", "").strip()
 
 
 _VISEME_POSES = {
@@ -655,10 +658,13 @@ class TTSPlayer(QObject):
             available = len(self._current_chunk) - self._current_pos
             take = min(available, frames - filled)
             chunk = self._current_chunk[self._current_pos:self._current_pos + take]
-            np = _numpy()
-            rms = float(np.sqrt(np.mean(chunk * chunk)))
-            peak = float(np.max(np.abs(chunk)))
-            self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
+            try:
+                np = _numpy()
+                rms = float(np.sqrt(np.mean(chunk * chunk)))
+                peak = float(np.max(np.abs(chunk)))
+                self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
+            except Exception:
+                pass
             self._update_mouth_pose_for_range(self._current_pos, take)
             if chunk.shape[1] == self._channels:
                 outdata[filled:filled + take] = chunk

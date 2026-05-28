@@ -2570,7 +2570,10 @@ class PetWindow(QWidget):
     def _save_config(self):
         if self._cfg:
             from i18n_manager import current_language
-            from qfluentwidgets import isDarkTheme
+            try:
+                from qfluentwidgets import isDarkTheme
+            except ImportError:
+                isDarkTheme = lambda: False
             self._cfg.load()
             models = self._cfg.get("models", [])
             model_exists = (

@@ -548,13 +548,19 @@ def _enrich_results_with_page_excerpts(results: list[dict], max_pages: int = 2):
         url = str(result.get("url", "") or "").strip()
         if not url.startswith(("http://", "https://")):
             continue
-        excerpt = _fetch_page_excerpt(url)
+        try:
+            excerpt = _fetch_page_excerpt(url)
+        except Exception:
+            excerpt = ""
         if excerpt:
             result["page_excerpt"] = excerpt
             enriched += 1
 
 
 def _fetch_page_excerpt(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https"):
+        return ""
     try:
         req = urllib.request.Request(
             url,

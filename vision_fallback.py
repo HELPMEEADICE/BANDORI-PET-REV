@@ -50,5 +50,8 @@ def analyze_images_with_aux_model(
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    message = data.get("choices", [{}])[0].get("message", {})
+    choices = data.get("choices", [])
+    if not choices:
+        return ""
+    message = choices[0].get("message", {})
     return _strip_thinking_text(message.get("content", ""))

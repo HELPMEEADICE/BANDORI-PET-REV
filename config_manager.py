@@ -658,9 +658,6 @@ class ConfigManager:
             self._data["costume"] = first["costume"]
 
     def save(self):
-        # Atomic write: write to a temp file in the same directory, fsync,
-        # then os.replace into place. Avoids losing all settings (including
-        # llm_api_key) if the process is killed mid-write.
         self._path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(
             prefix=self._path.name + ".",
@@ -671,13 +668,17 @@ class ConfigManager:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2, ensure_ascii=False)
                 f.flush()
-            # Retry on Windows PermissionError when multiple processes
-            # try to replace the same config file simultaneously.
+                os.fsync(f.fileno())
             for attempt in range(3):
                 try:
                     os.replace(tmp_path, self._path)
                     return
                 except PermissionError:
+                    if attempt < 2:
+                        time.sleep(0.1 * (attempt + 1))
+                    else:
+                        raise
+                except OSError:
                     if attempt < 2:
                         time.sleep(0.1 * (attempt + 1))
                     else:

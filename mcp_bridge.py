@@ -627,7 +627,10 @@ def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:
                 continue
             name, value = line.split(":", 1)
             if name.strip().lower() == "content-length":
-                content_length = int(value.strip())
+                try:
+                    content_length = int(value.strip())
+                except ValueError:
+                    raise RuntimeError(_tr("McpBridge.invalid_content_length", default="MCP server response Content-Length is not a valid integer"))
                 break
         if content_length is None:
             raise RuntimeError(_tr("McpBridge.missing_content_length", default="MCP server response missing Content-Length"))

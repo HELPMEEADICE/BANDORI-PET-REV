@@ -1,3 +1,4 @@
+import atexit
 import os
 import sys
 import hashlib
@@ -11,6 +12,17 @@ DEBUG_LOG_ENV = "BANDORI_PET_DEBUG_LOG"
 _DEBUG_LOG_LOCK = threading.RLock()
 _DEBUG_LOG_FILE = None
 _DEBUG_LOG_CONFIGURED = False
+
+
+def _close_debug_log():
+    global _DEBUG_LOG_FILE
+    with _DEBUG_LOG_LOCK:
+        if _DEBUG_LOG_FILE is not None:
+            try:
+                _DEBUG_LOG_FILE.close()
+            except Exception:
+                pass
+            _DEBUG_LOG_FILE = None
 
 
 class _BinaryTee:
@@ -138,6 +150,7 @@ def configure_debug_logging(argv: list[str] | None = None) -> Path | None:
     sys.stdout = _TextTee(sys.stdout, _DEBUG_LOG_FILE)
     sys.stderr = _TextTee(sys.stderr, _DEBUG_LOG_FILE)
     _DEBUG_LOG_CONFIGURED = True
+    atexit.register(_close_debug_log)
     print(f"[debug] logging to {path}", file=sys.stderr)
     return path
 

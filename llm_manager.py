@@ -655,7 +655,10 @@ class LLMStreamWorker(QThread):
             return
         try:
             data = json.loads(data_str)
-            delta = data.get("choices", [{}])[0].get("delta", {})
+            choices = data.get("choices", [{}])
+            if not choices:
+                return
+            delta = choices[0].get("delta", {})
             self._collect_tool_call_delta(delta)
             reasoning = _extract_reasoning(delta)
             if reasoning:
@@ -871,7 +874,11 @@ class NonStreamWorker(QThread):
 
             with urllib.request.urlopen(req, timeout=120) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
-                message = resp_data.get("choices", [{}])[0].get("message", {})
+                choices = resp_data.get("choices", [{}])
+                if not choices:
+                    self.error.emit("API returned empty choices")
+                    return
+                message = choices[0].get("message", {})
                 content = message.get("content", "")
                 reasoning = _extract_reasoning(message)
                 content, reasoning = split_thinking_text(

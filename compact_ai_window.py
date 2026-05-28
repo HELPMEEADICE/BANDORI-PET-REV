@@ -1217,6 +1217,7 @@ class CompactAIWindow(QWidget):
         bar.setValue(bar.maximum())
 
     def closeEvent(self, event):
+        self._clear_timer.stop()
         if self._worker is not None:
             self._worker.cancel()
             self._park_cancelled_worker(self._worker)
@@ -1226,5 +1227,10 @@ class CompactAIWindow(QWidget):
             if worker is not None and worker.isRunning():
                 worker.wait(1000)
         self._cancelled_workers.clear()
+        for worker in list(self._memory_workers):
+            if worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1000)
+        self._memory_workers.clear()
         self._db.close()
         super().closeEvent(event)

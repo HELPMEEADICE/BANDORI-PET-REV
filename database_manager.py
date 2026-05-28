@@ -471,6 +471,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
+        self._closed = False
+
+    def __del__(self):
+        try:
+            if not getattr(self, "_closed", True):
+                self.close()
+        except Exception:
+            pass
 
     def _create_tables(self):
         self._conn.execute("""
@@ -1444,4 +1452,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         }
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         self._conn.close()

@@ -236,7 +236,10 @@ def _screenshot_result(config: dict, content: str) -> dict:
 
 def _capture_screenshot_data_url(config: dict) -> tuple[str, int, int, int, int]:
     global _LAST_SCREENSHOT_METRICS
-    image = ImageGrab.grab(all_screens=True)
+    try:
+        image = ImageGrab.grab(all_screens=True)
+    except Exception:
+        raise RuntimeError("Failed to capture screenshot. This may happen when no display is available or a security restriction prevents screen capture.")
     max_width = max(640, min(1920, _int(config.get("computer_use_max_screenshot_width", 1280))))
     original_width, original_height = image.size
     desktop_left, desktop_top, desktop_width, desktop_height = _desktop_bounds(original_width, original_height)

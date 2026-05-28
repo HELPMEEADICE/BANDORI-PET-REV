@@ -180,6 +180,8 @@ def main():
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
 
     def broadcast_reminder_event(event: dict):
+        if not isinstance(event, dict):
+            return
         payload = json.dumps(event, ensure_ascii=False)
         broadcast_ipc_line(f"REMINDER_EVENT\t{payload}")
 
@@ -391,10 +393,12 @@ def main():
                     continue
                 model_char = item.get("character", "")
                 model_costume = item.get("costume", "")
-                if model_char in seen or model_char not in mgr.characters:
+                if not model_char or model_char in seen or model_char not in mgr.characters:
                     continue
                 if not model_costume:
                     model_costume = mgr.get_default_costume(model_char)
+                if not model_costume:
+                    continue
                 path = ModelManager.get_model_json_path(model_char, model_costume)
                 if not path:
                     continue
@@ -667,15 +671,16 @@ def main():
         if line.startswith("MODEL\t"):
             parts = line.split("\t")
             if len(parts) >= 3:
+                character = parts[1].strip()
+                costume = parts[2].strip()
+                if not character or not costume:
+                    return
                 relaunch = (
                     parts[3] == "RELAUNCH"
                     if len(parts) >= 4
                     else not settings_process_ref.get("show_launch", True)
                 )
-                on_model_selected(
-                    parts[1], parts[2],
-                    relaunch=relaunch,
-                )
+                on_model_selected(character, costume, relaunch=relaunch)
         elif line.startswith("SETTINGS\t"):
             try:
                 cfg.load()
