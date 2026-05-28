@@ -123,7 +123,8 @@ def repeat_days_label(days: list[int]) -> str:
         _tr("ReminderCore.weekday_sat", default="周六"),
         _tr("ReminderCore.weekday_sun", default="周日"),
     )
-    return "、".join(weekday_labels[day] for day in days)
+    separator = _tr("ReminderCore.weekday_separator", default="、")
+    return separator.join(weekday_labels[day] for day in days)
 
 
 def compute_next_alarm_at(time_text: str, repeat_days=None, after: datetime | None = None, date_text: str = "") -> datetime | None:
