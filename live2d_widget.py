@@ -24,6 +24,7 @@ class Live2DWidget(QOpenGLWidget):
         fmt.setStencilBufferSize(8)
         fmt.setSwapInterval(1)
         fmt.setVersion(2, 1)
+        fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
         fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
         QSurfaceFormat.setDefaultFormat(fmt)
 

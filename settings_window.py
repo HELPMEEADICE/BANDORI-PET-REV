@@ -15,7 +15,7 @@ import fluent_bootstrap
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QPropertyAnimation, QEasingCurve, QVariantAnimation, QPoint, QEvent, QUrl, QRectF, QRect, QSize, QTime
-from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices, QFont, QTextCursor, QRegion
+from PySide6.QtGui import QColor, QPalette, QPixmap, QIcon, QCursor, QPainter, QPainterPath, QPen, QBrush, QIntValidator, QDoubleValidator, QDesktopServices, QFont, QTextCursor, QRegion, QKeyEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QSizePolicy, QScrollArea,
@@ -1697,9 +1697,13 @@ class SettingsWindow(QWidget):
             self._owns_live2d = False
 
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift:
+        if not isinstance(event, QKeyEvent):
+            return super().eventFilter(watched, event)
+
+        event_type = event.type()
+        if event_type == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift:
             self._hide_hover_costume_preview()
-        elif event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Shift:
+        elif event_type == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Shift:
             widget = QApplication.widgetAt(QCursor.pos())
             while widget is not None:
                 if isinstance(widget, CostumeItem):
