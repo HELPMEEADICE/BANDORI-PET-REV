@@ -2859,6 +2859,7 @@ class SettingsWindow(QWidget):
         head_track_label = _wrap_label(StrongBodyLabel(_tr("SettingsWindow.live2d_head_tracking"), action_container))
         self._live2d_head_tracking_switch = SwitchButton(action_container)
         self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
+        self._live2d_head_tracking_switch.setEnabled(not self._live2d_mutual_gaze_enabled)
         self._live2d_head_tracking_switch.checkedChanged.connect(self._on_live2d_head_tracking_changed)
         head_track_row.addWidget(head_track_label, 1)
         head_track_row.addWidget(self._live2d_head_tracking_switch, 0, Qt.AlignmentFlag.AlignRight)
@@ -3141,28 +3142,22 @@ class SettingsWindow(QWidget):
         if self._cfg:
             self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
             self._cfg.save()
-        # 关闭看向鼠标时，联动关闭对视功能
-        if not checked and self._live2d_mutual_gaze_enabled:
-            self._live2d_mutual_gaze_enabled = False
-            if hasattr(self, "_live2d_mutual_gaze_switch"):
-                self._live2d_mutual_gaze_switch.setChecked(False)
-            if self._cfg:
-                self._cfg.set("live2d_mutual_gaze_enabled", False)
-                self._cfg.save()
 
     def _on_live2d_mutual_gaze_changed(self, checked: bool):
         self._live2d_mutual_gaze_enabled = bool(checked)
         if self._cfg:
             self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
             self._cfg.save()
-        # 开启对视时，联动开启看向鼠标
-        if checked and not self._live2d_head_tracking_enabled:
-            self._live2d_head_tracking_enabled = True
-            if hasattr(self, "_live2d_head_tracking_switch"):
-                self._live2d_head_tracking_switch.setChecked(True)
-            if self._cfg:
-                self._cfg.set("live2d_head_tracking_enabled", True)
-                self._cfg.save()
+        if hasattr(self, "_live2d_head_tracking_switch"):
+            if checked:
+                self._live2d_head_tracking_switch.setEnabled(False)
+                self._live2d_head_tracking_switch.setChecked(False)
+                self._live2d_head_tracking_enabled = False
+                if self._cfg:
+                    self._cfg.set("live2d_head_tracking_enabled", False)
+                    self._cfg.save()
+            else:
+                self._live2d_head_tracking_switch.setEnabled(True)
 
     def _populate_default_motion_combo(self, item: dict):
         combo = self._default_motion_combo
@@ -7203,6 +7198,7 @@ class SettingsWindow(QWidget):
                 self._live2d_idle_actions_switch.setChecked(self._live2d_idle_actions_enabled)
             if hasattr(self, "_live2d_head_tracking_switch"):
                 self._live2d_head_tracking_switch.setChecked(self._live2d_head_tracking_enabled)
+                self._live2d_head_tracking_switch.setEnabled(not self._live2d_mutual_gaze_enabled)
             if hasattr(self, "_live2d_mutual_gaze_switch"):
                 self._live2d_mutual_gaze_switch.setChecked(self._live2d_mutual_gaze_enabled)
             self._opacity_value.setText(_tr("SettingsWindow.opacity_value", v=self._opacity_slider.value()))
