@@ -5096,7 +5096,16 @@ class SettingsWindow(QWidget):
         weekday_row.setContentsMargins(0, 0, 0, 0)
         weekday_row.setSpacing(6)
         self._alarm_weekday_checks: list[QCheckBox] = []
-        for index, label in enumerate(("一", "二", "三", "四", "五", "六", "日")):
+        weekday_labels = (
+            _tr("ReminderCore.weekday_mon", default="周一"),
+            _tr("ReminderCore.weekday_tue", default="周二"),
+            _tr("ReminderCore.weekday_wed", default="周三"),
+            _tr("ReminderCore.weekday_thu", default="周四"),
+            _tr("ReminderCore.weekday_fri", default="周五"),
+            _tr("ReminderCore.weekday_sat", default="周六"),
+            _tr("ReminderCore.weekday_sun", default="周日"),
+        )
+        for index, label in enumerate(weekday_labels):
             check = QCheckBox(label, self._alarm_weekday_widget)
             check.setProperty("weekday", index)
             self._alarm_weekday_checks.append(check)
@@ -5461,7 +5470,16 @@ class SettingsWindow(QWidget):
             ),
             row,
         )
-        subtitle = BodyLabel(f"{desc} · {display} · 下次切换 {next_at if next_at else '已结束'}", row)
+        subtitle = BodyLabel(
+            _tr(
+                "SettingsWindow.pomodoro_row_subtitle",
+                default="{desc} · {character} · 下次切换 {time}",
+                desc=desc,
+                character=display,
+                time=next_at if next_at else _tr("SettingsWindow.pomodoro_ended", default="已结束"),
+            ),
+            row,
+        )
         subtitle.setObjectName("reminderHint")
         subtitle.setWordWrap(True)
         text_col = QVBoxLayout()
