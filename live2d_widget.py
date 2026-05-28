@@ -678,6 +678,7 @@ class Live2DWidget(QOpenGLWidget):
         if width <= 0 or height <= 0: return None
         
         self._safe_make_current()
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
         self._process_hit_pbo_results()
         self._safe_unbind_pbo()
         data = gl.glReadPixels(0, 0, width, height, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
@@ -833,6 +834,10 @@ class Live2DWidget(QOpenGLWidget):
         if not (0 <= x < self._cache_w and 0 <= y < self._cache_h): return None
         
         self._safe_make_current()
+        # paintGL binds defaultFramebufferObject() at draw time, but Qt may
+        # unbind to FBO 0 (an empty surface) after compositing. Re-bind here
+        # so glReadPixels samples the actual rendered model on every platform.
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             
         sx = int(x * self._system_scale)
         sy = int((self._cache_h - 1 - y) * self._system_scale)

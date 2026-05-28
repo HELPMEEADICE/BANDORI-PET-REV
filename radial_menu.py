@@ -391,12 +391,18 @@ class RadialMenu(QWidget):
             widget.set_color(color)
 
     def show_at(self, center: QPoint):
-        if self._is_showing:
-            return
-
         n = len(self._items)
         if n == 0:
             return
+
+        # If we're still in a previous show/hide animation, cancel it and
+        # reset state synchronously so this call can re-show the menu fresh.
+        if self._anim_group is not None and self._anim_group.state() == QPropertyAnimation.State.Running:
+            self._anim_group.stop()
+        if self._is_showing:
+            self._outside_click_timer.stop()
+            self.hide()
+            self._is_showing = False
 
         self._center = center
         self._is_showing = True
