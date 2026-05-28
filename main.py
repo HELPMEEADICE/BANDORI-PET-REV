@@ -111,6 +111,8 @@ def main():
         tray_icon.setToolTip(_tr("MainTray.tooltip"))
 
         menu = QMenu(tray_anchor)
+        chat_action = menu.addAction(_tr("MainTray.chat"))
+        chat_action.triggered.connect(launch_chat_process)
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
         exit_action = menu.addAction(_tr("MainTray.exit"))
@@ -118,7 +120,7 @@ def main():
         tray_icon.setContextMenu(menu)
         tray_icon.activated.connect(on_tray_activated)
         tray_ref["menu"] = menu
-        tray_ref["actions"] = [settings_action, exit_action]
+        tray_ref["actions"] = [chat_action, settings_action, exit_action]
         keep_tray_icon_visible(tray_icon)
 
     def on_tray_activated(reason: QSystemTrayIcon.ActivationReason):
@@ -145,6 +147,7 @@ def main():
         stop_chat_integration_server()
         close_pet_processes(force=True)
         close_settings_process(force=True)
+        close_chat_process(force=True)
         if tray_icon is not None:
             tray_icon.hide()
         app.quit()
@@ -438,6 +441,11 @@ def main():
         settings_process_ref.pop("process", None)
         settings_process_ref.pop("show_launch", None)
 
+    def close_chat_process(force=False):
+        process = chat_process_ref.get("process")
+        _close_qprocess(process, force)
+        chat_process_ref.pop("process", None)
+
     def on_model_selected(selected_char, selected_costume, relaunch=False):
         nonlocal char, costume
         char = selected_char
@@ -454,6 +462,7 @@ def main():
             ("dark_theme", "dark", False),
             ("vsync", "vsync", True),
             ("game_topmost", "game_topmost", False),
+            ("chat_window_normal_window", "chat_window_normal_window", False),
             ("hide_live2d_model", "hide_live2d_model", False),
             ("live2d_idle_actions_enabled", "live2d_idle_actions_enabled", True),
             ("live2d_head_tracking_enabled", "live2d_head_tracking_enabled", True),
@@ -528,7 +537,7 @@ def main():
             apply_app_theme(True)
             cfg.set("dark_theme", True)
         _pet_window_keys = (
-            "fps", "opacity", "vsync", "game_topmost", "hide_live2d_model",
+            "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
             "live2d_idle_actions_enabled", "live2d_quality", "live2d_scale",
             "compact_ai_window_enabled", "compact_ai_window_opacity",
             "compact_ai_window_font_size", "compact_ai_window_background_color",
@@ -591,6 +600,72 @@ def main():
         process.deleteLater()
 
     settings_process_ref = {}
+    chat_process_ref = {}
+
+    def clear_chat_process(process):
+        if not isValid(process):
+            return
+        if chat_process_ref.get("process") is process:
+            chat_process_ref.pop("process", None)
+        process.deleteLater()
+
+    def launch_chat_process():
+        existing = chat_process_ref.get("process")
+        if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
+            return
+
+        cfg.load()
+        current_char = cfg.get("character", char)
+        current_costume = cfg.get("costume", costume)
+        if not (current_char and current_char in mgr.characters):
+            models = configured_models()
+            if models:
+                current_char = models[0].get("character", "")
+                current_costume = models[0].get("costume", current_costume)
+        if not current_char:
+            launch_settings_process(show_launch=False)
+            return
+
+        if pet_window_ref.get("processes") and ipc_ref.get("clients"):
+            broadcast_ipc_line(f"OPEN_CHAT\t{current_char}")
+            return
+
+        group_characters = []
+        seen_group_characters = set()
+        for model in configured_models():
+            model_char = model.get("character", "")
+            if model_char and model_char not in seen_group_characters:
+                group_characters.append(model_char)
+                seen_group_characters.add(model_char)
+        if current_char not in seen_group_characters:
+            group_characters.insert(0, current_char)
+
+        screen = app.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            pet_x = available.center().x()
+            pet_y = available.center().y()
+        else:
+            pet_x = 100
+            pet_y = 100
+
+        process = QProcess(app)
+        program, arguments = process_program_and_args(BASE_DIR, "chat_process.py", [
+            "--character", current_char,
+            "--pet-x", str(pet_x),
+            "--pet-y", str(pet_y),
+            "--pet-w", "1",
+            "--pet-h", "1",
+            "--group-characters", json.dumps(group_characters, ensure_ascii=False),
+        ])
+        process.setProgram(program)
+        process.setArguments(arguments)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
+        process.finished.connect(lambda *args, p=process: clear_chat_process(p))
+        process.errorOccurred.connect(lambda _error, p=process: clear_chat_process(p))
+        chat_process_ref["process"] = process
+        process.start()
 
     def handle_settings_line(line):
         if line.startswith("MODEL\t"):
@@ -714,6 +789,7 @@ def main():
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(close_settings_process)
+    app.aboutToQuit.connect(close_chat_process)
     app.aboutToQuit.connect(close_pet_processes)
 
     if has_configured_models or model_valid:
