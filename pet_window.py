@@ -1203,6 +1203,7 @@ class PetWindow(QWidget):
             "user_avatar_color",
             "user_avatar_path",
             "language",
+            "chat_window_normal_window",
             "hide_live2d_model",
             "live2d_idle_actions_enabled",
         }
@@ -1230,6 +1231,8 @@ class PetWindow(QWidget):
                 self._cfg.set("chat_integration_port", data["chat_integration_port"])
             if "chat_integration_token" in data:
                 self._cfg.set("chat_integration_token", data["chat_integration_token"])
+            if "chat_window_normal_window" in data:
+                self._cfg.set("chat_window_normal_window", bool(data["chat_window_normal_window"]))
             if "hide_live2d_model" in data:
                 self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
             if "live2d_idle_actions_enabled" in data:
@@ -1793,6 +1796,10 @@ class PetWindow(QWidget):
                 self._handle_reminder_event(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
+        elif line.startswith("OPEN_CHAT"):
+            parts = line.split("\t", 1)
+            if len(parts) == 1 or not parts[1] or parts[1] == self._current_char:
+                self._open_chat()
         elif line == "SHUTDOWN":
             self._quit()
 

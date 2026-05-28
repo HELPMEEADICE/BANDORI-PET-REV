@@ -2071,6 +2071,7 @@ class ChatWindow(QWidget):
         avatar_paths = self._cfg.get("chat_avatar_paths", {}) if self._cfg else {}
         self._chat_avatar_paths = avatar_paths if isinstance(avatar_paths, dict) else {}
         self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True)) if self._cfg else True
+        self._normal_window_mode = bool(self._cfg.get("chat_window_normal_window", False)) if self._cfg else False
 
         from database_manager import DatabaseManager
         self._db = DatabaseManager()
@@ -2089,6 +2090,31 @@ class ChatWindow(QWidget):
         else:
             self.resize(420, 620)
 
+        self._apply_window_mode_flags()
+        self.setAutoFillBackground(False)
+        self._init_ui()
+        self._apply_theme()
+        qconfig.themeChanged.connect(self._apply_theme)
+
+        self._load_or_create_conversation()
+
+    def _apply_window_mode_flags(self):
+        if self._normal_window_mode:
+            flags = (
+                Qt.WindowType.Window
+                | Qt.WindowType.WindowTitleHint
+                | Qt.WindowType.WindowSystemMenuHint
+                | Qt.WindowType.WindowMinimizeButtonHint
+                | Qt.WindowType.WindowMaximizeButtonHint
+                | Qt.WindowType.WindowCloseButtonHint
+            )
+            fullscreen_hint = getattr(Qt.WindowType, "WindowFullscreenButtonHint", None)
+            if fullscreen_hint is not None:
+                flags |= fullscreen_hint
+            self.setWindowFlags(flags)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+            return
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -2096,12 +2122,6 @@ class ChatWindow(QWidget):
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAutoFillBackground(False)
-        self._init_ui()
-        self._apply_theme()
-        qconfig.themeChanged.connect(self._apply_theme)
-
-        self._load_or_create_conversation()
 
     def _assign_legacy_chat_history(self):
         if not self._cfg or not hasattr(self._cfg, "legacy_chat_user_key"):
@@ -2319,13 +2339,15 @@ class ChatWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_11_border_fix()
-        if macos_patch is not None:
+        if macos_patch is not None and not self._normal_window_mode:
             QTimer.singleShot(0, lambda: macos_patch.apply_floating_tool_window_polish(self))
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
             QTimer.singleShot(0, self._play_entrance)
 
     def _apply_windows_11_border_fix(self):
+        if self._normal_window_mode:
+            return
         hwnd = int(self.winId())
         apply_windows_11_border_fix(hwnd)
 
@@ -2453,6 +2475,7 @@ class ChatWindow(QWidget):
 
         self._resize_grip = ChatResizeGrip(self, self._shell)
         self._resize_grip.setObjectName("ChatResizeGrip")
+        self._resize_grip.setVisible(not self._normal_window_mode)
         self._resize_grip.raise_()
         self._position_resize_grip()
 
@@ -2904,6 +2927,7 @@ class ChatWindow(QWidget):
         close_btn = IconButton(FluentIcon.CLOSE, bar)
         close_btn.setFixedSize(32, 32)
         close_btn.clicked.connect(self.close)
+        close_btn.setVisible(not self._normal_window_mode)
         layout.addWidget(close_btn)
 
         self._new_btn = new_btn
