@@ -1,12 +1,11 @@
+import ctypes
 import os
 import random
+import sys
 import time
 from pathlib import Path
 
-try:
-    from lupa.luajit21 import LuaRuntime
-except ModuleNotFoundError:
-    from lupa.lua import LuaRuntime
+from lupa.luajit21 import LuaRuntime
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
@@ -26,6 +25,15 @@ def _normalize_lua_path(path) -> str:
 
 def _read_lua_chunk_bytes(path: Path) -> bytes:
     return path.read_bytes()
+
+
+def _read_bundled_lua_module_bytes(module_name: str) -> tuple[bytes, bytes]:
+    relative = Path(*module_name.split("."))
+    for suffix in (".ljbc", ".lua"):
+        path = BASE_DIR / relative.with_suffix(suffix)
+        if path.exists():
+            return path.read_bytes(), ("@" + path.as_posix()).encode("utf-8")
+    raise FileNotFoundError(f"Bundled Lua module not found: {module_name}")
 
 
 def _lua_module_name(path: Path, root: Path) -> str | None:
@@ -75,6 +83,56 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
         b"end; "
         b"local loaders = package.searchers or package.loaders; "
         b"table.insert(loaders, 1, loader)"
+    )
+
+
+def _install_gl_proc_address_loader(lua: LuaRuntime):
+    if sys.platform != "win32":
+        return
+
+    try:
+        opengl32 = ctypes.WinDLL("opengl32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except OSError:
+        return
+
+    opengl32.wglGetProcAddress.argtypes = [ctypes.c_char_p]
+    opengl32.wglGetProcAddress.restype = ctypes.c_void_p
+    kernel32.GetProcAddress.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    kernel32.GetProcAddress.restype = ctypes.c_void_p
+    opengl32_handle = ctypes.c_void_p(opengl32._handle)
+    invalid_ptrs = {0, 1, 2, 3, ctypes.c_void_p(-1).value}
+
+    def gl_get_proc_address(name):
+        if isinstance(name, str):
+            name = name.encode("ascii", errors="ignore")
+        elif not isinstance(name, bytes):
+            name = str(name).encode("ascii", errors="ignore")
+        ptr = opengl32.wglGetProcAddress(name)
+        if ptr in invalid_ptrs:
+            ptr = kernel32.GetProcAddress(opengl32_handle, name)
+        if ptr in invalid_ptrs:
+            return None
+        return format(int(ptr), "x")
+
+    lua.globals()[b"__bandori_gl_get_proc_address"] = gl_get_proc_address
+
+
+def _require_bundled_lua_module(lua: LuaRuntime, module_name: str):
+    chunk, chunk_name = _read_bundled_lua_module_bytes(module_name)
+    return lua.execute(
+        b"local name, chunk, chunk_name = ...; "
+        b"local loaded = package.loaded[name]; "
+        b"if loaded ~= nil then return loaded end; "
+        b"local fn, err = load(chunk, chunk_name); "
+        b"if fn == nil then error(err) end; "
+        b"local result = fn(name); "
+        b"if result == nil then result = true end; "
+        b"package.loaded[name] = result; "
+        b"return result",
+        module_name.encode("utf-8"),
+        chunk,
+        chunk_name,
     )
 
 
@@ -253,13 +311,19 @@ class LuaLive2DModule:
         lua = LuaRuntime(unpack_returned_tuples=True, encoding=None)
         lua.execute(b'assert(require("ffi"), "lupa must be built with LuaJIT FFI")')
         _install_lazy_lua_module_loader(lua, LIVE2D_LUA_DIR)
+        _install_gl_proc_address_loader(lua)
         base_dir = BASE_DIR.as_posix().encode("utf-8")
         lua.execute(
             b"local root = ...; "
             b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
             base_dir,
         )
-        lua.execute(b'package.loaded["live2d.platform_manager"] = require("live2d_platform_manager_override")')
+        _require_bundled_lua_module(lua, "live2d_platform_manager_override")
+        lua.execute(
+            b"local target, source = ...; package.loaded[target] = package.loaded[source]",
+            b"live2d.platform_manager",
+            b"live2d_platform_manager_override",
+        )
         lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
         lua.execute(
             b"local root = ...; "

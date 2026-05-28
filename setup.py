@@ -38,6 +38,7 @@ PYOPENGL_PLATFORM_MODULES = (
 for module_name in (
     "PySide6.QtCore",
     "PySide6.QtGui",
+    "PySide6.QtOpenGL",
     "PySide6.QtOpenGLWidgets",
     "PySide6.QtWidgets",
 ):
@@ -423,30 +424,22 @@ def _mac_iconfile() -> str | None:
 
 
 def lupa_luajit_runtime_module() -> str:
-    candidates = ("lupa.luajit21", "lupa.lua")
-    errors: list[str] = []
-
-    for name in candidates:
-        spec = importlib.util.find_spec(name)
-        if spec is None:
-            errors.append(f"{name}: not installed")
-            continue
-        try:
-            module = __import__(name, fromlist=["LuaRuntime"])
-            lua = module.LuaRuntime()
-            lua.execute('assert(require("ffi"))')
-        except Exception as exc:
-            errors.append(f"{name}: {exc}")
-            continue
-        return name
-
-    details = "; ".join(errors)
-    raise RuntimeError(
-        "A Lupa runtime built with LuaJIT FFI is required. "
-        "On macOS, reinstall it with: "
-        "LUPA_NO_BUNDLE=true pip install --no-binary lupa --force-reinstall lupa. "
-        f"Checked runtimes: {details}"
-    )
+    name = "lupa.luajit21"
+    spec = importlib.util.find_spec(name)
+    if spec is None:
+        raise RuntimeError("lupa.luajit21 is required but is not installed.")
+    try:
+        module = __import__(name, fromlist=["LuaRuntime"])
+        lua = module.LuaRuntime()
+        lua.execute('assert(require("ffi"))')
+    except Exception as exc:
+        raise RuntimeError(
+            "lupa.luajit21 must be available and built with LuaJIT FFI. "
+            "On macOS, reinstall it with: "
+            "LUPA_NO_BUNDLE=true pip install --no-binary lupa --force-reinstall lupa. "
+            f"Error: {exc}"
+        ) from exc
+    return name
 
 
 include_files = [
@@ -473,6 +466,7 @@ build_exe_options = {
         "PIL",
         "PySide6.QtCore",
         "PySide6.QtGui",
+        "PySide6.QtOpenGL",
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
         "darkdetect",

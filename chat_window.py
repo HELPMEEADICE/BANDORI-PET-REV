@@ -1980,9 +1980,6 @@ class ChatWindow(QWidget):
         self._model_manager = model_manager
         self._live2d = live2d_module
         self._cfg = config_manager
-        self._modern_chat_ui_enabled = bool(
-            self._cfg.get("fluent_chat_window_enabled", False)
-        ) if self._cfg else False
         display_names = self._cfg.get("chat_display_names", {}) if self._cfg else {}
         self._chat_display_names = display_names if isinstance(display_names, dict) else {}
         pinned_chat_keys = self._cfg.get("pinned_chat_keys", []) if self._cfg else []
@@ -2055,7 +2052,7 @@ class ChatWindow(QWidget):
         ) if self._cfg else _GROUP_SIDEBAR_DEFAULT_RATIO
         self._group_sidebar_collapsed = bool(
             self._cfg.get("group_chat_sidebar_collapsed", False)
-        ) if (self._modern_chat_ui_enabled or self._is_group_chat) and self._cfg else False
+        ) if self._cfg else False
         self._group_sidebar_save_timer = QTimer(self)
         self._group_sidebar_save_timer.setSingleShot(True)
         self._group_sidebar_save_timer.timeout.connect(self._save_group_sidebar_settings)
@@ -2087,7 +2084,7 @@ class ChatWindow(QWidget):
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
         self._apply_chat_window_minimum_size()
-        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
+        if not self._group_sidebar_collapsed:
             self.resize(880, 680)
         else:
             self.resize(420, 620)
@@ -2121,13 +2118,10 @@ class ChatWindow(QWidget):
             ratio = _GROUP_SIDEBAR_DEFAULT_RATIO
         return max(_GROUP_SIDEBAR_MIN_RATIO, min(_GROUP_SIDEBAR_MAX_RATIO, ratio))
 
-    def _chat_sidebar_enabled(self) -> bool:
-        return bool(self._modern_chat_ui_enabled or self._is_group_chat)
-
     def _chat_minimum_size_for(self, sidebar_collapsed: bool | None = None) -> tuple[int, int]:
         if sidebar_collapsed is None:
             sidebar_collapsed = self._group_sidebar_collapsed
-        if self._chat_sidebar_enabled() and not sidebar_collapsed:
+        if not sidebar_collapsed:
             return 720, 600
         return 360, 520
 
@@ -2411,40 +2405,32 @@ class ChatWindow(QWidget):
         main_layout.addWidget(self._shell)
         self._resize_grip = None
 
-        if self._chat_sidebar_enabled():
-            shell_layout = QHBoxLayout(self._shell)
-            shell_layout.setContentsMargins(0, 0, 0, 0)
-            shell_layout.setSpacing(0)
-            self._group_splitter = FluentSplitter(Qt.Orientation.Horizontal, self._shell)
-            self._group_splitter.setObjectName("GroupChatSplitter")
-            self._group_splitter.setChildrenCollapsible(False)
-            self._group_splitter.setHandleWidth(10)
-            self._group_splitter.setOpaqueResize(True)
-            self._group_splitter.splitterMoved.connect(self._on_group_splitter_moved)
-            shell_layout.addWidget(self._group_splitter)
+        shell_layout = QHBoxLayout(self._shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        self._group_splitter = FluentSplitter(Qt.Orientation.Horizontal, self._shell)
+        self._group_splitter.setObjectName("GroupChatSplitter")
+        self._group_splitter.setChildrenCollapsible(False)
+        self._group_splitter.setHandleWidth(10)
+        self._group_splitter.setOpaqueResize(True)
+        self._group_splitter.splitterMoved.connect(self._on_group_splitter_moved)
+        shell_layout.addWidget(self._group_splitter)
 
-            self._group_sidebar = self._build_group_sidebar()
-            self._group_splitter.addWidget(self._group_sidebar)
+        self._group_sidebar = self._build_group_sidebar()
+        self._group_splitter.addWidget(self._group_sidebar)
 
-            content = QWidget(self._shell)
-            content.setObjectName("ChatContent")
-            content.setMinimumWidth(360)
-            content_layout = QVBoxLayout(content)
-            content_layout.setContentsMargins(0, 0, 0, 0)
-            content_layout.setSpacing(0)
-            self._group_splitter.addWidget(content)
-            self._group_splitter.setStretchFactor(0, 0)
-            self._group_splitter.setStretchFactor(1, 1)
-            if self._group_sidebar_collapsed:
-                self._group_sidebar.setVisible(False)
-            QTimer.singleShot(0, self._restore_group_splitter_sizes)
-        else:
-            self._group_sidebar = None
-            self._group_splitter = None
-            shell_layout = QVBoxLayout(self._shell)
-            shell_layout.setContentsMargins(0, 0, 0, 0)
-            shell_layout.setSpacing(0)
-            content_layout = shell_layout
+        content = QWidget(self._shell)
+        content.setObjectName("ChatContent")
+        content.setMinimumWidth(360)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        self._group_splitter.addWidget(content)
+        self._group_splitter.setStretchFactor(0, 0)
+        self._group_splitter.setStretchFactor(1, 1)
+        if self._group_sidebar_collapsed:
+            self._group_sidebar.setVisible(False)
+        QTimer.singleShot(0, self._restore_group_splitter_sizes)
 
         self._titlebar = self._build_titlebar()
         content_layout.addWidget(self._titlebar)
@@ -2472,7 +2458,7 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._chat_sidebar_enabled() and not self._group_sidebar_collapsed:
+        if not self._group_sidebar_collapsed:
             self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
         self._relayout_message_bubbles()
@@ -2539,7 +2525,7 @@ class ChatWindow(QWidget):
         self._schedule_group_relayout()
 
     def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
-        if not self._chat_sidebar_enabled() or not self._group_splitter or not self._group_sidebar:
+        if not self._group_splitter or not self._group_sidebar:
             return
         was_collapsed = self._group_sidebar_collapsed
         collapsed = bool(collapsed)
@@ -2572,11 +2558,11 @@ class ChatWindow(QWidget):
         collapse_text = _tr(
             "ChatWindow.chat_list_collapse",
             default="收起聊天列表",
-        ) if self._modern_chat_ui_enabled else _tr("ChatWindow.group_list_collapse")
+        )
         expand_text = _tr(
             "ChatWindow.chat_list_expand",
             default="展开聊天列表",
-        ) if self._modern_chat_ui_enabled else _tr("ChatWindow.group_list_expand")
+        )
         if self._group_toggle_btn is not None:
             icon = FluentIcon.MENU if self._group_sidebar_collapsed else FluentIcon.CARE_LEFT_SOLID
             self._group_toggle_btn.setIcon(icon.icon())
@@ -2612,9 +2598,7 @@ class ChatWindow(QWidget):
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
         title = StrongBodyLabel(
-            _tr("ChatWindow.chat_list", default="聊天列表")
-            if self._modern_chat_ui_enabled
-            else _tr("ChatWindow.group_list"),
+            _tr("ChatWindow.chat_list", default="聊天列表"),
             sidebar,
         )
         title.setObjectName("GroupSidebarTitle")
@@ -2629,9 +2613,7 @@ class ChatWindow(QWidget):
             _tr(
                 "ChatWindow.chat_list_hint",
                 default="快速切换私聊和群聊；右键可管理名称、头像和置顶。",
-            )
-            if self._modern_chat_ui_enabled
-            else _tr("ChatWindow.group_list_hint"),
+            ),
             sidebar,
         )
         subtitle.setObjectName("GroupSidebarSubtitle")
@@ -2654,18 +2636,15 @@ class ChatWindow(QWidget):
         scroll.setWidget(list_widget)
         layout.addWidget(scroll, 1)
 
-        if self._modern_chat_ui_enabled:
-            new_chat_btn = QToolButton(sidebar)
-            new_chat_btn.setObjectName("NewChatPickerButton")
-            new_chat_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            new_chat_btn.setIcon(FluentIcon.ADD.icon())
-            new_chat_btn.setText(_tr("ChatWindow.new_chat_picker", default="新建聊天"))
-            new_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            new_chat_btn.clicked.connect(self._show_new_chat_picker)
-            layout.addWidget(new_chat_btn)
-            self._new_chat_picker_btn = new_chat_btn
-        else:
-            self._new_chat_picker_btn = None
+        new_chat_btn = QToolButton(sidebar)
+        new_chat_btn.setObjectName("NewChatPickerButton")
+        new_chat_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        new_chat_btn.setIcon(FluentIcon.ADD.icon())
+        new_chat_btn.setText(_tr("ChatWindow.new_chat_picker", default="新建聊天"))
+        new_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_chat_btn.clicked.connect(self._show_new_chat_picker)
+        layout.addWidget(new_chat_btn)
+        self._new_chat_picker_btn = new_chat_btn
 
         self._group_sidebar_title = title
         self._group_sidebar_subtitle = subtitle
@@ -2835,33 +2814,7 @@ class ChatWindow(QWidget):
             if item:
                 del item
 
-        if self._modern_chat_ui_enabled:
-            self._refresh_modern_chat_list()
-            return
-
-        current_key = self._conversation_key_for(self._group_characters)
-        chats = self._group_chats()
-        if not chats:
-            empty = BodyLabel(_tr("ChatWindow.no_convs"), self._group_list_widget)
-            empty.setObjectName("GroupListEmpty")
-            empty.setWordWrap(True)
-            self._group_list_layout.addWidget(empty)
-            self._group_list_layout.addStretch()
-            return
-
-        for idx, chat in enumerate(chats):
-            combo = chat["characters"]
-            row = GroupChatListRow(
-                combo,
-                self._group_display_name(combo),
-                self._group_preview(chat),
-                self._conversation_key_for(combo) == current_key,
-                self._group_list_widget,
-            )
-            row.selected.connect(self._switch_group_chat)
-            row.context_menu_requested.connect(self._show_group_chat_context_menu)
-            self._group_list_layout.addWidget(row)
-        self._group_list_layout.addStretch()
+        self._refresh_modern_chat_list()
 
     def _show_new_chat_picker(self):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
@@ -2936,12 +2889,11 @@ class ChatWindow(QWidget):
         layout.addLayout(title_stack)
         layout.addStretch()
 
-        if self._chat_sidebar_enabled():
-            group_toggle_btn = IconButton(FluentIcon.CARE_LEFT_SOLID, bar)
-            group_toggle_btn.setFixedSize(32, 32)
-            group_toggle_btn.clicked.connect(self._toggle_group_sidebar)
-            layout.addWidget(group_toggle_btn)
-            self._group_toggle_btn = group_toggle_btn
+        group_toggle_btn = IconButton(FluentIcon.CARE_LEFT_SOLID, bar)
+        group_toggle_btn.setFixedSize(32, 32)
+        group_toggle_btn.clicked.connect(self._toggle_group_sidebar)
+        layout.addWidget(group_toggle_btn)
+        self._group_toggle_btn = group_toggle_btn
 
         new_btn = IconButton(FluentIcon.ADD, bar)
         new_btn.setFixedSize(32, 32)
@@ -3218,8 +3170,7 @@ class ChatWindow(QWidget):
 
         self._shell.set_panel_style(bg, border, 14, 1)
         group_sidebar_visible = (
-            self._chat_sidebar_enabled()
-            and self._group_sidebar is not None
+            self._group_sidebar is not None
             and not self._group_sidebar_collapsed
         )
         title_radius = (0, 14, 0, 0) if group_sidebar_visible else (14, 14, 0, 0)
@@ -3725,14 +3676,11 @@ class ChatWindow(QWidget):
     def _sync_chat_mode_chrome(self):
         self._apply_chat_window_minimum_size(ensure_visible_size=True)
         if self._group_toggle_btn is not None:
-            self._group_toggle_btn.setVisible(self._chat_sidebar_enabled())
+            self._group_toggle_btn.setVisible(True)
         if self._group_sidebar is not None:
-            self._group_sidebar.setVisible(self._chat_sidebar_enabled() and not self._group_sidebar_collapsed)
+            self._group_sidebar.setVisible(not self._group_sidebar_collapsed)
         if self._group_splitter is not None:
-            if self._chat_sidebar_enabled():
-                self._schedule_group_sidebar_ratio_apply()
-            else:
-                self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
+            self._schedule_group_sidebar_ratio_apply()
         self._sync_group_sidebar_toggle_buttons()
         self._apply_theme()
 

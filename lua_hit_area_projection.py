@@ -1,10 +1,7 @@
 from pathlib import Path
 import sys
 
-try:
-    from lupa.luajit21 import LuaRuntime
-except ModuleNotFoundError:
-    from lupa.lua import LuaRuntime
+from lupa.luajit21 import LuaRuntime
 
 
 _LUA_BASENAME = "custom_hit_area_state"

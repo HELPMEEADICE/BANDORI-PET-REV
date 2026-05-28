@@ -1,3 +1,5 @@
+import sys
+
 from fluent_bootstrap import assert_pyside6_fluent_widgets
 from fluent_silencer import import_qfluentwidgets
 
@@ -12,7 +14,17 @@ BANDORI_PRIMARY_SOFT = "#fff0f5"
 BANDORI_PRIMARY_SOFT_HOVER = "#ffe2ec"
 BANDORI_PRIMARY_SOFT_DARK = "#3a1826"
 BANDORI_PRIMARY_SOFT_DARK_HOVER = "#4a1d2f"
-BANDORI_UI_FONT_FAMILY = "Microsoft YaHei UI"
+
+
+def _default_ui_font_family() -> str:
+    if sys.platform == "darwin":
+        return "PingFang SC"
+    if sys.platform.startswith("linux"):
+        return "Noto Sans CJK SC"
+    return "Microsoft YaHei UI"
+
+
+BANDORI_UI_FONT_FAMILY = _default_ui_font_family()
 
 
 def accent_color(dark: bool = False) -> str:

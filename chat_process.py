@@ -64,6 +64,7 @@ def main():
     set_language(lang)
 
     app = QApplication(sys.argv)
+    install_parent_death_watch(app)
 
     if sys.platform == "darwin":
         import macos_patch

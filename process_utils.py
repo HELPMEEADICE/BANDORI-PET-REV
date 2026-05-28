@@ -270,6 +270,25 @@ def clamp_float(value: object, minimum: float, maximum: float, default: float) -
     return max(minimum, min(maximum, number))
 
 
+def install_parent_death_watch(app, interval_ms: int = 2000):
+    # When the parent process dies (SIGKILL, terminal closed, etc.) the OS
+    # reparents this process to init/launchd, so getppid() changes. Poll for
+    # that and call app.quit() so a graceful Qt shutdown still runs.
+    from PySide6.QtCore import QTimer
+
+    initial_ppid = os.getppid()
+
+    def _check():
+        if os.getppid() != initial_ppid:
+            app.quit()
+
+    timer = QTimer(app)
+    timer.setInterval(int(interval_ms))
+    timer.timeout.connect(_check)
+    timer.start()
+    return timer
+
+
 def hidden_subprocess_kwargs() -> dict:
     if os.name != "nt":
         return {}
