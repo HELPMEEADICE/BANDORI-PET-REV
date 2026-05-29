@@ -2508,7 +2508,7 @@ class ChatWindow(QWidget):
 
     def _schedule_group_relayout(self):
         if self._group_relayout_timer.isActive():
-            return
+            self._group_relayout_timer.stop()
         self._group_relayout_timer.start()
 
     def _apply_group_sidebar_ratio_to_splitter(self):
@@ -2548,6 +2548,7 @@ class ChatWindow(QWidget):
     def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
         if not self._group_splitter or not self._group_sidebar:
             return
+        scroll_state = self._message_scroll_state()
         was_collapsed = self._group_sidebar_collapsed
         collapsed = bool(collapsed)
         collapsed_size = None
@@ -2568,9 +2569,45 @@ class ChatWindow(QWidget):
             self._schedule_group_sidebar_ratio_apply()
         self._sync_group_sidebar_toggle_buttons()
         self._apply_theme()
-        self._schedule_group_relayout()
+        self._sync_layout_after_group_sidebar_toggle(scroll_state)
         if persist:
             self._schedule_group_sidebar_settings_save()
+
+    def _message_scroll_state(self) -> tuple[int, bool]:
+        sb = self._scroll.verticalScrollBar()
+        return sb.value(), sb.value() >= sb.maximum() - 4
+
+    def _restore_message_scroll_state(self, state: tuple[int, bool]):
+        value, was_at_bottom = state
+        sb = self._scroll.verticalScrollBar()
+        sb.setValue(sb.maximum() if was_at_bottom else min(value, sb.maximum()))
+
+    def _sync_layout_after_group_sidebar_toggle(self, scroll_state: tuple[int, bool] | None = None):
+        if self.layout():
+            self.layout().activate()
+        if getattr(self, "_shell", None) is not None and self._shell.layout():
+            self._shell.layout().activate()
+        if self._group_splitter is not None:
+            if self._group_sidebar_collapsed:
+                self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
+            else:
+                self._apply_group_sidebar_ratio_to_splitter()
+        self._relayout_message_bubbles()
+        if scroll_state is not None:
+            self._restore_message_scroll_state(scroll_state)
+        for delay in (0, 35, 90):
+            QTimer.singleShot(delay, lambda state=scroll_state: self._finish_group_sidebar_layout_sync(state))
+
+    def _finish_group_sidebar_layout_sync(self, scroll_state: tuple[int, bool] | None = None):
+        if self._group_splitter is not None and not self._group_sidebar_collapsed:
+            self._apply_group_sidebar_ratio_to_splitter()
+        self._relayout_message_bubbles()
+        if scroll_state is not None:
+            self._restore_message_scroll_state(scroll_state)
+        self._scroll.viewport().update()
+        self._scroll.update()
+        self._msg_area.update()
+        self._shell.update()
 
     def _toggle_group_sidebar(self):
         self._set_group_sidebar_collapsed(not self._group_sidebar_collapsed)
