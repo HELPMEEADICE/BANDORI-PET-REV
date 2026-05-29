@@ -158,6 +158,7 @@ _HISTORY_SCROLL_WIDTH = _HISTORY_ROW_WIDTH + 24
 _GROUP_SIDEBAR_DEFAULT_RATIO = 0.28
 _GROUP_SIDEBAR_MIN_RATIO = 0.18
 _GROUP_SIDEBAR_MAX_RATIO = 0.46
+_GROUP_SIDEBAR_ANIMATION_MS = 180
 _INTERRUPT_COMMANDS = INTERRUPT_COMMANDS
 
 
@@ -579,21 +580,19 @@ class FluentSplitterHandle(QSplitterHandle):
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
+        if not self._hovered and not self._pressed:
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         dark = isDarkTheme()
         if self._pressed:
-            color = QColor(accent_color(dark))
-            width = 4
-            alpha = 190
-        elif self._hovered:
             color = QColor("#8f98ad" if dark else "#9aa8c2")
-            width = 3
-            alpha = 150
-        else:
-            color = QColor("#3d4658" if dark else "#d6deec")
             width = 2
-            alpha = 120
+            alpha = 130
+        else:
+            color = QColor("#8f98ad" if dark else "#9aa8c2")
+            width = 1
+            alpha = 90
         color.setAlpha(alpha)
         x = (self.width() - width) / 2
         y = 18
@@ -2041,6 +2040,8 @@ class ChatWindow(QWidget):
         self._group_toggle_btn = None
         self._group_sidebar_toggle_btn = None
         self._group_splitter_adjusting = False
+        self._group_sidebar_anim = None
+        self._group_sidebar_animating = False
         self._collapsed_chat_size: QSize | None = None
         self._group_sidebar_ratio = self._normalized_group_sidebar_ratio(
             self._cfg.get("group_chat_sidebar_ratio", _GROUP_SIDEBAR_DEFAULT_RATIO)
@@ -2152,6 +2153,42 @@ class ChatWindow(QWidget):
         if ensure_visible_size and (self.width() < min_width or self.height() < min_height):
             self.resize(max(self.width(), min_width), max(self.height(), min_height))
 
+    def _available_geometry_for_window(self, geometry: QRect | None = None) -> QRect | None:
+        center = (geometry or self.geometry()).center()
+        screen = QApplication.screenAt(center) if center is not None else None
+        if screen is None:
+            screen = self.screen() or QApplication.primaryScreen()
+        return screen.availableGeometry() if screen is not None else None
+
+    def _geometry_keeping_right_edge_for_size(self, size: QSize, anchor_geometry: QRect | None = None) -> QRect | None:
+        if not size.isValid() or size.isEmpty():
+            return None
+        anchor = QRect(anchor_geometry or self.geometry())
+        width = max(self.minimumWidth(), size.width())
+        height = max(self.minimumHeight(), size.height())
+        x = anchor.right() - width + 1
+        y = anchor.y()
+        screen_geo = self._available_geometry_for_window(anchor)
+        if screen_geo is not None:
+            min_x = screen_geo.left()
+            max_x = screen_geo.right() - width + 1
+            if max_x >= min_x:
+                x = max(min_x, min(x, max_x))
+            else:
+                x = min_x
+            min_y = screen_geo.top()
+            max_y = screen_geo.bottom() - height + 1
+            if max_y >= min_y:
+                y = max(min_y, min(y, max_y))
+            else:
+                y = min_y
+        return QRect(x, y, width, height)
+
+    def _set_size_keeping_right_edge(self, size: QSize, anchor_geometry: QRect | None = None):
+        geometry = self._geometry_keeping_right_edge_for_size(size, anchor_geometry=anchor_geometry)
+        if geometry is not None:
+            self.setGeometry(geometry)
+
     def _valid_collapsed_chat_size(self, size: QSize | None) -> QSize | None:
         if size is None or not size.isValid() or size.isEmpty():
             return None
@@ -2171,11 +2208,32 @@ class ChatWindow(QWidget):
         min_width, min_height = self._chat_minimum_size_for(sidebar_collapsed=True)
         return QSize(max(min_width, content_width), max(min_height, self.height()))
 
-    def _restore_collapsed_chat_size(self, size: QSize):
+    def _expanded_chat_size_for_collapsed_size(self, size: QSize) -> QSize:
+        collapsed_size = self._valid_collapsed_chat_size(size) or self._fallback_collapsed_chat_size()
+        min_width, min_height = self._chat_minimum_size_for(sidebar_collapsed=False)
+        ratio = self._normalized_group_sidebar_ratio(self._group_sidebar_ratio)
+        sidebar_min_width = self._group_sidebar.minimumWidth() if self._group_sidebar is not None else 0
+        sidebar_width = int(round(collapsed_size.width() * ratio / max(0.01, 1.0 - ratio)))
+        sidebar_width = max(sidebar_min_width, sidebar_width)
+        return QSize(
+            max(min_width, collapsed_size.width() + sidebar_width),
+            max(min_height, collapsed_size.height()),
+        )
+
+    def _sidebar_width_for_total_width(self, total_width: int) -> int:
+        if self._group_sidebar is None:
+            return 0
+        total = max(1, int(total_width))
+        min_width = self._group_sidebar.minimumWidth()
+        max_width = max(min_width, int(total * _GROUP_SIDEBAR_MAX_RATIO))
+        sidebar_width = int(total * self._group_sidebar_ratio)
+        return max(min_width, min(max_width, sidebar_width))
+
+    def _restore_collapsed_chat_size(self, size: QSize, anchor_geometry: QRect | None = None):
         size = self._valid_collapsed_chat_size(size) or self._fallback_collapsed_chat_size()
         if self.size() == size:
             return
-        self.resize(size)
+        self._set_size_keeping_right_edge(size, anchor_geometry=anchor_geometry)
 
     def _normalize_group_characters(self, characters: list[str]) -> list[str]:
         result = []
@@ -2431,7 +2489,7 @@ class ChatWindow(QWidget):
         self._group_splitter = FluentSplitter(Qt.Orientation.Horizontal, self._shell)
         self._group_splitter.setObjectName("GroupChatSplitter")
         self._group_splitter.setChildrenCollapsible(False)
-        self._group_splitter.setHandleWidth(10)
+        self._group_splitter.setHandleWidth(1)
         self._group_splitter.setOpaqueResize(True)
         self._group_splitter.splitterMoved.connect(self._on_group_splitter_moved)
         shell_layout.addWidget(self._group_splitter)
@@ -2479,7 +2537,7 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self._group_sidebar_collapsed:
+        if not self._group_sidebar_collapsed and not self._group_sidebar_animating:
             self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
         self._relayout_message_bubbles()
@@ -2516,14 +2574,12 @@ class ChatWindow(QWidget):
             not self._group_splitter
             or not self._group_sidebar
             or self._group_sidebar_collapsed
+            or self._group_sidebar_animating
             or self._group_splitter_adjusting
         ):
             return
         total = max(1, self._group_splitter.width())
-        min_width = self._group_sidebar.minimumWidth()
-        max_width = max(min_width, int(total * _GROUP_SIDEBAR_MAX_RATIO))
-        sidebar_width = int(total * self._group_sidebar_ratio)
-        sidebar_width = max(min_width, min(max_width, sidebar_width))
+        sidebar_width = self._sidebar_width_for_total_width(total)
         content_width = max(1, total - sidebar_width)
         self._group_splitter_adjusting = True
         self._group_splitter.setSizes([sidebar_width, content_width])
@@ -2545,30 +2601,136 @@ class ChatWindow(QWidget):
         self._schedule_group_sidebar_settings_save()
         self._schedule_group_relayout()
 
+    def _stop_group_sidebar_animation(self):
+        if self._group_sidebar_anim is not None:
+            try:
+                self._group_sidebar_anim.stop()
+            except RuntimeError:
+                pass
+        self._group_sidebar_anim = None
+        self._group_sidebar_animating = False
+
+    def _set_group_splitter_sizes(self, sidebar_width: int, content_width: int):
+        if self._group_splitter is None:
+            return
+        self._group_splitter_adjusting = True
+        self._group_splitter.setSizes([max(0, sidebar_width), max(1, content_width)])
+        self._group_splitter_adjusting = False
+
+    def _animate_group_sidebar_transition(
+        self,
+        collapsed: bool,
+        target_size: QSize,
+        anchor_geometry: QRect,
+        scroll_state: tuple[int, bool],
+    ) -> bool:
+        if not self.isVisible() or self._group_splitter is None or self._group_sidebar is None:
+            return False
+        end_geometry = self._geometry_keeping_right_edge_for_size(target_size, anchor_geometry=anchor_geometry)
+        if end_geometry is None:
+            return False
+        start_geometry = QRect(self.geometry())
+        start_sizes = self._group_splitter.sizes()
+        start_sidebar_width = start_sizes[0] if start_sizes else (0 if not collapsed else self._sidebar_width_for_total_width(start_geometry.width()))
+        start_content_width = start_sizes[1] if len(start_sizes) > 1 else max(1, start_geometry.width() - start_sidebar_width)
+        end_sidebar_width = 0 if collapsed else self._sidebar_width_for_total_width(end_geometry.width())
+        end_content_width = max(1, end_geometry.width() - end_sidebar_width)
+
+        self._group_sidebar_ratio_timer.stop()
+        self._group_sidebar.setVisible(True)
+        self._group_sidebar_animating = True
+
+        anim = QVariantAnimation(self)
+        anim.setDuration(_GROUP_SIDEBAR_ANIMATION_MS)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def apply_value(value):
+            progress = float(value)
+            geometry = QRect(
+                int(round(start_geometry.x() + (end_geometry.x() - start_geometry.x()) * progress)),
+                int(round(start_geometry.y() + (end_geometry.y() - start_geometry.y()) * progress)),
+                int(round(start_geometry.width() + (end_geometry.width() - start_geometry.width()) * progress)),
+                int(round(start_geometry.height() + (end_geometry.height() - start_geometry.height()) * progress)),
+            )
+            self.setGeometry(geometry)
+            sidebar_width = int(round(start_sidebar_width + (end_sidebar_width - start_sidebar_width) * progress))
+            content_width = int(round(start_content_width + (end_content_width - start_content_width) * progress))
+            self._set_group_splitter_sizes(sidebar_width, content_width)
+            self._restore_message_scroll_state(scroll_state)
+
+        def finish():
+            self._group_sidebar_animating = False
+            self._group_sidebar_anim = None
+            self.setGeometry(end_geometry)
+            self._group_sidebar.setVisible(not collapsed)
+            if collapsed:
+                self._set_group_splitter_sizes(0, max(1, self._group_splitter.width()))
+            else:
+                self._apply_chat_window_minimum_size()
+                self._apply_group_sidebar_ratio_to_splitter()
+            self._sync_layout_after_group_sidebar_toggle(scroll_state)
+
+        anim.valueChanged.connect(apply_value)
+        anim.finished.connect(finish)
+        self._group_sidebar_anim = anim
+        anim.start()
+        return True
+
     def _set_group_sidebar_collapsed(self, collapsed: bool, persist: bool = True):
         if not self._group_splitter or not self._group_sidebar:
             return
+        self._stop_group_sidebar_animation()
         scroll_state = self._message_scroll_state()
+        anchor_geometry = QRect(self.geometry())
         was_collapsed = self._group_sidebar_collapsed
         collapsed = bool(collapsed)
+        if was_collapsed == collapsed:
+            self._apply_chat_window_minimum_size()
+            self._group_sidebar.setVisible(not collapsed)
+            if collapsed:
+                self._set_group_splitter_sizes(0, max(1, self._group_splitter.width()))
+            else:
+                self._apply_group_sidebar_ratio_to_splitter()
+            self._sync_group_sidebar_toggle_buttons()
+            return
         collapsed_size = None
+        expanded_size = None
         if was_collapsed and not collapsed:
             self._collapsed_chat_size = self.size()
+            expanded_size = self._expanded_chat_size_for_collapsed_size(self._collapsed_chat_size)
         elif not was_collapsed and collapsed:
             collapsed_size = self._valid_collapsed_chat_size(self._collapsed_chat_size)
             if collapsed_size is None:
                 collapsed_size = self._fallback_collapsed_chat_size()
         self._group_sidebar_collapsed = bool(collapsed)
-        self._apply_chat_window_minimum_size(ensure_visible_size=not self._group_sidebar_collapsed)
+        if was_collapsed and not collapsed and expanded_size is not None and self.isVisible():
+            min_width, min_height = self._chat_minimum_size_for(sidebar_collapsed=True)
+            self.setMinimumSize(min_width, min_height)
+        else:
+            self._apply_chat_window_minimum_size()
+        self._sync_group_sidebar_toggle_buttons()
+        self._apply_theme()
+        target_size = collapsed_size if self._group_sidebar_collapsed else expanded_size
+        if target_size is not None and self._animate_group_sidebar_transition(
+            self._group_sidebar_collapsed,
+            target_size,
+            anchor_geometry,
+            scroll_state,
+        ):
+            if persist:
+                self._schedule_group_sidebar_settings_save()
+            return
         self._group_sidebar.setVisible(not self._group_sidebar_collapsed)
         if self._group_sidebar_collapsed:
             self._group_splitter.setSizes([0, max(1, self._group_splitter.width())])
             if collapsed_size is not None:
-                self._restore_collapsed_chat_size(collapsed_size)
+                self._restore_collapsed_chat_size(collapsed_size, anchor_geometry=anchor_geometry)
         else:
+            if expanded_size is not None:
+                self._set_size_keeping_right_edge(expanded_size, anchor_geometry=anchor_geometry)
             self._schedule_group_sidebar_ratio_apply()
-        self._sync_group_sidebar_toggle_buttons()
-        self._apply_theme()
         self._sync_layout_after_group_sidebar_toggle(scroll_state)
         if persist:
             self._schedule_group_sidebar_settings_save()
