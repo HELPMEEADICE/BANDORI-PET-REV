@@ -1,5 +1,6 @@
 import argparse
 import ctypes
+import ctypes.util
 import ctypes.wintypes
 import json
 import os
@@ -121,6 +122,43 @@ else:
     _dwm_enable_blur_behind_window = None
     _DWM_BLURBEHIND = None
     _WNDPROC = None
+
+_x11 = None
+_x11_open_display = None
+_x11_close_display = None
+_x11_default_root_window = None
+_x11_query_pointer = None
+if sys.platform.startswith("linux"):
+    try:
+        _x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        _x11_open_display = _x11.XOpenDisplay
+        _x11_open_display.argtypes = [ctypes.c_char_p]
+        _x11_open_display.restype = ctypes.c_void_p
+        _x11_close_display = _x11.XCloseDisplay
+        _x11_close_display.argtypes = [ctypes.c_void_p]
+        _x11_close_display.restype = ctypes.c_int
+        _x11_default_root_window = _x11.XDefaultRootWindow
+        _x11_default_root_window.argtypes = [ctypes.c_void_p]
+        _x11_default_root_window.restype = ctypes.c_ulong
+        _x11_query_pointer = _x11.XQueryPointer
+        _x11_query_pointer.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_uint),
+        ]
+        _x11_query_pointer.restype = ctypes.c_int
+    except (AttributeError, OSError, TypeError):
+        _x11 = None
+        _x11_open_display = None
+        _x11_close_display = None
+        _x11_default_root_window = None
+        _x11_query_pointer = None
 
 
 def _parse_args():
@@ -611,7 +649,10 @@ class LightweightPet:
             self.x, self.y = 100 + args.index * 36, 100
         self.window = None
         self.hwnd = 0
+        self.x11_display = None
+        self.x11_root_window = 0
         self.mouse_passthrough = False
+        self.mouse_passthrough_supported = False
         self.native_hit_test = False
         self._original_wndproc = 0
         self._wndproc = None
@@ -667,6 +708,7 @@ class LightweightPet:
             self.shared_events.close()
             self.radial.close(force=True)
             self._restore_windows_hit_test_hook()
+            self._close_x11_input_support()
             self.renderer.dispose()
             if self.window is not None:
                 glfw.destroy_window(self.window)
@@ -763,6 +805,8 @@ class LightweightPet:
             set_windows_app_user_model_id("BandoriPet.PetRenderer")
             self.hwnd = int(glfw.get_win32_window(self.window))
             self._apply_windows_window_style()
+        elif sys.platform.startswith("linux"):
+            self._init_x11_input_support()
 
     def _apply_windows_window_style(self):
         if not self.hwnd:
@@ -820,6 +864,32 @@ class LightweightPet:
         self._original_wndproc = 0
         self._wndproc = None
 
+    def _init_x11_input_support(self):
+        if _x11_open_display is None or _x11_default_root_window is None or _x11_query_pointer is None:
+            return
+        if not hasattr(glfw, "MOUSE_PASSTHROUGH") or not hasattr(glfw, "set_window_attrib"):
+            return
+        if hasattr(glfw, "get_platform") and glfw.get_platform() != glfw.PLATFORM_X11:
+            return
+        display = _x11_open_display(None)
+        if not display:
+            return
+        self.x11_display = display
+        self.x11_root_window = int(_x11_default_root_window(display))
+        self.mouse_passthrough_supported = True
+
+    def _close_x11_input_support(self):
+        if self.x11_display is None:
+            return
+        try:
+            self._set_mouse_passthrough(False)
+        finally:
+            if _x11_close_display is not None:
+                _x11_close_display(self.x11_display)
+            self.x11_display = None
+            self.x11_root_window = 0
+            self.mouse_passthrough_supported = False
+
     def _call_original_wndproc(self, hwnd, msg, wparam, lparam):
         if self._original_wndproc and _call_window_proc is not None:
             return _call_window_proc(self._original_wndproc, hwnd, msg, wparam, lparam)
@@ -847,7 +917,16 @@ class LightweightPet:
         return self._call_original_wndproc(hwnd, msg, wparam, lparam)
 
     def _set_mouse_passthrough(self, enabled: bool):
-        if os.name != "nt" or not self.hwnd or enabled == self.mouse_passthrough:
+        if enabled == self.mouse_passthrough:
+            return
+        if sys.platform.startswith("linux") and self.mouse_passthrough_supported and self.window is not None:
+            try:
+                glfw.set_window_attrib(self.window, glfw.MOUSE_PASSTHROUGH, glfw.TRUE if enabled else glfw.FALSE)
+                self.mouse_passthrough = enabled
+            except Exception:
+                self.mouse_passthrough_supported = False
+            return
+        if os.name != "nt" or not self.hwnd:
             return
         style = _get_window_long(self.hwnd, GWL_EXSTYLE)
         if enabled:
@@ -871,6 +950,26 @@ class LightweightPet:
             point = ctypes.wintypes.POINT()
             _get_cursor_pos(ctypes.byref(point))
             return int(point.x), int(point.y)
+        if self.x11_display is not None and self.x11_root_window and _x11_query_pointer is not None:
+            root_return = ctypes.c_ulong()
+            child_return = ctypes.c_ulong()
+            root_x = ctypes.c_int()
+            root_y = ctypes.c_int()
+            win_x = ctypes.c_int()
+            win_y = ctypes.c_int()
+            mask = ctypes.c_uint()
+            if _x11_query_pointer(
+                self.x11_display,
+                self.x11_root_window,
+                ctypes.byref(root_return),
+                ctypes.byref(child_return),
+                ctypes.byref(root_x),
+                ctypes.byref(root_y),
+                ctypes.byref(win_x),
+                ctypes.byref(win_y),
+                ctypes.byref(mask),
+            ):
+                return int(root_x.value), int(root_y.value)
         x, y = glfw.get_cursor_pos(self.window)
         wx, wy = glfw.get_window_pos(self.window)
         return int(wx + x), int(wy + y)
