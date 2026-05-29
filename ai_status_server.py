@@ -1,7 +1,13 @@
+import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+
+def _token_matches(expected: str, candidate: str) -> bool:
+    """Constant-time token comparison to avoid leaking the token via timing."""
+    return hmac.compare_digest(str(expected or ""), str(candidate or ""))
 
 
 class AiStatusHttpServer:
@@ -88,12 +94,12 @@ class AiStatusHttpServer:
                 if not token:
                     return True
                 auth = self.headers.get("Authorization", "")
-                if auth == f"Bearer {token}":
+                if _token_matches(f"Bearer {token}", auth):
                     return True
-                if self.headers.get("X-Bandori-Token", "") == token:
+                if _token_matches(token, self.headers.get("X-Bandori-Token", "")):
                     return True
                 query_token = parse_qs(parsed.query).get("token", [""])[0]
-                return query_token == token
+                return _token_matches(token, query_token)
 
             def _send_json(self, data: dict, status: int = 200):
                 payload = b"" if status == 204 else json.dumps(data, ensure_ascii=False).encode("utf-8")
