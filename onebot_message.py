@@ -64,13 +64,16 @@ def normalize_onebot_event(event: dict) -> dict | None:
     if message_type == "group" and group_id:
         thread_id = group_id
         thread_name = str(event.get("group_name") or event.get("group_id") or "QQ 群聊")
+        chat_type = "group"
     else:
         thread_id = sender_id or str(event.get("target_id") or "private")
         thread_name = sender_name or "QQ 私聊"
+        chat_type = "private"
     normalized = {
         "platform": "qq",
         "thread_id": thread_id or "default",
         "thread_name": thread_name,
+        "chat_type": chat_type,
         "sender_id": sender_id,
         "sender_name": sender_name,
         "text": text,

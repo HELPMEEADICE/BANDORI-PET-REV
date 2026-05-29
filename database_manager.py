@@ -6,7 +6,7 @@ import json
 import threading
 from functools import wraps
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import FunctionType
 from process_utils import app_base_dir, clamp_int as _clamp_int
@@ -575,6 +575,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 platform TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
                 thread_name TEXT NOT NULL DEFAULT '',
+                chat_type TEXT NOT NULL DEFAULT '',
                 unread_count INTEGER NOT NULL DEFAULT 0,
                 last_message_id INTEGER,
                 last_message_at TEXT NOT NULL DEFAULT '',
@@ -593,6 +594,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 direction TEXT NOT NULL DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound', 'draft')),
                 content TEXT NOT NULL,
                 unread INTEGER NOT NULL DEFAULT 1,
+                chat_type TEXT NOT NULL DEFAULT '',
                 raw_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
@@ -618,6 +620,12 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT ''")
         if "tool_trace_json" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN tool_trace_json TEXT NOT NULL DEFAULT ''")
+        external_msg_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(external_chat_messages)").fetchall()]
+        if "chat_type" not in external_msg_columns:
+            self._conn.execute("ALTER TABLE external_chat_messages ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''")
+        external_thread_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(external_chat_threads)").fetchall()]
+        if "chat_type" not in external_thread_columns:
+            self._conn.execute("ALTER TABLE external_chat_threads ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_character_user ON conversations(character, user_key, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_user_conv_id ON group_messages(group_key, user_key, conversation_id, id)")
@@ -626,6 +634,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_thread ON external_chat_messages(platform, thread_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_unread ON external_chat_messages(unread, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_external_id ON external_chat_messages(platform, thread_id, external_message_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_chat_type ON external_chat_messages(chat_type, created_at)")
         self._conn.commit()
 
     def _normalize_user_key(self, user_key: str) -> str:
@@ -1261,6 +1270,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         direction = _clean_external_text(event.get("direction") or "inbound", "inbound").lower()
         if direction not in {"inbound", "outbound", "draft"}:
             direction = "inbound"
+        chat_type = _clean_external_text(event.get("chat_type") or "").lower()
+        if chat_type not in {"group", "private"}:
+            chat_type = ""
         unread = 1 if bool(event.get("unread", direction == "inbound")) and direction == "inbound" else 0
         created_at = _clean_external_text(event.get("timestamp") or event.get("created_at") or _now_text(), _now_text())
 
@@ -1280,8 +1292,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
         cur = self._conn.execute(
             "INSERT INTO external_chat_messages "
-            "(platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, chat_type, raw_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 platform,
                 thread_id,
@@ -1291,6 +1303,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 direction,
                 content,
                 unread,
+                chat_type,
                 _json_text(event),
                 created_at,
             ),
@@ -1299,10 +1312,11 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         now = _now_text()
         self._conn.execute(
             "INSERT INTO external_chat_threads "
-            "(platform, thread_id, thread_name, unread_count, last_message_id, last_message_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "(platform, thread_id, thread_name, chat_type, unread_count, last_message_id, last_message_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(platform, thread_id) DO UPDATE SET "
             "thread_name=CASE WHEN excluded.thread_name != '' THEN excluded.thread_name ELSE external_chat_threads.thread_name END, "
+            "chat_type=CASE WHEN excluded.chat_type != '' THEN excluded.chat_type ELSE external_chat_threads.chat_type END, "
             "unread_count=external_chat_threads.unread_count + ?, "
             "last_message_id=excluded.last_message_id, "
             "last_message_at=excluded.last_message_at, "
@@ -1311,6 +1325,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 platform,
                 thread_id,
                 thread_name,
+                chat_type,
                 unread,
                 message_id,
                 created_at,
@@ -1450,6 +1465,71 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "marked_read": int(cur.rowcount or 0),
             "unread": self.get_external_chat_unread_summary(),
         }
+
+    def _resync_external_chat_threads(self):
+        """Drop empty threads and recompute unread/last-message after a deletion."""
+        self._conn.execute(
+            "DELETE FROM external_chat_threads WHERE NOT EXISTS ("
+            "SELECT 1 FROM external_chat_messages m "
+            "WHERE m.platform=external_chat_threads.platform AND m.thread_id=external_chat_threads.thread_id)"
+        )
+        self._conn.execute(
+            "UPDATE external_chat_threads SET "
+            "unread_count=(SELECT COUNT(*) FROM external_chat_messages m "
+            "WHERE m.platform=external_chat_threads.platform AND m.thread_id=external_chat_threads.thread_id AND m.unread=1), "
+            "last_message_id=(SELECT MAX(m.id) FROM external_chat_messages m "
+            "WHERE m.platform=external_chat_threads.platform AND m.thread_id=external_chat_threads.thread_id)"
+        )
+
+    def delete_external_chat(self, chat_type: str = "", platform: str = "") -> dict:
+        """Delete all external chat records, optionally scoped by chat_type/platform.
+
+        ``chat_type`` is "group" / "private" (empty = any). Used by the manual
+        "delete records" buttons in the NapCat settings.
+        """
+        chat_type = _clean_external_text(chat_type)
+        platform = _clean_external_text(platform)
+        cur = self._conn.execute(
+            "DELETE FROM external_chat_messages "
+            "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
+            (chat_type, chat_type, platform, platform),
+        )
+        deleted_messages = int(cur.rowcount or 0)
+        tcur = self._conn.execute(
+            "DELETE FROM external_chat_threads "
+            "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
+            (chat_type, chat_type, platform, platform),
+        )
+        deleted_threads = int(tcur.rowcount or 0)
+        if deleted_messages:
+            self._resync_external_chat_threads()
+        self._conn.commit()
+        return {
+            "deleted_messages": deleted_messages,
+            "deleted_threads": deleted_threads,
+            "unread": self.get_external_chat_unread_summary(),
+        }
+
+    def purge_external_chat_older_than(self, days, chat_type: str = "", platform: str = "") -> dict:
+        """Delete external chat records older than ``days`` (retention auto-clean).
+
+        Records created strictly before ``now - days`` are removed; threads left
+        empty are dropped and the rest have their unread/last-message recomputed.
+        """
+        days = _clamp_int(days, 1, 3650, 7)
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        chat_type = _clean_external_text(chat_type)
+        platform = _clean_external_text(platform)
+        cur = self._conn.execute(
+            "DELETE FROM external_chat_messages "
+            "WHERE created_at < ? AND (?='' OR chat_type=?) AND (?='' OR platform=?)",
+            (cutoff, chat_type, chat_type, platform, platform),
+        )
+        deleted_messages = int(cur.rowcount or 0)
+        if deleted_messages:
+            self._resync_external_chat_threads()
+            self._conn.commit()
+        return {"deleted_messages": deleted_messages}
 
     def close(self):
         if self._closed:

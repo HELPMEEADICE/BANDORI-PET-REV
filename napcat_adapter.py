@@ -144,7 +144,7 @@ class NapcatClient(QObject):
         except RuntimeError:
             return False
 
-    def send_reply(self, raw_event: dict, text: str) -> bool:
+    def send_reply(self, raw_event: dict, text: str, mention_sender: bool = False) -> bool:
         """Send a text reply to the group/private chat the event came from."""
         text = str(text or "").strip()
         if not text or not isinstance(raw_event, dict):
@@ -152,6 +152,8 @@ class NapcatClient(QObject):
         message_type = str(raw_event.get("message_type") or "").lower()
         group_id = raw_event.get("group_id")
         user_id = raw_event.get("user_id")
+        if mention_sender and user_id:
+            text = f"[CQ:at,qq={user_id}] {text}"
         if message_type == "group" and group_id:
             return self.call_action("send_group_msg", {"group_id": group_id, "message": text})
         if user_id:

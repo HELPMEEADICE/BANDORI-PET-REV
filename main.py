@@ -372,6 +372,7 @@ def main():
         client = NapcatClient(ws_url, token, handle_napcat_message, parent=app)
         napcat_ref["client"] = client
         client.start()
+        _napcat_apply_retention()
 
     def _napcat_should_reply(event: dict) -> bool:
         if not cfg.get("napcat_auto_reply_enabled", False):
@@ -397,12 +398,70 @@ def main():
                     return str(item["character"])
         return char
 
-    def handle_napcat_message(event: dict):
-        try:
-            handle_chat_integration_message(event)
-        except Exception as exc:
-            print(f"NapCat message handling failed: {exc}")
+    def _napcat_chat_type(event: dict) -> str:
+        chat_type = str(event.get("chat_type") or "").lower() if isinstance(event, dict) else ""
+        if chat_type in ("group", "private"):
+            return chat_type
+        raw_event = event.get("raw_event") if isinstance(event, dict) else None
+        if isinstance(raw_event, dict) and str(raw_event.get("message_type") or "").lower() == "group":
+            return "group"
+        return "private"
+
+    def _napcat_should_save(chat_type: str) -> bool:
+        policy = str(cfg.get("napcat_save_policy", "all") or "all").lower()
+        if policy == "overlay_only":
+            return False
+        if policy == "private_only":
+            return chat_type != "group"
+        return True
+
+    def broadcast_napcat_transient_overlay(event: dict):
+        # Notification-only path for messages we are NOT persisting (save policy
+        # = overlay_only, or private_only applied to a group message). Shows the
+        # single incoming message in the floating window without a DB write.
+        content = str(event.get("text") or event.get("content") or "")
+        content = content.replace("\r", " ").replace("\n", " ").strip()
+        if not content:
             return
+        if len(content) > 80:
+            content = content[:80] + "..."
+        sender = str(event.get("sender_name") or event.get("sender_id") or "").strip()
+        body = f"{sender}: {content}" if sender else content
+        overlay = {
+            "source": str(event.get("platform") or "qq"),
+            "state": "stream",
+            "mode": "replace",
+            "title": str(event.get("thread_name") or "").strip()
+            or _tr("ChatIntegration.overlay_new_message", default="新消息"),
+            "text": body,
+            "action": "surprised",
+            "ttl_ms": 9000,
+            "anchor_to_pet": True,
+        }
+        broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+
+    def _napcat_apply_retention():
+        # Auto-delete expired records for chat types whose retention mode is "auto".
+        try:
+            with chat_integration_ref["lock"]:
+                db = chat_integration_db()
+                if str(cfg.get("napcat_group_retention_mode", "manual") or "manual").lower() == "auto":
+                    db.purge_external_chat_older_than(cfg.get("napcat_group_retention_days", 7), chat_type="group")
+                if str(cfg.get("napcat_private_retention_mode", "manual") or "manual").lower() == "auto":
+                    db.purge_external_chat_older_than(cfg.get("napcat_private_retention_days", 30), chat_type="private")
+        except Exception as exc:
+            print(f"NapCat retention cleanup failed: {exc}")
+
+    def handle_napcat_message(event: dict):
+        if _napcat_should_save(_napcat_chat_type(event)):
+            try:
+                handle_chat_integration_message(event)
+            except Exception as exc:
+                print(f"NapCat message handling failed: {exc}")
+                return
+            _napcat_apply_retention()
+        else:
+            broadcast_napcat_transient_overlay(event)
         if _napcat_should_reply(event):
             _napcat_generate_reply(event)
 
@@ -445,7 +504,11 @@ def main():
             clean = strip_action_tags(full_text)
             client = napcat_ref.get("client")
             if clean and client is not None and isinstance(raw_event, dict):
-                client.send_reply(raw_event, clean)
+                client.send_reply(
+                    raw_event,
+                    clean,
+                    mention_sender=bool(cfg.get("napcat_reply_mention_sender", True)),
+                )
                 overlay = {
                     "source": "napcat",
                     "state": "stream",
@@ -613,7 +676,13 @@ def main():
             ("napcat_auto_reply_enabled", "napcat_auto_reply_enabled", False),
             ("napcat_reply_private", "napcat_reply_private", True),
             ("napcat_reply_group_at_only", "napcat_reply_group_at_only", True),
+            ("napcat_reply_mention_sender", "napcat_reply_mention_sender", True),
             ("napcat_reply_character", "napcat_reply_character", ""),
+            ("napcat_save_policy", "napcat_save_policy", "all"),
+            ("napcat_group_retention_mode", "napcat_group_retention_mode", "manual"),
+            ("napcat_group_retention_days", "napcat_group_retention_days", 7),
+            ("napcat_private_retention_mode", "napcat_private_retention_mode", "manual"),
+            ("napcat_private_retention_days", "napcat_private_retention_days", 30),
         )
         language = data.get("language")
         if language:
