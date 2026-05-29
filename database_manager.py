@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import json
 import threading
+import time
 from functools import wraps
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ _REQUIRED_COLUMNS = {
 
 _VALID_MESSAGE_ROLES = {"user", "assistant", "system"}
 _SAFE_CHAT_ATTACHMENT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_EXTERNAL_GROUP_CHAT_MESSAGE_LIMIT = 50
 
 
 def _db_text(value, default: str = "") -> str:
@@ -449,8 +451,36 @@ def _with_database_lock(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            except sqlite3.Error:
+                _rollback_quietly(getattr(self, "_conn", None))
+                raise
     return wrapper
+
+
+def _database_is_locked_error(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
+
+
+def _rollback_quietly(conn):
+    if conn is None:
+        return
+    try:
+        conn.rollback()
+    except sqlite3.Error:
+        pass
+
+
+def _run_with_locked_retry(conn, operation, attempts: int = 5, delay: float = 0.25):
+    for attempt in range(max(1, attempts)):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if not _database_is_locked_error(exc) or attempt >= attempts - 1:
+                raise
+            _rollback_quietly(conn)
+            time.sleep(delay * (attempt + 1))
 
 
 class _DatabaseManagerMeta(type):
@@ -466,7 +496,8 @@ class _DatabaseManagerMeta(type):
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
+        self._conn.execute("PRAGMA busy_timeout=2000")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
@@ -641,16 +672,22 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
     def assign_legacy_chat_history_user(self, user_key: str) -> int:
         user_key = self._normalize_user_key(user_key)
-        conv_cur = self._conn.execute(
-            "UPDATE conversations SET user_key=? WHERE user_key='' OR user_key IS NULL",
-            (user_key,),
-        )
-        group_cur = self._conn.execute(
-            "UPDATE group_messages SET user_key=? WHERE user_key='' OR user_key IS NULL",
-            (user_key,),
-        )
-        self._conn.commit()
-        return int(conv_cur.rowcount or 0) + int(group_cur.rowcount or 0)
+        try:
+            conv_cur = self._conn.execute(
+                "UPDATE conversations SET user_key=? WHERE user_key='' OR user_key IS NULL",
+                (user_key,),
+            )
+            group_cur = self._conn.execute(
+                "UPDATE group_messages SET user_key=? WHERE user_key='' OR user_key IS NULL",
+                (user_key,),
+            )
+            self._conn.commit()
+            return int(conv_cur.rowcount or 0) + int(group_cur.rowcount or 0)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            self._conn.rollback()
+            return 0
 
     def get_relationship_state(self, character: str, user_key: str = "") -> dict:
         user_key = self._normalize_user_key(user_key)
@@ -1085,17 +1122,21 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def delete_group_conversation(self, group_key: str, conversation_id: str, user_key: str | None = None):
         conversation_id = conversation_id or "default"
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        if user_filter is None:
-            self._conn.execute(
-                "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
-                (group_key, conversation_id, conversation_id),
-            )
-        else:
-            self._conn.execute(
-                "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) AND user_key=?",
-                (group_key, conversation_id, conversation_id, user_filter),
-            )
-        self._conn.commit()
+
+        def operation():
+            if user_filter is None:
+                self._conn.execute(
+                    "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
+                    (group_key, conversation_id, conversation_id),
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) AND user_key=?",
+                    (group_key, conversation_id, conversation_id, user_filter),
+                )
+            self._conn.commit()
+
+        _run_with_locked_retry(self._conn, operation)
 
     def get_group_conversations(self, group_key: str, user_key: str | None = None) -> list[dict]:
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
@@ -1190,30 +1231,38 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
 
     def delete_conversation(self, conv_id: int):
-        self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
-        self._conn.commit()
+        def operation():
+            self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+            self._conn.commit()
+
+        _run_with_locked_retry(self._conn, operation)
 
     def delete_empty_conversations(self, character: str = "", user_key: str | None = None):
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        if character:
-            where = "character=?"
-            params: tuple = (character,)
-            if user_filter is not None:
-                where += " AND user_key=?"
-                params = (character, user_filter)
-            self._conn.execute(
-                f"DELETE FROM conversations WHERE {where} AND NOT EXISTS ("
-                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ")",
-                params,
-            )
-        else:
-            self._conn.execute(
-                "DELETE FROM conversations WHERE NOT EXISTS ("
-                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ")"
-            )
-        self._conn.commit()
+        try:
+            if character:
+                where = "character=?"
+                params: tuple = (character,)
+                if user_filter is not None:
+                    where += " AND user_key=?"
+                    params = (character, user_filter)
+                self._conn.execute(
+                    f"DELETE FROM conversations WHERE {where} AND NOT EXISTS ("
+                    "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
+                    ")",
+                    params,
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM conversations WHERE NOT EXISTS ("
+                    "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
+                    ")"
+                )
+            self._conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            self._conn.rollback()
 
     def add_external_chat_message(self, event: dict) -> dict:
         if not isinstance(event, dict):
@@ -1325,10 +1374,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 unread,
             ),
         )
+        pruned_messages = 0
+        if chat_type == "group":
+            pruned_messages = self._prune_external_group_thread_messages(platform, thread_id)
         self._conn.commit()
         return {
             "duplicate": False,
             "message_id": message_id,
+            "pruned_messages": pruned_messages,
             "thread": self._external_thread_summary(platform, thread_id),
             "unread": self.get_external_chat_unread_summary(),
         }
@@ -1473,6 +1526,45 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "WHERE m.platform=external_chat_threads.platform AND m.thread_id=external_chat_threads.thread_id)"
         )
 
+    def _prune_external_group_thread_messages(self, platform: str, thread_id: str) -> int:
+        cur = self._conn.execute(
+            "DELETE FROM external_chat_messages "
+            "WHERE platform=? AND thread_id=? AND chat_type='group' AND id NOT IN ("
+            "SELECT id FROM external_chat_messages "
+            "WHERE platform=? AND thread_id=? AND chat_type='group' "
+            "ORDER BY id DESC LIMIT ?"
+            ")",
+            (
+                platform,
+                thread_id,
+                platform,
+                thread_id,
+                _EXTERNAL_GROUP_CHAT_MESSAGE_LIMIT,
+            ),
+        )
+        deleted_messages = int(cur.rowcount or 0)
+        if deleted_messages:
+            self._resync_external_chat_threads()
+        return deleted_messages
+
+    def prune_external_group_chat_limit(self) -> dict:
+        """Keep only the newest stored messages for each external group chat."""
+        def operation():
+            rows = self._conn.execute(
+                "SELECT platform, thread_id FROM external_chat_threads WHERE chat_type='group' "
+                "UNION "
+                "SELECT platform, thread_id FROM external_chat_messages WHERE chat_type='group'"
+            ).fetchall()
+            deleted_messages = 0
+            for row in rows:
+                platform = _db_text(row[0], "external") or "external"
+                thread_id = _db_text(row[1], "default") or "default"
+                deleted_messages += self._prune_external_group_thread_messages(platform, thread_id)
+            self._conn.commit()
+            return {"deleted_messages": deleted_messages}
+
+        return _run_with_locked_retry(self._conn, operation)
+
     def delete_external_chat(self, chat_type: str = "", platform: str = "") -> dict:
         """Delete all external chat records, optionally scoped by chat_type/platform.
 
@@ -1481,26 +1573,30 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         """
         chat_type = _clean_external_text(chat_type)
         platform = _clean_external_text(platform)
-        cur = self._conn.execute(
-            "DELETE FROM external_chat_messages "
-            "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
-            (chat_type, chat_type, platform, platform),
-        )
-        deleted_messages = int(cur.rowcount or 0)
-        tcur = self._conn.execute(
-            "DELETE FROM external_chat_threads "
-            "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
-            (chat_type, chat_type, platform, platform),
-        )
-        deleted_threads = int(tcur.rowcount or 0)
-        if deleted_messages:
-            self._resync_external_chat_threads()
-        self._conn.commit()
-        return {
-            "deleted_messages": deleted_messages,
-            "deleted_threads": deleted_threads,
-            "unread": self.get_external_chat_unread_summary(),
-        }
+
+        def operation():
+            cur = self._conn.execute(
+                "DELETE FROM external_chat_messages "
+                "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
+                (chat_type, chat_type, platform, platform),
+            )
+            deleted_messages = int(cur.rowcount or 0)
+            tcur = self._conn.execute(
+                "DELETE FROM external_chat_threads "
+                "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
+                (chat_type, chat_type, platform, platform),
+            )
+            deleted_threads = int(tcur.rowcount or 0)
+            if deleted_messages:
+                self._resync_external_chat_threads()
+            self._conn.commit()
+            return {
+                "deleted_messages": deleted_messages,
+                "deleted_threads": deleted_threads,
+                "unread": self.get_external_chat_unread_summary(),
+            }
+
+        return _run_with_locked_retry(self._conn, operation)
 
     def purge_external_chat_older_than(self, days, chat_type: str = "", platform: str = "") -> dict:
         """Delete external chat records older than ``days`` (retention auto-clean).
@@ -1512,16 +1608,20 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         chat_type = _clean_external_text(chat_type)
         platform = _clean_external_text(platform)
-        cur = self._conn.execute(
-            "DELETE FROM external_chat_messages "
-            "WHERE created_at < ? AND (?='' OR chat_type=?) AND (?='' OR platform=?)",
-            (cutoff, chat_type, chat_type, platform, platform),
-        )
-        deleted_messages = int(cur.rowcount or 0)
-        if deleted_messages:
-            self._resync_external_chat_threads()
+
+        def operation():
+            cur = self._conn.execute(
+                "DELETE FROM external_chat_messages "
+                "WHERE created_at < ? AND (?='' OR chat_type=?) AND (?='' OR platform=?)",
+                (cutoff, chat_type, chat_type, platform, platform),
+            )
+            deleted_messages = int(cur.rowcount or 0)
+            if deleted_messages:
+                self._resync_external_chat_threads()
             self._conn.commit()
-        return {"deleted_messages": deleted_messages}
+            return {"deleted_messages": deleted_messages}
+
+        return _run_with_locked_retry(self._conn, operation)
 
     def close(self):
         if self._closed:

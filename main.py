@@ -445,6 +445,7 @@ def main():
         try:
             with chat_integration_ref["lock"]:
                 db = chat_integration_db()
+                db.prune_external_group_chat_limit()
                 if str(cfg.get("napcat_group_retention_mode", "manual") or "manual").lower() == "auto":
                     db.purge_external_chat_older_than(cfg.get("napcat_group_retention_days", 7), chat_type="group")
                 if str(cfg.get("napcat_private_retention_mode", "manual") or "manual").lower() == "auto":
