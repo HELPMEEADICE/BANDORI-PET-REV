@@ -1,3 +1,4 @@
+import ssl
 from settings_window.constants import *
 
 
