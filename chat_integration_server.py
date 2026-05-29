@@ -1,9 +1,10 @@
 import hmac
 import json
 import threading
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+from onebot_message import normalize_onebot_event
 
 
 def _token_matches(expected: str, candidate: str) -> bool:
@@ -202,76 +203,7 @@ class ChatIntegrationHttpServer:
                 return any(key in data for key in ("text", "content", "message", "body"))
 
             def _normalize_event(self, event: dict) -> dict | None:
-                post_type = str(event.get("post_type") or "").lower()
-                if not post_type:
-                    return event
-                if post_type != "message":
-                    return None
-                text = self._onebot_message_text(event)
-                if not text:
-                    return None
-                message_type = str(event.get("message_type") or "").lower()
-                sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
-                sender_id = str(event.get("user_id") or sender.get("user_id") or "")
-                sender_name = (
-                    str(sender.get("card") or "").strip()
-                    or str(sender.get("nickname") or "").strip()
-                    or sender_id
-                    or "unknown"
-                )
-                group_id = str(event.get("group_id") or "")
-                if message_type == "group" and group_id:
-                    thread_id = group_id
-                    thread_name = str(event.get("group_name") or event.get("group_id") or "QQ 群聊")
-                else:
-                    thread_id = sender_id or str(event.get("target_id") or "private")
-                    thread_name = sender_name or "QQ 私聊"
-                normalized = {
-                    "platform": "qq",
-                    "thread_id": thread_id or "default",
-                    "thread_name": thread_name,
-                    "sender_id": sender_id,
-                    "sender_name": sender_name,
-                    "text": text,
-                    "message_id": str(event.get("message_id") or event.get("message_seq") or ""),
-                    "raw_event": event,
-                }
-                if event.get("time"):
-                    try:
-                        normalized["timestamp"] = datetime.fromtimestamp(int(event["time"])).strftime("%Y-%m-%d %H:%M:%S")
-                    except (OSError, TypeError, ValueError, OverflowError):
-                        pass
-                return normalized
-
-            def _onebot_message_text(self, event: dict) -> str:
-                raw_message = event.get("raw_message")
-                if raw_message:
-                    return str(raw_message).strip()
-                message = event.get("message")
-                if isinstance(message, str):
-                    return message.strip()
-                if isinstance(message, list):
-                    parts = [self._onebot_segment_text(item) for item in message]
-                    return "".join(part for part in parts if part).strip()
-                return str(event.get("content") or event.get("text") or "").strip()
-
-            def _onebot_segment_text(self, segment) -> str:
-                if isinstance(segment, str):
-                    return segment
-                if not isinstance(segment, dict):
-                    return ""
-                seg_type = str(segment.get("type") or "").lower()
-                data = segment.get("data") if isinstance(segment.get("data"), dict) else {}
-                if seg_type == "text":
-                    return str(data.get("text") or "")
-                if seg_type == "at":
-                    qq = str(data.get("qq") or "").strip()
-                    return f"@{qq} " if qq else "@ "
-                if seg_type in {"face", "emoji"}:
-                    return f"[{seg_type}:{data.get('id') or ''}]"
-                if seg_type in {"image", "record", "video", "file"}:
-                    return f"[{seg_type}]"
-                return f"[{seg_type}]" if seg_type else ""
+                return normalize_onebot_event(event)
 
             def _authorized(self, parsed) -> bool:
                 if not token:

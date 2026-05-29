@@ -23,7 +23,29 @@ http://127.0.0.1:38473/chat-events
 
 QQ 不能像普通网页服务那样直接填写账号密码读取所有聊天。推荐把 QQ 侧单独作为一个“消息转发器”，再把消息转发到 BandoriPet 的本地接收地址。
 
-### 一键脚本：NapCat 接入 BandoriPet
+### 推荐：NapCat 正向 WebSocket（应用内直连，支持自动回复）
+
+这是最接近 AstrBot OneBot 适配的方式：BandoriPet 作为客户端**主动连接** NapCat 的 WebSocket 服务器，既能接收消息，也能让角色 AI **自动把回复发回 QQ 群/私聊**。无需配置 webhook 上报，也不需要本地接入端口。
+
+配置步骤：
+
+1. 在 NapCat WebUI 里新建一个 **WebSocket 服务器**（OneBot v11 正向 WS），记下端口（默认 `3001`），可选设置 Access Token。
+2. 用手机 QQ 扫码登录 NapCat。
+3. 打开 BandoriPet 设置 →「聊天接入」→ 最下方「NapCat 适配（正向 WebSocket）」。
+4. 打开「启用 NapCat 连接」，在「WS 地址」填 `ws://127.0.0.1:3001`（端口与上面一致），如设了 Token 就填到「Token」。
+5. 点「测试连接」，显示「已连接 ✓」即说明通了。
+6. 保存聊天接入配置。
+
+自动回复：
+
+- 打开「启用自动回复」，角色 AI 会读取消息并把回复发回 QQ。回复角色默认取第一个已配置的桌宠。
+- 「私聊自动回复」控制私聊是否自动回。
+- 「群聊仅在 @机器人 时回复」默认开启，避免群里刷屏；关闭后群里每条消息都会触发回复。
+- 自动回复需要先在「AI 设置」里配好 LLM 接口（API 地址 / Key / 模型）。
+
+NapCat 正向 WS 与下面的 HTTP 上报脚本二选一即可；正向 WS 更省事且支持双向回复。
+
+### 一键脚本：NapCat 接入 BandoriPet（HTTP 上报，单向）
 
 项目内置了 Windows 脚本：
 

@@ -254,6 +254,13 @@ DATA_CONFIG_KEYS = {
         "chat_integration_include_context",
         "chat_integration_port",
         "chat_integration_token",
+        "napcat_enabled",
+        "napcat_ws_url",
+        "napcat_access_token",
+        "napcat_auto_reply_enabled",
+        "napcat_reply_private",
+        "napcat_reply_group_at_only",
+        "napcat_reply_character",
     ),
     DATA_CATEGORY_MCP: (
         "llm_hide_tool_call_details",
@@ -6134,6 +6141,8 @@ class SettingsWindow(QWidget):
         ), page)
         apply_hint.setWordWrap(True)
         layout.addWidget(apply_hint)
+
+        self._build_napcat_section(layout, page)
         layout.addStretch()
 
         self._chat_integration_port_input.textChanged.connect(self._update_chat_integration_quick_setup)
@@ -6359,18 +6368,21 @@ class SettingsWindow(QWidget):
         self._chat_integration_include_context.setChecked(bool(self._cfg.get("chat_integration_include_context", True)))
         self._chat_integration_port_input.setText(str(self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))))
         self._chat_integration_token_input.setText(str(self._cfg.get("chat_integration_token", "") or ""))
+        self._load_napcat_config()
         self._update_chat_integration_quick_setup()
 
     def _chat_integration_settings_data(self) -> dict:
         if not self._cfg:
             return {}
-        return {
+        data = {
             "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False),
             "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True),
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True),
             "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)),
             "chat_integration_token": self._cfg.get("chat_integration_token", ""),
         }
+        data.update(self._napcat_settings_data())
+        return data
 
     def _save_chat_integration_config(self, show_info: bool = True, emit_update: bool = False):
         if not self._cfg or not self._chat_integration_widgets_ready():
@@ -6380,6 +6392,7 @@ class SettingsWindow(QWidget):
         self._cfg.set("chat_integration_include_context", self._chat_integration_include_context.isChecked())
         self._cfg.set("chat_integration_port", self._clamp_chat_integration_port(self._chat_integration_port_input.text()))
         self._cfg.set("chat_integration_token", self._chat_integration_token_input.text().strip())
+        self._save_napcat_into_cfg()
         try:
             self._cfg.save()
             if emit_update:
@@ -6400,6 +6413,197 @@ class SettingsWindow(QWidget):
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+
+    def _build_napcat_section(self, layout: QVBoxLayout, page: QWidget):
+        layout.addWidget(SubtitleLabel(_tr(
+            "SettingsWindow.napcat_title",
+            default="NapCat 适配（正向 WebSocket）",
+        ), page))
+        napcat_desc = BodyLabel(_tr(
+            "SettingsWindow.napcat_desc",
+            default="像 AstrBot 那样主动连接 NapCat。请先在 NapCat WebUI 开启 WebSocket 服务器，再在下方填写地址。",
+        ), page)
+        napcat_desc.setWordWrap(True)
+        layout.addWidget(napcat_desc)
+
+        self._napcat_enabled = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.napcat_enabled", default="启用 NapCat 连接"),
+            self._napcat_enabled,
+        )
+
+        url_row = QHBoxLayout()
+        url_row.setContentsMargins(0, 0, 0, 0)
+        url_row.setSpacing(8)
+        self._napcat_ws_url_input = LineEdit(page)
+        self._napcat_ws_url_input.setFixedHeight(36)
+        self._napcat_ws_url_input.setPlaceholderText("ws://127.0.0.1:3001")
+        self._napcat_token_input = LineEdit(page)
+        self._napcat_token_input.setFixedHeight(36)
+        self._napcat_token_input.setPlaceholderText(_tr(
+            "SettingsWindow.napcat_token_placeholder",
+            default="Access Token，可留空",
+        ))
+        url_row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_ws_url", default="WS 地址"), page))
+        url_row.addWidget(self._napcat_ws_url_input, 1)
+        url_row.addSpacing(12)
+        url_row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_token", default="Token"), page))
+        url_row.addWidget(self._napcat_token_input, 1)
+        layout.addLayout(url_row)
+
+        self._napcat_auto_reply_enabled = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.napcat_auto_reply_enabled", default="启用自动回复（AI 生成并发回 QQ）"),
+            self._napcat_auto_reply_enabled,
+        )
+        self._napcat_reply_private = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.napcat_reply_private", default="私聊自动回复"),
+            self._napcat_reply_private,
+        )
+        self._napcat_reply_group_at_only = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.napcat_reply_group_at_only", default="群聊仅在 @机器人 时回复"),
+            self._napcat_reply_group_at_only,
+        )
+
+        napcat_btn_row = QHBoxLayout()
+        napcat_btn_row.setContentsMargins(0, 0, 0, 0)
+        test_conn_btn = PushButton(FluentIcon.WIFI, _tr(
+            "SettingsWindow.napcat_test", default="测试连接",
+        ), page)
+        test_conn_btn.clicked.connect(self._test_napcat_connection)
+        self._napcat_status_label = BodyLabel("", page)
+        napcat_btn_row.addWidget(test_conn_btn)
+        napcat_btn_row.addWidget(self._napcat_status_label, 1)
+        napcat_btn_row.addStretch()
+        layout.addLayout(napcat_btn_row)
+
+    def _napcat_widgets_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_napcat_enabled",
+                "_napcat_ws_url_input",
+                "_napcat_token_input",
+                "_napcat_auto_reply_enabled",
+                "_napcat_reply_private",
+                "_napcat_reply_group_at_only",
+            )
+        )
+
+    def _load_napcat_config(self):
+        if not self._cfg or not self._napcat_widgets_ready():
+            return
+        self._napcat_enabled.setChecked(bool(self._cfg.get("napcat_enabled", False)))
+        self._napcat_ws_url_input.setText(str(self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001") or ""))
+        self._napcat_token_input.setText(str(self._cfg.get("napcat_access_token", "") or ""))
+        self._napcat_auto_reply_enabled.setChecked(bool(self._cfg.get("napcat_auto_reply_enabled", False)))
+        self._napcat_reply_private.setChecked(bool(self._cfg.get("napcat_reply_private", True)))
+        self._napcat_reply_group_at_only.setChecked(bool(self._cfg.get("napcat_reply_group_at_only", True)))
+
+    def _napcat_settings_data(self) -> dict:
+        if not self._cfg:
+            return {}
+        return {
+            "napcat_enabled": self._cfg.get("napcat_enabled", False),
+            "napcat_ws_url": self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001"),
+            "napcat_access_token": self._cfg.get("napcat_access_token", ""),
+            "napcat_auto_reply_enabled": self._cfg.get("napcat_auto_reply_enabled", False),
+            "napcat_reply_private": self._cfg.get("napcat_reply_private", True),
+            "napcat_reply_group_at_only": self._cfg.get("napcat_reply_group_at_only", True),
+            "napcat_reply_character": self._cfg.get("napcat_reply_character", ""),
+        }
+
+    def _save_napcat_into_cfg(self):
+        if not self._cfg or not self._napcat_widgets_ready():
+            return
+        self._cfg.set("napcat_enabled", self._napcat_enabled.isChecked())
+        self._cfg.set("napcat_ws_url", self._napcat_ws_url_input.text().strip())
+        self._cfg.set("napcat_access_token", self._napcat_token_input.text().strip())
+        self._cfg.set("napcat_auto_reply_enabled", self._napcat_auto_reply_enabled.isChecked())
+        self._cfg.set("napcat_reply_private", self._napcat_reply_private.isChecked())
+        self._cfg.set("napcat_reply_group_at_only", self._napcat_reply_group_at_only.isChecked())
+
+    def _test_napcat_connection(self):
+        if not self._napcat_widgets_ready():
+            return
+        from PySide6.QtNetwork import QNetworkRequest
+        from PySide6.QtWebSockets import QWebSocket
+
+        ws_url = self._napcat_ws_url_input.text().strip()
+        if not ws_url:
+            InfoBar.warning(
+                _tr("SettingsWindow.napcat_test_empty_title", default="缺少地址"),
+                _tr("SettingsWindow.napcat_test_empty_content", default="请先填写 NapCat WebSocket 地址。"),
+                duration=2200,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        token = self._napcat_token_input.text().strip()
+        self._napcat_status_label.setText(_tr("SettingsWindow.napcat_status_connecting", default="连接中…"))
+
+        socket = QWebSocket()
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(4000)
+        state = {"done": False}
+
+        def finish(ok: bool, detail: str = ""):
+            if state["done"]:
+                return
+            state["done"] = True
+            timer.stop()
+            try:
+                socket.close()
+            except RuntimeError:
+                pass
+            socket.deleteLater()
+            if ok:
+                self._napcat_status_label.setText(_tr("SettingsWindow.napcat_status_connected", default="已连接 ✓"))
+                InfoBar.success(
+                    _tr("SettingsWindow.napcat_test_success_title", default="连接成功"),
+                    _tr("SettingsWindow.napcat_test_success_content", default="已成功连接到 NapCat WebSocket 服务器。"),
+                    duration=2600,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            else:
+                self._napcat_status_label.setText(_tr("SettingsWindow.napcat_status_failed", default="连接失败 ✗"))
+                InfoBar.error(
+                    _tr("SettingsWindow.napcat_test_failed_title", default="连接失败"),
+                    _tr(
+                        "SettingsWindow.napcat_test_failed_content",
+                        default="无法连接到 NapCat。请确认已在 NapCat 开启 WebSocket 服务器、地址和 Token 正确。{error}",
+                        error=detail,
+                    ),
+                    duration=4500,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+
+        url = QUrl(ws_url)
+        if token:
+            query = url.query()
+            token_param = f"access_token={token}"
+            url.setQuery(f"{query}&{token_param}" if query else token_param)
+        request = QNetworkRequest(url)
+        if token:
+            request.setRawHeader(b"Authorization", f"Bearer {token}".encode("utf-8"))
+        socket.connected.connect(lambda: finish(True))
+        socket.errorOccurred.connect(lambda _err: finish(False, socket.errorString()))
+        timer.timeout.connect(lambda: finish(False, _tr("SettingsWindow.napcat_status_timeout", default="超时")))
+        timer.start()
+        socket.open(request)
 
     @staticmethod
     def _clamp_ai_status_port(value) -> int:
@@ -10044,6 +10248,13 @@ class SettingsWindow(QWidget):
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True) if self._cfg else True,
             "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)) if self._cfg else 38473,
             "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
+            "napcat_enabled": self._cfg.get("napcat_enabled", False) if self._cfg else False,
+            "napcat_ws_url": self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001") if self._cfg else "ws://127.0.0.1:3001",
+            "napcat_access_token": self._cfg.get("napcat_access_token", "") if self._cfg else "",
+            "napcat_auto_reply_enabled": self._cfg.get("napcat_auto_reply_enabled", False) if self._cfg else False,
+            "napcat_reply_private": self._cfg.get("napcat_reply_private", True) if self._cfg else True,
+            "napcat_reply_group_at_only": self._cfg.get("napcat_reply_group_at_only", True) if self._cfg else True,
+            "napcat_reply_character": self._cfg.get("napcat_reply_character", "") if self._cfg else "",
             "alarms": normalize_alarms(self._cfg.get("alarms", [])) if self._cfg else [],
             "pomodoros": normalize_pomodoros(self._cfg.get("pomodoros", [])) if self._cfg else [],
             "reminder_display_mode": normalize_display_mode(self._cfg.get("reminder_display_mode", DISPLAY_MODE_FLOATING)) if self._cfg else DISPLAY_MODE_FLOATING,

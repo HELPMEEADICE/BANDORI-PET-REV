@@ -1990,6 +1990,8 @@ class PetWindow(QWidget):
         if action:
             self._on_chat_action(action)
 
+        if not self._compact_ai_window_enabled:
+            return
         if not self.isVisible():
             return
         should_position = (

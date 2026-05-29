@@ -30,6 +30,8 @@ from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
+from napcat_adapter import NapcatClient
+from onebot_message import onebot_event_mentions_self
 from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from alarm_manager import ReminderScheduler
@@ -86,6 +88,7 @@ def main():
     ipc_ref = {"clients": [], "buffers": {}}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
+    napcat_ref = {"client": None, "workers": []}
     reminder_ref = {"scheduler": None}
     ai_event_bridge = AiEventBridge()
 
@@ -135,6 +138,7 @@ def main():
         notify_chat_processes_shutdown()
         stop_ai_status_server()
         stop_chat_integration_server()
+        stop_napcat_adapter()
         close_pet_processes(force=True)
         close_settings_process(force=True)
         close_chat_process(force=True)
@@ -306,6 +310,13 @@ def main():
             stored = chat_integration_db().add_external_chat_message(event)
         if not stored.get("duplicate"):
             broadcast_chat_overlay(event, stored)
+            # Notification model: the overlay copy already lives on the pet side
+            # and self-clears after its TTL, so clear the unread backlog now to
+            # stop stale messages (e.g. earlier test pushes) from re-surfacing
+            # on the next event. AI context reads messages regardless of the
+            # unread flag, so this does not affect what the model can see.
+            with chat_integration_ref["lock"]:
+                chat_integration_db().mark_external_chat_read("", "")
         return stored
 
     def handle_chat_integration_read(data: dict) -> dict:
@@ -342,6 +353,121 @@ def main():
             print(f"Chat integration port failed to start on 127.0.0.1:{port}: {exc}")
             return
         chat_integration_ref["server"] = server
+
+    def stop_napcat_adapter():
+        client = napcat_ref.get("client")
+        if client is not None:
+            client.stop()
+            client.deleteLater()
+        napcat_ref["client"] = None
+
+    def init_napcat_adapter():
+        stop_napcat_adapter()
+        if not cfg.get("napcat_enabled", False):
+            return
+        ws_url = str(cfg.get("napcat_ws_url", "") or "").strip()
+        if not ws_url:
+            return
+        token = str(cfg.get("napcat_access_token", "") or "").strip()
+        client = NapcatClient(ws_url, token, handle_napcat_message, parent=app)
+        napcat_ref["client"] = client
+        client.start()
+
+    def _napcat_should_reply(event: dict) -> bool:
+        if not cfg.get("napcat_auto_reply_enabled", False):
+            return False
+        raw_event = event.get("raw_event") if isinstance(event, dict) else None
+        if not isinstance(raw_event, dict):
+            return False
+        message_type = str(raw_event.get("message_type") or "").lower()
+        if message_type == "group":
+            if cfg.get("napcat_reply_group_at_only", True):
+                return onebot_event_mentions_self(raw_event)
+            return True
+        return bool(cfg.get("napcat_reply_private", True))
+
+    def _napcat_reply_character() -> str:
+        explicit = str(cfg.get("napcat_reply_character", "") or "").strip()
+        if explicit:
+            return explicit
+        models = cfg.get("models", [])
+        if isinstance(models, list):
+            for item in models:
+                if isinstance(item, dict) and item.get("character"):
+                    return str(item["character"])
+        return char
+
+    def handle_napcat_message(event: dict):
+        try:
+            handle_chat_integration_message(event)
+        except Exception as exc:
+            print(f"NapCat message handling failed: {exc}")
+            return
+        if _napcat_should_reply(event):
+            _napcat_generate_reply(event)
+
+    def _napcat_generate_reply(event: dict):
+        from llm_manager import NonStreamWorker, build_system_prompt, strip_action_tags
+
+        api_url = str(cfg.get("llm_api_url", "") or "").strip()
+        api_key = str(cfg.get("llm_api_key", "") or "").strip()
+        model_id = str(cfg.get("llm_model_id", "") or "").strip()
+        if not api_url or not api_key or not model_id:
+            return
+        character = _napcat_reply_character()
+        system_prompt = build_system_prompt(character, cfg)
+        if not system_prompt:
+            return
+        sender_name = str(event.get("sender_name") or "对方")
+        user_text = f"{sender_name}：{event.get('text') or ''}".strip()
+        try:
+            with chat_integration_ref["lock"]:
+                context = chat_integration_db().external_chat_context_text()
+        except Exception:
+            context = ""
+        if context:
+            user_text += "\n\n【最近外部聊天上下文】\n" + context
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ]
+        enable_thinking = cfg.get("llm_enable_thinking", None)
+        worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking, app)
+        raw_event = event.get("raw_event") if isinstance(event, dict) else None
+        character_for_event = character
+
+        def _cleanup():
+            if worker in napcat_ref["workers"]:
+                napcat_ref["workers"].remove(worker)
+            worker.deleteLater()
+
+        def _on_finished(full_text, _reasoning, _actions):
+            clean = strip_action_tags(full_text)
+            client = napcat_ref.get("client")
+            if clean and client is not None and isinstance(raw_event, dict):
+                client.send_reply(raw_event, clean)
+                overlay = {
+                    "source": "napcat",
+                    "state": "stream",
+                    "mode": "replace",
+                    "title": _tr("ChatIntegration.napcat_reply_title", default="已回复 QQ"),
+                    "text": clean,
+                    "action": "smile",
+                    "ttl_ms": 9000,
+                    "anchor_to_pet": True,
+                    "character": character_for_event,
+                }
+                broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+            _cleanup()
+
+        def _on_error(message):
+            print(f"NapCat auto-reply failed: {message}")
+            _cleanup()
+
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        napcat_ref["workers"].append(worker)
+        worker.start()
 
     def read_ipc_client(socket):
         if not isValid(socket):
@@ -481,6 +607,13 @@ def main():
             ("chat_integration_include_context", "chat_integration_include_context", True),
             ("chat_integration_port", "chat_integration_port", 38473),
             ("chat_integration_token", "chat_integration_token", ""),
+            ("napcat_enabled", "napcat_enabled", False),
+            ("napcat_ws_url", "napcat_ws_url", "ws://127.0.0.1:3001"),
+            ("napcat_access_token", "napcat_access_token", ""),
+            ("napcat_auto_reply_enabled", "napcat_auto_reply_enabled", False),
+            ("napcat_reply_private", "napcat_reply_private", True),
+            ("napcat_reply_group_at_only", "napcat_reply_group_at_only", True),
+            ("napcat_reply_character", "napcat_reply_character", ""),
         )
         language = data.get("language")
         if language:
@@ -518,6 +651,7 @@ def main():
         cfg.save()
         init_ai_status_server()
         init_chat_integration_server()
+        init_napcat_adapter()
         scheduler = reminder_ref.get("scheduler")
         if scheduler is not None:
             scheduler.reload()
@@ -762,6 +896,7 @@ def main():
     init_ipc_server()
     init_ai_status_server()
     init_chat_integration_server()
+    init_napcat_adapter()
     init_reminder_scheduler()
 
     def _handle_signal(_signum, _frame):
@@ -787,6 +922,7 @@ def main():
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
+    app.aboutToQuit.connect(stop_napcat_adapter)
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(close_settings_process)
