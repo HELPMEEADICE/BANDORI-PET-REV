@@ -33,6 +33,7 @@ from qfluentwidgets import (
     FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
     TimeEdit, SpinBox,
     isDarkTheme, InfoBar, InfoBarPosition, ProgressBar,
+    MessageBoxBase,
 )
 from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
 from qfluentwidgets.components.widgets.menu import (

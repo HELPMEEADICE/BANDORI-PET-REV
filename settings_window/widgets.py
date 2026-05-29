@@ -379,10 +379,11 @@ class FullHitToolButton(QToolButton):
 class CharacterCard(CardWidget):
     char_selected = Signal(str)
     favorite_toggled = Signal(str, bool)
+    delete_requested = Signal(str)
 
     def __init__(self, char_key: str, display_name: str, costume_count: int,
                  image_path: str = "", roleplay_status: str = "red", parent=None,
-                 image_data: bytes = b"", favorite: bool = False):
+                 image_data: bytes = b"", favorite: bool = False, deletable: bool = False):
         super().__init__(parent)
         self._char_key = char_key
         self._favorite = bool(favorite)
@@ -399,6 +400,16 @@ class CharacterCard(CardWidget):
         self._favorite_btn.setToolTip(_tr("SettingsWindow.favorite_character_tooltip"))
         self._favorite_btn.clicked.connect(self._on_favorite_clicked)
         self._favorite_btn.raise_()
+
+        self._delete_btn = None
+        if deletable:
+            self._delete_btn = FullHitToolButton(self)
+            self._delete_btn.setFixedSize(28, 28)
+            self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._delete_btn.setToolTip(_tr("SettingsWindow.custom_model_delete_tooltip"))
+            self._delete_btn.clicked.connect(self._on_delete_clicked)
+            self._delete_btn.raise_()
+
         self._position_status_dot()
 
         layout = QVBoxLayout(self)
@@ -468,6 +479,9 @@ class CharacterCard(CardWidget):
         self._update_favorite_style()
         self.favorite_toggled.emit(self._char_key, self._favorite)
 
+    def _on_delete_clicked(self):
+        self.delete_requested.emit(self._char_key)
+
     def set_favorite(self, favorite: bool):
         self._favorite = bool(favorite)
         self._favorite_btn.setChecked(self._favorite)
@@ -491,6 +505,19 @@ class CharacterCard(CardWidget):
                 border-color: {accent_color(dark)};
             }}
         """)
+        if self._delete_btn is not None:
+            self._delete_btn.setIcon(FluentIcon.DELETE.icon(color=QColor("#e74c3c")))
+            self._delete_btn.setStyleSheet(f"""
+                QToolButton {{
+                    background: {'#2b2b2b' if dark else '#ffffff'};
+                    border: 1px solid {'#4a4a4a' if dark else '#d9dde7'};
+                    border-radius: 14px;
+                }}
+                QToolButton:hover {{
+                    background: rgba(231, 76, 60, 0.16);
+                    border-color: #e74c3c;
+                }}
+            """)
 
     def set_disabled_for_existing(self, disabled: bool):
         self._disabled_for_existing = disabled
@@ -502,6 +529,8 @@ class CharacterCard(CardWidget):
             effect.setOpacity(0.38)
             self.setGraphicsEffect(effect)
             self._favorite_btn.raise_()
+            if self._delete_btn is not None:
+                self._delete_btn.raise_()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -511,6 +540,9 @@ class CharacterCard(CardWidget):
         self._status_dot.move(self.width() - self._status_dot.width() - 12, 12)
         self._favorite_btn.move(self.width() - self._favorite_btn.width() - 8, 34)
         self._favorite_btn.raise_()
+        if self._delete_btn is not None:
+            self._delete_btn.move(self.width() - self._delete_btn.width() - 8, 66)
+            self._delete_btn.raise_()
 
 
 class BandCard(CardWidget):
@@ -982,3 +1014,103 @@ class NavButton(QPushButton):
         )
         painter.drawPath(shoulders)
         painter.restore()
+
+
+class CustomModelImportDialog(MessageBoxBase):
+    """Collects a source (folder/zip), display name and costume id for an import."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.source_path = ""
+        self.source_kind = ""  # "folder" | "zip"
+
+        self.titleLabel = SubtitleLabel(_tr("SettingsWindow.custom_model_import_title"), self)
+        self.viewLayout.addWidget(self.titleLabel)
+
+        hint = BodyLabel(_tr("SettingsWindow.custom_model_import_hint"), self)
+        hint.setWordWrap(True)
+        self.viewLayout.addWidget(hint)
+
+        source_row = QHBoxLayout()
+        source_row.setSpacing(8)
+        self._folder_btn = PushButton(FluentIcon.FOLDER_ADD, _tr("SettingsWindow.custom_model_choose_folder"), self)
+        self._folder_btn.clicked.connect(self._choose_folder)
+        self._zip_btn = PushButton(FluentIcon.ZIP_FOLDER, _tr("SettingsWindow.custom_model_choose_zip"), self)
+        self._zip_btn.clicked.connect(self._choose_zip)
+        source_row.addWidget(self._folder_btn)
+        source_row.addWidget(self._zip_btn)
+        source_row.addStretch()
+        self.viewLayout.addLayout(source_row)
+
+        self._source_label = BodyLabel(_tr("SettingsWindow.custom_model_no_source"), self)
+        self._source_label.setWordWrap(True)
+        self._source_label.setStyleSheet(f"color: {'#a7b0bf' if isDarkTheme() else '#687385'};")
+        self.viewLayout.addWidget(self._source_label)
+
+        self.viewLayout.addWidget(StrongBodyLabel(_tr("SettingsWindow.custom_model_name_label"), self))
+        self._name_edit = LineEdit(self)
+        self._name_edit.setClearButtonEnabled(True)
+        self._name_edit.setPlaceholderText(_tr("SettingsWindow.custom_model_name_placeholder"))
+        self._name_edit.textChanged.connect(lambda _t: self._error_label.clear())
+        self.viewLayout.addWidget(self._name_edit)
+
+        self.viewLayout.addWidget(StrongBodyLabel(_tr("SettingsWindow.custom_model_costume_label"), self))
+        self._costume_edit = LineEdit(self)
+        self._costume_edit.setClearButtonEnabled(True)
+        self._costume_edit.setPlaceholderText(_tr("SettingsWindow.custom_model_costume_placeholder"))
+        self.viewLayout.addWidget(self._costume_edit)
+
+        self._error_label = BodyLabel("", self)
+        self._error_label.setWordWrap(True)
+        self._error_label.setStyleSheet("color: #e74c3c;")
+        self.viewLayout.addWidget(self._error_label)
+
+        self.yesButton.setText(_tr("SettingsWindow.custom_model_import_confirm"))
+        self.cancelButton.setText(_tr("SettingsWindow.custom_model_import_cancel"))
+        self.widget.setMinimumWidth(480)
+
+    def _choose_folder(self):
+        path = QFileDialog.getExistingDirectory(
+            self, _tr("SettingsWindow.custom_model_choose_folder")
+        )
+        if path:
+            self._set_source(path, "folder")
+
+    def _choose_zip(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, _tr("SettingsWindow.custom_model_choose_zip"), "",
+            _tr("SettingsWindow.custom_model_zip_filter"),
+        )
+        if path:
+            self._set_source(path, "zip")
+
+    def _set_source(self, path: str, kind: str):
+        self.source_path = path
+        self.source_kind = kind
+        self._source_label.setText(path)
+        self._source_label.setStyleSheet(f"color: {'#d5dae5' if isDarkTheme() else '#4b5565'};")
+        self._error_label.clear()
+        if not self._name_edit.text().strip():
+            from pathlib import Path
+            stem = Path(path).stem if kind == "zip" else Path(path).name
+            self._name_edit.setText(stem)
+
+    @property
+    def display_name(self) -> str:
+        return self._name_edit.text().strip()
+
+    @property
+    def costume_id(self) -> str:
+        return self._costume_edit.text().strip()
+
+    def set_error(self, message: str):
+        self._error_label.setText(message)
+
+    def validate(self) -> bool:
+        if not self.source_path:
+            self._error_label.setText(_tr("SettingsWindow.custom_model_err_no_source"))
+            return False
+        if not self.display_name:
+            self._error_label.setText(_tr("SettingsWindow.custom_model_err_no_name"))
+            return False
+        return True

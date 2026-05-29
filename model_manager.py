@@ -58,6 +58,20 @@ class ModelManager:
         self._parse_outfit_json()
         self._parse_band_json()
 
+    def rescan(self):
+        """Re-read the models directory after models are added/removed.
+
+        Mirrors __init__'s full-scan path so newly imported (or deleted)
+        characters are picked up without recreating the manager.
+        """
+        self._characters = {}
+        self._costume_names = {}
+        self._bands = []
+        self._advanced_roleplay_cache = None
+        self._scan()
+        self._parse_outfit_json()
+        self._parse_band_json()
+
     def _scan_model_keys(self):
         ModelManager._model_paths = {}
         ModelManager._character_images = {}

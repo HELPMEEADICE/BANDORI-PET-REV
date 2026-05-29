@@ -1,6 +1,14 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from custom_model_import import (
+    CustomModelImportError,
+    delete_custom_character,
+    import_from_folder,
+    import_from_zip,
+    is_custom_character,
+    list_custom_characters,
+)
 from settings_window.pages.llm import LLMPageMixin
 from settings_window.pages.tts import TTSPageMixin
 from settings_window.pages.pov import POVPageMixin
@@ -1595,6 +1603,12 @@ class SettingsWindow(
         self._character_filter_combo.addItem(_tr("SettingsWindow.filter_favorites"), userData=MODEL_PICKER_FILTER_FAVORITES)
         self._character_filter_combo.currentIndexChanged.connect(self._on_character_filter_changed)
         character_tools.addWidget(self._character_filter_combo)
+        self._import_custom_btn = PushButton(
+            FluentIcon.ADD, _tr("SettingsWindow.custom_model_import_button"), self._character_tools_widget
+        )
+        self._import_custom_btn.setFixedHeight(36)
+        self._import_custom_btn.clicked.connect(self._import_custom_model)
+        character_tools.addWidget(self._import_custom_btn)
         layout.addWidget(self._character_tools_widget)
 
         scroll = ScrollArea()
@@ -2049,10 +2063,12 @@ class SettingsWindow(
                 self._selection_grid_widget,
                 image_data=image_data,
                 favorite=self._is_favorite_character(char_key),
+                deletable=is_custom_character(char_key),
             )
             card.set_disabled_for_existing(char_key in configured_characters)
             card.char_selected.connect(self._on_char_selected)
             card.favorite_toggled.connect(self._set_character_favorite)
+            card.delete_requested.connect(self._delete_custom_model)
             card.animate_in(delay_ms=card_idx * 50)
             self._char_grid.addWidget(card, row, col)
             self._selection_cards.append(card)
@@ -2061,6 +2077,86 @@ class SettingsWindow(
             if col >= cols_per_row:
                 col = 0
                 row += 1
+
+    def _custom_import_error_message(self, error: CustomModelImportError) -> str:
+        return _tr(f"SettingsWindow.custom_model_err_{error.code}", **error.params)
+
+    def _refresh_after_custom_models_changed(self):
+        """Rebuild the currently visible band/character grid after import/delete."""
+        if getattr(self, "_selection_grid_widget", None) is None:
+            return
+        if self._selected_band:
+            self._populate_characters(self._selected_band)
+        else:
+            self._populate_bands()
+
+    def _import_custom_model(self):
+        dialog = CustomModelImportDialog(self)
+        while dialog.exec():
+            try:
+                args = (dialog.source_path, dialog.display_name, dialog.costume_id or "default")
+                if dialog.source_kind == "zip":
+                    character, costumes = import_from_zip(*args)
+                else:
+                    character, costumes = import_from_folder(*args)
+            except CustomModelImportError as exc:
+                dialog.set_error(self._custom_import_error_message(exc))
+                continue
+
+            self._model_manager.rescan()
+            self._refresh_after_custom_models_changed()
+            InfoBar.success(
+                _tr("SettingsWindow.custom_model_imported_title"),
+                _tr("SettingsWindow.custom_model_imported_content", name=character, count=len(costumes)),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+
+    def _delete_custom_model(self, character: str):
+        if not is_custom_character(character):
+            return
+        if any(item.get("character") == character for item in self._configured_models):
+            InfoBar.warning(
+                _tr("SettingsWindow.custom_model_delete_in_use_title"),
+                _tr("SettingsWindow.custom_model_delete_in_use_content"),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        display = self._model_manager.get_display_name(character)
+        reply = QMessageBox.question(
+            self,
+            _tr("SettingsWindow.custom_model_delete_confirm_title"),
+            _tr("SettingsWindow.custom_model_delete_confirm_content", name=display),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_custom_character(character)
+        except (CustomModelImportError, OSError) as exc:
+            detail = self._custom_import_error_message(exc) if isinstance(exc, CustomModelImportError) else str(exc)
+            InfoBar.error(
+                _tr("SettingsWindow.custom_model_delete_failed_title"),
+                detail,
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        self._model_manager.rescan()
+        self._refresh_after_custom_models_changed()
+        InfoBar.success(
+            _tr("SettingsWindow.custom_model_deleted_title"),
+            _tr("SettingsWindow.custom_model_deleted_content", name=display),
+            duration=3000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _populate_character_results(self, band_id: str = ""):
         self._set_character_tools_visible(True)
