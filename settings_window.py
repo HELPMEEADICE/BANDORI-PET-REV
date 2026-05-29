@@ -1875,6 +1875,7 @@ class SettingsWindow(QWidget):
         page_scroll.setWidget(self._page_stack)
         page_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._reserve_overlay_scrollbar(page_scroll)
 
         side_panel = self._build_side_panel()
 
@@ -1947,6 +1948,7 @@ class SettingsWindow(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._reserve_overlay_scrollbar(scroll)
         scroll.setWidget(self._wizard_stack)
         main_layout.addWidget(scroll, 1)
 
@@ -2574,6 +2576,17 @@ class SettingsWindow(QWidget):
             nav_content.setPalette(pal)
             nav_content.setAutoFillBackground(True)
 
+    @staticmethod
+    def _reserve_overlay_scrollbar(scroll):
+        """Reserve space on the right for qfluentwidgets' overlay scrollbar.
+
+        ``ScrollArea`` forces the native scrollbar off and floats a 12px-wide
+        fluent scrollbar at ``width - 13`` over the viewport, which otherwise
+        overlaps the rightmost text/UI. Insetting the viewport keeps the
+        floating bar in its own gutter instead of on top of the content.
+        """
+        scroll.setViewportMargins(0, 0, 14, 0)
+
     def _build_sidebar(self):
         sidebar = QWidget()
         sidebar.setFixedWidth(210)
@@ -2603,6 +2616,7 @@ class SettingsWindow(QWidget):
         nav_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._reserve_overlay_scrollbar(nav_scroll)
         nav_content = QWidget(nav_scroll)
         nav_content.setObjectName("sidebarNavContent")
         nav_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -2723,7 +2737,14 @@ class SettingsWindow(QWidget):
         btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar, "#94a3b8")
         btn_about.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["about"] = btn_about
-        layout.addWidget(btn_about)
+        # The nav buttons above live inside nav_scroll, whose viewport reserves
+        # 14px on the right for the overlay scrollbar. Inset the about button by
+        # the same amount so it stays the same width and stays aligned.
+        about_row = QHBoxLayout()
+        about_row.setContentsMargins(0, 0, 14, 0)
+        about_row.setSpacing(0)
+        about_row.addWidget(btn_about)
+        layout.addLayout(about_row)
 
         self._update_sidebar_style()
         self._theme_widgets.append(sidebar)
