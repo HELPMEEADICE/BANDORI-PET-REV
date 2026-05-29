@@ -2940,16 +2940,22 @@ class SettingsWindow(QWidget):
         card_layout.addWidget(self._detail_band)
 
         action_scroll = ScrollArea(self._model_detail_widget)
+        action_scroll.setObjectName("modelDetailActionScroll")
+        action_scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         action_scroll.setWidgetResizable(True)
+        action_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         action_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         action_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         action_scroll.setFixedWidth(320)
         action_scroll.setFixedHeight(self._detail_card.height())
         action_scroll.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        action_scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        action_scroll.viewport().setAutoFillBackground(False)
         action_container = self._make_theme_widget(QWidget(action_scroll))
+        action_container.setObjectName("modelDetailActionContainer")
         action_container.setFixedWidth(292)
         action_col = QVBoxLayout(action_container)
-        action_col.setContentsMargins(0, 0, 0, 0)
+        action_col.setContentsMargins(10, 0, 10, 0)
         action_col.setSpacing(10)
         self._switch_model_btn = QPushButton(_tr("SettingsWindow.model_switch"), action_container)
         self._switch_model_btn.setFixedSize(132, 132)
@@ -3012,7 +3018,7 @@ class SettingsWindow(QWidget):
 
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
-        self._click_motion_profile_name = FluentContextLineEdit(action_container)
+        self._click_motion_profile_name = LineEdit(action_container)
         self._click_motion_profile_name.setPlaceholderText(_tr("SettingsWindow.click_motion_profile_name_placeholder", default="自定义档案名称"))
         self._click_motion_profile_name.setFixedHeight(36)
         name_row.addWidget(self._click_motion_profile_name, 1)
@@ -3146,6 +3152,21 @@ class SettingsWindow(QWidget):
             }}
             QPushButton:hover {{ background: {BANDORI_PRIMARY_HOVER if not dark else BANDORI_PRIMARY_DARK_HOVER}; }}
             QPushButton:pressed {{ background: {BANDORI_PRIMARY_PRESSED if not dark else BANDORI_PRIMARY_DARK_PRESSED}; }}
+        """)
+        self._detail_action_scroll.setStyleSheet(f"""
+            #modelDetailActionScroll {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 18px;
+            }}
+            #modelDetailActionScroll QWidget#qt_scrollarea_viewport {{
+                background: transparent;
+                border: none;
+            }}
+            QWidget#modelDetailActionContainer {{
+                background: transparent;
+                border: none;
+            }}
         """)
 
     def _show_model_detail(self):
