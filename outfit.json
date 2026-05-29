@@ -120,7 +120,8 @@
         "yukata": "浴衣",
         "festival": "夏日祭",
         "halloween": "万圣节",
-        "furisode": "振袖和服"
+        "furisode": "振袖和服",
+        "live_event_332_r": "332期 これからも迎える朝は"
       }
     },
     "yukina": {
@@ -472,7 +473,8 @@
         "festival": "夏日祭",
         "halloween": "万圣节",
         "arbeit": "RING工作服",
-        "furisode": "振袖和服"
+        "furisode": "振袖和服",
+        "live_event_332_ur": "332期 これからも迎える朝は"
       }
     },
     "rimi": {
@@ -564,7 +566,8 @@
         "swimsuit-2023": "泳衣2023",
         "festival": "夏日祭",
         "furisode": "振袖和服",
-        "arbeit": "RING工作服"
+        "arbeit": "RING工作服",
+        "live_event_332_sr": "332期 これからも迎える朝は"
       }
     },
     "saaya": {
@@ -655,7 +658,8 @@
         "swimsuit-2023": "泳衣2023",
         "furisode": "振袖和服",
         "festival": "夏日祭",
-        "halloween": "万圣节"
+        "halloween": "万圣节",
+        "live_event_332_ur": "332期 これからも迎える朝は"
       }
     },
     "arisa": {
@@ -757,7 +761,8 @@
         "furisode": "振袖和服",
         "festival": "夏日祭",
         "arbeit": "RING工作服",
-        "halloween": "万圣节"
+        "halloween": "万圣节",
+        "live_event_332_ssr": "332期 これからも迎える朝は"
       }
     },
     "ran": {
@@ -2312,7 +2317,8 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_4_ur": "梦限4"
       }
     },
     "rinko": {
@@ -2746,7 +2752,8 @@
         "school_summer": "夏季校服",
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "dream_festival_4_ur": "梦限4"
       }
     },
     "tsukushi": {
