@@ -3179,7 +3179,9 @@ class SettingsWindow(QWidget):
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
         self._populate_click_motion_combos(item)
-        self._reload_click_motion_profiles()
+        self._reload_click_motion_profiles(
+            select_name=self._cfg.get_click_motion_active_profile() if self._cfg else ""
+        )
 
         pixmap = QPixmap(self._model_manager.get_character_image_path(character))
         image_data = self._model_manager.get_character_image_data(character)
@@ -3397,6 +3399,13 @@ class SettingsWindow(QWidget):
         item = self._selected_model_item()
         if not item:
             return
+
+        if self._cfg:
+            self._cfg.set_click_motion_active_profile(name)
+            try:
+                self._cfg.save()
+            except Exception:
+                pass
 
         motions = self._model_manager.get_motion_names(item["character"], item["costume"])
         expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
