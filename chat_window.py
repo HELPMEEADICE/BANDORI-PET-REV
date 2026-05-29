@@ -731,7 +731,6 @@ class ConversationHistoryRow(QWidget):
         delete_btn.clicked.connect(self._emit_delete)
         layout.addWidget(delete_btn)
 
-        self._leading_icon = leading_icon
         self._label = label
         self._delete_btn = delete_btn
         self.apply_theme()
@@ -865,7 +864,6 @@ class GroupChatListRow(QWidget):
         self._characters = list(characters)
         self._title_text = title
         self._preview_text = preview
-        self._kind_text = kind_text
         self._pinned = bool(pinned)
         self._current = current
         self._hovered = False
@@ -938,8 +936,6 @@ class GroupChatListRow(QWidget):
         self._avatar = avatar
         self._title_label = title_label
         self._preview_label = preview_label
-        self._pin_label = pin_label
-        self._badge_label = badge_label
         self.apply_theme()
         self._update_elided_texts()
 
@@ -1979,7 +1975,6 @@ class ChatWindow(QWidget):
         self._is_group_chat = len(self._group_characters) > 1
         self._conversation_key = self._conversation_key_for(self._group_characters if self._is_group_chat else [character])
         self._model_manager = model_manager
-        self._live2d = live2d_module
         self._cfg = config_manager
         display_names = self._cfg.get("chat_display_names", {}) if self._cfg else {}
         self._chat_display_names = display_names if isinstance(display_names, dict) else {}
@@ -1989,7 +1984,6 @@ class ChatWindow(QWidget):
             for key in pinned_chat_keys
             if str(key or "").strip()
         ] if isinstance(pinned_chat_keys, list) else []
-        self._parent_pet = parent_pet
         self._conv_id: int | None = None
         self._group_conv_id = ""
         self._worker = None
@@ -2016,7 +2010,6 @@ class ChatWindow(QWidget):
         self._tts_next_sequence = 0
         self._tts_next_play_sequence = 0
         self._tts_playing_sequence: int | None = None
-        self._tts_max_parallel = 1
         self._tts_player = TTSPlayer(self)
         self._tts_player.mouth_pose_changed.connect(self._on_tts_mouth_pose_changed)
         self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
@@ -2881,8 +2874,6 @@ class ChatWindow(QWidget):
             widget = item.widget() if item else None
             if widget:
                 widget.deleteLater()
-            if item:
-                del item
 
         self._refresh_modern_chat_list()
 
@@ -3144,7 +3135,6 @@ class ChatWindow(QWidget):
         layout = QHBoxLayout(self._composer)
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(10)
-        self._composer_layout = layout
 
         self._attach_btn = IconButton(FluentIcon.PHOTO, self._composer)
         self._attach_btn.setFixedSize(46, 46)
@@ -3435,16 +3425,12 @@ class ChatWindow(QWidget):
 
     def _clear_message_widgets(self):
         if self._msg_layout.count() > 0:
-            item = self._msg_layout.takeAt(self._msg_layout.count() - 1)
-            if item:
-                del item
+            self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for i in range(self._msg_layout.count() - 1, -1, -1):
             item = self._msg_layout.takeAt(i)
             widget = item.widget() if item else None
             if widget:
                 widget.deleteLater()
-            if item:
-                del item
         self._msg_layout.addStretch()
 
     def _history_scroll_style(self, bg: str, dark: bool) -> str:
@@ -4158,9 +4144,7 @@ class ChatWindow(QWidget):
             return
         else:
             messages = self._db.get_messages(self._conv_id)
-        stretch = self._msg_layout.takeAt(self._msg_layout.count() - 1)
-        if stretch:
-            del stretch
+        self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for m in messages:
             author = self._user_name if m["role"] == "user" and self._user_name else _tr("ChatWindow.you") if m["role"] == "user" else self._message_author(m["content"])
             avatar = self._user_avatar_color if m["role"] == "user" else ""
@@ -5288,7 +5272,6 @@ class ChatWindow(QWidget):
     def _on_group_plan_error(self, error_msg: str):
         if self.sender() is not self._group_plan_worker:
             return
-        del error_msg
         self._group_plan_worker = None
         self._hide_plan_divider()
         self._use_fallback_group_plan()
@@ -5449,53 +5432,6 @@ class ChatWindow(QWidget):
         clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
-        if self._current_bubble:
-            self._stream_flush_timer.stop()
-            self._stream_buffer = ""
-            self._visible_stream_text = clean
-            self._reasoning_stream_text = reasoning_clean
-            self._current_bubble.set_streaming(False)
-            self._current_bubble.set_reasoning(reasoning_clean)
-            self._current_bubble.set_search_sources(self._stream_search_sources)
-            self._current_bubble.set_text(clean)
-
-        stored = self._assistant_content(self._active_response_character, clean)
-        tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
-        if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace, user_key=self._chat_user_key)
-            self._refresh_group_list()
-        elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
-        self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
-
-        if self._is_group_chat:
-            self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
-            self._worker = None
-            self._current_bubble = None
-            self._start_next_group_response()
-        else:
-            self._set_busy(False)
-            self._input.setFocus()
-            self._sync_input_height()
-            self._worker = None
-            self._current_bubble = None
-            self._scroll_to_bottom()
-
-    def _on_response_finished_nonstream(self, full_text: str, reasoning_text: str, actions: list):
-        if self.sender() is not self._worker:
-            return
-        self._merge_search_sources(actions)
-        acts = parse_action_tags(full_text)
-        self._pending_action_character = self._active_response_character
-        self._pending_actions.extend(acts)
-        self._flush_actions()
-
-        clean, inline_sources = extract_inline_search_sources(full_text)
-        self._merge_search_sources(inline_sources)
-        clean = strip_action_tags(clean)
-        clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
-        reasoning_clean = strip_action_tags(reasoning_text)
         if self._current_bubble:
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
@@ -5717,7 +5653,7 @@ class ChatWindow(QWidget):
         self._tts_audio_buffers.setdefault(sequence, []).append((audio, media_type))
 
     def _on_tts_error(self, error_msg: str):
-        del error_msg
+        pass
 
     def _on_tts_mouth_pose_changed(self, level: float, form: float):
         character = self._tts_characters.get(self._tts_playing_sequence)

@@ -223,5 +223,4 @@ def hide_dock_icon():
         pass
 
 
-def is_available() -> bool:
-    return _init_objc()
+

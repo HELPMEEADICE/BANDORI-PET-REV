@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 import urllib.error
-from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEventLoop, QUrl
@@ -25,15 +24,6 @@ _thread_local = threading.local()
 _APP_DIR = Path(app_base_dir()).resolve()
 _BUNDLED_STDIO_MCP_SCRIPT = (_APP_DIR / "filesystem_mcp_server.py").resolve()
 _ALLOWED_STDIO_PYTHON_COMMANDS = {"python", "python.exe", "pythonw.exe", "py", "py.exe"}
-
-
-@dataclass
-class McpTool:
-    public_name: str
-    tool_name: str
-    server: dict
-    description: str
-    input_schema: dict
 
 
 def mcp_proxy_tools(config: dict) -> list[dict]:

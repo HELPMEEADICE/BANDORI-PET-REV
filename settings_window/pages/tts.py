@@ -294,7 +294,6 @@ class TTSPageMixin:
         self._tts_test_worker.start()
 
     def _set_tts_test_running(self, running: bool):
-        self._tts_test_running = running
         button = getattr(self, "_tts_test_button", None)
         if button is not None:
             button.setEnabled(_SETTINGS_TTS_AVAILABLE and not running)

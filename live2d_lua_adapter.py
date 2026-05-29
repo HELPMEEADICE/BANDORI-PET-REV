@@ -251,7 +251,6 @@ def _lua_custom_hit_areas(table) -> dict[str, list[float]]:
 
 
 class MotionPriority:
-    NONE = 0
     IDLE = 1
     NORMAL = 2
     FORCE = 3
@@ -519,9 +518,6 @@ class LuaLAppModel:
 
     def Drag(self, x: float, y: float):
         self._module._drag(self._renderer, float(x), float(y))
-
-    def SetOffset(self, x: float, y: float):
-        self._module._set_offset(self._renderer, float(x), float(y))
 
     def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
         self._pending_parameters[str(param_id)] = (str(param_id), float(value), float(weight))

@@ -173,7 +173,6 @@ def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = N
 
 
 def reminder_tools_enabled(tool_config: dict | None = None) -> bool:
-    del tool_config
     return True
 
 

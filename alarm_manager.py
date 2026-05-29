@@ -490,7 +490,7 @@ class ReminderScheduler(QObject):
             self._tts_player.enqueue(audio, media_type)
 
     def _on_tts_error(self, error_msg: str):
-        del error_msg
+        pass
 
     def _on_tts_worker_finished(self):
         if self.sender() is self._tts_worker:

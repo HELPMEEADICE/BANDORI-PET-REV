@@ -179,9 +179,6 @@ class Live2DWidget(QOpenGLWidget):
         self._static_render_done = False
         self.update()
 
-    def set_lip_sync_level(self, level: float):
-        self.set_lip_sync_pose(level, self._lip_sync_form_target)
-
     def set_lip_sync_pose(self, level: float, form: float = 0.0):
         self._lip_sync_target = max(0.0, min(float(level), self._lip_sync_max_open))
         self._lip_sync_form_target = max(-1.0, min(float(form), 1.0))
@@ -579,19 +576,9 @@ class Live2DWidget(QOpenGLWidget):
         local = self.mapFromGlobal(global_pos)
         return local if self.rect().contains(local) else None
 
-    def alpha_at_global(self, global_pos: QPoint) -> int:
-        local = self._get_valid_local_pos(global_pos)
-        if not local: return 0
-        alpha = self._get_alpha_fast(local.x(), local.y())
-        return 0 if alpha is None else alpha
-
     def is_model_hit_at_global(self, global_pos: QPoint, *, sync: bool = False) -> bool:
         local = self._get_valid_local_pos(global_pos)
         return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
-
-    def model_hit_state_at_global(self, global_pos: QPoint):
-        local = self._get_valid_local_pos(global_pos)
-        return self._hit_state_at(local.x(), local.y()) if local else False
 
     def hit_area_name_at(self, x: float, y: float) -> str:
         if not self._model: return ""
@@ -646,10 +633,6 @@ class Live2DWidget(QOpenGLWidget):
             
         self._last_hit_state = alpha > self._hit_alpha_threshold
         return self._last_hit_state
-
-    def _is_in_model_hit_area(self, x: float, y: float) -> bool:
-        if not self._has_model_hit_areas(): return True
-        return self._is_in_sdk_hit_area(x, y) or self._is_in_custom_hit_area(x, y)
 
     def _has_model_hit_areas(self) -> bool:
         return self._has_sdk_hit_areas() or (self._custom_hit_areas is not None and self._custom_hit_areas.has_projected_areas())

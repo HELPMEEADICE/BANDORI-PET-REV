@@ -465,7 +465,6 @@ class _DatabaseManagerMeta(type):
 
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
-        self._db_path = db_path
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -988,13 +987,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "last_message_at": _db_text(row[5]) if len(row) > 5 else _db_text(row[4]),
             }
         return None
-
-    def update_conversation_title(self, conv_id: int, title: str):
-        self._conn.execute(
-            "UPDATE conversations SET title=? WHERE id=?",
-            (title, conv_id)
-        )
-        self._conn.commit()
 
     def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

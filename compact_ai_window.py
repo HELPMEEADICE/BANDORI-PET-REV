@@ -951,8 +951,6 @@ class CompactAIWindow(QWidget):
         ) if self._cfg else None
         if command_result is not None:
             self._input.clear()
-            if command_result.get("show_reasoning") is not None and hasattr(self, "_show_reasoning"):
-                self._show_reasoning = bool(command_result["show_reasoning"])
             self._set_output_text(command_result["message"])
             return True
         if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
@@ -1165,7 +1163,7 @@ class CompactAIWindow(QWidget):
         self._tts_player.enqueue(audio, media_type)
 
     def _on_tts_error(self, error_msg: str):
-        del error_msg
+        pass
 
     def _on_tts_worker_finished(self):
         if self.sender() is self._tts_worker:

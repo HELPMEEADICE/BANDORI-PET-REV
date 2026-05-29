@@ -249,15 +249,6 @@ def preset_display_name(preset: dict, tr_func=None) -> str:
     return _PRESET_DISPLAY_DEFAULTS.get(name, (name, ""))[0]
 
 
-def preset_description(preset: dict, tr_func=None) -> str:
-    i18n_key = preset.get("i18n_key", "")
-    desc_key = f"{i18n_key}_desc" if i18n_key else ""
-    if tr_func and desc_key:
-        return tr_func(desc_key)
-    name = preset["name"]
-    return _PRESET_DISPLAY_DEFAULTS.get(name, ("", ""))[1]
-
-
 def preset_combo_label(preset: dict, tr_func=None) -> str:
     name = preset_display_name(preset, tr_func)
     return f"[{name}]"

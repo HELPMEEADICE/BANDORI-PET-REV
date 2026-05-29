@@ -905,23 +905,6 @@ class PetWindow(QWidget):
         mode = self._cfg.get("pet_mode", "live2d")
         return mode if mode in {"live2d", "pixel"} else "live2d"
 
-    def _switch_model(self, character: str, costume: str):
-        path = self._model_manager.get_model_json_path(character, costume)
-        if not path:
-            return
-        self._note_user_interaction()
-        self._close_chat_process()
-        self._current_char = character
-        self._current_costume = costume
-        self._ensure_current_character_in_group()
-        self._live2d_widget.set_model_path(path)
-        self._sync_current_model_entry(path)
-        if self._pixel_mode and not self._load_pixel_for_current_character():
-            self._enable_live2d_mode(save=False)
-        self._update_tooltip()
-        self._sync_compact_ai_window(allow_create=True)
-        self._save_config()
-
     def _on_live2d_model_loaded(self):
         self._motion_guard_token += 1
         self._live2d_prewarm_token += 1
@@ -1819,17 +1802,6 @@ class PetWindow(QWidget):
         self._chat_process = process
         process.start()
 
-    def _read_chat_process_output(self, process: QProcess):
-        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        for line in data.splitlines():
-            if line.startswith("ACTION\t"):
-                parts = line.split("\t", 2)
-                if len(parts) == 3:
-                    if parts[1] == self._current_char:
-                        self._on_chat_action(parts[2])
-                elif len(parts) == 2:
-                    self._on_chat_action(parts[1])
-
     def _connect_ipc_socket(self):
         if self._ipc_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
             return
@@ -2694,11 +2666,6 @@ class PetWindow(QWidget):
 
     def contextMenuEvent(self, event):
         event.accept()
-
-    @staticmethod
-    def _toggle_theme():
-        from qfluentwidgets import isDarkTheme as _is_dark
-        apply_app_theme(not _is_dark())
 
     def showEvent(self, event):
         super().showEvent(event)

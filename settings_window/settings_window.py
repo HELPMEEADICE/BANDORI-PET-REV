@@ -1427,8 +1427,6 @@ class SettingsWindow(
         nav_scroll.verticalScrollBar().valueChanged.connect(
             lambda _value: self._position_nav_indicator(self._current_page)
         )
-        self._sidebar_nav_scroll = nav_scroll
-        self._sidebar_nav_content = nav_content
         layout.addWidget(nav_scroll, 1)
 
         btn_about = NavButton("about", FluentIcon.INFO, _tr("SettingsWindow.nav_about"), sidebar, "#94a3b8")
@@ -2793,8 +2791,6 @@ class SettingsWindow(
             widget = item.widget() if item else None
             if widget:
                 widget.deleteLater()
-            if item:
-                del item
         for item in self._configured_models:
             character = item["character"]
             costume = item["costume"]

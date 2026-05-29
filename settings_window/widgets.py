@@ -1105,12 +1105,3 @@ class CustomModelImportDialog(MessageBoxBase):
 
     def set_error(self, message: str):
         self._error_label.setText(message)
-
-    def validate(self) -> bool:
-        if not self.source_path:
-            self._error_label.setText(_tr("SettingsWindow.custom_model_err_no_source"))
-            return False
-        if not self.display_name:
-            self._error_label.setText(_tr("SettingsWindow.custom_model_err_no_name"))
-            return False
-        return True

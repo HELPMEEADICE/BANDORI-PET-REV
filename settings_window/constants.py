@@ -1,15 +1,9 @@
 import os
-import secrets
-import shutil
 import urllib.error
 import urllib.parse
 
 __all__ = []  # will be populated at end of file
 import urllib.request
-import ssl
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import fluent_bootstrap
@@ -329,8 +323,6 @@ DATA_EXPORT_ORDER = (
 PROJECT_REPO_URL = APP_REPO_URL
 PROJECT_LICENSE_URL = APP_LICENSE_URL
 PROJECT_QQ_GROUP_URL = APP_QQ_GROUP_URL
-CLICK_MOTION_CONFIG_FORMAT = "bandori-click-motion-actions"
-CLICK_MOTION_CONFIG_VERSION = 1
 CLICK_MOTION_SCOPE_ALL = "all_models"
 CLICK_MOTION_SCOPE_CHARACTER = "current_character"
 CLICK_MOTION_SCOPE_COSTUME = "current_costume"
