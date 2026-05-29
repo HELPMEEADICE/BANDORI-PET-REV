@@ -11,7 +11,7 @@ BASE_DIR = str(app_base_dir())
 
 from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtNetwork import QHostAddress, QLocalServer, QLocalSocket, QTcpServer
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
@@ -20,7 +20,8 @@ from radial_menu import RadialMenu
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Show radial menu in a separate process.")
-    parser.add_argument("--server-name", required=True)
+    parser.add_argument("--server-name", default="")
+    parser.add_argument("--tcp-port", type=int, default=-1)
     return parser.parse_args()
 
 
@@ -101,7 +102,8 @@ def main():
     args = _parse_args()
 
     server_name = str(args.server_name or "").strip()
-    if not server_name:
+    use_tcp = args.tcp_port >= 0
+    if not server_name and not use_tcp:
         return 2
 
     set_windows_app_user_model_id("BandoriPet.RadialMenu")
@@ -122,15 +124,20 @@ def main():
     idle_timer.timeout.connect(app.quit)
     idle_timer.start()
 
-    QLocalServer.removeServer(server_name)
-    server = QLocalServer(app)
-    if not server.listen(server_name):
-        return 3
+    if use_tcp:
+        server = QTcpServer(app)
+        if not server.listen(QHostAddress.SpecialAddress.LocalHost, int(args.tcp_port)):
+            return 3
+    else:
+        QLocalServer.removeServer(server_name)
+        server = QLocalServer(app)
+        if not server.listen(server_name):
+            return 3
 
     menu = None
     menu_actions: list[str] = []
-    clients: list[QLocalSocket] = []
-    buffers: dict[QLocalSocket, str] = {}
+    clients = []
+    buffers = {}
 
     def on_menu_closed():
         _emit("STATE\tCLOSED")
@@ -189,14 +196,14 @@ def main():
             close_menu()
             app.quit()
 
-    def remove_client(socket: QLocalSocket):
+    def remove_client(socket):
         if socket in clients:
             clients.remove(socket)
         buffers.pop(socket, None)
         if isValid(socket):
             socket.deleteLater()
 
-    def read_client(socket: QLocalSocket):
+    def read_client(socket):
         if not isValid(socket):
             return
         data = bytes(socket.readAll()).decode("utf-8", errors="replace")
@@ -218,7 +225,7 @@ def main():
             socket.disconnected.connect(lambda s=socket: remove_client(s))
 
     server.newConnection.connect(accept_clients)
-    _emit("READY")
+    _emit(f"READY\t{server.serverPort()}" if use_tcp else "READY")
     return app.exec()
 
 

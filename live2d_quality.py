@@ -1,7 +1,5 @@
 from typing import Any
 
-from PySide6.QtWidgets import QApplication
-
 
 LIVE2D_SCALE_MIN = 25
 LIVE2D_SCALE_MAX = 500
@@ -33,6 +31,8 @@ def clamp_live2d_scale(value: Any, default: int = 100, use_device_pixel_ratio_de
         pct = 0 if use_device_pixel_ratio_default else default
     if pct <= 0:
         if use_device_pixel_ratio_default:
+            from PySide6.QtWidgets import QApplication
+
             screen = QApplication.primaryScreen()
             ratio = screen.devicePixelRatio() if screen else 1.0
             pct = int(round(ratio * 100))

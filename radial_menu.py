@@ -24,14 +24,34 @@ from app_theme import BANDORI_UI_FONT_FAMILY
 from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 WM_NCCALCSIZE = 0x0083
+WM_NCHITTEST = 0x0084
+HTTRANSPARENT = -1
+HTCLIENT = 1
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
     _get_async_key_state = _user32.GetAsyncKeyState
     _get_async_key_state.argtypes = [ctypes.c_int]
     _get_async_key_state.restype = ctypes.c_short
+    _set_window_pos = _user32.SetWindowPos
+    _set_window_pos.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    _set_window_pos.restype = ctypes.wintypes.BOOL
 else:
     _get_async_key_state = None
+    _set_window_pos = None
 
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
@@ -249,14 +269,47 @@ class RadialMenu(QWidget):
                 msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
+                if msg.message == WM_NCHITTEST:
+                    x = ctypes.c_short(int(msg.lParam) & 0xFFFF).value
+                    y = ctypes.c_short((int(msg.lParam) >> 16) & 0xFFFF).value
+                    local = self.mapFromGlobal(QPoint(x, y))
+                    return True, HTCLIENT if self._is_interactive_pos(local) else HTTRANSPARENT
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
+
+    def _is_interactive_pos(self, pos: QPoint) -> bool:
+        if not self.rect().contains(pos):
+            return False
+        for item in self._items:
+            if item.widget.isVisible() and item.widget.geometry().contains(pos):
+                return True
+        cx = self.width() // 2
+        cy = self.height() // 2
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        return dx * dx + dy * dy < 40 * 40
 
     def _apply_windows_11_border_fix(self):
         hwnd = int(self.winId())
         apply_windows_11_border_fix(hwnd)
         frame_changed(hwnd)
+
+    def _raise_above_pet(self):
+        if os.name == "nt" and _set_window_pos is not None:
+            hwnd = int(self.winId())
+            if hwnd:
+                _set_window_pos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
+            return
+        self.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -431,6 +484,9 @@ class RadialMenu(QWidget):
             item.widget.show()
 
         self.show()
+        self._raise_above_pet()
+        QTimer.singleShot(0, self._raise_above_pet)
+        QTimer.singleShot(50, self._raise_above_pet)
         if sys.platform.startswith("linux"):
             self.raise_()
             self.activateWindow()
@@ -564,7 +620,7 @@ class RadialMenu(QWidget):
             super().mousePressEvent(event)
             return
 
-        if any(item.widget.geometry().contains(event.pos()) for item in self._items):
+        if any(item.widget.isVisible() and item.widget.geometry().contains(event.pos()) for item in self._items):
             super().mousePressEvent(event)
             return
 

@@ -35,6 +35,7 @@ from onebot_message import onebot_event_mentions_self
 from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from alarm_manager import ReminderScheduler
+from shared_event_ipc import SharedEventWriter
 
 
 class AiEventBridge(QObject):
@@ -86,6 +87,7 @@ def main():
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
     ipc_ref = {"clients": [], "buffers": {}, "lock": threading.RLock()}
+    shared_event_ref = {"writer": SharedEventWriter()}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
@@ -139,6 +141,11 @@ def main():
         stop_ai_status_server()
         stop_chat_integration_server()
         stop_napcat_adapter()
+        writer = shared_event_ref.get("writer")
+        if writer is not None:
+            writer.write_line("SHUTDOWN")
+            writer.close()
+            shared_event_ref["writer"] = None
         close_pet_processes(force=True)
         close_settings_process(force=True)
         close_chat_process(force=True)
@@ -185,6 +192,9 @@ def main():
             remove_ipc_client(socket)
 
     def broadcast_ipc_line(line: str):
+        writer = shared_event_ref.get("writer")
+        if writer is not None:
+            writer.write_line(line)
         with ipc_ref["lock"]:
             sockets = list(ipc_ref.get("clients", []))
         for socket in sockets:
