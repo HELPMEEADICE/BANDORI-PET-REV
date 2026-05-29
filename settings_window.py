@@ -2968,6 +2968,7 @@ class SettingsWindow(QWidget):
         self._default_motion_combo = OpaqueDropDownComboBox(action_container)
         self._default_motion_combo.setMinimumWidth(190)
         self._default_motion_combo.currentIndexChanged.connect(self._on_default_motion_changed)
+        self._default_motion_combo.activated.connect(self._on_default_motion_preview)
         motion_row.addWidget(self._default_motion_combo, 1)
         self._default_motion_btn = PushButton(_tr("SettingsWindow.model_default"), action_container)
         self._default_motion_btn.clicked.connect(self._reset_default_motion)
@@ -2982,6 +2983,7 @@ class SettingsWindow(QWidget):
         self._default_expression_combo = OpaqueDropDownComboBox(action_container)
         self._default_expression_combo.setMinimumWidth(190)
         self._default_expression_combo.currentIndexChanged.connect(self._on_default_expression_changed)
+        self._default_expression_combo.activated.connect(self._on_default_expression_preview)
         expression_row.addWidget(self._default_expression_combo, 1)
         self._default_expression_btn = PushButton(_tr("SettingsWindow.model_default"), action_container)
         self._default_expression_btn.clicked.connect(self._reset_default_expression)
@@ -3561,6 +3563,18 @@ class SettingsWindow(QWidget):
             position=InfoBarPosition.TOP,
             parent=self,
         )
+
+    def _on_default_motion_preview(self, index: int):
+        motion = self._default_motion_combo.itemData(index) or ""
+        if motion in CLICK_MOTION_SPECIAL_VALUES or not motion:
+            return
+        self._send_preview_motion(motion, "")
+
+    def _on_default_expression_preview(self, index: int):
+        expression = self._default_expression_combo.itemData(index) or ""
+        if not expression:
+            return
+        self._send_preview_motion("", expression)
 
     def _on_click_combo_preview(self, region: str, combo, index: int):
         motion = combo.itemData(index) or ""
