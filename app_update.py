@@ -118,21 +118,42 @@ def _is_newer_version(latest: str, current: str) -> bool:
     return bool(latest and latest.strip().lstrip("v") != current.strip().lstrip("v"))
 
 
+def _git_env() -> dict:
+    env = os.environ.copy()
+    # The update check runs in a hidden, console-less subprocess. Without these,
+    # git can block forever waiting for credential or terminal input (for example
+    # when the remote was switched to a private fork or cached credentials have
+    # expired), which makes the version check hang until it times out instead of
+    # failing fast with a useful message.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env.setdefault("GCM_INTERACTIVE", "Never")
+    env.setdefault("GIT_ASKPASS", "")
+    env.setdefault("SSH_ASKPASS", "")
+    return env
+
+
 def _run_git(args: list[str], cwd: Path, timeout: int = 60) -> str:
     git = shutil.which("git")
     if not git:
         raise RuntimeError("Git was not found in PATH.")
-    proc = subprocess.run(
-        [git, *args],
-        cwd=str(cwd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        **hidden_subprocess_kwargs(),
-    )
+    try:
+        proc = subprocess.run(
+            [git, *args],
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=_git_env(),
+            **hidden_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git {args[0]} timed out after {timeout}s. "
+            "Check your network connection or proxy settings."
+        ) from exc
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout or "git command failed").strip()
         raise RuntimeError(message)
@@ -147,6 +168,14 @@ def _is_git_repo(path: Path) -> bool:
         return False
 
 
+def _ref_exists(cwd: Path, ref: str) -> bool:
+    try:
+        _run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
 def _git_upstream(cwd: Path) -> str:
     try:
         upstream = _run_git(
@@ -154,19 +183,28 @@ def _git_upstream(cwd: Path) -> str:
             cwd,
             timeout=10,
         )
-        if upstream:
+        # An upstream that tracks a local branch (no remote prefix) cannot tell us
+        # whether the remote has new commits, so fall through to the remote refs.
+        if upstream and "/" in upstream:
             return upstream
     except Exception:
         pass
 
     branch = _run_git(["branch", "--show-current"], cwd, timeout=10)
-    if branch:
+    if branch and _ref_exists(cwd, f"origin/{branch}"):
         return f"origin/{branch}"
 
     try:
-        return _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd, timeout=10)
-    except Exception as exc:
-        raise RuntimeError("No upstream branch is configured for this Git checkout.") from exc
+        head = _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd, timeout=10)
+        if head and _ref_exists(cwd, head):
+            return head
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "No remote-tracking branch was found for this Git checkout. "
+        "Set an upstream with: git branch --set-upstream-to=origin/<branch>"
+    )
 
 
 def _check_git_update(cwd: Path) -> UpdateInfo:
