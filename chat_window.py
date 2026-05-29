@@ -88,12 +88,13 @@ except (ImportError, OSError):
         import re as _re
         return _re.sub(r"\[(?:DONE|[A-Za-z0-9_.\-]+)\]", "", text).strip()
 from relationship_memory import (
+    GLOBAL_MEMORY_CHARACTER,
     analyze_interaction,
     build_memory_extraction_messages,
     build_relationship_context,
     format_character_status,
-    parse_memory_extraction_response,
     parse_relationship_analysis_response,
+    store_extracted_memories,
     user_key_from_config,
 )
 from action_bus import publish_action, publish_lip_sync
@@ -4346,7 +4347,7 @@ class ChatWindow(QWidget):
     def _prune_cancelled_workers(self):
         self._cancelled_workers = [worker for worker in self._cancelled_workers if worker is not None and worker.isRunning()]
 
-    def _relationship_status_text(self) -> str:
+    def _relationship_status_text(self, sections: tuple[str, ...] | None = None) -> str:
         user_key = self._user_memory_key()
         parts = []
         for character in self._memory_target_characters():
@@ -4355,6 +4356,7 @@ class ChatWindow(QWidget):
                 character,
                 user_key,
                 self._model_manager.get_display_name(character),
+                sections=sections,
             ))
         return "\n\n".join(parts)
 
@@ -4446,9 +4448,13 @@ class ChatWindow(QWidget):
                 self._show_reasoning = bool(command_result["show_reasoning"])
             self._show_local_assistant_message(command_result["message"])
             return True
-        if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
+        if lowered in {"@memory", "/memory", "@记忆", "/记忆"}:
             self._input.clear()
-            self._show_local_assistant_message(self._relationship_status_text())
+            self._show_local_assistant_message(self._relationship_status_text(("global", "memories")))
+            return True
+        if lowered in {"@status", "/status", "@状态", "/状态"}:
+            self._input.clear()
+            self._show_local_assistant_message(self._relationship_status_text(("state",)))
             return True
         for prefix in ("@remember ", "/remember ", "@记住 ", "/记住 "):
             if stripped.startswith(prefix):
@@ -4530,7 +4536,14 @@ class ChatWindow(QWidget):
         if not api_url or not api_key or not model_id:
             return False
         existing = self._db.get_character_memories(character, user_key, limit=12)
-        messages = build_memory_extraction_messages(user_text, assistant_text, existing)
+        global_existing = self._db.get_character_memories(GLOBAL_MEMORY_CHARACTER, user_key, limit=12)
+        messages = build_memory_extraction_messages(
+            user_text,
+            assistant_text,
+            existing,
+            global_memories=global_existing,
+            character_name=self._model_manager.get_display_name(character),
+        )
         worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
         self._memory_workers.append(worker)
         worker.finished.connect(
@@ -4572,16 +4585,14 @@ class ChatWindow(QWidget):
             relationship_analysis,
             "chat_model",
         )
-        for memory in parse_memory_extraction_response(content):
-            self._db.add_character_memory(
-                character,
-                user_key,
-                memory["kind"],
-                memory["content"],
-                memory["importance"],
-                source_message_id=source_message_id,
-                source_group_message_id=source_group_message_id,
-            )
+        store_extracted_memories(
+            self._db,
+            character,
+            user_key,
+            content,
+            source_message_id=source_message_id,
+            source_group_message_id=source_group_message_id,
+        )
 
     def _forget_memory_worker(self, worker: NonStreamWorker):
         self._memory_workers = [item for item in self._memory_workers if item is not worker]

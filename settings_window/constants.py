@@ -75,6 +75,7 @@ from app_theme import (
 from database_manager import DatabaseManager
 from config_manager import BUILTIN_LLM_API_PROFILES, DEFAULT_USER_PROFILE_KEY, make_user_profile_key
 from relationship_memory import (
+    GLOBAL_MEMORY_CHARACTER,
     MEMORY_KIND_LABELS,
     affection_label,
     display_user_name,

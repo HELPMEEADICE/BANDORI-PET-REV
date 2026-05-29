@@ -92,15 +92,19 @@ class MemoryPageMixin:
         selector_row.addWidget(BodyLabel(_tr("SettingsWindow.memory_character"), page))
         self._memory_character_combo = OpaqueDropDownComboBox(page)
         self._memory_character_combo.setFixedHeight(36)
+        self._memory_character_combo.addItem(
+            _tr("SettingsWindow.memory_global_profile", default="用户偏好（全局 · 对所有角色生效）"),
+            userData=GLOBAL_MEMORY_CHARACTER,
+        )
         selected_character = self._current_char or self._selected_list_character
-        selected_index = 0
-        for index, char_key in enumerate(self._model_manager.characters):
+        selected_index = 1 if self._model_manager.characters else 0
+        for char_key in self._model_manager.characters:
             self._memory_character_combo.addItem(
                 self._model_manager.get_display_name(char_key),
                 userData=char_key,
             )
             if char_key == selected_character:
-                selected_index = index
+                selected_index = self._memory_character_combo.count() - 1
         self._memory_character_combo.setCurrentIndex(selected_index)
         self._memory_character_combo.currentIndexChanged.connect(lambda _i: self._refresh_memory_page())
         selector_row.addWidget(self._memory_character_combo, 1)
@@ -109,9 +113,19 @@ class MemoryPageMixin:
         selector_row.addWidget(self._memory_user_label, 1)
         layout.addLayout(selector_row)
 
+        self._memory_global_hint = _wrap_label(BodyLabel(
+            _tr("SettingsWindow.memory_global_hint",
+                default="全局用户偏好会整理你的长期信息（昵称、喜好、底线等），并在与任何角色开启新对话时自动提供，让 AI 更快了解你。"),
+            page,
+        ))
+        self._memory_global_hint.setObjectName("memoryHint")
+        self._memory_global_hint.setVisible(False)
+        layout.addWidget(self._memory_global_hint)
+
         status_panel = QWidget(page)
         status_panel.setObjectName("memoryStatusPanel")
         status_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._memory_status_panel = status_panel
         status_layout = QGridLayout(status_panel)
         status_layout.setContentsMargins(16, 14, 16, 14)
         status_layout.setHorizontalSpacing(18)
@@ -206,6 +220,7 @@ class MemoryPageMixin:
         command_layout.setSpacing(8)
         command_layout.addWidget(SubtitleLabel(_tr("SettingsWindow.memory_commands_title"), command_panel))
         for key in (
+            "SettingsWindow.memory_command_memory",
             "SettingsWindow.memory_command_status",
             "SettingsWindow.memory_command_remember",
             "SettingsWindow.memory_command_forget",
@@ -297,27 +312,34 @@ class MemoryPageMixin:
         db = self._memory_database()
         user_key = user_key_from_config(self._cfg)
         user_display = self._memory_user_display(user_key) or _tr("SettingsWindow.memory_default_user")
-        self._memory_user_label.setText(_tr("SettingsWindow.memory_current_user", display=user_display))
+        is_global = character == GLOBAL_MEMORY_CHARACTER
 
-        state = db.get_relationship_state(character, user_key)
-        self._memory_affection_value.setText(
-            _tr(
-                "SettingsWindow.memory_affection_value",
-                value=state["affection"],
-                label=affection_label(state["affection"]),
+        if hasattr(self, "_memory_status_panel"):
+            self._memory_status_panel.setVisible(not is_global)
+        if hasattr(self, "_memory_global_hint"):
+            self._memory_global_hint.setVisible(is_global)
+
+        self._memory_user_label.setText(_tr("SettingsWindow.memory_current_user", display=user_display))
+        if not is_global:
+            state = db.get_relationship_state(character, user_key)
+            self._memory_affection_value.setText(
+                _tr(
+                    "SettingsWindow.memory_affection_value",
+                    value=state["affection"],
+                    label=affection_label(state["affection"]),
+                )
             )
-        )
-        self._memory_trust_value.setText(_tr("SettingsWindow.memory_score_value", value=state["trust"]))
-        self._memory_familiarity_value.setText(_tr("SettingsWindow.memory_score_value", value=state["familiarity"]))
-        self._memory_mood_value.setText(
-            _tr(
-                "SettingsWindow.memory_mood_value",
-                mood=mood_label(state["mood"]),
-                value=state["mood_intensity"],
+            self._memory_trust_value.setText(_tr("SettingsWindow.memory_score_value", value=state["trust"]))
+            self._memory_familiarity_value.setText(_tr("SettingsWindow.memory_score_value", value=state["familiarity"]))
+            self._memory_mood_value.setText(
+                _tr(
+                    "SettingsWindow.memory_mood_value",
+                    mood=mood_label(state["mood"]),
+                    value=state["mood_intensity"],
+                )
             )
-        )
-        updated_at = state.get("updated_at") or _tr("SettingsWindow.memory_never_updated")
-        self._memory_updated_value.setText(_tr("SettingsWindow.memory_updated_at", time=updated_at))
+            updated_at = state.get("updated_at") or _tr("SettingsWindow.memory_never_updated")
+            self._memory_updated_value.setText(_tr("SettingsWindow.memory_updated_at", time=updated_at))
 
         self._memory_items = db.get_character_memories(character, user_key, limit=100)
         target_id = self._selected_memory_id if prefer_memory_id is None else int(prefer_memory_id or 0)

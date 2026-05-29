@@ -56,12 +56,13 @@ except (ImportError, OSError):
 from database_manager import DatabaseManager
 from i18n_manager import tr as _tr
 from relationship_memory import (
+    GLOBAL_MEMORY_CHARACTER,
     analyze_interaction,
     build_memory_extraction_messages,
     build_relationship_context,
     format_character_status,
-    parse_memory_extraction_response,
     parse_relationship_analysis_response,
+    store_extracted_memories,
     user_key_from_config,
 )
 from action_bus import publish_lip_sync
@@ -955,13 +956,24 @@ class CompactAIWindow(QWidget):
                 self._show_reasoning = bool(command_result["show_reasoning"])
             self._set_output_text(command_result["message"])
             return True
-        if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
+        if lowered in {"@memory", "/memory", "@记忆", "/记忆"}:
             self._input.clear()
             self._set_output_text(format_character_status(
                 self._db,
                 self._character,
                 self._user_memory_key(),
                 self._model_manager.get_display_name(self._character),
+                sections=("global", "memories"),
+            ))
+            return True
+        if lowered in {"@status", "/status", "@状态", "/状态"}:
+            self._input.clear()
+            self._set_output_text(format_character_status(
+                self._db,
+                self._character,
+                self._user_memory_key(),
+                self._model_manager.get_display_name(self._character),
+                sections=("state",),
             ))
             return True
         for prefix in ("@remember ", "/remember ", "@记住 ", "/记住 "):
@@ -1064,7 +1076,14 @@ class CompactAIWindow(QWidget):
         if not api_url or not api_key or not model_id:
             return False
         existing = self._db.get_character_memories(self._character, user_key, limit=12)
-        messages = build_memory_extraction_messages(user_text, assistant_text, existing)
+        global_existing = self._db.get_character_memories(GLOBAL_MEMORY_CHARACTER, user_key, limit=12)
+        messages = build_memory_extraction_messages(
+            user_text,
+            assistant_text,
+            existing,
+            global_memories=global_existing,
+            character_name=self._model_manager.get_display_name(self._character),
+        )
         worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
         self._memory_workers.append(worker)
         worker.finished.connect(
@@ -1094,15 +1113,13 @@ class CompactAIWindow(QWidget):
             relationship_analysis,
             "compact_chat_model",
         )
-        for memory in parse_memory_extraction_response(content):
-            self._db.add_character_memory(
-                self._character,
-                user_key,
-                memory["kind"],
-                memory["content"],
-                memory["importance"],
-                source_message_id=source_message_id,
-            )
+        store_extracted_memories(
+            self._db,
+            self._character,
+            user_key,
+            content,
+            source_message_id=source_message_id,
+        )
 
     def _forget_memory_worker(self, worker: NonStreamWorker):
         self._memory_workers = [item for item in self._memory_workers if item is not worker]

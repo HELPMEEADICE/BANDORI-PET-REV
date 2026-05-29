@@ -8,6 +8,12 @@ from config_manager import DEFAULT_USER_PROFILE_KEY
 DEFAULT_USER_KEY = DEFAULT_USER_PROFILE_KEY
 ROLE_USER_KEY_PREFIX = "__role__:"
 
+# Reserved "character" key for cross-character (global) user-profile memories.
+# These memories describe the user themselves and apply to every character the
+# user talks to, so they are stored under this sentinel character key and merged
+# into every character's context.
+GLOBAL_MEMORY_CHARACTER = "__global__"
+
 MOOD_LABELS = {
     "calm": "平静",
     "happy": "开心",
@@ -48,24 +54,62 @@ MEMORY_KIND_LABELS = {
 }
 
 MEMORY_EXTRACTOR_SYSTEM_PROMPT = (
-    "You are a multilingual interaction analysis component for a role-play chat app. "
-    "Read the latest user message and the assistant reply. Extract durable facts that the character "
-    "should remember about the user or the user's relationship with the character, and estimate a small "
-    "relationship-state update. Understand any language, including "
-    "Simplified Chinese, Traditional Chinese, English, Japanese, Korean, and mixed-language messages. "
-    "Do not extract temporary requests, one-off topics, greetings, assistant facts, role instructions, "
-    "or anything merely implied. Prefer user profile facts, stable preferences, boundaries, recurring "
-    "habits, relationship notes, and explicit requests to remember durable information. "
-    "Write memory content in concise Chinese so it fits the existing UI. "
-    "Return only valid JSON with this exact shape: "
-    "{\"relationship\":{\"affection_delta\":0,\"trust_delta\":0,\"familiarity_delta\":1,"
-    "\"mood\":\"calm\",\"mood_intensity\":24,\"reason\":\"...\"},"
-    "\"memories\":[{\"kind\":\"profile|preference|relationship|note\",\"content\":\"...\","
-    "\"importance\":1-100}]}. "
-    "Use small relationship deltas from -5 to 5. familiarity_delta is usually 1 when the user sent a "
-    "substantive message, otherwise 0. mood must be one of calm, happy, excited, soft, concerned, sad, "
-    "hurt, annoyed, angry, shy, thoughtful, surprised, tired. If there is nothing worth saving, use an "
-    "empty memories array."
+    "You are the long-term memory and relationship analyzer for a role-play desktop companion app. "
+    "Every turn you read the user's latest message (the character's reply is given only as context) and "
+    "decide what is worth remembering for the long term, then estimate a small relationship-state update. "
+    "You understand every language (Simplified/Traditional Chinese, English, Japanese, Korean, and "
+    "mixed-language text) and always write the saved memory content in concise Chinese so it fits the UI.\n"
+    "\n"
+    "WHAT TO REMEMBER — save a memory whenever the user reveals durable information, even when it is stated "
+    "briefly, casually, or in passing. Do NOT ignore a clear memory point just because the message is short "
+    "or informal:\n"
+    "- Identity & profile: the name or nickname they want to be called, age range, location/timezone, "
+    "job or studies, languages they use.\n"
+    "- Stable preferences & dislikes: foods, hobbies, games, music, favorite BanG Dream! bands/characters, "
+    "topics they enjoy or want avoided, the tone or way they like to be spoken to and addressed.\n"
+    "- Boundaries & sensitivities: things that upset them, subjects not to bring up, emotional support they need.\n"
+    "- Lasting life facts & ongoing situations: family, pets, partner, health constraints, recurring "
+    "schedule, exams/projects or goals they are working toward.\n"
+    "- Relationship-specific facts about THIS character: nicknames they use for the character, inside jokes, "
+    "promises, shared plans or recurring rituals with this character.\n"
+    "- Anything the user explicitly asks you to remember.\n"
+    "\n"
+    "WHAT TO SKIP: one-off or momentary things (today's weather, what they are doing right now, a single "
+    "question, a passing mood), pure task requests already handled in the reply (translate this, write code, "
+    "look something up), greetings and filler, facts about the character/assistant, role-play stage "
+    "directions, and anything you would only be guessing at — never invent facts the user did not state.\n"
+    "Quick test: if a thoughtful friend would still find it useful to know next week, remember it; otherwise skip it.\n"
+    "\n"
+    "SCOPE every memory:\n"
+    "- \"user\": true about the person no matter which character they talk to (identity, global preferences, "
+    "boundaries, life facts). These build a shared cross-character user profile.\n"
+    "- \"relationship\": only meaningful for the current character (nicknames for this character, shared "
+    "memories, promises made to it).\n"
+    "\n"
+    "AVOID DUPLICATES & MAINTAIN THE PROFILE: you are shown the memories already saved. Never repeat a fact "
+    "that is already stored. If a new statement corrects or replaces an old fact (the user moved, changed a "
+    "favorite, updated how they want to be called), put the corrected fact in \"memories\" AND copy the "
+    "outdated existing line verbatim into \"outdated\" so it gets removed.\n"
+    "\n"
+    "Return ONLY valid JSON with this exact shape:\n"
+    "{\"relationship\":{\"affection_delta\":0,\"trust_delta\":0,\"familiarity_delta\":1,\"mood\":\"calm\","
+    "\"mood_intensity\":24,\"reason\":\"...\"},"
+    "\"memories\":[{\"scope\":\"user|relationship\",\"kind\":\"profile|preference|relationship|note\","
+    "\"content\":\"...\",\"importance\":1-100}],"
+    "\"outdated\":[\"<verbatim existing memory line to delete>\"]}.\n"
+    "Relationship deltas range -5..5. familiarity_delta is 1 for a substantive user message, otherwise 0. "
+    "mood must be one of calm, happy, excited, soft, concerned, sad, hurt, annoyed, angry, shy, thoughtful, "
+    "surprised, tired. importance: 80-100 for core identity/boundaries, 55-79 for stable preferences and "
+    "relationship facts, 30-54 for minor notes. If nothing is worth saving use \"memories\":[] and \"outdated\":[].\n"
+    "\n"
+    "Examples (saved content is illustrative):\n"
+    "User: \"以后叫我小K就好，我不太喜欢别人喊全名\" -> memories:[{\"scope\":\"user\",\"kind\":\"preference\","
+    "\"content\":\"希望被称呼为“小K”，不喜欢被叫全名\",\"importance\":85}].\n"
+    "User: \"今天好累，刚加完班\" -> memories:[] (momentary state, nothing durable).\n"
+    "User: \"我最喜欢的乐队是MyGO，尤其是灯\" -> memories:[{\"scope\":\"user\",\"kind\":\"preference\","
+    "\"content\":\"最喜欢的乐队是MyGO，最喜欢的角色是高松灯\",\"importance\":80}].\n"
+    "User: \"我们之前说好周末一起看演唱会直播对吧\" -> memories:[{\"scope\":\"relationship\","
+    "\"kind\":\"relationship\",\"content\":\"和用户约好周末一起看演唱会直播\",\"importance\":70}]."
 )
 
 _POSITIVE_TERMS = (
@@ -188,20 +232,31 @@ def _trim_text(value: str, limit: int = 180) -> str:
     return value
 
 
+def _format_memory_lines(memories: list[dict] | None, limit: int = 12) -> str:
+    lines = []
+    for memory in (memories or [])[:limit]:
+        # Keep the content verbatim (it is already short) so the model can copy a
+        # line into "outdated" for an exact match when a fact is superseded.
+        content = re.sub(r"\s+", " ", str(memory.get("content", "") or "")).strip()
+        if content:
+            lines.append("- " + content)
+    return "\n".join(lines) or "（无）"
+
+
 def build_memory_extraction_messages(
     user_text: str,
     assistant_text: str = "",
     existing_memories: list[dict] | None = None,
+    *,
+    global_memories: list[dict] | None = None,
+    character_name: str = "",
 ) -> list[dict]:
-    existing_lines = []
-    for memory in (existing_memories or [])[:12]:
-        content = _trim_text(memory.get("content", ""), 160)
-        if content:
-            existing_lines.append("- " + content)
-    existing_text = "\n".join(existing_lines) or "无"
     user_payload = (
-        "现有长期记忆：\n"
-        + existing_text
+        "当前角色：" + (str(character_name or "").strip() or "（未指定）") + "\n\n"
+        + "已保存的用户档案（跨角色，scope=user）：\n"
+        + _format_memory_lines(global_memories)
+        + "\n\n已保存的与当前角色相关的记忆（scope=relationship）：\n"
+        + _format_memory_lines(existing_memories)
         + "\n\n用户最新消息：\n"
         + str(user_text or "").strip()
     )
@@ -260,6 +315,16 @@ def parse_relationship_analysis_response(text: str) -> dict:
     }
 
 
+def _scope_for(scope: str, kind: str) -> str:
+    value = str(scope or "").strip().lower()
+    if value in ("user", "global", "profile", "shared"):
+        return "user"
+    if value in ("relationship", "character", "local", "char"):
+        return "relationship"
+    # Derive from the memory kind when the model did not give an explicit scope.
+    return "user" if kind in ("profile", "preference") else "relationship"
+
+
 def parse_memory_extraction_response(text: str) -> list[dict]:
     data = _json_object_from_text(text)
 
@@ -280,13 +345,81 @@ def parse_memory_extraction_response(text: str) -> list[dict]:
         except (TypeError, ValueError):
             importance = 60
         memories.append({
+            "scope": _scope_for(item.get("scope", ""), kind),
             "kind": kind,
             "content": content,
             "importance": max(1, min(100, importance)),
         })
-        if len(memories) >= 5:
+        if len(memories) >= 6:
             break
     return memories
+
+
+def _normalize_memory_match_key(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).strip().lower()
+
+
+def parse_memory_supersede_response(text: str) -> list[str]:
+    """Existing memory contents the model flagged as outdated/replaced."""
+    data = _json_object_from_text(text)
+    raw = data.get("outdated")
+    if raw is None:
+        raw = data.get("superseded") or data.get("remove") or []
+    results = []
+    seen = set()
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            item = item.get("content", "")
+        content = re.sub(r"\s+", " ", str(item or "")).strip()
+        key = _normalize_memory_match_key(content)
+        if len(content) < 3 or key in seen:
+            continue
+        seen.add(key)
+        results.append(content)
+        if len(results) >= 6:
+            break
+    return results
+
+
+def store_extracted_memories(
+    db,
+    character: str,
+    user_key: str,
+    response_text: str,
+    *,
+    source_message_id: int | None = None,
+    source_group_message_id: int | None = None,
+) -> None:
+    """Persist memories from an extractor response, routing by scope and
+    removing any existing lines the model marked as outdated."""
+    memories = parse_memory_extraction_response(response_text)
+    outdated = parse_memory_supersede_response(response_text)
+
+    if outdated:
+        # Match the model's verbatim lines against stored memories in both the
+        # current character's scope and the shared global profile, then delete.
+        index: dict[str, tuple[int, str]] = {}
+        for owner in (character, GLOBAL_MEMORY_CHARACTER):
+            for existing in db.get_character_memories(owner, user_key, limit=100):
+                key = _normalize_memory_match_key(existing.get("content", ""))
+                if key and key not in index:
+                    index[key] = (existing.get("id", 0), owner)
+        for line in outdated:
+            hit = index.get(_normalize_memory_match_key(line))
+            if hit and hit[0]:
+                db.delete_character_memory(hit[0], hit[1], user_key)
+
+    for memory in memories:
+        owner = GLOBAL_MEMORY_CHARACTER if memory["scope"] == "user" else character
+        db.add_character_memory(
+            owner,
+            user_key,
+            memory["kind"],
+            memory["content"],
+            memory["importance"],
+            source_message_id=source_message_id,
+            source_group_message_id=source_group_message_id,
+        )
 
 
 def _mood_from_actions(actions: list[str]) -> str:
@@ -366,6 +499,7 @@ def analyze_interaction(user_text: str, assistant_text: str = "", actions: list[
 def build_relationship_context(db, character: str, user_key: str, display_name: str = "") -> str:
     state = db.get_relationship_state(character, user_key)
     memories = db.get_character_memories(character, user_key, limit=8)
+    global_memories = db.get_character_memories(GLOBAL_MEMORY_CHARACTER, user_key, limit=8)
     user_label = display_name or display_user_name(user_key) or _tr("Relationship.default_user", "当前用户")
     lines = [
         _tr("Relationship.context_title", "【长期记忆与关系状态】"),
@@ -378,35 +512,74 @@ def build_relationship_context(db, character: str, user_key: str, display_name: 
         _tr("Relationship.context_mood", "当前心情：{mood}，强度 {intensity}/100。",
             mood=mood_label(state['mood']), intensity=state['mood_intensity']),
     ]
+    if global_memories:
+        lines.append(_tr("Relationship.context_global_label",
+                         "用户档案（跨角色长期偏好，对每位角色都适用）："))
+        for memory in global_memories:
+            kind = _tr(f"Relationship.kind_{memory['kind']}", MEMORY_KIND_LABELS.get(memory["kind"], memory["kind"]))
+            lines.append(f"- {kind}：{memory['content']}")
     if memories:
         lines.append(_tr("Relationship.context_memories_label", "长期记忆："))
         for memory in memories:
             kind = _tr(f"Relationship.kind_{memory['kind']}", MEMORY_KIND_LABELS.get(memory["kind"], memory["kind"]))
             lines.append(f"- {kind}：{memory['content']}")
-    else:
+    elif not global_memories:
         lines.append(_tr("Relationship.context_memories_empty", "长期记忆：暂无明确记录。"))
     lines.append(_tr("Relationship.context_instruction_footer", "互动要求：随着好感、信任和心情变化调整语气亲近度，但仍必须保持角色本人的性格边界。"))
     return "\n".join(lines)
 
 
-def format_character_status(db, character: str, user_key: str, display_name: str = "", limit: int = 6) -> str:
-    state = db.get_relationship_state(character, user_key)
-    memories = db.get_character_memories(character, user_key, limit=limit)
+def _format_memory_block(memories: list[dict], empty_text: str) -> list[str]:
+    if not memories:
+        return [empty_text]
+    block = []
+    for memory in memories:
+        kind = _tr(f"Relationship.kind_{memory['kind']}", MEMORY_KIND_LABELS.get(memory["kind"], memory["kind"]))
+        block.append(f"- {kind}：{memory['content']}")
+    return block
+
+
+def format_character_status(
+    db,
+    character: str,
+    user_key: str,
+    display_name: str = "",
+    limit: int = 6,
+    sections: tuple[str, ...] | None = None,
+) -> str:
+    """Render the long-term status. ``sections`` selects which blocks to show:
+    ``"state"`` (relationship stats), ``"global"`` (cross-character preferences),
+    ``"memories"`` (this character's memories). Defaults to all three."""
+    sections = tuple(sections) if sections else ("state", "global", "memories")
     title = display_name or character
-    lines = [
-        _tr("Relationship.status_title", "【{title} 的长期状态】", title=title),
-        _tr("SettingsWindow.memory_affection_value", "{value}/100（{label}）",
-            value=state['affection'], label=affection_label(state['affection'])),
-        _tr("Relationship.status_trust", "信任：{value}/100", value=state['trust']),
-        _tr("Relationship.status_familiarity", "熟悉度：{value}/100", value=state['familiarity']),
-        _tr("SettingsWindow.memory_mood_value", "{mood}（{value}/100）",
-            mood=mood_label(state['mood']), value=state['mood_intensity']),
-    ]
-    if memories:
-        lines.append(_tr("Relationship.status_memories_label", "记住的事："))
-        for memory in memories:
-            kind = _tr(f"Relationship.kind_{memory['kind']}", MEMORY_KIND_LABELS.get(memory["kind"], memory["kind"]))
-            lines.append(f"- {kind}：{memory['content']}")
-    else:
-        lines.append(_tr("Relationship.status_memories_empty", "记住的事：暂无。"))
+    empty_text = _tr("Relationship.status_block_empty", "（暂无）")
+
+    lines = [_tr("Relationship.status_title", "【{title} 的长期状态】", title=title)]
+
+    # Block 1 — relationship stats (this character).
+    if "state" in sections:
+        state = db.get_relationship_state(character, user_key)
+        lines.append("")
+        lines.append(_tr("Relationship.status_section_state", "── 关系数值 ──"))
+        lines.append(_tr("Relationship.status_affection", "好感度：{value}/100（{label}）",
+                         value=state['affection'], label=affection_label(state['affection'])))
+        lines.append(_tr("Relationship.status_trust", "信任：{value}/100", value=state['trust']))
+        lines.append(_tr("Relationship.status_familiarity", "熟悉度：{value}/100", value=state['familiarity']))
+        lines.append(_tr("Relationship.status_mood", "当前心情：{mood}（{value}/100）",
+                         mood=mood_label(state['mood']), value=state['mood_intensity']))
+
+    # Block 2 — global user preferences (shared across every character).
+    if "global" in sections:
+        global_memories = db.get_character_memories(GLOBAL_MEMORY_CHARACTER, user_key, limit=limit)
+        lines.append("")
+        lines.append(_tr("Relationship.status_global_label", "── 全局用户偏好（对所有角色生效）──"))
+        lines.extend(_format_memory_block(global_memories, empty_text))
+
+    # Block 3 — memories specific to this character.
+    if "memories" in sections:
+        memories = db.get_character_memories(character, user_key, limit=limit)
+        lines.append("")
+        lines.append(_tr("Relationship.status_memories_label", "── 角色专属记忆 ──"))
+        lines.extend(_format_memory_block(memories, empty_text))
+
     return "\n".join(lines)
