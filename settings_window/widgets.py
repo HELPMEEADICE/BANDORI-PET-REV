@@ -190,14 +190,26 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
         dark = isDarkTheme()
         bg = "#2b2b2b" if dark else "#ffffff"
         border = "#4a4a4a" if dark else "#d8d8d8"
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, Qt.GlobalColor.transparent)
+        palette.setColor(QPalette.ColorRole.Window, QColor(bg))
+        palette.setColor(QPalette.ColorRole.Base, QColor(bg))
         self.setPalette(palette)
         self.hBoxLayout.setContentsMargins(0, 0, 0, 0)
+        self.view.setAutoFillBackground(True)
         self.view.setGraphicsEffect(None)
+        self.setStyleSheet(
+            self.styleSheet()
+            + f"""
+            QMenu {{
+                background: {bg};
+                border: none;
+            }}
+            """
+        )
         self.view.setStyleSheet(
             self.view.styleSheet()
             + f"""

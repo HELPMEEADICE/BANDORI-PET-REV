@@ -215,7 +215,16 @@ DEFAULTS = {
     "napcat_auto_reply_enabled": False,
     "napcat_reply_private": True,
     "napcat_reply_group_at_only": True,
+    "napcat_reply_mention_sender": True,
     "napcat_reply_character": "",
+    # 聊天记录保存策略：all=全部保存（群聊和私聊），private_only=只保存私聊，
+    # overlay_only=仅在悬浮窗提示而不保存。
+    "napcat_save_policy": "all",
+    # 记录保留期限：mode=auto 时按 days 自动删除过期记录；mode=manual 时仅在点击删除按钮时清理。
+    "napcat_group_retention_mode": "manual",
+    "napcat_group_retention_days": 7,
+    "napcat_private_retention_mode": "manual",
+    "napcat_private_retention_days": 30,
     "alarms": [],
     "pomodoros": [],
     "click_motion_profiles": [],

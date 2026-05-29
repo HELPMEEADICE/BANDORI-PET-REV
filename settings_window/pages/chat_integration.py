@@ -180,6 +180,11 @@ class ChatIntegrationPageMixin:
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
         readonly_bg = "#242424" if dark else "#f8f8f8"
+        control_hover_bg = "#333333" if dark else "#f9fafb"
+        control_pressed_bg = "#262626" if dark else "#f3f4f6"
+        disabled_bg = "#252525" if dark else "#f5f6f8"
+        disabled_text = "#b7beca" if dark else "#4b5563"
+        disabled_border = "#3a3a3a" if dark else "#d9dee8"
         page.setStyleSheet(f"""
             QWidget#chatIntegrationPage {{
                 background: {page_bg};
@@ -201,6 +206,65 @@ class ChatIntegrationPageMixin:
                 border-radius: 6px;
                 padding-left: 0px;
                 selection-background-color: {BANDORI_PRIMARY};
+            }}
+            #NapcatRecordCombo {{
+                color: {text};
+                background-color: {input_bg};
+                border: 1px solid {text_border};
+                border-radius: 6px;
+                border-bottom: 1px solid {text_border};
+                padding: 5px 31px 6px 11px;
+                text-align: left;
+            }}
+            #NapcatRecordCombo:hover {{
+                background-color: {control_hover_bg};
+            }}
+            #NapcatRecordCombo:pressed {{
+                color: {text};
+                background-color: {control_pressed_bg};
+                border-bottom: 1px solid {text_border};
+            }}
+            #NapcatRecordDaysSpin {{
+                color: {text};
+                background-color: {input_bg};
+                border: 1px solid {text_border};
+                border-bottom: 1px solid {text_border};
+                border-radius: 6px;
+                padding: 0px 76px 0px 12px;
+                selection-background-color: {BANDORI_PRIMARY};
+            }}
+            #NapcatRecordDaysSpin:hover,
+            #NapcatRecordDaysSpin:focus {{
+                color: {text};
+                background-color: {control_hover_bg};
+                border: 1px solid {text_border};
+                border-bottom: 1px solid {text_border};
+            }}
+            #NapcatRecordDaysSpin:disabled {{
+                color: {disabled_text};
+                background-color: {disabled_bg};
+                border: 1px solid {disabled_border};
+                border-bottom: 1px solid {disabled_border};
+            }}
+            QLineEdit#NapcatRecordDaysSpinEdit {{
+                color: {text};
+                background: transparent;
+                border: none;
+                padding: 0px;
+                selection-background-color: {BANDORI_PRIMARY};
+            }}
+            QLineEdit#NapcatRecordDaysSpinEdit:hover,
+            QLineEdit#NapcatRecordDaysSpinEdit:focus {{
+                color: {text};
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }}
+            QLineEdit#NapcatRecordDaysSpinEdit:disabled {{
+                color: {disabled_text};
+                background: transparent;
+                border: none;
+                padding: 0px;
             }}
         """)
         self._refresh_theme_widget_styles(page)
@@ -481,6 +545,62 @@ class ChatIntegrationPageMixin:
             _tr("SettingsWindow.napcat_reply_group_at_only", default="群聊仅在 @机器人 时回复"),
             self._napcat_reply_group_at_only,
         )
+        self._napcat_reply_mention_sender = SwitchButton(page)
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.napcat_reply_mention_sender", default="回复开头 @ 发消息的人"),
+            self._napcat_reply_mention_sender,
+        )
+
+        layout.addWidget(SubtitleLabel(_tr(
+            "SettingsWindow.napcat_record_title",
+            default="聊天记录管理",
+        ), page))
+
+        policy_row = QHBoxLayout()
+        policy_row.setContentsMargins(0, 0, 0, 0)
+        policy_row.setSpacing(8)
+        policy_row.addWidget(BodyLabel(_tr(
+            "SettingsWindow.napcat_save_policy",
+            default="聊天记录保存策略",
+        ), page))
+        self._napcat_save_policy_combo = OpaqueDropDownComboBox(page)
+        self._napcat_save_policy_combo.setObjectName("NapcatRecordCombo")
+        self._napcat_save_policy_combo.addItem(_tr(
+            "SettingsWindow.napcat_save_policy_all", default="全部保存（群聊和私聊）",
+        ), userData="all")
+        self._napcat_save_policy_combo.addItem(_tr(
+            "SettingsWindow.napcat_save_policy_private", default="只保存私聊",
+        ), userData="private_only")
+        self._napcat_save_policy_combo.addItem(_tr(
+            "SettingsWindow.napcat_save_policy_overlay", default="仅悬浮窗提示，不保存",
+        ), userData="overlay_only")
+        self._napcat_save_policy_combo.setMinimumWidth(220)
+        policy_row.addWidget(self._napcat_save_policy_combo)
+        policy_row.addStretch()
+        layout.addLayout(policy_row)
+
+        (
+            self._napcat_group_retention_mode_combo,
+            self._napcat_group_retention_days_spin,
+        ) = self._build_napcat_retention_row(
+            layout,
+            page,
+            label=_tr("SettingsWindow.napcat_group_retention", default="群聊记录保留"),
+            delete_label=_tr("SettingsWindow.napcat_delete_group", default="删除群聊记录"),
+            on_delete=self._napcat_delete_group_records,
+        )
+        (
+            self._napcat_private_retention_mode_combo,
+            self._napcat_private_retention_days_spin,
+        ) = self._build_napcat_retention_row(
+            layout,
+            page,
+            label=_tr("SettingsWindow.napcat_private_retention", default="私聊记录保留"),
+            delete_label=_tr("SettingsWindow.napcat_delete_private", default="删除私聊记录"),
+            on_delete=self._napcat_delete_private_records,
+        )
 
         napcat_btn_row = QHBoxLayout()
         napcat_btn_row.setContentsMargins(0, 0, 0, 0)
@@ -494,6 +614,100 @@ class ChatIntegrationPageMixin:
         napcat_btn_row.addStretch()
         layout.addLayout(napcat_btn_row)
 
+    def _build_napcat_retention_row(self, layout, page, *, label, delete_label, on_delete):
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(BodyLabel(label, page))
+        mode_combo = OpaqueDropDownComboBox(page)
+        mode_combo.setObjectName("NapcatRecordCombo")
+        mode_combo.addItem(_tr("SettingsWindow.napcat_retention_auto", default="自动删除"), userData="auto")
+        mode_combo.addItem(_tr("SettingsWindow.napcat_retention_manual", default="手动删除"), userData="manual")
+        mode_combo.setMinimumWidth(120)
+        row.addWidget(mode_combo)
+        days_spin = SpinBox(page)
+        days_spin.setObjectName("NapcatRecordDaysSpin")
+        days_spin.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        days_spin.lineEdit().setObjectName("NapcatRecordDaysSpinEdit")
+        days_spin.lineEdit().setFrame(False)
+        days_spin.setRange(1, 3650)
+        days_spin.setFixedWidth(136)
+        row.addWidget(days_spin)
+        row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_retention_days_unit", default="天"), page))
+        row.addStretch()
+        delete_btn = PushButton(FluentIcon.DELETE, delete_label, page)
+        delete_btn.clicked.connect(on_delete)
+        row.addWidget(delete_btn)
+        layout.addLayout(row)
+        mode_combo.currentIndexChanged.connect(
+            lambda _i, c=mode_combo, s=days_spin: s.setEnabled((c.itemData(c.currentIndex()) or "") == "auto")
+        )
+        return mode_combo, days_spin
+
+    def _set_combo_by_data(self, combo, value):
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                combo.setCurrentIndex(i)
+                return
+        combo.setCurrentIndex(0)
+
+    def _napcat_delete_group_records(self):
+        self._napcat_delete_records(
+            "group",
+            _tr("SettingsWindow.napcat_delete_group_confirm_title", default="删除群聊记录"),
+            _tr(
+                "SettingsWindow.napcat_delete_group_confirm_content",
+                default="确定要删除全部已保存的 QQ 群聊记录吗？此操作不可撤销。",
+            ),
+        )
+
+    def _napcat_delete_private_records(self):
+        self._napcat_delete_records(
+            "private",
+            _tr("SettingsWindow.napcat_delete_private_confirm_title", default="删除私聊记录"),
+            _tr(
+                "SettingsWindow.napcat_delete_private_confirm_content",
+                default="确定要删除全部已保存的 QQ 私聊记录吗？此操作不可撤销。",
+            ),
+        )
+
+    def _napcat_delete_records(self, chat_type: str, title: str, content: str):
+        reply = QMessageBox.warning(
+            self,
+            title,
+            content,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            db = DatabaseManager()
+            try:
+                result = db.delete_external_chat(chat_type=chat_type)
+            finally:
+                db.close()
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.napcat_delete_failed_title", default="删除失败"),
+                str(exc),
+                duration=3500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        InfoBar.success(
+            _tr("SettingsWindow.napcat_delete_done_title", default="已删除"),
+            _tr(
+                "SettingsWindow.napcat_delete_done_content",
+                default="已删除 {count} 条记录。",
+                count=int(result.get("deleted_messages", 0) if isinstance(result, dict) else 0),
+            ),
+            duration=2600,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
     def _napcat_widgets_ready(self) -> bool:
         return all(
             hasattr(self, attr)
@@ -504,6 +718,12 @@ class ChatIntegrationPageMixin:
                 "_napcat_auto_reply_enabled",
                 "_napcat_reply_private",
                 "_napcat_reply_group_at_only",
+                "_napcat_reply_mention_sender",
+                "_napcat_save_policy_combo",
+                "_napcat_group_retention_mode_combo",
+                "_napcat_group_retention_days_spin",
+                "_napcat_private_retention_mode_combo",
+                "_napcat_private_retention_days_spin",
             )
         )
 
@@ -516,6 +736,18 @@ class ChatIntegrationPageMixin:
         self._napcat_auto_reply_enabled.setChecked(bool(self._cfg.get("napcat_auto_reply_enabled", False)))
         self._napcat_reply_private.setChecked(bool(self._cfg.get("napcat_reply_private", True)))
         self._napcat_reply_group_at_only.setChecked(bool(self._cfg.get("napcat_reply_group_at_only", True)))
+        self._napcat_reply_mention_sender.setChecked(bool(self._cfg.get("napcat_reply_mention_sender", True)))
+        self._set_combo_by_data(self._napcat_save_policy_combo, str(self._cfg.get("napcat_save_policy", "all") or "all"))
+        self._set_combo_by_data(self._napcat_group_retention_mode_combo, str(self._cfg.get("napcat_group_retention_mode", "manual") or "manual"))
+        self._napcat_group_retention_days_spin.setValue(self._clamp_retention_days(self._cfg.get("napcat_group_retention_days", 7)))
+        self._set_combo_by_data(self._napcat_private_retention_mode_combo, str(self._cfg.get("napcat_private_retention_mode", "manual") or "manual"))
+        self._napcat_private_retention_days_spin.setValue(self._clamp_retention_days(self._cfg.get("napcat_private_retention_days", 30)))
+        self._napcat_group_retention_days_spin.setEnabled(
+            (self._napcat_group_retention_mode_combo.itemData(self._napcat_group_retention_mode_combo.currentIndex()) or "") == "auto"
+        )
+        self._napcat_private_retention_days_spin.setEnabled(
+            (self._napcat_private_retention_mode_combo.itemData(self._napcat_private_retention_mode_combo.currentIndex()) or "") == "auto"
+        )
 
     def _napcat_settings_data(self) -> dict:
         if not self._cfg:
@@ -527,7 +759,13 @@ class ChatIntegrationPageMixin:
             "napcat_auto_reply_enabled": self._cfg.get("napcat_auto_reply_enabled", False),
             "napcat_reply_private": self._cfg.get("napcat_reply_private", True),
             "napcat_reply_group_at_only": self._cfg.get("napcat_reply_group_at_only", True),
+            "napcat_reply_mention_sender": self._cfg.get("napcat_reply_mention_sender", True),
             "napcat_reply_character": self._cfg.get("napcat_reply_character", ""),
+            "napcat_save_policy": self._cfg.get("napcat_save_policy", "all"),
+            "napcat_group_retention_mode": self._cfg.get("napcat_group_retention_mode", "manual"),
+            "napcat_group_retention_days": self._cfg.get("napcat_group_retention_days", 7),
+            "napcat_private_retention_mode": self._cfg.get("napcat_private_retention_mode", "manual"),
+            "napcat_private_retention_days": self._cfg.get("napcat_private_retention_days", 30),
         }
 
     def _save_napcat_into_cfg(self):
@@ -539,6 +777,12 @@ class ChatIntegrationPageMixin:
         self._cfg.set("napcat_auto_reply_enabled", self._napcat_auto_reply_enabled.isChecked())
         self._cfg.set("napcat_reply_private", self._napcat_reply_private.isChecked())
         self._cfg.set("napcat_reply_group_at_only", self._napcat_reply_group_at_only.isChecked())
+        self._cfg.set("napcat_reply_mention_sender", self._napcat_reply_mention_sender.isChecked())
+        self._cfg.set("napcat_save_policy", self._napcat_save_policy_combo.itemData(self._napcat_save_policy_combo.currentIndex()) or "all")
+        self._cfg.set("napcat_group_retention_mode", self._napcat_group_retention_mode_combo.itemData(self._napcat_group_retention_mode_combo.currentIndex()) or "manual")
+        self._cfg.set("napcat_group_retention_days", self._clamp_retention_days(self._napcat_group_retention_days_spin.value()))
+        self._cfg.set("napcat_private_retention_mode", self._napcat_private_retention_mode_combo.itemData(self._napcat_private_retention_mode_combo.currentIndex()) or "manual")
+        self._cfg.set("napcat_private_retention_days", self._clamp_retention_days(self._napcat_private_retention_days_spin.value()))
 
     def _test_napcat_connection(self):
         if not self._napcat_widgets_ready():
@@ -627,3 +871,11 @@ class ChatIntegrationPageMixin:
         except (TypeError, ValueError):
             port = 38473
         return max(1024, min(65535, port))
+
+    @staticmethod
+    def _clamp_retention_days(value) -> int:
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            days = 7
+        return max(1, min(3650, days))

@@ -259,7 +259,13 @@ DATA_CONFIG_KEYS = {
         "napcat_auto_reply_enabled",
         "napcat_reply_private",
         "napcat_reply_group_at_only",
+        "napcat_reply_mention_sender",
         "napcat_reply_character",
+        "napcat_save_policy",
+        "napcat_group_retention_mode",
+        "napcat_group_retention_days",
+        "napcat_private_retention_mode",
+        "napcat_private_retention_days",
     ),
     DATA_CATEGORY_MCP: (
         "llm_hide_tool_call_details",

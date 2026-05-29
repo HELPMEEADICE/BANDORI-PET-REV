@@ -2585,6 +2585,7 @@ class SettingsWindow(
             "napcat_auto_reply_enabled": self._cfg.get("napcat_auto_reply_enabled", False) if self._cfg else False,
             "napcat_reply_private": self._cfg.get("napcat_reply_private", True) if self._cfg else True,
             "napcat_reply_group_at_only": self._cfg.get("napcat_reply_group_at_only", True) if self._cfg else True,
+            "napcat_reply_mention_sender": self._cfg.get("napcat_reply_mention_sender", True) if self._cfg else True,
             "napcat_reply_character": self._cfg.get("napcat_reply_character", "") if self._cfg else "",
             "alarms": normalize_alarms(self._cfg.get("alarms", [])) if self._cfg else [],
             "pomodoros": normalize_pomodoros(self._cfg.get("pomodoros", [])) if self._cfg else [],
