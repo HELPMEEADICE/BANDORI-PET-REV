@@ -62,6 +62,7 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
+from chat_commands import handle_command as _handle_chat_command
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, strip_tts_action_tags
     _TTS_AVAILABLE = True
@@ -4434,6 +4435,17 @@ class ChatWindow(QWidget):
     def _handle_local_memory_command(self, text: str) -> bool:
         stripped = text.strip()
         lowered = stripped.lower()
+        command_result = _handle_chat_command(
+            self._cfg,
+            stripped,
+            name_resolver=self._model_manager.get_display_name,
+        ) if self._cfg else None
+        if command_result is not None:
+            self._input.clear()
+            if command_result.get("show_reasoning") is not None:
+                self._show_reasoning = bool(command_result["show_reasoning"])
+            self._show_local_assistant_message(command_result["message"])
+            return True
         if lowered in {"@memory", "/memory", "@status", "/status", "@mood", "/mood", "@记忆", "/记忆", "@状态", "/状态", "@心情", "/心情"}:
             self._input.clear()
             self._show_local_assistant_message(self._relationship_status_text())

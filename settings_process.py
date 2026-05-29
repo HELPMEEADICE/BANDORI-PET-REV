@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -97,6 +98,25 @@ def main():
         live2d_module=None,
     )
     window.connect_ipc_output(send_ipc_line)
+
+    ipc_inbound = {"buffer": ""}
+
+    def on_ipc_ready():
+        try:
+            ipc_inbound["buffer"] += bytes(ipc_socket.readAll()).decode("utf-8", "ignore")
+        except Exception:
+            return
+        while "\n" in ipc_inbound["buffer"]:
+            line, ipc_inbound["buffer"] = ipc_inbound["buffer"].split("\n", 1)
+            line = line.rstrip("\r")
+            if line.startswith("SETTINGS\t"):
+                try:
+                    payload = json.loads(line.split("\t", 1)[1])
+                except Exception:
+                    continue
+                window.apply_remote_settings(payload)
+
+    ipc_socket.readyRead.connect(on_ipc_ready)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
     screen = app.primaryScreen()
