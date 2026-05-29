@@ -2,7 +2,9 @@ import ctypes
 import os
 import random
 import sys
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from lupa.luajit21 import LuaRuntime
@@ -16,12 +18,70 @@ BASE_DIR = Path(app_base_dir())
 LIVE2D_LUA_DIR = BASE_DIR / "third_party" / "Live2D-v2-Lua"
 MODELS_DIR = BASE_DIR / "models"
 LIVE2D_PROFILE_ENABLED = os.environ.get("BANDORI_LIVE2D_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
+_RESOURCE_BYTE_CACHE_MAX_ITEMS = 512
+_RESOURCE_BYTE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_RESOURCE_BYTE_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_RESOURCE_BYTE_CACHE_BYTES = 0
+_RESOURCE_BYTE_CACHE_LOCK = threading.RLock()
 
 
 def _normalize_lua_path(path) -> str:
     if isinstance(path, bytes):
         path = path.decode("utf-8")
     return str(path).replace("\\", "/")
+
+
+def _resource_cache_key(path: str | Path) -> str:
+    return _normalize_lua_path(path)
+
+
+def _get_cached_resource_bytes(path: str | Path) -> bytes | None:
+    key = _resource_cache_key(path)
+    with _RESOURCE_BYTE_CACHE_LOCK:
+        cached = _RESOURCE_BYTE_CACHE.get(key)
+        if cached is not None:
+            _RESOURCE_BYTE_CACHE.move_to_end(key)
+        return cached
+
+
+def _store_cached_resource_bytes(path: str | Path, data: bytes):
+    global _RESOURCE_BYTE_CACHE_BYTES
+    key = _resource_cache_key(path)
+    with _RESOURCE_BYTE_CACHE_LOCK:
+        old = _RESOURCE_BYTE_CACHE.pop(key, None)
+        if old is not None:
+            _RESOURCE_BYTE_CACHE_BYTES -= len(old)
+        _RESOURCE_BYTE_CACHE[key] = data
+        _RESOURCE_BYTE_CACHE_BYTES += len(data)
+        while (
+            len(_RESOURCE_BYTE_CACHE) > _RESOURCE_BYTE_CACHE_MAX_ITEMS
+            or _RESOURCE_BYTE_CACHE_BYTES > _RESOURCE_BYTE_CACHE_MAX_BYTES
+        ):
+            _, evicted = _RESOURCE_BYTE_CACHE.popitem(last=False)
+            _RESOURCE_BYTE_CACHE_BYTES -= len(evicted)
+
+
+def clear_resource_byte_cache():
+    global _RESOURCE_BYTE_CACHE_BYTES
+    with _RESOURCE_BYTE_CACHE_LOCK:
+        _RESOURCE_BYTE_CACHE.clear()
+        _RESOURCE_BYTE_CACHE_BYTES = 0
+
+
+def prefetch_model_resource_bytes(paths):
+    for path in paths:
+        try:
+            normalized = _normalize_lua_path(path)
+            if not normalized or is_virtual_path(normalized):
+                continue
+            if _get_cached_resource_bytes(normalized) is not None:
+                continue
+            fs_path = _safe_model_file_path(normalized)
+            data = fs_path.read_bytes()
+            _store_cached_resource_bytes(normalized, data)
+            _store_cached_resource_bytes(fs_path.as_posix(), data)
+        except Exception:
+            continue
 
 
 def _read_lua_chunk_bytes(path: Path) -> bytes:
@@ -150,12 +210,22 @@ def _load_model_bytes(path: str) -> bytes:
                 return _safe_model_file_path(fixed).read_bytes()
             raise
 
+    cached = _get_cached_resource_bytes(path)
+    if cached is not None:
+        return cached
+
     fs_path = _safe_model_file_path(path)
     if not fs_path.exists():
         fixed = _fix_mtn_path(path)
         if fixed:
             fs_path = _safe_model_file_path(fixed)
-    return fs_path.read_bytes()
+    cached = _get_cached_resource_bytes(fs_path.as_posix())
+    if cached is not None:
+        return cached
+    data = fs_path.read_bytes()
+    _store_cached_resource_bytes(path, data)
+    _store_cached_resource_bytes(fs_path.as_posix(), data)
+    return data
 
 
 def _texture_options(profile: str) -> tuple[float, bool, int]:

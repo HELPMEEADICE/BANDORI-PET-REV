@@ -245,6 +245,7 @@ class Live2DGlRenderer:
 
         if not model_json_path:
             return
+        loaded = False
         try:
             if is_virtual_path(model_json_path):
                 clear_virtual_byte_cache()
@@ -254,9 +255,66 @@ class Live2DGlRenderer:
             self.model.LoadModelJson(model_json_path, disable_precision=self.disable_precision)
             self.model_path = model_json_path
             self.default_motion_group = self._default_motion_group()
+            loaded = True
         finally:
             if is_virtual_path(model_json_path):
                 clear_virtual_byte_cache()
+        if loaded:
+            self._start_action_resource_warmup(model_json_path)
+
+    def _start_action_resource_warmup(self, model_json_path: str):
+        motion_names = []
+        expression_names = []
+        if self.model is not None and self.model.modelSetting is not None:
+            motion_names = list(self.model.modelSetting.getMotionNames())
+        if self.model is not None:
+            expression_names = list(getattr(self.model, "expressions", {}).keys())
+
+        def warmup():
+            try:
+                from live2d_lua_adapter import prefetch_model_resource_bytes
+                from zst_model_archive import is_virtual_path, prefetch_virtual_action_resources
+
+                if is_virtual_path(model_json_path):
+                    prefetch_virtual_action_resources(model_json_path, motion_names, expression_names)
+                    return
+                prefetch_model_resource_bytes(self._action_resource_paths(model_json_path, motion_names, expression_names))
+            except Exception:
+                pass
+
+        threading.Thread(target=warmup, name="Live2DActionWarmup", daemon=True).start()
+
+    def _action_resource_paths(self, model_json_path: str, motion_names: list[str], expression_names: list[str]) -> list[str]:
+        try:
+            model_path = Path(model_json_path)
+            model_json = json.loads(model_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+        base_dir = model_path.parent
+        paths = []
+
+        def add(path):
+            if isinstance(path, str) and path:
+                paths.append(str((base_dir / path.replace("\\", "/")).resolve()))
+
+        motions = model_json.get("motions") or {}
+        if isinstance(motions, dict):
+            for group_name in motion_names:
+                group = motions.get(group_name) or []
+                if not isinstance(group, list):
+                    continue
+                for item in group:
+                    if isinstance(item, dict):
+                        add(item.get("file"))
+
+        wanted_expressions = {str(name) for name in expression_names if name}
+        expressions = model_json.get("expressions") or []
+        if isinstance(expressions, list):
+            for item in expressions:
+                if isinstance(item, dict) and str(item.get("name", "")) in wanted_expressions:
+                    add(item.get("file"))
+        return paths
 
     def resize(self, width: int, height: int):
         self.width = max(1, int(width))
