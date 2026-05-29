@@ -17,7 +17,7 @@ import glfw
 import OpenGL.GL as gl
 
 from process_utils import app_base_dir, configure_debug_logging, process_program_and_args, set_windows_app_user_model_id
-from shared_event_ipc import SharedEventReader
+from shared_event_ipc import SharedEventReader, SharedEventWriter
 
 configure_debug_logging()
 
@@ -714,6 +714,7 @@ class LightweightPet:
         self.drag_locked = bool(_cfg_get(self.config, "drag_locked", False))
         self.hide = bool(_cfg_get(self.config, "hide_live2d_model", False))
         self.head_tracking = bool(_cfg_get(self.config, "live2d_head_tracking_enabled", True))
+        self.mutual_gaze_enabled = bool(_cfg_get(self.config, "live2d_mutual_gaze_enabled", False))
         self.quality = str(_cfg_get(self.config, "live2d_quality", "balanced"))
         scale = _clamp_int(_cfg_get(self.config, "live2d_scale", 100), 25, 500, 100)
         self.width = int(round(LIVE2D_BASE_WIDTH * scale / 100.0))
@@ -739,6 +740,9 @@ class LightweightPet:
         self.drag_origin = (0.0, 0.0)
         self.last_head_track = 0.0
         self.last_save = 0.0
+        self._saved_x = self.x
+        self._saved_y = self.y
+        self._SAVE_POS_DELAY = 1.0
         self.renderer = Live2DGlRenderer(
             self.width,
             self.height,
@@ -749,6 +753,11 @@ class LightweightPet:
         )
         self.radial = RadialMenuClient(self._on_radial_action, self._on_lock_toggled)
         self.shared_events = SharedEventReader()
+        self.shared_writer = SharedEventWriter()
+        self._peers = {}  # character -> (global_x, global_y, timestamp)
+        self._last_peer_pos_send = 0.0
+        self._PEER_POS_INTERVAL = 0.5
+        self._PEER_POS_TTL = 2.0
 
     def run(self) -> int:
         if not self.model_path:
@@ -771,7 +780,9 @@ class LightweightPet:
                 glfw.poll_events()
                 self._poll_shared_events()
                 self._poll_head_tracking()
+                self._send_peer_pos()
                 self._update_mouse_passthrough()
+                self._maybe_save_position()
                 now = time.monotonic()
                 if now >= next_frame:
                     self.renderer.draw()
@@ -782,6 +793,7 @@ class LightweightPet:
         finally:
             self._save_position()
             self.shared_events.close()
+            self.shared_writer.close()
             self.radial.close(force=True)
             self._restore_windows_hit_test_hook()
             self._close_x11_input_support()
@@ -826,6 +838,61 @@ class LightweightPet:
         elif line == "SHUTDOWN":
             if self.window is not None:
                 glfw.set_window_should_close(self.window, True)
+        elif line.startswith("PEER_POS\t"):
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                peer_char = parts[1]
+                if peer_char != self.character:
+                    try:
+                        self._peers[peer_char] = (float(parts[2]), float(parts[3]), time.monotonic())
+                    except (ValueError, IndexError):
+                        pass
+        elif line.startswith("SETTINGS\t"):
+            try:
+                new_settings = json.loads(line.split("\t", 1)[1])
+                if isinstance(new_settings, dict):
+                    if "live2d_mutual_gaze_enabled" in new_settings:
+                        self.mutual_gaze_enabled = bool(new_settings["live2d_mutual_gaze_enabled"])
+                    if "live2d_head_tracking_enabled" in new_settings:
+                        self.head_tracking = bool(new_settings["live2d_head_tracking_enabled"])
+            except (json.JSONDecodeError, IndexError):
+                pass
+
+    def _send_peer_pos(self):
+        now = time.monotonic()
+        if now - self._last_peer_pos_send < self._PEER_POS_INTERVAL:
+            return
+        self._last_peer_pos_send = now
+        wx, wy = glfw.get_window_pos(self.window)
+        cx = wx + self.width * 0.5
+        cy = wy + self.height * 0.5
+        self.shared_writer.write_line(f"PEER_POS\t{self.character}\t{cx}\t{cy}")
+
+    def _prune_stale_peers(self):
+        now = time.monotonic()
+        stale = [c for c, (_, _, ts) in self._peers.items() if now - ts > self._PEER_POS_TTL]
+        for c in stale:
+            del self._peers[c]
+
+    def _nearest_peer_global_pos(self):
+        self._prune_stale_peers()
+        if not self._peers:
+            return None
+        wx, wy = glfw.get_window_pos(self.window)
+        cx = wx + self.width * 0.5
+        cy = wy + self.height * 0.5
+        best_char = None
+        best_dist_sq = float("inf")
+        for peer_char, (px, py, _) in self._peers.items():
+            dx = px - cx
+            dy = py - cy
+            dist_sq = dx * dx + dy * dy
+            if dist_sq < best_dist_sq:
+                best_dist_sq = dist_sq
+                best_char = peer_char
+        if best_char is None:
+            return None
+        return self._peers[best_char][0], self._peers[best_char][1]
 
     def _handle_ai_event_payload(self, payload: str):
         try:
@@ -1206,13 +1273,23 @@ class LightweightPet:
             self.last_save = time.monotonic()
 
     def _poll_head_tracking(self):
-        if not self.head_tracking or self.dragging or self.renderer.model is None:
+        if self.dragging or self.renderer.model is None:
             return
         now = time.monotonic()
         if now - self.last_head_track < 1.0 / 30.0:
             return
         self.last_head_track = now
-        gx, gy = self._global_cursor_pos()
+
+        if self.mutual_gaze_enabled:
+            peer_pos = self._nearest_peer_global_pos()
+            if peer_pos is None:
+                return
+            gx, gy = peer_pos
+        elif self.head_tracking:
+            gx, gy = self._global_cursor_pos()
+        else:
+            return
+
         wx, wy = glfw.get_window_pos(self.window)
         cx = wx + self.width * 0.5
         cy = wy + self.height * 0.5
@@ -1345,6 +1422,23 @@ class LightweightPet:
                     item["pet_mode"] = "pixel"
                     break
         _save_config(self.config)
+
+    def _maybe_save_position(self):
+        if self.window is None or self.dragging:
+            return
+        if self.last_save <= 0:
+            return
+        now = time.monotonic()
+        if now - self.last_save < self._SAVE_POS_DELAY:
+            return
+        wx, wy = glfw.get_window_pos(self.window)
+        if int(wx) == self._saved_x and int(wy) == self._saved_y:
+            self.last_save = 0.0
+            return
+        self._save_position()
+        self._saved_x = int(wx)
+        self._saved_y = int(wy)
+        self.last_save = 0.0
 
     def _save_position(self):
         if self.window is None:
