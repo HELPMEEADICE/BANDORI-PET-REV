@@ -30,12 +30,15 @@ DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
 
 GWL_EXSTYLE = -20
+GWLP_WNDPROC = -4
 WS_EX_TRANSPARENT = 0x00000020
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
 WS_EX_NOACTIVATE = 0x08000000
 LWA_ALPHA = 0x00000002
+WM_NCHITTEST = 0x0084
+HTTRANSPARENT = -1
 HWND_TOPMOST = -1
 SWP_NOMOVE = 0x0002
 SWP_NOSIZE = 0x0001
@@ -49,18 +52,45 @@ if os.name == "nt":
     _set_window_long = _user32.SetWindowLongPtrW
     _set_window_pos = _user32.SetWindowPos
     _set_layered_window_attributes = _user32.SetLayeredWindowAttributes
+    _call_window_proc = _user32.CallWindowProcW
+    _def_window_proc = _user32.DefWindowProcW
     _get_cursor_pos = _user32.GetCursorPos
+    _WNDPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    )
     _get_window_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
     _get_window_long.restype = ctypes.c_ssize_t
     _set_window_long.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
     _set_window_long.restype = ctypes.c_ssize_t
+    _call_window_proc.argtypes = [
+        ctypes.c_ssize_t,
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    ]
+    _call_window_proc.restype = ctypes.c_ssize_t
+    _def_window_proc.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    ]
+    _def_window_proc.restype = ctypes.c_ssize_t
 else:
     _user32 = None
     _get_window_long = None
     _set_window_long = None
     _set_window_pos = None
     _set_layered_window_attributes = None
+    _call_window_proc = None
+    _def_window_proc = None
     _get_cursor_pos = None
+    _WNDPROC = None
 
 
 def _parse_args():
@@ -469,6 +499,9 @@ class LightweightPet:
         self.window = None
         self.hwnd = 0
         self.mouse_passthrough = False
+        self.native_hit_test = False
+        self._original_wndproc = 0
+        self._wndproc = None
         self.dragging = False
         self.drag_moved = False
         self.pressed_on_model = False
@@ -520,6 +553,7 @@ class LightweightPet:
             self._save_position()
             self.shared_events.close()
             self.radial.close(force=True)
+            self._restore_windows_hit_test_hook()
             self.renderer.dispose()
             if self.window is not None:
                 glfw.destroy_window(self.window)
@@ -627,9 +661,66 @@ class LightweightPet:
         _set_window_long(self.hwnd, GWL_EXSTYLE, style)
         if self.opacity < 1.0:
             _set_layered_window_attributes(self.hwnd, 0, int(round(self.opacity * 255)), LWA_ALPHA)
+        self._install_windows_hit_test_hook()
         _set_window_pos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
 
+    def _install_windows_hit_test_hook(self):
+        if os.name != "nt" or not self.hwnd or _WNDPROC is None or self._original_wndproc:
+            return
+        try:
+            self._wndproc = _WNDPROC(self._native_wndproc)
+            proc_ptr = ctypes.cast(self._wndproc, ctypes.c_void_p).value
+            previous = _set_window_long(self.hwnd, GWLP_WNDPROC, int(proc_ptr))
+            if previous:
+                self._original_wndproc = int(previous)
+                self.native_hit_test = True
+            else:
+                self._wndproc = None
+        except Exception:
+            self.native_hit_test = False
+            self._original_wndproc = 0
+            self._wndproc = None
+
+    def _restore_windows_hit_test_hook(self):
+        if os.name != "nt" or not self.hwnd or not self._original_wndproc:
+            return
+        try:
+            _set_window_long(self.hwnd, GWLP_WNDPROC, self._original_wndproc)
+        except Exception:
+            pass
+        self.native_hit_test = False
+        self._original_wndproc = 0
+        self._wndproc = None
+
+    def _call_original_wndproc(self, hwnd, msg, wparam, lparam):
+        if self._original_wndproc and _call_window_proc is not None:
+            return _call_window_proc(self._original_wndproc, hwnd, msg, wparam, lparam)
+        if _def_window_proc is not None:
+            return _def_window_proc(hwnd, msg, wparam, lparam)
+        return 0
+
+    @staticmethod
+    def _signed_word(value: int) -> int:
+        value &= 0xffff
+        return value - 0x10000 if value & 0x8000 else value
+
+    def _native_wndproc(self, hwnd, msg, wparam, lparam):
+        try:
+            if msg == WM_NCHITTEST and self.window is not None and not self.dragging:
+                raw = int(lparam) & 0xffffffff
+                gx = self._signed_word(raw)
+                gy = self._signed_word(raw >> 16)
+                wx, wy = glfw.get_window_pos(self.window)
+                if wx <= gx < wx + self.width and wy <= gy < wy + self.height:
+                    if not self.renderer.hit_at(gx - wx, gy - wy):
+                        return HTTRANSPARENT
+        except Exception:
+            pass
+        return self._call_original_wndproc(hwnd, msg, wparam, lparam)
+
     def _set_mouse_passthrough(self, enabled: bool):
+        if self.native_hit_test:
+            return
         if os.name != "nt" or not self.hwnd or enabled == self.mouse_passthrough:
             return
         style = _get_window_long(self.hwnd, GWL_EXSTYLE)
