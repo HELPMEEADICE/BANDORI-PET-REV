@@ -85,10 +85,10 @@ def main():
 
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
-    ipc_ref = {"clients": [], "buffers": {}}
+    ipc_ref = {"clients": [], "buffers": {}, "lock": threading.RLock()}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
-    napcat_ref = {"client": None, "workers": []}
+    napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
     reminder_ref = {"scheduler": None}
     ai_event_bridge = AiEventBridge()
 
@@ -154,31 +154,40 @@ def main():
         def accept_clients():
             while server.hasPendingConnections():
                 socket = server.nextPendingConnection()
-                ipc_ref["clients"].append(socket)
-                ipc_ref["buffers"][socket] = ""
+                with ipc_ref["lock"]:
+                    ipc_ref["clients"].append(socket)
+                    ipc_ref["buffers"][socket] = ""
                 socket.readyRead.connect(lambda s=socket: read_ipc_client(s))
                 socket.disconnected.connect(lambda s=socket: remove_ipc_client(s))
+                socket.errorOccurred.connect(lambda _error, s=socket: remove_ipc_client(s))
 
         server.newConnection.connect(accept_clients)
         if server.listen(name):
             ipc_ref["server"] = server
 
     def remove_ipc_client(socket):
-        clients = ipc_ref.get("clients", [])
-        if socket in clients:
-            clients.remove(socket)
-        ipc_ref.get("buffers", {}).pop(socket, None)
+        with ipc_ref["lock"]:
+            clients = ipc_ref.get("clients", [])
+            if socket in clients:
+                clients.remove(socket)
+            ipc_ref.get("buffers", {}).pop(socket, None)
         if isValid(socket):
             socket.deleteLater()
 
     def write_ipc_line(socket, line: str):
         if not isValid(socket) or not socket.isOpen():
+            remove_ipc_client(socket)
             return
-        socket.write((line + "\n").encode("utf-8"))
-        socket.flush()
+        try:
+            socket.write((line + "\n").encode("utf-8"))
+            socket.flush()
+        except RuntimeError:
+            remove_ipc_client(socket)
 
     def broadcast_ipc_line(line: str):
-        for socket in list(ipc_ref.get("clients", [])):
+        with ipc_ref["lock"]:
+            sockets = list(ipc_ref.get("clients", []))
+        for socket in sockets:
             write_ipc_line(socket, line)
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
@@ -303,7 +312,7 @@ def main():
         character = (event.get("character") or event.get("target_character") or "").strip()
         if character:
             overlay["character"] = character
-        broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+        ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
 
     def handle_chat_integration_message(event: dict) -> dict:
         with chat_integration_ref["lock"]:
@@ -332,7 +341,7 @@ def main():
             "text": "",
             "ttl_ms": 1,
         }
-        broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+        ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
         return result
 
     def init_chat_integration_server():
@@ -355,11 +364,18 @@ def main():
         chat_integration_ref["server"] = server
 
     def stop_napcat_adapter():
-        client = napcat_ref.get("client")
+        with napcat_ref["lock"]:
+            client = napcat_ref.get("client")
+            workers = list(napcat_ref.get("workers", []))
+            napcat_ref["workers"].clear()
         if client is not None:
             client.stop()
             client.deleteLater()
-        napcat_ref["client"] = None
+        for worker in workers:
+            if isValid(worker) and worker.isRunning():
+                worker.requestInterruption()
+        with napcat_ref["lock"]:
+            napcat_ref["client"] = None
 
     def init_napcat_adapter():
         stop_napcat_adapter()
@@ -496,14 +512,27 @@ def main():
         raw_event = event.get("raw_event") if isinstance(event, dict) else None
         character_for_event = character
 
-        def _cleanup():
-            if worker in napcat_ref["workers"]:
-                napcat_ref["workers"].remove(worker)
-            worker.deleteLater()
+        def _cleanup(delete_later=True):
+            with napcat_ref["lock"]:
+                if worker in napcat_ref["workers"]:
+                    napcat_ref["workers"].remove(worker)
+            if delete_later and isValid(worker):
+                worker.deleteLater()
+
+        def _on_timeout():
+            if isValid(worker) and worker.isRunning():
+                worker.requestInterruption()
+                _cleanup(delete_later=False)
+
+        def _on_destroyed():
+            with napcat_ref["lock"]:
+                if worker in napcat_ref["workers"]:
+                    napcat_ref["workers"].remove(worker)
 
         def _on_finished(full_text, _reasoning, _actions):
             clean = strip_action_tags(full_text)
-            client = napcat_ref.get("client")
+            with napcat_ref["lock"]:
+                client = napcat_ref.get("client")
             if clean and client is not None and isinstance(raw_event, dict):
                 client.send_reply(
                     raw_event,
@@ -521,7 +550,7 @@ def main():
                     "anchor_to_pet": True,
                     "character": character_for_event,
                 }
-                broadcast_ipc_line(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+                ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
             _cleanup()
 
         def _on_error(message):
@@ -530,20 +559,24 @@ def main():
 
         worker.finished.connect(_on_finished)
         worker.error.connect(_on_error)
-        napcat_ref["workers"].append(worker)
+        worker.destroyed.connect(_on_destroyed)
+        with napcat_ref["lock"]:
+            napcat_ref["workers"].append(worker)
         worker.start()
+        QTimer.singleShot(130_000, _on_timeout)
 
     def read_ipc_client(socket):
         if not isValid(socket):
             return
         data = bytes(socket.readAll()).decode("utf-8", errors="replace")
-        buffers = ipc_ref.setdefault("buffers", {})
-        buffer = buffers.get(socket, "") + data
-        lines = buffer.splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            buffers[socket] = lines.pop()
-        else:
-            buffers[socket] = ""
+        with ipc_ref["lock"]:
+            buffers = ipc_ref.setdefault("buffers", {})
+            buffer = buffers.get(socket, "") + data
+            lines = buffer.splitlines(keepends=True)
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                buffers[socket] = lines.pop()
+            else:
+                buffers[socket] = ""
         for raw_line in lines:
             handle_ipc_line(raw_line.rstrip("\r\n"))
 
@@ -566,7 +599,9 @@ def main():
                 broadcast_ipc_line(line)
 
     def notify_chat_processes_shutdown():
-        for socket in list(ipc_ref.get("clients", [])):
+        with ipc_ref["lock"]:
+            sockets = list(ipc_ref.get("clients", []))
+        for socket in sockets:
             if not isValid(socket) or not socket.isOpen():
                 continue
             socket.write(b"SHUTDOWN\n")
@@ -830,7 +865,9 @@ def main():
             launch_settings_process(show_launch=False)
             return
 
-        if pet_window_ref.get("processes") and ipc_ref.get("clients"):
+        with ipc_ref["lock"]:
+            has_ipc_clients = bool(ipc_ref.get("clients"))
+        if pet_window_ref.get("processes") and has_ipc_clients:
             broadcast_ipc_line(f"OPEN_CHAT\t{current_char}")
             return
 

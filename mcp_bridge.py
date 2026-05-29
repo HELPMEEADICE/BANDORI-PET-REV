@@ -30,13 +30,14 @@ def mcp_proxy_tools(config: dict) -> list[dict]:
     if not _mcp_enabled(config):
         return []
     tools = []
+    tool_name_map_updates = {}
     for server in _enabled_servers(config):
         if _is_native_only(server):
             continue
         try:
             for item in _list_server_tools(server):
                 public_name = _public_tool_name(server.get("label", ""), item.get("name", ""))
-                _TOOL_NAME_MAP[public_name] = (server, item.get("name", ""))
+                tool_name_map_updates[public_name] = (server, item.get("name", ""))
                 schema = item.get("inputSchema") or item.get("input_schema") or {"type": "object", "properties": {}}
                 if not isinstance(schema, dict):
                     schema = {"type": "object", "properties": {}}
@@ -50,6 +51,9 @@ def mcp_proxy_tools(config: dict) -> list[dict]:
                 })
         except Exception as exc:
             tools.append(_mcp_error_tool(server, exc))
+    if tool_name_map_updates:
+        with _LOCK:
+            _TOOL_NAME_MAP.update(tool_name_map_updates)
     return tools
 
 
@@ -172,7 +176,8 @@ def call_mcp_tool(public_name: str, arguments) -> str:
             arguments = {}
     if not isinstance(arguments, dict):
         arguments = {}
-    server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
+    with _LOCK:
+        server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
     if not server or not tool_name:
         # The process may be fresh; rebuild maps from configured clients is not
         # possible here, so return a clear error instead of guessing.
@@ -229,12 +234,13 @@ def _mcp_error_tool(server: dict, exc: Exception) -> dict:
     label = _safe_name(server.get("label", "mcp"))
     name = f"{_TOOL_PREFIX}{label}__status"[:64]
     error = _format_mcp_exception(server, exc)
-    _TOOL_NAME_MAP[name] = ({
-        "transport": "error",
-        "label": label,
-        "require_approval": "never",
-        "error": error,
-    }, "status")
+    with _LOCK:
+        _TOOL_NAME_MAP[name] = ({
+            "transport": "error",
+            "label": label,
+            "require_approval": "never",
+            "error": error,
+        }, "status")
     return {
         "type": "function",
         "function": {

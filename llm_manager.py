@@ -1,7 +1,9 @@
 import json
 import re
+import threading
 import urllib.request
 import urllib.error
+from functools import lru_cache
 from PySide6.QtCore import QThread, Signal
 
 from llm_api_compat import (
@@ -389,7 +391,7 @@ from process_utils import app_base_dir
 _BASE_DIR = app_base_dir()
 _CHARACTERS_DIR = _BASE_DIR / "characters"
 _OUTFIT_JSON_PATH = _BASE_DIR / "outfit.json"
-_CHAR_MD_CACHE: dict[str, str] | None = None
+_CHAR_MD_CACHE_LOCK = threading.RLock()
 
 
 def _build_key_to_name_mapping() -> dict[str, str]:
@@ -400,42 +402,49 @@ def _build_key_to_name_mapping() -> dict[str, str]:
     return {key: info.get("display", key) for key, info in chars.items()}
 
 
-def _scan_character_md_files() -> dict[str, str]:
-    result: dict[str, str] = {}
+def _character_prompt_cache_token() -> tuple[tuple[str, int, int], ...]:
+    paths = []
+    if _OUTFIT_JSON_PATH.exists():
+        paths.append(_OUTFIT_JSON_PATH)
     if not _CHARACTERS_DIR.exists():
-        return result
+        return _path_cache_token(paths)
+    for md_file in _CHARACTERS_DIR.glob("*/*.md"):
+        paths.append(md_file)
+    return _path_cache_token(paths)
+
+
+def _path_cache_token(paths) -> tuple[tuple[str, int, int], ...]:
+    token = []
+    for path in sorted(paths):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        token.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(token)
+
+
+@lru_cache(maxsize=16)
+def _load_character_md_prompt(character: str, _cache_token: tuple[tuple[str, int, int], ...]) -> str:
+    if not _CHARACTERS_DIR.exists():
+        return ""
 
     key_to_name = _build_key_to_name_mapping()
-    name_to_keys: dict[str, list[str]] = {}
-    for key, name in key_to_name.items():
-        name_to_keys.setdefault(name, []).append(key)
-
-    for entry in sorted(_CHARACTERS_DIR.iterdir()):
-        if not entry.is_dir():
-            continue
-        keys = name_to_keys.get(entry.name, [])
-        if not keys:
-            continue
-
-        md_files = sorted([f for f in entry.iterdir() if f.suffix == ".md"])
-        if not md_files:
-            continue
-
-        parts = []
-        for md_file in md_files:
-            parts.append(md_file.read_text(encoding="utf-8"))
-        content = "\n\n".join(parts)
-        for key in keys:
-            result[key] = content
-
-    return result
+    character_dir_name = key_to_name.get(character, "")
+    if not character_dir_name:
+        return ""
+    character_dir = _CHARACTERS_DIR / character_dir_name
+    if not character_dir.is_dir():
+        return ""
+    parts = []
+    for md_file in sorted(character_dir.glob("*.md")):
+        parts.append(md_file.read_text(encoding="utf-8"))
+    return "\n\n".join(parts)
 
 
 def _get_character_md_prompt(character: str) -> str:
-    global _CHAR_MD_CACHE
-    if _CHAR_MD_CACHE is None:
-        _CHAR_MD_CACHE = _scan_character_md_files()
-    return _CHAR_MD_CACHE.get(character, "")
+    with _CHAR_MD_CACHE_LOCK:
+        return _load_character_md_prompt(character, _character_prompt_cache_token())
 
 
 def _get_user_display_name(config_manager, pov_mode: str) -> str:
