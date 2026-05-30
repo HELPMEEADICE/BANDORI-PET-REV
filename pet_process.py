@@ -491,6 +491,8 @@ class Live2DGlRenderer:
     def _ensure_default_motion(self):
         if self.model is None or not self.default_motion_group:
             return
+        if not self.idle_actions_enabled:
+            return
         try:
             finished = self.model.IsMotionFinished()
             if finished:
@@ -768,6 +770,7 @@ class LightweightPet:
         self.head_tracking = bool(self.config.get("live2d_head_tracking_enabled", True))
         self.mutual_gaze_enabled = bool(self.config.get("live2d_mutual_gaze_enabled", False))
         self.quality = str(self.config.get("live2d_quality", "balanced"))
+        self.idle_actions_enabled = bool(self.config.get("live2d_idle_actions_enabled", True))
         scale = _clamp_int(self.config.get("live2d_scale", 100), 25, 500, 100)
         self.width = int(round(LIVE2D_BASE_WIDTH * scale / 100.0))
         self.height = int(round(LIVE2D_BASE_HEIGHT * scale / 100.0))
@@ -805,6 +808,7 @@ class LightweightPet:
             _clamp_float(self.config.get("live2d_lip_sync_max_open", DEFAULT_LIP_SYNC_MAX_OPEN), 0.0, 1.0, DEFAULT_LIP_SYNC_MAX_OPEN),
         )
         self.renderer.default_expression = str(self.entry.get("default_expression", "")).strip()
+        self.renderer.idle_actions_enabled = self.idle_actions_enabled
         self.radial = RadialMenuClient(self._on_radial_action, self._on_lock_toggled)
         self.shared_events = SharedEventReader()
         self.shared_writer = SharedEventWriter()
@@ -929,6 +933,9 @@ class LightweightPet:
                         self.mutual_gaze_enabled = bool(new_settings["live2d_mutual_gaze_enabled"])
                     if "live2d_head_tracking_enabled" in new_settings:
                         self.head_tracking = bool(new_settings["live2d_head_tracking_enabled"])
+                    if "live2d_idle_actions_enabled" in new_settings:
+                        self.idle_actions_enabled = bool(new_settings["live2d_idle_actions_enabled"])
+                        self.renderer.idle_actions_enabled = self.idle_actions_enabled
             except (json.JSONDecodeError, IndexError):
                 pass
 
