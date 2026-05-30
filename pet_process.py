@@ -19,6 +19,10 @@ import OpenGL.GL as gl
 
 from process_utils import app_base_dir, configure_debug_logging, process_program_and_args, set_windows_app_user_model_id
 from shared_event_ipc import SharedEventReader, SharedEventWriter
+from live2d_click_actions import (
+    CLICK_MOTION_AUTO, CLICK_MOTION_RANDOM, CLICK_MOTION_NONE,
+    click_motion_region_for_point, click_motion_auto_buckets,
+)
 from win32_dwm import is_windows_11_or_later
 
 configure_debug_logging()
@@ -1355,7 +1359,40 @@ class LightweightPet:
         if self.radial.visible:
             self.radial.send("CLOSE")
             return
-        self.renderer.start_random_motion()
+
+        click_actions = self.entry.get("click_motion_actions", {})
+        if not isinstance(click_actions, dict):
+            click_actions = {}
+
+        region = click_motion_region_for_point(x, y, self.width, self.height)
+        action = click_actions.get(region, {})
+        if not isinstance(action, dict):
+            action = {}
+
+        motion = str(action.get("motion", "")).strip()
+        expression = str(action.get("expression", "")).strip()
+
+        if motion == CLICK_MOTION_NONE:
+            return
+
+        if motion == CLICK_MOTION_RANDOM:
+            self.renderer.start_random_motion()
+            return
+
+        if not motion or motion == CLICK_MOTION_AUTO:
+            buckets = click_motion_auto_buckets(region)
+            for bucket in buckets:
+                tags = list(bucket)
+                random.shuffle(tags)
+                for tag in tags:
+                    resolved = self.renderer._find_motion(tag, self.character)
+                    if resolved:
+                        self.renderer.start_motion(resolved, expression)
+                        return
+            self.renderer.start_random_motion()
+            return
+
+        self.renderer.start_motion(motion, expression)
 
     def _show_radial_menu(self, gx: int, gy: int):
         self._set_mouse_passthrough(False)
