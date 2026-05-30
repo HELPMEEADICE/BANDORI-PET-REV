@@ -62,6 +62,9 @@ WM_RBUTTONUP = 0x0205
 HTTRANSPARENT = -1
 HTCLIENT = 1
 HWND_TOPMOST = -1
+VK_LBUTTON = 0x01
+VK_RBUTTON = 0x02
+VK_MBUTTON = 0x04
 SWP_NOMOVE = 0x0002
 SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
@@ -87,6 +90,9 @@ if os.name == "nt":
     _release_capture = _user32.ReleaseCapture
     _call_window_proc = _user32.CallWindowProcW
     _def_window_proc = _user32.DefWindowProcW
+    _get_async_key_state = _user32.GetAsyncKeyState
+    _get_async_key_state.argtypes = [ctypes.c_int]
+    _get_async_key_state.restype = ctypes.c_short
     _get_cursor_pos = _user32.GetCursorPos
     _create_compatible_dc = _gdi32.CreateCompatibleDC
     _create_dib_section = _gdi32.CreateDIBSection
@@ -255,6 +261,7 @@ else:
     _release_capture = None
     _call_window_proc = None
     _def_window_proc = None
+    _get_async_key_state = None
     _get_cursor_pos = None
     _create_compatible_dc = None
     _create_dib_section = None
@@ -1008,6 +1015,7 @@ class LightweightPet:
         self._last_peer_pos_send = 0.0
         self._PEER_POS_INTERVAL = 0.5
         self._PEER_POS_TTL = 2.0
+        self._radial_mouse_pressed = False
 
     def run(self) -> int:
         if not self.model_path:
@@ -1845,17 +1853,35 @@ class LightweightPet:
     def _update_mouse_passthrough(self):
         if self.dragging:
             return
-        if self.radial.visible:
-            self._set_mouse_passthrough(True)
-            return
         gx, gy = self._global_cursor_pos()
         wx, wy = glfw.get_window_pos(self.window)
         inside = wx <= gx < wx + self.width and wy <= gy < wy + self.height
         if not inside:
             self._set_mouse_passthrough(True)
+            if self.radial.visible:
+                self._check_radial_dismiss_click()
             return
         lx, ly = gx - wx, gy - wy
         self._set_mouse_passthrough(not self.renderer.hit_at(lx, ly))
+        if self.radial.visible:
+            self._check_radial_dismiss_click()
+
+    def _check_radial_dismiss_click(self):
+        gx, gy = self._global_cursor_pos()
+        wx, wy = glfw.get_window_pos(self.window)
+        inside_pet = wx <= gx < wx + self.width and wy <= gy < wy + self.height
+        if not inside_pet:
+            self._radial_mouse_pressed = False
+            return
+        pressed = False
+        if _get_async_key_state is not None:
+            pressed = any(
+                bool(_get_async_key_state(button) & 0x8000)
+                for button in (VK_LBUTTON, VK_MBUTTON)
+            )
+        if pressed and not self._radial_mouse_pressed:
+            self.radial.send("CLOSE")
+        self._radial_mouse_pressed = pressed
 
     def _on_click(self, x: float, y: float):
         if self.radial.visible:
