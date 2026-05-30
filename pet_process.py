@@ -383,6 +383,8 @@ class Live2DGlRenderer:
         self.lip_form_target = 0.0
         self.lip_last_at = -1000.0
         self.default_motion_group = ""
+        self.default_expression = ""
+        self._motion_was_finished = True
 
     def init_gl(self):
         self.live2d.glInit()
@@ -502,8 +504,14 @@ class Live2DGlRenderer:
         if self.model is None or not self.default_motion_group:
             return
         try:
-            if self.model.IsMotionFinished():
+            finished = self.model.IsMotionFinished()
+            if finished:
                 self.model.StartRandomMotion(self.default_motion_group, priority=self.live2d.MotionPriority.IDLE)
+            if not self._motion_was_finished and finished:
+                self.model.ResetExpression()
+                if self.default_expression:
+                    self.set_expression(self.default_expression)
+            self._motion_was_finished = finished
         except Exception:
             pass
 
@@ -788,6 +796,7 @@ class LightweightPet:
             _clamp_int(self.config.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD), 0, 255, DEFAULT_HIT_ALPHA_THRESHOLD),
             _clamp_float(self.config.get("live2d_lip_sync_max_open", DEFAULT_LIP_SYNC_MAX_OPEN), 0.0, 1.0, DEFAULT_LIP_SYNC_MAX_OPEN),
         )
+        self.renderer.default_expression = str(self.entry.get("default_expression", "")).strip()
         self.radial = RadialMenuClient(self._on_radial_action, self._on_lock_toggled)
         self.shared_events = SharedEventReader()
         self.shared_writer = SharedEventWriter()
