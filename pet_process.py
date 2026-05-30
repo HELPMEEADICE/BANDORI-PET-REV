@@ -1845,6 +1845,9 @@ class LightweightPet:
     def _update_mouse_passthrough(self):
         if self.dragging:
             return
+        if self.radial.visible:
+            self._set_mouse_passthrough(True)
+            return
         gx, gy = self._global_cursor_pos()
         wx, wy = glfw.get_window_pos(self.window)
         inside = wx <= gx < wx + self.width and wy <= gy < wy + self.height
@@ -1894,7 +1897,8 @@ class LightweightPet:
         self.renderer.start_motion(motion, expression)
 
     def _show_radial_menu(self, gx: int, gy: int):
-        self._set_mouse_passthrough(False)
+        self.radial.visible = True
+        self._set_mouse_passthrough(True)
         self.radial.send(f"SHOW\t{json.dumps(self._radial_payload(gx, gy), ensure_ascii=False)}")
 
     def _radial_payload(self, gx: int, gy: int) -> dict:

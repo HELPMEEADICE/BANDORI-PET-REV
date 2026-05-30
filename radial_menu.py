@@ -210,9 +210,18 @@ class RadialMenuItem(QWidget):
         self._hover = False
         self.update()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._enabled:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._enabled:
             self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 @dataclass
@@ -266,14 +275,15 @@ class RadialMenu(QWidget):
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
             try:
-                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if hasattr(message, '__int__'):
+                    msg_ptr = message.__int__()
+                else:
+                    msg_ptr = int(message)
+                msg = ctypes.wintypes.MSG.from_address(msg_ptr)
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
                 if msg.message == WM_NCHITTEST:
-                    x = ctypes.c_short(int(msg.lParam) & 0xFFFF).value
-                    y = ctypes.c_short((int(msg.lParam) >> 16) & 0xFFFF).value
-                    local = self.mapFromGlobal(QPoint(x, y))
-                    return True, HTCLIENT if self._is_interactive_pos(local) else HTTRANSPARENT
+                    return True, HTCLIENT
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
@@ -603,7 +613,8 @@ class RadialMenu(QWidget):
         self.closed.emit()
 
     def _on_item_clicked(self):
-        self.dismiss()
+        if not self._locked:
+            self.dismiss()
 
     def dismiss(self):
         self._outside_click_timer.stop()
@@ -638,9 +649,19 @@ class RadialMenu(QWidget):
             super().mousePressEvent(event)
             return
 
-        if any(item.widget.isVisible() and item.widget.geometry().contains(event.pos()) for item in self._items):
-            super().mousePressEvent(event)
-            return
+        for item in self._items:
+            if item.widget.isVisible() and item.widget.geometry().contains(event.pos()):
+                item_local = event.pos() - item.widget.pos()
+                local_evt = QMouseEvent(
+                    event.type(),
+                    item_local, item_local,
+                    event.globalPosition().toPoint(),
+                    event.button(), event.buttons(), event.modifiers(),
+                )
+                item.widget.event(local_evt)
+                if local_evt.isAccepted():
+                    event.accept()
+                return
 
         cx = self.width() // 2
         cy = self.height() // 2
@@ -652,6 +673,23 @@ class RadialMenu(QWidget):
             self._toggle_locked()
         else:
             self.dismiss()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            for item in self._items:
+                if item.widget.isVisible() and item.widget.geometry().contains(event.pos()):
+                    item_local = event.pos() - item.widget.pos()
+                    local_evt = QMouseEvent(
+                        event.type(),
+                        item_local, item_local,
+                        event.globalPosition().toPoint(),
+                        event.button(), event.buttons(), event.modifiers(),
+                    )
+                    item.widget.event(local_evt)
+                    if local_evt.isAccepted():
+                        event.accept()
+                    return
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)
