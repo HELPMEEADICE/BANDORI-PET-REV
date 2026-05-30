@@ -457,6 +457,24 @@ class RadialMenu(QWidget):
             self.hide()
             self._is_showing = False
 
+        app = QGuiApplication.instance()
+        if app is not None:
+            dpr = 1.0
+            for screen in app.screens():
+                geom = screen.geometry()
+                sdpr = screen.devicePixelRatio()
+                px = geom.x() * sdpr
+                py = geom.y() * sdpr
+                pw = geom.width() * sdpr
+                ph = geom.height() * sdpr
+                if px <= center.x() < px + pw and py <= center.y() < py + ph:
+                    dpr = max(1.0, sdpr)
+                    break
+            else:
+                dpr = max(1.0, app.primaryScreen().devicePixelRatio())
+            if dpr != 1.0:
+                center = QPoint(int(center.x() / dpr), int(center.y() / dpr))
+
         self._center = center
         self._is_showing = True
         self._ignore_outside_click_until_release = self._mouse_buttons_pressed()
