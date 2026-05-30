@@ -5,7 +5,7 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 
 from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
@@ -30,7 +30,7 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, circular_pixmap
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter, circular_pixmap
 from win32_dwm import apply_windows_11_border_fix
 
 import base64
@@ -2019,9 +2019,11 @@ class ChatWindow(QWidget):
         self._composer_colors = {}
         self._group_queue: list[str] = []
         self._group_spoken: list[str] = []
-        self._auto_mode = False
-        self._auto_round_count = 0
-        self._auto_max_rounds = 10
+        self._auto_active = False
+        self._auto_topic = ""
+        self._auto_round = 0
+        self._auto_max_rounds = 30
+        self._auto_delay_ms = 1500
         self._group_plan_worker = None
         self._vision_fallback_worker = None
         self._memory_workers: list[NonStreamWorker] = []
@@ -2083,13 +2085,22 @@ class ChatWindow(QWidget):
             self.setWindowIcon(QIcon(icon_path))
         self.setWindowTitle(_tr("ChatWindow.title", name=self._display_name))
         self._apply_chat_window_minimum_size()
-        if not self._group_sidebar_collapsed:
-            self.resize(880, 680)
-        else:
-            self.resize(420, 620)
+        self._apply_default_chat_window_size()
 
         self._apply_window_mode_flags()
         self.setAutoFillBackground(False)
+
+        if self._cfg:
+            saved_x = self._cfg.get("chat_window_x")
+            saved_y = self._cfg.get("chat_window_y")
+            saved_w = self._cfg.get("chat_window_width")
+            saved_h = self._cfg.get("chat_window_height")
+            if None not in (saved_x, saved_y, saved_w, saved_h):
+                saved_rect = QRect(saved_x, saved_y, saved_w, saved_h)
+                screen_geo = self._available_geometry_for_window(saved_rect)
+                if screen_geo and screen_geo.intersects(saved_rect):
+                    self.setGeometry(saved_rect)
+
         self._init_ui()
         self._apply_theme()
         qconfig.themeChanged.connect(self._apply_theme)
@@ -2153,6 +2164,12 @@ class ChatWindow(QWidget):
         self.setMinimumSize(min_width, min_height)
         if ensure_visible_size and (self.width() < min_width or self.height() < min_height):
             self.resize(max(self.width(), min_width), max(self.height(), min_height))
+
+    def _apply_default_chat_window_size(self):
+        if not self._group_sidebar_collapsed:
+            self.resize(880, 680)
+        else:
+            self.resize(420, 620)
 
     def _available_geometry_for_window(self, geometry: QRect | None = None) -> QRect | None:
         center = (geometry or self.geometry()).center()
@@ -2437,6 +2454,7 @@ class ChatWindow(QWidget):
             return
         self._close_animating = True
         start = self.geometry()
+        self._pre_close_geometry = QRect(start)
         end = self._scaled_geometry(start, 0.96)
 
         group = QParallelAnimationGroup(self)
@@ -3360,6 +3378,10 @@ class ChatWindow(QWidget):
         self._input.viewport().setAcceptDrops(True)
         self._input.viewport().installEventFilter(self)
         self._input.textChanged.connect(self._sync_input_height)
+        self._input.textChanged.connect(self._on_composer_text_changed)
+        self._command_completer = CommandCompleter(self._input)
+        self._command_completer.command_selected.connect(self._on_command_selected)
+        self._completer_suppress = False
         layout.addWidget(self._input)
 
         self._send_btn = ChatSendButton(self._composer)
@@ -3402,6 +3424,20 @@ class ChatWindow(QWidget):
             ):
                 return self._handle_composer_drag_event(event)
         if input_widget is not None and obj == input_widget and event.type() == QKeyEvent.Type.KeyPress:
+            comp = getattr(self, "_command_completer", None)
+            if comp is not None and comp.is_shown():
+                if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                    if event.key() == Qt.Key.Key_Up:
+                        comp.move_up()
+                    else:
+                        comp.move_down()
+                    return True
+                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Tab):
+                    comp.select_current()
+                    return True
+                if event.key() == Qt.Key.Key_Escape:
+                    comp.hide()
+                    return True
             if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self._send_message()
                 return True
@@ -3412,6 +3448,10 @@ class ChatWindow(QWidget):
                 return False
         if input_widget is not None and obj == input_widget and event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
             QTimer.singleShot(0, self._update_composer_focus_style)
+            if event.type() == QEvent.Type.FocusOut:
+                comp = getattr(self, "_command_completer", None)
+                if comp is not None:
+                    QTimer.singleShot(100, comp.hide)
         return super().eventFilter(obj, event)
 
     def _apply_theme(self):
@@ -3939,8 +3979,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
-        self._auto_mode = False
-        self._auto_round_count = 0
+        self._auto_active = False
+        self._auto_round = 0
         self._last_user_message_id = None
         self._last_group_user_message_id = None
 
@@ -4001,8 +4041,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
-        self._auto_mode = False
-        self._auto_round_count = 0
+        self._auto_active = False
+        self._auto_round = 0
         self._group_conv_id = conversation_id
         self._clear_message_widgets()
         self._load_messages()
@@ -4166,8 +4206,8 @@ class ChatWindow(QWidget):
                 self._current_bubble = None
                 self._group_queue = []
                 self._group_spoken = []
-                self._auto_mode = False
-                self._auto_round_count = 0
+                self._auto_active = False
+                self._auto_round = 0
                 self._clear_message_widgets()
                 self._group_conv_id = ""
 
@@ -4232,8 +4272,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
-        self._auto_mode = False
-        self._auto_round_count = 0
+        self._auto_active = False
+        self._auto_round = 0
         self._clear_message_widgets()
         self._group_conv_id = conversations[0]["conversation_id"] if conversations else ""
         if self._group_conv_id:
@@ -4296,6 +4336,49 @@ class ChatWindow(QWidget):
         ))
         self._composer_focus_anim = anim
         anim.start()
+
+    def _on_composer_text_changed(self):
+        if self._completer_suppress:
+            return
+        text = self._input.toPlainText()
+        cursor = self._input.textCursor()
+        pos = cursor.position()
+
+        prefix = self._extract_command_prefix(text, pos)
+        if prefix is not None:
+            self._command_completer.filter(prefix)
+        else:
+            self._command_completer.hide()
+
+    @staticmethod
+    def _extract_command_prefix(text: str, pos: int):
+        before = text[:pos]
+        last_space = before.rfind(" ")
+        last_newline = before.rfind("\n")
+        start = max(last_space, last_newline) + 1
+        word = before[start:pos]
+        if word.startswith("@") or word.startswith("/"):
+            return word
+        return None
+
+    def _on_command_selected(self, command: str):
+        text = self._input.toPlainText()
+        cursor = self._input.textCursor()
+        pos = cursor.position()
+
+        prefix = self._extract_command_prefix(text, pos)
+        if prefix is None:
+            return
+
+        self._completer_suppress = True
+        try:
+            start_idx = pos - len(prefix)
+            cursor.setPosition(start_idx, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.insertText(command + " ")
+            self._input.setTextCursor(cursor)
+        finally:
+            self._completer_suppress = False
 
     def _sync_input_height(self):
         doc_height = int(self._input.document().size().height()) + 10
@@ -4503,8 +4586,8 @@ class ChatWindow(QWidget):
             interrupted = True
         self._group_plan_worker = None
         self._group_queue = []
-        self._auto_mode = False
-        self._auto_round_count = 0
+        self._auto_active = False
+        self._auto_round = 0
 
         vision_worker = self._vision_fallback_worker
         if vision_worker is not None:
@@ -5068,8 +5151,8 @@ class ChatWindow(QWidget):
                 self._group_conv_id = ""
                 self._group_queue = []
                 self._group_spoken = []
-                self._auto_mode = False
-                self._auto_round_count = 0
+                self._auto_active = False
+                self._auto_round = 0
                 self._current_bubble = None
                 self._clear_message_widgets()
                 self._load_or_create_conversation()
@@ -5191,6 +5274,25 @@ class ChatWindow(QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
+        if self._auto_active:
+            other_characters = [c for c in self._group_characters if c != character]
+            other_names = [self._model_manager.get_display_name(c) for c in other_characters]
+            other_names_str = "、".join(other_names) if other_names else "其他角色"
+            if self._auto_topic:
+                dynamic_context += (
+                    f"\n\n【自动对话模式】\n"
+                    f"你正在与 {other_names_str} 进行对话。\n"
+                    f"当前话题：{self._auto_topic}\n"
+                    f"请围绕此话题与 {other_names_str} 展开自然对话，不要提及用户或观众。\n"
+                    f"直接与其他角色交流，就像他们在你面前一样。"
+                )
+            else:
+                dynamic_context += (
+                    f"\n\n【自动对话模式】\n"
+                    f"你正在与 {other_names_str} 进行自由对话。\n"
+                    f"请与 {other_names_str} 展开自然对话，不要提及用户或观众。\n"
+                    f"直接与其他角色交流，就像他们在你面前一样。"
+                )
         messages = [{"role": "system", "content": system_prompt}]
         if self._is_group_chat:
             max_history = 20
@@ -5217,6 +5319,13 @@ class ChatWindow(QWidget):
         time_str = now.strftime("%Y-%m-%d %I:%M %p")
         dynamic_context += f"\n\n【后置提示词】\n当前时间：{time_str}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
+        if self._auto_active:
+            has_user_message = any(m["role"] == "user" for m in messages)
+            if not has_user_message:
+                messages.append({
+                    "role": "user",
+                    "content": f"【自动对话模式】请开始与其他角色的对话。{dynamic_context}"
+                })
         return messages
 
     @staticmethod
@@ -5241,14 +5350,15 @@ class ChatWindow(QWidget):
         if lowered in {"@auto", "/auto", "@自动", "/自动"}:
             if not self._is_group_chat:
                 return _tr("ChatWindow.auto_group_only", default="自动聊天仅在群聊中可用。")
-            if self._auto_mode:
+            if self._auto_active:
                 self._interrupt_generation(clear_input=True)
-                self._auto_mode = False
-                self._auto_round_count = 0
+                self._auto_active = False
+                self._auto_round = 0
                 return _tr("ChatWindow.auto_disabled", default="已关闭自动聊天模式。")
             else:
-                self._auto_mode = True
-                self._auto_round_count = 0
+                self._auto_active = True
+                self._auto_topic = ""
+                self._auto_round = 0
                 self._start_auto_round()
                 return _tr("ChatWindow.auto_enabled", default="已开启自动聊天模式，角色将开始自动对话。")
 
@@ -5256,45 +5366,85 @@ class ChatWindow(QWidget):
             if stripped.startswith(prefix):
                 if not self._is_group_chat:
                     return _tr("ChatWindow.auto_group_only", default="自动聊天仅在群聊中可用。")
-                arg = stripped[len(prefix):].strip().lower()
-                if arg in ("off", "false", "0", "关", "关闭", "停用", "stop", "结束"):
-                    if self._auto_mode:
+                arg = stripped[len(prefix):].strip()
+                arg_lower = arg.lower()
+                if arg_lower in ("off", "false", "0", "关", "关闭", "停用", "stop", "结束"):
+                    if self._auto_active:
                         self._interrupt_generation(clear_input=True)
-                        self._auto_mode = False
-                        self._auto_round_count = 0
+                        self._auto_active = False
+                        self._auto_round = 0
                         return _tr("ChatWindow.auto_disabled", default="已关闭自动聊天模式。")
                     else:
                         return _tr("ChatWindow.auto_not_running", default="自动聊天模式未开启。")
-                if arg in ("on", "true", "1", "开", "开启", "启用", "start", "开始"):
-                    if self._auto_mode:
+                if arg_lower in ("on", "true", "1", "开", "开启", "启用", "start", "开始"):
+                    if self._auto_active:
                         return _tr("ChatWindow.auto_already_running", default="自动聊天模式已在运行中。")
-                    self._auto_mode = True
-                    self._auto_round_count = 0
+                    self._auto_active = True
+                    self._auto_topic = ""
+                    self._auto_round = 0
                     self._start_auto_round()
                     return _tr("ChatWindow.auto_enabled", default="已开启自动聊天模式，角色将开始自动对话。")
-                return _tr("ChatWindow.auto_usage", default="用法：@auto 开/关。")
+                # 作为话题启动
+                if self._auto_active:
+                    return _tr("ChatWindow.auto_already_running", default="自动聊天模式已在运行中。")
+                self._auto_active = True
+                self._auto_topic = arg
+                self._auto_round = 0
+                self._start_auto_round()
+                topic_display = arg if arg else _tr("ChatWindow.auto_free_talk", default="自由对话")
+                return _tr("ChatWindow.auto_enabled_topic", default="已开启自动聊天模式，话题：{topic}", topic=topic_display)
 
         return None
 
     def _start_auto_round(self):
-        if not self._auto_mode or self._generation_busy():
+        if not self._auto_active or self._generation_busy():
             return
-        if self._auto_round_count >= self._auto_max_rounds:
-            self._auto_mode = False
+        if self._auto_round >= self._auto_max_rounds:
+            self._auto_active = False
             self._set_busy(False)
             self._show_local_assistant_message(
                 _tr("ChatWindow.auto_max_rounds", default="自动聊天已达到最大轮次 ({count})，已自动停止。", count=self._auto_max_rounds)
             )
             return
-        self._auto_round_count += 1
+        self._auto_round += 1
         self._group_spoken = []
-        if self._auto_round_count == 1:
+        topic_context = f"话题：{self._auto_topic}" if self._auto_topic else ""
+        if self._auto_round == 1:
             synthetic_text = _tr("ChatWindow.auto_round_start", default="（系统启动自动聊天模式，请角色们自然地继续对话）")
         else:
-            synthetic_text = _tr("ChatWindow.auto_round_continue", default="（自动聊天第 {round} 轮，请角色们继续自然地聊天）", round=self._auto_round_count)
+            synthetic_text = _tr("ChatWindow.auto_round_continue", default="（自动聊天第 {round} 轮，请角色们继续自然地聊天）", round=self._auto_round)
+        if topic_context:
+            synthetic_text = f"{topic_context}\n{synthetic_text}"
         self._last_user_text = ""
         self._set_busy(True, planning=True)
-        self._start_group_plan(synthetic_text)
+
+        # 优先使用 LLM 调度，失败时 fallback 到随机选择
+        if self._has_aux_model():
+            self._start_group_plan(synthetic_text)
+        else:
+            self._auto_fallback_random()
+
+    def _has_aux_model(self) -> bool:
+        """检查是否有辅助模型可用"""
+        aux_api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip()
+        aux_model_id = str(self._cfg.get("llm_aux_model_id", "") or "").strip()
+        return bool(aux_api_url or aux_model_id)
+
+    def _auto_fallback_random(self):
+        """随机选择发言人作为 fallback"""
+        import random
+        available = list(self._group_characters)
+        if len(available) >= 2:
+            random.shuffle(available)
+            self._group_queue = available[:2]
+        else:
+            self._group_queue = list(available)
+
+        topic_context = f"话题：{self._auto_topic}" if self._auto_topic else "请开始自然对话"
+        self._show_local_assistant_message(
+            f"[自动聊天] 第 {self._auto_round} 轮，{topic_context}"
+        )
+        QTimer.singleShot(500, self._start_next_group_response)
 
     def _send_message(self):
         text = self._input.toPlainText().strip()
@@ -5315,10 +5465,10 @@ class ChatWindow(QWidget):
             return
 
         if self._generation_busy():
-            if self._auto_mode:
+            if self._auto_active:
                 self._interrupt_generation(clear_input=False)
-                self._auto_mode = False
-                self._auto_round_count = 0
+                self._auto_active = False
+                self._auto_round = 0
                 self._input.clear()
                 self._show_local_assistant_message(_tr("ChatWindow.auto_interrupted", default="用户输入，已关闭自动聊天模式。"))
                 return
@@ -5663,11 +5813,11 @@ class ChatWindow(QWidget):
 
     def _start_next_group_response(self):
         if not self._group_queue:
-            if self._auto_mode:
+            if self._auto_active:
                 self._composer_hint.setText(
-                    _tr("ChatWindow.auto_round_done", default="自动聊天第 {round} 轮完成，准备下一轮...", round=self._auto_round_count)
+                    _tr("ChatWindow.auto_round_done", default="自动聊天第 {round} 轮完成，准备下一轮...", round=self._auto_round)
                 )
-                QTimer.singleShot(2500, self._start_auto_round)
+                QTimer.singleShot(self._auto_delay_ms, self._start_auto_round)
                 return
             self._set_busy(False)
             self._input.setFocus()
@@ -5759,7 +5909,10 @@ class ChatWindow(QWidget):
             self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
             self._worker = None
             self._current_bubble = None
-            self._start_next_group_response()
+            if self._auto_active:
+                QTimer.singleShot(self._auto_delay_ms, self._start_next_group_response)
+            else:
+                self._start_next_group_response()
         else:
             self._set_busy(False)
             self._input.setFocus()
@@ -5777,6 +5930,10 @@ class ChatWindow(QWidget):
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._reset_tts_stream(stop_player=False)
+        if self._auto_active:
+            self._auto_active = False
+            self._auto_round = 0
+            self._show_local_assistant_message(_tr("ChatWindow.auto_error_stopped", default="自动聊天因错误已停止。"))
         self._set_busy(False)
         self._input.setFocus()
         self._sync_input_height()
@@ -6068,5 +6225,12 @@ class ChatWindow(QWidget):
         self._stream_flush_timer.stop()
         self._tts_player.stop()
         self._db.close()
+        if self._cfg and hasattr(self, '_pre_close_geometry'):
+            geo = self._pre_close_geometry
+            self._cfg.set("chat_window_x", geo.x())
+            self._cfg.set("chat_window_y", geo.y())
+            self._cfg.set("chat_window_width", geo.width())
+            self._cfg.set("chat_window_height", geo.height())
+            self._cfg.save()
         self.closed.emit()
         super().closeEvent(event)

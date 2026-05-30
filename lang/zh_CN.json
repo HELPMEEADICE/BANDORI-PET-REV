@@ -702,7 +702,7 @@
   "ChatWindow.avatar_save_failed_content": "无法保存头像：{error}",
   "ChatWindow.subtitle": "AI 聊天 | 回车发送，Shift+Enter 换行",
   "ChatWindow.new_chat": "新对话",
-  "ChatWindow.ready": "就绪",
+  "ChatWindow.ready": "就绪，输入 @auto 可开启自动聊天，@auto + 话题 可指定话题",
   "ChatWindow.not_configured": "未配置",
   "ChatWindow.planning_group_response": "正在规划群聊发言...",
   "ChatWindow.ai_scheduling": "AI 调度中",

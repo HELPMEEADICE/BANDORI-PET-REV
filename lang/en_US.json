@@ -702,7 +702,7 @@
   "ChatWindow.avatar_save_failed_content": "Could not save avatar: {error}",
   "ChatWindow.subtitle": "AI chat | Enter to send, Shift+Enter for newline",
   "ChatWindow.new_chat": "New Chat",
-  "ChatWindow.ready": "Ready",
+  "ChatWindow.ready": "Ready, type @auto to start auto chat, @auto + topic for specific topic",
   "ChatWindow.not_configured": "Not configured",
   "ChatWindow.planning_group_response": "Planning group chat replies...",
   "ChatWindow.ai_scheduling": "AI scheduling",

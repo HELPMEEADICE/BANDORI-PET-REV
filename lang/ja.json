@@ -702,7 +702,7 @@
   "ChatWindow.avatar_save_failed_content": "アバターを保存できませんでした：{error}",
   "ChatWindow.subtitle": "AI チャット | Enter で送信、Shift+Enter で改行",
   "ChatWindow.new_chat": "新しい会話",
-  "ChatWindow.ready": "準備完了",
+  "ChatWindow.ready": "準備完了、@auto で自動チャット開始、@auto + トピック でトピック指定",
   "ChatWindow.not_configured": "未設定",
   "ChatWindow.planning_group_response": "グループチャット返信を計画中...",
   "ChatWindow.ai_scheduling": "AI スケジューリング中",

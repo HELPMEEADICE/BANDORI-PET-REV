@@ -135,7 +135,12 @@ def main():
     shutdown_socket.connectToServer(ipc_server_name())
 
     window.show()
-    window.position_next_to_pet(QRect(args.pet_x, args.pet_y, args.pet_w, args.pet_h))
+    saved_x = cfg.get("chat_window_x")
+    saved_y = cfg.get("chat_window_y")
+    saved_w = cfg.get("chat_window_width")
+    saved_h = cfg.get("chat_window_height")
+    if None in (saved_x, saved_y, saved_w, saved_h):
+        window.position_next_to_pet(QRect(args.pet_x, args.pet_y, args.pet_w, args.pet_h))
 
     ret = app.exec()
     cfg.load()

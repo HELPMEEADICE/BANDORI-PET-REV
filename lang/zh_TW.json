@@ -702,7 +702,7 @@
   "ChatWindow.avatar_save_failed_content": "無法儲存頭像：{error}",
   "ChatWindow.subtitle": "AI 聊天 | Enter 傳送，Shift+Enter 換行",
   "ChatWindow.new_chat": "新對話",
-  "ChatWindow.ready": "就緒",
+  "ChatWindow.ready": "就緒，輸入 @auto 可開啟自動聊天，@auto + 話題 可指定話題",
   "ChatWindow.not_configured": "未設定",
   "ChatWindow.planning_group_response": "正在規劃群聊發言...",
   "ChatWindow.ai_scheduling": "AI 排程中",
