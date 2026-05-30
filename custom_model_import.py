@@ -88,11 +88,57 @@ def delete_custom_character(character: str) -> None:
     shutil.rmtree(target)
 
 
+def _is_model_json(json_path: Path) -> bool:
+    """检查 JSON 文件是否是 Live2D 模型配置文件"""
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        # 模型配置文件必须包含 model 字段（指向 .moc 文件）
+        return "model" in data and isinstance(data["model"], str)
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
 def _find_model_jsons(root: Path) -> list[Path]:
-    return sorted(
-        path for path in root.rglob("*")
-        if path.is_file() and path.name.lower() == MODEL_JSON_NAME
-    )
+    """查找所有可能的 Live2D 模型配置文件
+    
+    支持：
+    - model.json（标准名称）
+    - *.model.json（变体文件）
+    - 其他包含 model 字段的 JSON 文件
+    """
+    result = []
+    seen = set()
+    
+    # 递归查找所有 JSON 文件
+    for json_path in root.rglob("*.json"):
+        if not json_path.is_file():
+            continue
+        
+        # 跳过已知的非模型配置文件
+        if json_path.name in ("_custom.json", "outfit.json", "band.json", "config.json"):
+            continue
+        
+        # 标准 model.json 文件
+        if json_path.name.lower() == MODEL_JSON_NAME:
+            if json_path not in seen:
+                result.append(json_path)
+                seen.add(json_path)
+            continue
+        
+        # *.model.json 变体文件
+        if json_path.name.endswith(".model.json"):
+            if json_path not in seen:
+                result.append(json_path)
+                seen.add(json_path)
+            continue
+        
+        # 其他 JSON 文件：检查是否是模型配置文件
+        if _is_model_json(json_path):
+            if json_path not in seen:
+                result.append(json_path)
+                seen.add(json_path)
+    
+    return sorted(result)
 
 
 def _has_cubism3_artifacts(root: Path) -> bool:
@@ -134,8 +180,8 @@ def _validate_cubism2_model(model_json: Path) -> None:
             raise CustomModelImportError("missing_resource", resource=str(texture))
 
 
-def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Path]]:
-    """Map a source tree to a list of (costume_id, costume_dir) to copy.
+def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Path, Path]]:
+    """Map a source tree to a list of (costume_id, costume_dir, model_json_path) to copy.
 
     One model.json -> a single costume using the user-supplied id.
     Multiple model.json -> one costume per containing folder (ids derived
@@ -147,11 +193,12 @@ def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Pat
             raise CustomModelImportError("cubism3_unsupported")
         raise CustomModelImportError("no_model_json")
 
-    costumes: list[tuple[str, Path]] = []
+    costumes: list[tuple[str, Path, Path]] = []
     if len(model_jsons) == 1:
-        parent = model_jsons[0].parent
+        model_json = model_jsons[0]
+        parent = model_json.parent
         fallback = parent.name if parent != source_root else "default"
-        costumes.append((sanitize_costume_id(costume_id, fallback), parent))
+        costumes.append((sanitize_costume_id(costume_id, fallback), parent, model_json))
     else:
         used: set[str] = set()
         for model_json in model_jsons:
@@ -163,10 +210,10 @@ def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Pat
                 cid = f"{base}_{index}"
                 index += 1
             used.add(cid)
-            costumes.append((cid, parent))
+            costumes.append((cid, parent, model_json))
 
-    for _cid, costume_dir in costumes:
-        _validate_cubism2_model(costume_dir / MODEL_JSON_NAME)
+    for _cid, _costume_dir, model_json_path in costumes:
+        _validate_cubism2_model(model_json_path)
     return costumes
 
 
@@ -196,7 +243,7 @@ def _import_from_dir(source_root: Path, display_name: str, costume_id: str,
     try:
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=False)
-        for cid, costume_dir in costumes:
+        for cid, costume_dir, _model_json_path in costumes:
             shutil.copytree(costume_dir, target_dir / cid)
         _write_marker(target_dir, source_label)
     except CustomModelImportError:
@@ -206,7 +253,7 @@ def _import_from_dir(source_root: Path, display_name: str, costume_id: str,
         shutil.rmtree(target_dir, ignore_errors=True)
         raise CustomModelImportError("copy_failed", detail=str(exc)) from exc
 
-    return character, [cid for cid, _dir in costumes]
+    return character, [cid for cid, _dir, _model_json in costumes]
 
 
 def import_from_folder(folder: str, display_name: str,
