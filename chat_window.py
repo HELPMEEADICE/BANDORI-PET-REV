@@ -2019,6 +2019,9 @@ class ChatWindow(QWidget):
         self._composer_colors = {}
         self._group_queue: list[str] = []
         self._group_spoken: list[str] = []
+        self._auto_mode = False
+        self._auto_round_count = 0
+        self._auto_max_rounds = 10
         self._group_plan_worker = None
         self._vision_fallback_worker = None
         self._memory_workers: list[NonStreamWorker] = []
@@ -3936,6 +3939,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
+        self._auto_mode = False
+        self._auto_round_count = 0
         self._last_user_message_id = None
         self._last_group_user_message_id = None
 
@@ -3996,6 +4001,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
+        self._auto_mode = False
+        self._auto_round_count = 0
         self._group_conv_id = conversation_id
         self._clear_message_widgets()
         self._load_messages()
@@ -4159,6 +4166,8 @@ class ChatWindow(QWidget):
                 self._current_bubble = None
                 self._group_queue = []
                 self._group_spoken = []
+                self._auto_mode = False
+                self._auto_round_count = 0
                 self._clear_message_widgets()
                 self._group_conv_id = ""
 
@@ -4223,6 +4232,8 @@ class ChatWindow(QWidget):
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
+        self._auto_mode = False
+        self._auto_round_count = 0
         self._clear_message_widgets()
         self._group_conv_id = conversations[0]["conversation_id"] if conversations else ""
         if self._group_conv_id:
@@ -4492,6 +4503,8 @@ class ChatWindow(QWidget):
             interrupted = True
         self._group_plan_worker = None
         self._group_queue = []
+        self._auto_mode = False
+        self._auto_round_count = 0
 
         vision_worker = self._vision_fallback_worker
         if vision_worker is not None:
@@ -5055,6 +5068,8 @@ class ChatWindow(QWidget):
                 self._group_conv_id = ""
                 self._group_queue = []
                 self._group_spoken = []
+                self._auto_mode = False
+                self._auto_round_count = 0
                 self._current_bubble = None
                 self._clear_message_widgets()
                 self._load_or_create_conversation()
@@ -5219,6 +5234,67 @@ class ChatWindow(QWidget):
                     messages[i]["content"] = str(content) + suffix
                 break
 
+    def _handle_auto_command(self, text: str):
+        stripped = text.strip()
+        lowered = stripped.lower()
+
+        if lowered in {"@auto", "/auto", "@自动", "/自动"}:
+            if not self._is_group_chat:
+                return _tr("ChatWindow.auto_group_only", default="自动聊天仅在群聊中可用。")
+            if self._auto_mode:
+                self._interrupt_generation(clear_input=True)
+                self._auto_mode = False
+                self._auto_round_count = 0
+                return _tr("ChatWindow.auto_disabled", default="已关闭自动聊天模式。")
+            else:
+                self._auto_mode = True
+                self._auto_round_count = 0
+                self._start_auto_round()
+                return _tr("ChatWindow.auto_enabled", default="已开启自动聊天模式，角色将开始自动对话。")
+
+        for prefix in ("@auto ", "/auto ", "@自动 ", "/自动 "):
+            if stripped.startswith(prefix):
+                if not self._is_group_chat:
+                    return _tr("ChatWindow.auto_group_only", default="自动聊天仅在群聊中可用。")
+                arg = stripped[len(prefix):].strip().lower()
+                if arg in ("off", "false", "0", "关", "关闭", "停用", "stop", "结束"):
+                    if self._auto_mode:
+                        self._interrupt_generation(clear_input=True)
+                        self._auto_mode = False
+                        self._auto_round_count = 0
+                        return _tr("ChatWindow.auto_disabled", default="已关闭自动聊天模式。")
+                    else:
+                        return _tr("ChatWindow.auto_not_running", default="自动聊天模式未开启。")
+                if arg in ("on", "true", "1", "开", "开启", "启用", "start", "开始"):
+                    if self._auto_mode:
+                        return _tr("ChatWindow.auto_already_running", default="自动聊天模式已在运行中。")
+                    self._auto_mode = True
+                    self._auto_round_count = 0
+                    self._start_auto_round()
+                    return _tr("ChatWindow.auto_enabled", default="已开启自动聊天模式，角色将开始自动对话。")
+                return _tr("ChatWindow.auto_usage", default="用法：@auto 开/关。")
+
+        return None
+
+    def _start_auto_round(self):
+        if not self._auto_mode or self._generation_busy():
+            return
+        if self._auto_round_count >= self._auto_max_rounds:
+            self._auto_mode = False
+            self._set_busy(False)
+            self._show_local_assistant_message(
+                _tr("ChatWindow.auto_max_rounds", default="自动聊天已达到最大轮次 ({count})，已自动停止。", count=self._auto_max_rounds)
+            )
+            return
+        self._auto_round_count += 1
+        self._group_spoken = []
+        if self._auto_round_count == 1:
+            synthetic_text = _tr("ChatWindow.auto_round_start", default="（系统启动自动聊天模式，请角色们自然地继续对话）")
+        else:
+            synthetic_text = _tr("ChatWindow.auto_round_continue", default="（自动聊天第 {round} 轮，请角色们继续自然地聊天）", round=self._auto_round_count)
+        self._last_user_text = ""
+        self._set_busy(True, planning=True)
+        self._start_group_plan(synthetic_text)
 
     def _send_message(self):
         text = self._input.toPlainText().strip()
@@ -5232,7 +5308,20 @@ class ChatWindow(QWidget):
             self._interrupt_generation()
             return
 
+        auto_result = self._handle_auto_command(text)
+        if auto_result is not None:
+            self._input.clear()
+            self._show_local_assistant_message(auto_result)
+            return
+
         if self._generation_busy():
+            if self._auto_mode:
+                self._interrupt_generation(clear_input=False)
+                self._auto_mode = False
+                self._auto_round_count = 0
+                self._input.clear()
+                self._show_local_assistant_message(_tr("ChatWindow.auto_interrupted", default="用户输入，已关闭自动聊天模式。"))
+                return
             self._composer_hint.setText(_tr("ChatWindow.busy_interrupt_hint", default="当前回复还在进行中；输入 @stop 或 @停止 可以中断。"))
             return
 
@@ -5574,6 +5663,12 @@ class ChatWindow(QWidget):
 
     def _start_next_group_response(self):
         if not self._group_queue:
+            if self._auto_mode:
+                self._composer_hint.setText(
+                    _tr("ChatWindow.auto_round_done", default="自动聊天第 {round} 轮完成，准备下一轮...", round=self._auto_round_count)
+                )
+                QTimer.singleShot(2500, self._start_auto_round)
+                return
             self._set_busy(False)
             self._input.setFocus()
             self._sync_input_height()
