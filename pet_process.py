@@ -765,6 +765,8 @@ class LightweightPet:
             self.renderer.load_model(self.model_path)
             if not self.hide:
                 glfw.show_window(self.window)
+                if os.name == "nt":
+                    self._enable_windows_framebuffer_transparency()
             frame_interval = 1.0 / self.fps
             next_frame = time.monotonic()
             while not glfw.window_should_close(self.window):
@@ -889,29 +891,22 @@ class LightweightPet:
         if not self.hwnd:
             return
         style = _get_window_long(self.hwnd, GWL_EXSTYLE)
-        style |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED
-        style &= ~WS_EX_APPWINDOW
+        style |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        style &= ~(WS_EX_APPWINDOW | WS_EX_LAYERED)
         _set_window_long(self.hwnd, GWL_EXSTYLE, style)
-        _set_layered_window_attributes(self.hwnd, 0, int(round(self.opacity * 255)), LWA_ALPHA)
         self._install_windows_hit_test_hook()
         _set_window_pos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
         self._enable_windows_framebuffer_transparency()
 
     def _enable_windows_framebuffer_transparency(self):
-        if _dwm_enable_blur_behind_window is None or _create_rect_rgn is None or _DWM_BLURBEHIND is None:
+        if _dwm_enable_blur_behind_window is None or _DWM_BLURBEHIND is None:
             return
-        region = _create_rect_rgn(0, 0, -1, -1)
-        if not region:
-            return
-        try:
-            blur = _DWM_BLURBEHIND()
-            blur.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION
-            blur.fEnable = True
-            blur.hRgnBlur = region
-            blur.fTransitionOnMaximized = False
-            _dwm_enable_blur_behind_window(self.hwnd, ctypes.byref(blur))
-        finally:
-            _delete_object(region)
+        blur = _DWM_BLURBEHIND()
+        blur.dwFlags = DWM_BB_ENABLE
+        blur.fEnable = True
+        blur.hRgnBlur = None
+        blur.fTransitionOnMaximized = False
+        _dwm_enable_blur_behind_window(self.hwnd, ctypes.byref(blur))
 
     def _install_windows_hit_test_hook(self):
         if os.name != "nt" or not self.hwnd or _WNDPROC is None or self._original_wndproc:
