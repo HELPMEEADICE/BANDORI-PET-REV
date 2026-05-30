@@ -983,6 +983,7 @@ class LightweightPet:
         self.window = glfw.create_window(self.width, self.height, f"BandoriPet-{self.character}", None, None)
         if self.window is None:
             raise RuntimeError("Failed to create GLFW window")
+        self.mouse_passthrough_supported = hasattr(glfw, "MOUSE_PASSTHROUGH") and hasattr(glfw, "set_window_attrib")
         glfw.set_window_pos(self.window, self.x, self.y)
         glfw.set_mouse_button_callback(self.window, self._mouse_button_callback)
         glfw.set_cursor_pos_callback(self.window, self._cursor_pos_callback)
@@ -1008,8 +1009,7 @@ class LightweightPet:
         if _dwm_extend_frame_into_client_area is not None and _MARGINS is not None and is_windows_11_or_later():
             margins = _MARGINS(-1, -1, -1, -1)
             try:
-                if _dwm_extend_frame_into_client_area(self.hwnd, ctypes.byref(margins)) == 0:
-                    return
+                _dwm_extend_frame_into_client_area(self.hwnd, ctypes.byref(margins))
             except Exception:
                 pass
         if _dwm_enable_blur_behind_window is None or _DWM_BLURBEHIND is None:
@@ -1061,11 +1061,6 @@ class LightweightPet:
         self.x11_root_window = int(_x11_default_root_window(display))
         self.x11_window = self._find_x11_window_by_title(f"BandoriPet-{self.character}")
         self._apply_x11_window_style()
-        self.mouse_passthrough_supported = hasattr(glfw, "MOUSE_PASSTHROUGH") and hasattr(
-            glfw,
-            "set_window_attrib",
-        )
-
     def _close_x11_input_support(self):
         if self.x11_display is None:
             return
@@ -1216,13 +1211,13 @@ class LightweightPet:
     def _set_mouse_passthrough(self, enabled: bool):
         if enabled == self.mouse_passthrough:
             return
-        if sys.platform.startswith("linux") and self.mouse_passthrough_supported and self.window is not None:
+        if self.mouse_passthrough_supported and self.window is not None:
             try:
                 glfw.set_window_attrib(self.window, glfw.MOUSE_PASSTHROUGH, glfw.TRUE if enabled else glfw.FALSE)
                 self.mouse_passthrough = enabled
+                return
             except Exception:
                 self.mouse_passthrough_supported = False
-            return
         if os.name != "nt" or not self.hwnd:
             return
         style = _get_window_long(self.hwnd, GWL_EXSTYLE)
