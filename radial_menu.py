@@ -352,10 +352,12 @@ class RadialMenu(QWidget):
         self._fps = max(30, min(fps, 240))
 
     def _show_duration(self):
-        return max(150, int(300 * 120 / self._fps))
+        # Keep the popup interaction snappy even when the pet itself is running
+        # at a low FPS; Qt animation duration is wall-clock time, not frame count.
+        return 180
 
     def _hide_duration(self):
-        return max(100, int(200 * 120 / self._fps))
+        return 120
 
     def add_item(self, icon: str, label: str, color: QColor,
                  on_click: Callable, glyph: str = "", enabled: bool = True):
