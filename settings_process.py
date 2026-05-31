@@ -19,6 +19,7 @@ from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
 from app_theme import apply_app_theme
+from live2d_widget import Live2DWidget
 
 
 def _parse_args():
@@ -50,6 +51,8 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     if sys.platform != "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+    Live2DWidget.configure_default_surface_format()
+
     set_windows_app_user_model_id("BandoriPet.Settings")
 
     app = QApplication(sys.argv)

@@ -24,34 +24,14 @@ from app_theme import BANDORI_UI_FONT_FAMILY
 from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 WM_NCCALCSIZE = 0x0083
-WM_NCHITTEST = 0x0084
-HTTRANSPARENT = -1
-HTCLIENT = 1
-HWND_TOPMOST = -1
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-SWP_NOACTIVATE = 0x0010
-SWP_SHOWWINDOW = 0x0040
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
     _get_async_key_state = _user32.GetAsyncKeyState
     _get_async_key_state.argtypes = [ctypes.c_int]
     _get_async_key_state.restype = ctypes.c_short
-    _set_window_pos = _user32.SetWindowPos
-    _set_window_pos.argtypes = [
-        ctypes.wintypes.HWND,
-        ctypes.wintypes.HWND,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_uint,
-    ]
-    _set_window_pos.restype = ctypes.wintypes.BOOL
 else:
     _get_async_key_state = None
-    _set_window_pos = None
 
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
@@ -210,18 +190,9 @@ class RadialMenuItem(QWidget):
         self._hover = False
         self.update()
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._enabled:
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._enabled:
             self.clicked.emit()
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
 
 
 @dataclass
@@ -275,51 +246,17 @@ class RadialMenu(QWidget):
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
             try:
-                if hasattr(message, '__int__'):
-                    msg_ptr = message.__int__()
-                else:
-                    msg_ptr = int(message)
-                msg = ctypes.wintypes.MSG.from_address(msg_ptr)
+                msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
-                if msg.message == WM_NCHITTEST:
-                    return True, HTCLIENT
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
-
-    def _is_interactive_pos(self, pos: QPoint) -> bool:
-        if not self.rect().contains(pos):
-            return False
-        for item in self._items:
-            if item.widget.isVisible() and item.widget.geometry().contains(pos):
-                return True
-        cx = self.width() // 2
-        cy = self.height() // 2
-        dx = pos.x() - cx
-        dy = pos.y() - cy
-        return dx * dx + dy * dy < 40 * 40
 
     def _apply_windows_11_border_fix(self):
         hwnd = int(self.winId())
         apply_windows_11_border_fix(hwnd)
         frame_changed(hwnd)
-
-    def _raise_above_pet(self):
-        if os.name == "nt" and _set_window_pos is not None:
-            hwnd = int(self.winId())
-            if hwnd:
-                _set_window_pos(
-                    hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                )
-            return
-        self.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -467,24 +404,6 @@ class RadialMenu(QWidget):
             self.hide()
             self._is_showing = False
 
-        app = QGuiApplication.instance()
-        if app is not None:
-            dpr = 1.0
-            for screen in app.screens():
-                geom = screen.geometry()
-                sdpr = screen.devicePixelRatio()
-                px = geom.x() * sdpr
-                py = geom.y() * sdpr
-                pw = geom.width() * sdpr
-                ph = geom.height() * sdpr
-                if px <= center.x() < px + pw and py <= center.y() < py + ph:
-                    dpr = max(1.0, sdpr)
-                    break
-            else:
-                dpr = max(1.0, app.primaryScreen().devicePixelRatio())
-            if dpr != 1.0:
-                center = QPoint(int(center.x() / dpr), int(center.y() / dpr))
-
         self._center = center
         self._is_showing = True
         self._ignore_outside_click_until_release = self._mouse_buttons_pressed()
@@ -512,9 +431,6 @@ class RadialMenu(QWidget):
             item.widget.show()
 
         self.show()
-        self._raise_above_pet()
-        QTimer.singleShot(0, self._raise_above_pet)
-        QTimer.singleShot(50, self._raise_above_pet)
         if sys.platform.startswith("linux"):
             self.raise_()
             self.activateWindow()
@@ -613,8 +529,7 @@ class RadialMenu(QWidget):
         self.closed.emit()
 
     def _on_item_clicked(self):
-        if not self._locked:
-            self.dismiss()
+        self.dismiss()
 
     def dismiss(self):
         self._outside_click_timer.stop()
@@ -649,19 +564,9 @@ class RadialMenu(QWidget):
             super().mousePressEvent(event)
             return
 
-        for item in self._items:
-            if item.widget.isVisible() and item.widget.geometry().contains(event.pos()):
-                item_local = event.pos() - item.widget.pos()
-                local_evt = QMouseEvent(
-                    event.type(),
-                    item_local, item_local,
-                    event.globalPosition().toPoint(),
-                    event.button(), event.buttons(), event.modifiers(),
-                )
-                item.widget.event(local_evt)
-                if local_evt.isAccepted():
-                    event.accept()
-                return
+        if any(item.widget.geometry().contains(event.pos()) for item in self._items):
+            super().mousePressEvent(event)
+            return
 
         cx = self.width() // 2
         cy = self.height() // 2
@@ -673,23 +578,6 @@ class RadialMenu(QWidget):
             self._toggle_locked()
         else:
             self.dismiss()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            for item in self._items:
-                if item.widget.isVisible() and item.widget.geometry().contains(event.pos()):
-                    item_local = event.pos() - item.widget.pos()
-                    local_evt = QMouseEvent(
-                        event.type(),
-                        item_local, item_local,
-                        event.globalPosition().toPoint(),
-                        event.button(), event.buttons(), event.modifiers(),
-                    )
-                    item.widget.event(local_evt)
-                    if local_evt.isAccepted():
-                        event.accept()
-                    return
-        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)

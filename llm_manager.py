@@ -743,7 +743,7 @@ class ResponsesStreamWorker(QThread):
                  messages: list[dict], enable_thinking=None, web_search=False,
                  parent=None, show_search_sources=True, tool_config=None):
         super().__init__(parent)
-        self._api_url = responses_api_url(api_url)
+        self._api_url = _responses_api_url(api_url)
         self._api_key = api_key
         self._model_id = model_id
         self._messages = messages
@@ -1020,6 +1020,10 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
 
 
 _THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
+
+
+def _responses_api_url(api_url: str) -> str:
+    return responses_api_url(api_url)
 
 
 def _messages_to_responses_input(messages: list[dict]) -> tuple[str, list[dict]]:

@@ -131,6 +131,8 @@ class ModelManager:
         archive_paths = []
         for entry in entries:
             if entry.is_file() and entry.suffix.lower() == ".zst":
+                if entry.stem in self._characters:
+                    continue
                 archive_paths.append(entry)
 
         if not archive_paths:
@@ -142,128 +144,20 @@ class ModelManager:
                 if result is not None:
                     self._apply_archive_scan_result(result)
 
-    @staticmethod
-    def _is_model_json(json_path: Path) -> bool:
-        """检查 JSON 文件是否是 Live2D 模型配置文件"""
-        try:
-            data = json.loads(json_path.read_text(encoding="utf-8"))
-            # 模型配置文件必须包含 model 字段（指向 .moc 文件）
-            return "model" in data and isinstance(data["model"], str)
-        except (json.JSONDecodeError, OSError):
-            return False
-
     def _scan_model_dir(self, entry: Path):
         char_name = entry.name
         costumes = []
-        has_model_json = False
-        # 扫描子目录中的 model.json
         for costume_dir in sorted(entry.iterdir()):
             if not costume_dir.is_dir():
                 continue
             model_json = costume_dir / "model.json"
             if model_json.exists():
-                has_model_json = True
                 model_path = str(model_json.resolve())
                 costumes.append({
                     "id": costume_dir.name,
                     "path": model_path,
                 })
                 ModelManager._model_paths[(char_name, costume_dir.name)] = model_path
-            else:
-                # 没有 model.json，扫描子目录内的 *.model.json
-                for variant_file in sorted(costume_dir.glob("*.model.json")):
-                    has_model_json = True
-                    variant_name = f"{costume_dir.name}/{variant_file.stem.replace('.model', '')}"
-                    model_path = str(variant_file.resolve())
-                    costumes.append({
-                        "id": variant_name,
-                        "path": model_path,
-                    })
-                    ModelManager._model_paths[(char_name, variant_name)] = model_path
-                # 扫描其他合法模型 JSON 文件
-                for json_file in sorted(costume_dir.glob("*.json")):
-                    if json_file.name == "model.json" or json_file.name.endswith(".model.json"):
-                        continue
-                    if json_file.name in ("_custom.json", "outfit.json", "band.json", "config.json"):
-                        continue
-                    if self._is_model_json(json_file):
-                        has_model_json = True
-                        variant_name = f"{costume_dir.name}/{json_file.stem}"
-                        model_path = str(json_file.resolve())
-                        costumes.append({
-                            "id": variant_name,
-                            "path": model_path,
-                        })
-                        ModelManager._model_paths[(char_name, variant_name)] = model_path
-        # 扫描 *.model.json 变体文件
-        for variant_file in sorted(entry.glob("*.model.json")):
-            has_model_json = True
-            variant_name = variant_file.stem.replace(".model", "")
-            model_path = str(variant_file.resolve())
-            costumes.append({
-                "id": variant_name,
-                "path": model_path,
-            })
-            ModelManager._model_paths[(char_name, variant_name)] = model_path
-        # 只在没有找到标准模型文件时才扫描其他 JSON 文件
-        if not has_model_json:
-            for json_file in sorted(entry.glob("*.json")):
-                # 跳过已经处理的 model.json 和 *.model.json
-                if json_file.name == "model.json" or json_file.name.endswith(".model.json"):
-                    continue
-                # 跳过已知的非模型配置文件
-                if json_file.name in ("_custom.json", "outfit.json", "band.json", "config.json"):
-                    continue
-                # 检查是否是模型配置文件
-                if self._is_model_json(json_file):
-                    variant_name = json_file.stem
-                    model_path = str(json_file.resolve())
-                    costumes.append({
-                        "id": variant_name,
-                        "path": model_path,
-                    })
-                    ModelManager._model_paths[(char_name, variant_name)] = model_path
-        # 递归扫描二级子目录中的模型配置文件
-        for sub_dir in sorted(entry.iterdir()):
-            if not sub_dir.is_dir():
-                continue
-            for costume_dir in sorted(sub_dir.iterdir()):
-                if not costume_dir.is_dir():
-                    continue
-                # 检查 model.json
-                model_json = costume_dir / "model.json"
-                if model_json.exists():
-                    model_path = str(model_json.resolve())
-                    costume_name = f"{sub_dir.name}/{costume_dir.name}"
-                    costumes.append({
-                        "id": costume_name,
-                        "path": model_path,
-                    })
-                    ModelManager._model_paths[(char_name, costume_name)] = model_path
-                else:
-                    # 检查 *.model.json 变体文件
-                    for variant_file in sorted(costume_dir.glob("*.model.json")):
-                        variant_name = f"{sub_dir.name}/{costume_dir.name}/{variant_file.stem.replace('.model', '')}"
-                        model_path = str(variant_file.resolve())
-                        costumes.append({
-                            "id": variant_name,
-                            "path": model_path,
-                        })
-                        ModelManager._model_paths[(char_name, variant_name)] = model_path
-                    # 检查其他合法模型 JSON 文件
-                    for json_file in sorted(costume_dir.glob("*.json")):
-                        if json_file.name == "model.json" or json_file.name.endswith(".model.json"):
-                            continue
-                        if json_file.name in ("_custom.json", "outfit.json", "band.json", "config.json"):
-                            continue
-                        if self._is_model_json(json_file):
-                            variant_name = f"{sub_dir.name}/{costume_dir.name}/{json_file.stem}"
-                            model_path = str(json_file.resolve())
-                            costumes.append({
-                                "id": variant_name,
-                                "path": model_path,
-                            })
-                            ModelManager._model_paths[(char_name, variant_name)] = model_path
         image_path = self._find_dir_character_image(entry)
         if image_path:
             ModelManager._character_images[char_name] = image_path
@@ -282,80 +176,17 @@ class ModelManager:
 
         costumes = []
         model_paths = []
-        
-        # 第一遍：查找 model.json 和 *.model.json（快速检查文件名）
         for member in files:
-            member_path = Path(member)
-            member_name = member_path.name
-            
-            # 跳过已知的非模型配置文件
-            if member_name in ("_custom.json", "outfit.json", "band.json", "config.json"):
+            if Path(member).name != "model.json":
                 continue
-            
-            is_model = False
-            costume_id = None
-            
-            # 标准 model.json
-            if member_name == "model.json":
-                is_model = True
-                parent = member_path.parent
-                costume_id = parent.name if str(parent) != "." else "default"
-            # *.model.json 变体文件
-            elif member_name.endswith(".model.json"):
-                is_model = True
-                parent = member_path.parent
-                variant_name = member_name.replace(".model.json", "")
-                if str(parent) != ".":
-                    costume_id = f"{parent.name}/{variant_name}"
-                else:
-                    costume_id = variant_name
-            
-            if is_model:
-                model_path = make_virtual_path(archive_path, member)
-                costumes.append({
-                    "id": costume_id,
-                    "path": model_path,
-                })
-                model_paths.append((char_name, costume_id, model_path))
-        
-        # 第二遍：如果没有找到标准模型文件，检查其他 JSON 文件内容
-        if not costumes:
-            for member in files:
-                member_path = Path(member)
-                member_name = member_path.name
-                
-                # 跳过已知的非模型配置文件
-                if member_name in ("_custom.json", "outfit.json", "band.json", "config.json"):
-                    continue
-                
-                # 跳过已经检查过的文件
-                if member_name == "model.json" or member_name.endswith(".model.json"):
-                    continue
-                
-                # 只检查 JSON 文件
-                if not member_name.endswith(".json"):
-                    continue
-                
-                # 检查文件内容是否是模型配置
-                try:
-                    model_path = make_virtual_path(archive_path, member)
-                    data = load_virtual_json(model_path)
-                    if isinstance(data, dict) and "model" in data and isinstance(data["model"], str):
-                        parent = member_path.parent
-                        variant_name = member_name.replace(".json", "")
-                        if str(parent) != ".":
-                            costume_id = f"{parent.name}/{variant_name}"
-                        else:
-                            costume_id = variant_name
-                        
-                        costumes.append({
-                            "id": costume_id,
-                            "path": model_path,
-                        })
-                        model_paths.append((char_name, costume_id, model_path))
-                except Exception:
-                    # 无法解析的 JSON 文件，跳过
-                    continue
+            parent = Path(member).parent
+            costume_id = parent.name if str(parent) != "." else "default"
+            model_path = make_virtual_path(archive_path, member)
+            costumes.append({
+                "id": costume_id,
+                "path": model_path,
+            })
+            model_paths.append((char_name, costume_id, model_path))
 
         image_path = self._find_archive_character_image(archive_path, files, char_name)
         if not costumes:
@@ -372,28 +203,10 @@ class ModelManager:
             ModelManager._model_paths[(char_name, costume_id)] = model_path
         image_path = result["image_path"]
         if image_path:
-            ModelManager._character_images.setdefault(result["character"], image_path)
-        char_name = result["character"]
-        new_costumes = result["costumes"]
-        if char_name in self._characters:
-            existing_costumes = self._characters[char_name].get("costumes", [])
-            existing_ids = {c["id"] for c in existing_costumes}
-            for costume in new_costumes:
-                costume_id = costume["id"]
-                if costume_id in existing_ids:
-                    suffix = 1
-                    while f"{costume_id}_zst{suffix}" in existing_ids:
-                        suffix += 1
-                    costume["id"] = f"{costume_id}_zst{suffix}"
-                    existing_ids.add(costume["id"])
-                    ModelManager._model_paths[(char_name, costume["id"])] = costume["path"]
-                else:
-                    existing_ids.add(costume_id)
-            self._characters[char_name]["costumes"] = existing_costumes + new_costumes
-        else:
-            self._characters[char_name] = {
-                "costumes": new_costumes,
-            }
+            ModelManager._character_images[result["character"]] = image_path
+        self._characters[result["character"]] = {
+            "costumes": result["costumes"],
+        }
 
     def _parse_outfit_json(self):
         if not OUTFIT_JSON.exists():
@@ -431,15 +244,14 @@ class ModelManager:
                 "characters": characters,
             })
 
-        # 所有未在 band.json 中配置的角色（自动扫描 + 自定义导入）都放入"自定义模型"分组
         ungrouped = [
             c for c in self.characters
             if c not in seen and self.get_costumes(c)
         ]
         if ungrouped:
             self._bands.append({
-                "id": "custom_models",
-                "display": _tr("ModelManager.custom_models_band"),
+                "id": "others",
+                "display": _tr("ModelManager.others_band"),
                 "characters": ungrouped,
             })
 

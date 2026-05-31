@@ -23,6 +23,7 @@ from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
+from live2d_widget import Live2DWidget
 from model_manager import ModelManager
 from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language, tr as _tr
@@ -34,7 +35,6 @@ from onebot_message import onebot_event_mentions_self
 from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from alarm_manager import ReminderScheduler
-from shared_event_ipc import SharedEventWriter
 
 
 class AiEventBridge(QObject):
@@ -65,6 +65,7 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     if sys.platform != "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+    Live2DWidget.configure_default_surface_format()
     icon_path = os.path.join(BASE_DIR, "logo.ico")
     ensure_windows_app_user_model_shortcut(APP_AUMID, "BandoriPet", icon_path)
     set_windows_app_user_model_id(APP_AUMID)
@@ -85,7 +86,6 @@ def main():
     mgr = ModelManager()
     pet_window_ref = {"processes": []}
     ipc_ref = {"clients": [], "buffers": {}, "lock": threading.RLock()}
-    shared_event_ref = {"writer": SharedEventWriter()}
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
@@ -139,11 +139,6 @@ def main():
         stop_ai_status_server()
         stop_chat_integration_server()
         stop_napcat_adapter()
-        writer = shared_event_ref.get("writer")
-        if writer is not None:
-            writer.write_line("SHUTDOWN")
-            writer.close()
-            shared_event_ref["writer"] = None
         close_pet_processes(force=True)
         close_settings_process(force=True)
         close_chat_process(force=True)
@@ -190,9 +185,6 @@ def main():
             remove_ipc_client(socket)
 
     def broadcast_ipc_line(line: str):
-        writer = shared_event_ref.get("writer")
-        if writer is not None:
-            writer.write_line(line)
         with ipc_ref["lock"]:
             sockets = list(ipc_ref.get("clients", []))
         for socket in sockets:
@@ -655,13 +647,8 @@ def main():
         except RuntimeError:
             pass
         if process.state() != QProcess.ProcessState.NotRunning:
-            if not force:
-                writer = shared_event_ref.get("writer")
-                if writer is not None:
-                    writer.write_line("SAVE_POSITION")
-                process.waitForFinished(500)
             process.terminate()
-            if not process.waitForFinished(2000):
+            if not process.waitForFinished(1000):
                 process.kill()
                 process.waitForFinished(1000)
         process.deleteLater()
@@ -944,6 +931,8 @@ def main():
         elif line == "LAUNCH":
             settings_process_ref["launched"] = True
             launch_pet()
+        elif line == "EXIT":
+            quit_all()
 
     def clear_settings_process(process):
         if not isValid(process):

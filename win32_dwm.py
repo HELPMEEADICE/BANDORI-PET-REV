@@ -65,16 +65,6 @@ else:
     _rtl_get_version = None
 
 
-def is_windows_8_or_later() -> bool:
-    if os.name != "nt":
-        return False
-    version = _OSVERSIONINFOEXW()
-    version.dwOSVersionInfoSize = ctypes.sizeof(version)
-    if _rtl_get_version(ctypes.byref(version)) != 0:
-        return False
-    return version.dwMajorVersion > 6 or (version.dwMajorVersion == 6 and version.dwMinorVersion >= 2)
-
-
 def is_windows_11_or_later() -> bool:
     if os.name != "nt":
         return False
