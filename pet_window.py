@@ -1558,18 +1558,16 @@ class PetWindow(QWidget):
 
     def _click_motion_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
+        visible_bounds = self._live2d_widget.visible_model_bounds()
         if area_name in {"head", "face"}:
-            return (
-                self._live2d_widget.hit_area_bounds(area_name)
-                or self._live2d_widget.visible_model_bounds()
-            )
+            return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
         if area_name in {"body", "hit", ""}:
             return (
-                self._live2d_widget.hit_area_bounds("body")
+                visible_bounds
+                or self._live2d_widget.hit_area_bounds("body")
                 or self._live2d_widget.hit_area_union_bounds()
-                or self._live2d_widget.visible_model_bounds()
             )
-        return self._live2d_widget.hit_area_bounds(area_name) or self._live2d_widget.visible_model_bounds()
+        return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
 
     def _configured_click_motion_feedback(self, region: str) -> dict[str, str]:
         from live2d_click_actions import normalize_click_motion_actions
