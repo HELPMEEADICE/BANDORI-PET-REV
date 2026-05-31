@@ -206,6 +206,8 @@ class PetWindow(QWidget):
         self._group_characters = self._normalize_chat_group_characters(group_characters)
         self._ensure_current_character_in_group()
         self._layer_index = self._compute_layer_index()
+        self._last_layer_insert_after = None
+        self._last_game_topmost_applied = False
         self._fps = fps
         self._opacity = opacity
         self._vsync = True
@@ -233,6 +235,8 @@ class PetWindow(QWidget):
         self._tray_actions = []
         self._enable_tray = enable_tray
         self._cfg = config_manager
+        self._restore_layer_order_from_config()
+        self._layer_index = self._compute_layer_index()
         if self._cfg:
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
@@ -443,7 +447,8 @@ class PetWindow(QWidget):
         apply_no_rounding(hwnd, windows_11_only=True)
         frame_changed(hwnd)
         self._apply_no_activate_to_hwnd(hwnd)
-        self._enforce_game_topmost()
+        if self._game_topmost:
+            self._enforce_game_topmost()
         self._enforce_layer_z_order()
 
     def _apply_no_activate_to_hwnd(self, hwnd: int):
@@ -482,6 +487,8 @@ class PetWindow(QWidget):
         hwnd = int(self.winId())
         if not hwnd:
             return
+        if self._last_game_topmost_applied and self._last_layer_insert_after == HWND_TOPMOST:
+            return
         _set_window_pos(
             hwnd,
             HWND_TOPMOST,
@@ -489,8 +496,10 @@ class PetWindow(QWidget):
             0,
             0,
             0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
+        self._last_game_topmost_applied = True
+        self._last_layer_insert_after = HWND_TOPMOST
 
     def _compute_layer_index(self) -> int:
         try:
@@ -501,36 +510,114 @@ class PetWindow(QWidget):
     def _enforce_layer_z_order(self):
         if os.name != "nt" or not self.isVisible():
             return
+        if self._game_topmost:
+            return
         if len(self._group_characters) <= 1:
             return
         hwnd = int(self.winId())
         if not hwnd:
             return
         if self._layer_index == 0:
+            if self._last_layer_insert_after == HWND_TOPMOST:
+                return
             _set_window_pos(
                 hwnd,
                 HWND_TOPMOST,
                 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
+            self._last_game_topmost_applied = False
+            self._last_layer_insert_after = HWND_TOPMOST
             return
         above_char = self._group_characters[self._layer_index - 1]
         above_title = f"BandoriPet-{above_char}"
         above_hwnd = _find_window(None, above_title)
         if not above_hwnd:
+            if self._last_layer_insert_after == HWND_TOPMOST:
+                return
             _set_window_pos(
                 hwnd,
                 HWND_TOPMOST,
                 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
+            self._last_game_topmost_applied = False
+            self._last_layer_insert_after = HWND_TOPMOST
+            return
+        if self._last_layer_insert_after == above_hwnd:
             return
         _set_window_pos(
             hwnd,
             above_hwnd,
             0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
+        self._last_game_topmost_applied = False
+        self._last_layer_insert_after = above_hwnd
+
+    def _broadcast_layer_order(self):
+        if not self._ipc_socket or not self._ipc_socket.isOpen():
+            return
+        payload = json.dumps({
+            "order": list(self._group_characters),
+        }, ensure_ascii=False)
+        msg = f"LAYER_ORDER\t{payload}"
+        self._ipc_socket.write((msg + "\n").encode("utf-8"))
+        self._ipc_socket.flush()
+
+    def _handle_layer_order(self, data: dict):
+        order = data.get("order", None)
+        if not isinstance(order, list) or len(order) <= 1:
+            return
+        current_set = set(self._group_characters)
+        order_set = set(order)
+        if order_set != current_set:
+            return
+        if order == self._group_characters:
+            return
+        self._group_characters = list(order)
+        self._layer_index = self._compute_layer_index()
+        self._last_game_topmost_applied = False
+        self._last_layer_insert_after = None
+        self._enforce_layer_z_order()
+
+    def _bring_to_front(self):
+        if len(self._group_characters) <= 1:
+            return
+        if self._layer_index == len(self._group_characters) - 1:
+            return
+        self._group_characters.remove(self._current_char)
+        self._group_characters.append(self._current_char)
+        self._layer_index = self._compute_layer_index()
+        self._last_game_topmost_applied = False
+        self._last_layer_insert_after = None
+        self._broadcast_layer_order()
+        self._enforce_layer_z_order()
+        self._save_layer_order()
+
+    def _save_layer_order(self):
+        if not self._cfg:
+            return
+        self._cfg.set("chat_group_order", list(self._group_characters))
+        self._cfg.save()
+
+    def _restore_layer_order_from_config(self):
+        if not self._cfg:
+            return
+        saved_order = self._cfg.get("chat_group_order", None)
+        if not isinstance(saved_order, list) or len(saved_order) <= 1:
+            return
+        current = set(self._group_characters)
+        restored = []
+        for ch in saved_order:
+            if ch in current:
+                restored.append(ch)
+                current.discard(ch)
+        for ch in self._group_characters:
+            if ch in current:
+                restored.append(ch)
+        if len(restored) == len(self._group_characters):
+            self._group_characters = restored
 
     def _sync_windows_topmost_guard(self):
         if os.name != "nt":
@@ -578,7 +665,8 @@ class PetWindow(QWidget):
         ):
             return
         self._last_topmost_interaction_refresh_at = now
-        self._enforce_game_topmost()
+        if self._game_topmost:
+            self._enforce_game_topmost()
         self._enforce_layer_z_order()
 
     def eventFilter(self, obj, event):
@@ -686,6 +774,8 @@ class PetWindow(QWidget):
 
     def set_game_topmost(self, enabled: bool):
         self._game_topmost = bool(enabled)
+        self._last_game_topmost_applied = False
+        self._last_layer_insert_after = None
         self._apply_game_topmost_state()
 
     def set_hide_live2d_model(self, enabled: bool):
@@ -809,6 +899,8 @@ class PetWindow(QWidget):
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
         self._peer_pos_broadcast_timer.stop()
+        self._last_game_topmost_applied = False
+        self._last_layer_insert_after = None
         super().hideEvent(event)
 
     def closeEvent(self, event):
@@ -880,6 +972,7 @@ class PetWindow(QWidget):
             self._current_char = chars[0]
             self._current_costume = self._model_manager.get_default_costume(self._current_char)
             self._ensure_current_character_in_group()
+            self._layer_index = self._compute_layer_index()
 
         path = self._model_manager.get_model_json_path(
             self._current_char, self._current_costume
@@ -1455,6 +1548,8 @@ class PetWindow(QWidget):
             if next_group_characters:
                 self._group_characters = next_group_characters
                 self._ensure_current_character_in_group()
+                self._restore_layer_order_from_config()
+                self._layer_index = self._compute_layer_index()
             self._cfg.set("models", data["models"])
             self._cfg.save()
         self._save_config()
@@ -1517,6 +1612,7 @@ class PetWindow(QWidget):
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         self._note_user_interaction()
         self._refresh_topmost_for_interaction(force=True)
+        self._bring_to_front()
         if self._is_radial_menu_visible():
             self._send_radial_menu_command("CLOSE")
             return
@@ -1963,6 +2059,12 @@ class PetWindow(QWidget):
                 motion = parts[2] if len(parts) > 2 else ""
                 expression = parts[3] if len(parts) > 3 else ""
                 self._preview_click_motion(motion, expression)
+        elif line.startswith("LAYER_ORDER\t"):
+            try:
+                data = json.loads(line.split("\t", 1)[1])
+                self._handle_layer_order(data)
+            except json.JSONDecodeError:
+                pass
 
     def _preview_click_motion(self, motion: str = "", expression: str = ""):
         model = self._live2d_widget.model
