@@ -748,7 +748,7 @@ class PetWindow(QWidget):
     def _is_interaction_hit(self, global_pos: QPoint) -> bool:
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
-        return self._live2d_widget.is_model_geometry_hit_at_global(global_pos)
+        return self._live2d_widget.is_model_interaction_hit_at_global(global_pos)
 
     def _update_mouse_passthrough(self):
         if self._use_native_hit_test_passthrough or not self.isVisible():
