@@ -21,6 +21,7 @@ from settings_window.pages.data import DataManagementPageMixin
 from settings_window.pages.quality import QualityPageMixin
 from settings_window.pages.about import AboutPageMixin
 from settings_window.pages.behavior import BehaviorPageMixin
+from settings_window.pages.statistics import StatisticsPageMixin
 
 
 class SettingsWindow(
@@ -36,6 +37,7 @@ class SettingsWindow(
     QualityPageMixin,
     AboutPageMixin,
     BehaviorPageMixin,
+    StatisticsPageMixin,
     QWidget,
 ):
 
@@ -113,6 +115,7 @@ class SettingsWindow(
         self._data_management_page = None
         self._quality_page = None
         self._about_page = None
+        self._statistics_page = None
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
@@ -398,6 +401,12 @@ class SettingsWindow(
             except Exception:
                 pass
             self._memory_db = None
+        if getattr(self, "_stats_db", None) is not None:
+            try:
+                self._stats_db.close()
+            except Exception:
+                pass
+            self._stats_db = None
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -1227,6 +1236,9 @@ class SettingsWindow(
         if key == "data_management":
             self._data_management_page = self._add_lazy_page("data_management", self._build_data_management_page())
             return self._data_management_page
+        if key == "statistics":
+            self._statistics_page = self._add_lazy_page("statistics", self._build_statistics_page())
+            return self._statistics_page
         if key == "quality":
             self._quality_page = self._add_lazy_page("quality", self._build_quality_page())
             return self._quality_page
@@ -1419,6 +1431,17 @@ class SettingsWindow(
         btn_data_management.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["data_management"] = btn_data_management
         nav_layout.addWidget(btn_data_management)
+
+        btn_statistics = NavButton(
+            "statistics",
+            FluentIcon.DATE_TIME,
+            _tr("SettingsWindow.nav_statistics", default="数据统计"),
+            nav_content,
+            "#8b5cf6",
+        )
+        btn_statistics.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["statistics"] = btn_statistics
+        nav_layout.addWidget(btn_statistics)
 
         btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_display"), nav_content, "#22c55e")
         btn_quality.nav_activated.connect(self._on_nav_selected)

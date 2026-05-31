@@ -600,6 +600,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             )
         """)
         self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS usage_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_time TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                end_time TEXT,
+                duration_seconds INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS external_chat_threads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 platform TEXT NOT NULL,
@@ -1622,6 +1630,230 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             return {"deleted_messages": deleted_messages}
 
         return _run_with_locked_retry(self._conn, operation)
+
+    # ── Usage session tracking ──────────────────────────────────────────
+
+    def start_usage_session(self) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO usage_sessions (start_time) VALUES (datetime('now','localtime'))"
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def end_usage_session(self, session_id: int):
+        self._conn.execute(
+            "UPDATE usage_sessions SET end_time=datetime('now', 'localtime'),"
+            "duration_seconds=CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
+            "WHERE id=? AND end_time IS NULL",
+            (session_id,),
+        )
+        self._conn.commit()
+
+    def heartbeat_usage_session(self, session_id: int):
+        self._conn.execute(
+            "UPDATE usage_sessions SET duration_seconds=CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
+            "WHERE id=? AND end_time IS NULL",
+            (session_id,),
+        )
+        self._conn.commit()
+
+    def get_usage_today(self) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions "
+            "WHERE date(start_time)=date('now','localtime')"
+        ).fetchone()
+        total = int(row[0]) if row else 0
+        cur = self._conn.execute(
+            "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
+            "WHERE end_time IS NULL AND date(start_time)=date('now','localtime') "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if cur:
+            live_row = self._conn.execute(
+                "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
+                "FROM usage_sessions WHERE id=?", (int(cur[0]),)
+            ).fetchone()
+            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
+            total = total - int(cur[1]) + live
+        return total
+
+    def get_usage_week(self) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions "
+            "WHERE start_time>=datetime('now','localtime','-6 days','start of day')"
+        ).fetchone()
+        total = int(row[0]) if row else 0
+        cur = self._conn.execute(
+            "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
+            "WHERE end_time IS NULL AND start_time>=datetime('now','localtime','-6 days','start of day') "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if cur:
+            live_row = self._conn.execute(
+                "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
+                "FROM usage_sessions WHERE id=?", (int(cur[0]),)
+            ).fetchone()
+            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
+            total = total - int(cur[1]) + live
+        return total
+
+    def get_usage_all_time(self) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions"
+        ).fetchone()
+        total = int(row[0]) if row else 0
+        cur = self._conn.execute(
+            "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
+            "WHERE end_time IS NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if cur:
+            live_row = self._conn.execute(
+                "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
+                "FROM usage_sessions WHERE id=?", (int(cur[0]),)
+            ).fetchone()
+            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
+            total = total - int(cur[1]) + live
+        return total
+
+    def get_usage_daily(self, days: int = 30) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT date(start_time) AS day, COALESCE(SUM(duration_seconds),0) AS total "
+            "FROM usage_sessions "
+            "WHERE start_time>=datetime('now','localtime',?,'start of day') "
+            "GROUP BY date(start_time) ORDER BY day ASC",
+            (f"-{days} days",),
+        ).fetchall()
+        return [{"day": r[0], "seconds": int(r[1])} for r in rows]
+
+    # ── Statistics queries ──────────────────────────────────────────────
+
+    def get_mood_events_for_chart(self, character: str, days: int = 30,
+                                  user_key: str = "") -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        if days <= 0:
+            rows = self._conn.execute(
+                "SELECT date(created_at) AS day, "
+                "SUM(affection_delta), SUM(trust_delta), SUM(familiarity_delta) "
+                "FROM mood_events WHERE character=? AND user_key=? "
+                "GROUP BY date(created_at) ORDER BY day ASC",
+                (character, user_key),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT date(created_at) AS day, "
+                "SUM(affection_delta), SUM(trust_delta), SUM(familiarity_delta) "
+                "FROM mood_events WHERE character=? AND user_key=? "
+                "AND created_at>=datetime('now','localtime',?) "
+                "GROUP BY date(created_at) ORDER BY day ASC",
+                (character, user_key, f"-{days} days"),
+            ).fetchall()
+        if not rows:
+            state = self.get_relationship_state(character, user_key)
+            today = datetime.now().strftime("%Y-%m-%d")
+            return [{
+                "day": today,
+                "affection": state["affection"],
+                "trust": state["trust"],
+                "familiarity": state["familiarity"],
+            }]
+        state = self.get_relationship_state(character, user_key)
+        total_aff_delta = sum(int(r[1] or 0) for r in rows)
+        total_trust_delta = sum(int(r[2] or 0) for r in rows)
+        total_fam_delta = sum(int(r[3] or 0) for r in rows)
+        base_affection = max(0, min(100, state["affection"] - total_aff_delta))
+        base_trust = max(0, min(100, state["trust"] - total_trust_delta))
+        base_familiarity = max(0, min(100, state["familiarity"] - total_fam_delta))
+        result = []
+        affection = base_affection
+        trust = base_trust
+        familiarity = base_familiarity
+        for r in rows:
+            affection = max(0, min(100, affection + int(r[1] or 0)))
+            trust = max(0, min(100, trust + int(r[2] or 0)))
+            familiarity = max(0, min(100, familiarity + int(r[3] or 0)))
+            result.append({
+                "day": r[0],
+                "affection": affection,
+                "trust": trust,
+                "familiarity": familiarity,
+            })
+        return result
+
+    def get_chat_summary(self) -> dict:
+        conv_row = self._conn.execute("SELECT COUNT(*) FROM conversations").fetchone()
+        msg_row = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+        gmsg_row = self._conn.execute("SELECT COUNT(*) FROM group_messages").fetchone()
+        return {
+            "total_conversations": int(conv_row[0]) if conv_row else 0,
+            "total_messages": int(msg_row[0]) if msg_row else 0,
+            "total_group_messages": int(gmsg_row[0]) if gmsg_row else 0,
+        }
+
+    def get_messages_per_character(self, user_key: str = "") -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        rows = self._conn.execute(
+            "SELECT c.character, COUNT(m.id) AS msg_count "
+            "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
+            "WHERE c.user_key=? "
+            "GROUP BY c.character ORDER BY msg_count DESC",
+            (user_key,),
+        ).fetchall()
+        return [{"character": r[0], "count": int(r[1])} for r in rows]
+
+    def get_daily_message_counts(self, days: int = 30) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT date(created_at) AS day, COUNT(*) AS cnt "
+            "FROM messages "
+            "WHERE created_at>=datetime('now','localtime',?) "
+            "GROUP BY date(created_at) ORDER BY day ASC",
+            (f"-{days} days",),
+        ).fetchall()
+        return [{"day": r[0], "count": int(r[1])} for r in rows]
+
+    def get_active_days(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(DISTINCT date(created_at)) FROM messages"
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_messages_per_character_range(self, days: int = 0, user_key: str = "") -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        if days <= 0:
+            rows = self._conn.execute(
+                "SELECT c.character, COUNT(m.id) AS msg_count "
+                "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
+                "WHERE c.user_key=? "
+                "GROUP BY c.character ORDER BY msg_count DESC",
+                (user_key,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT c.character, COUNT(m.id) AS msg_count "
+                "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
+                "WHERE c.user_key=? AND m.created_at>=datetime('now','localtime',?) "
+                "GROUP BY c.character ORDER BY msg_count DESC",
+                (user_key, f"-{days} days"),
+            ).fetchall()
+        return [{"character": r[0], "count": int(r[1])} for r in rows]
+
+    def get_hourly_heatmap(self, days: int = 7) -> list[list[int]]:
+        grid = [[0] * 24 for _ in range(7)]
+        rows = self._conn.execute(
+            "SELECT CAST(strftime('%w', created_at) AS INTEGER) AS wday, "
+            "CAST(strftime('%H', created_at) AS INTEGER) AS hour, COUNT(*) AS cnt "
+            "FROM messages "
+            "WHERE created_at>=datetime('now','localtime',?) "
+            "GROUP BY wday, hour",
+            (f"-{days} days",),
+        ).fetchall()
+        for r in rows:
+            wday = int(r[0])
+            hour = int(r[1])
+            count = int(r[2])
+            iso_day = (wday - 1) % 7
+            if 0 <= iso_day < 7 and 0 <= hour < 24:
+                grid[iso_day][hour] = count
+        return grid
 
     def close(self):
         if self._closed:

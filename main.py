@@ -1030,12 +1030,43 @@ def main():
     signal_pump_timer.timeout.connect(lambda: None)
     signal_pump_timer.start()
 
+    # ── Usage session tracking ─────────────────────────────────────────
+    usage_session_ref = {"db": None, "session_id": None}
+
+    def usage_db():
+        db = usage_session_ref.get("db")
+        if db is None:
+            from database_manager import DatabaseManager
+            db = DatabaseManager()
+            usage_session_ref["db"] = db
+        return db
+
+    def close_usage_db():
+        db = usage_session_ref.get("db")
+        if db is not None:
+            db.close()
+        usage_session_ref["db"] = None
+
+    def end_usage_session():
+        sid = usage_session_ref.get("session_id")
+        if sid is not None:
+            usage_db().end_usage_session(sid)
+        close_usage_db()
+
+    usage_session_ref["session_id"] = usage_db().start_usage_session()
+    usage_heartbeat = QTimer(app)
+    usage_heartbeat.setInterval(300_000)
+    usage_heartbeat.timeout.connect(lambda: usage_db().heartbeat_usage_session(
+        usage_session_ref["session_id"]))
+    usage_heartbeat.start()
+
     app.aboutToQuit.connect(save_config)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
     app.aboutToQuit.connect(stop_napcat_adapter)
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
+    app.aboutToQuit.connect(end_usage_session)
     app.aboutToQuit.connect(close_settings_process)
     app.aboutToQuit.connect(close_chat_process)
     app.aboutToQuit.connect(close_pet_processes)
