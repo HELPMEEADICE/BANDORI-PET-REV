@@ -3,10 +3,10 @@ import os
 import sys
 import time
 import numpy as np
-import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from qt_gl import gl, uses_qt_software_opengl
 
 
 DEFAULT_HIT_ALPHA_THRESHOLD = 8
@@ -791,6 +791,9 @@ class Live2DWidget(QOpenGLWidget):
 
     def _init_hit_pbos(self):
         if self._hit_pbo_supported is not None: return
+        if uses_qt_software_opengl():
+            self._hit_pbo_supported = False
+            return
         try:
             required_funcs = ("glGenBuffers", "glBindBuffer", "glBufferData", "glFenceSync", 
                               "glClientWaitSync", "glDeleteSync", "glMapBuffer", "glUnmapBuffer")

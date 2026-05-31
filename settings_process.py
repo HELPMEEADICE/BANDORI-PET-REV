@@ -4,19 +4,20 @@ import os
 import sys
 
 from process_utils import app_base_dir, configure_debug_logging, install_parent_death_watch, ipc_server_name, set_windows_app_user_model_id
-from gpu_acceleration import configure_qt_opengl_environment
+from config_manager import ConfigManager
+from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
 configure_debug_logging()
-configure_qt_opengl_environment()
 
 BASE_DIR = str(app_base_dir())
+_STARTUP_CONFIG = ConfigManager()
+configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
-from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
@@ -48,7 +49,7 @@ def main():
     os.chdir(BASE_DIR)
     args = _parse_args()
 
-    cfg = ConfigManager()
+    cfg = _STARTUP_CONFIG
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)

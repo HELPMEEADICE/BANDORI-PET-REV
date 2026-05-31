@@ -13,12 +13,14 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from gpu_acceleration import configure_qt_opengl_environment
+from config_manager import ConfigManager
+from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
 configure_debug_logging()
-configure_qt_opengl_environment()
 BASE_DIR = str(app_base_dir())
 APP_AUMID = "BandoriPet"
+_STARTUP_CONFIG = ConfigManager()
+configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer
@@ -27,7 +29,6 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
-from config_manager import ConfigManager
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
@@ -58,7 +59,7 @@ def main():
             f"{ipc_server_name()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         )
 
-    cfg = ConfigManager()
+    cfg = _STARTUP_CONFIG
 
     lang = cfg.get("language", "")
     if not lang:

@@ -28,6 +28,75 @@ def _read_lua_chunk_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
 
+_GL_LOADER_CORE_TYPEDEFS = b"""
+ffi.cdef("typedef void (" .. CC .. "*PFNGLCLEARPROC)(GLbitfield mask);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLCLEARCOLORPROC)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLVIEWPORTPROC)(GLint x, GLint y, GLsizei width, GLsizei height);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLENABLEPROC)(GLenum cap);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLDISABLEPROC)(GLenum cap);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLCOLORMASKPROC)(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLFRONTFACEPROC)(GLenum mode);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLBINDTEXTUREPROC)(GLenum target, GLuint texture);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLDELETETEXTURESPROC)(GLsizei n, const GLuint *textures);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLGETINTEGERVPROC)(GLenum pname, GLint *data);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLGENTEXTURESPROC)(GLsizei n, GLuint *textures);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLTEXPARAMETERIPROC)(GLenum target, GLenum pname, GLint param);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLTEXIMAGE2DPROC)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLDRAWELEMENTSPROC)(GLenum mode, GLsizei count, GLenum type, const void *indices);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLREADPIXELSPROC)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLDRAWARRAYSPROC)(GLenum mode, GLint first, GLsizei count);")
+ffi.cdef("typedef void (" .. CC .. "*PFNGLBLENDFUNCPROC)(GLenum sfactor, GLenum dfactor);")
+"""
+
+
+_GL_LOADER_CORE_PATCH = b"""
+local function loadCoreFromHostContext()
+    if type(_G.__bandori_gl_get_proc_address) ~= "function" then
+        return
+    end
+    local core = {
+        {"glClear", "PFNGLCLEARPROC"},
+        {"glClearColor", "PFNGLCLEARCOLORPROC"},
+        {"glViewport", "PFNGLVIEWPORTPROC"},
+        {"glEnable", "PFNGLENABLEPROC"},
+        {"glDisable", "PFNGLDISABLEPROC"},
+        {"glColorMask", "PFNGLCOLORMASKPROC"},
+        {"glFrontFace", "PFNGLFRONTFACEPROC"},
+        {"glBindTexture", "PFNGLBINDTEXTUREPROC"},
+        {"glDeleteTextures", "PFNGLDELETETEXTURESPROC"},
+        {"glGetIntegerv", "PFNGLGETINTEGERVPROC"},
+        {"glGenTextures", "PFNGLGENTEXTURESPROC"},
+        {"glTexParameteri", "PFNGLTEXPARAMETERIPROC"},
+        {"glTexImage2D", "PFNGLTEXIMAGE2DPROC"},
+        {"glDrawElements", "PFNGLDRAWELEMENTSPROC"},
+        {"glReadPixels", "PFNGLREADPIXELSPROC"},
+        {"glDrawArrays", "PFNGLDRAWARRAYSPROC"},
+        {"glBlendFunc", "PFNGLBLENDFUNCPROC"},
+    }
+    for _, item in ipairs(core) do
+        local ok, fn = pcall(loadGL, item[1], item[2])
+        if ok and fn ~= nil then
+            gl[item[1]] = fn
+        end
+    end
+end
+
+loadCoreFromHostContext()
+"""
+
+
+def _patch_lua_gl_loader(module_name: str, chunk: bytes) -> bytes:
+    if module_name != "live2d.gl_loader":
+        return chunk
+    typedef_marker = b'ffi.cdef("typedef void (" .. CC .. "*PFNGLGENERATEMIPMAPPROC)(GLenum target);")'
+    if b"PFNGLCLEARPROC" not in chunk and typedef_marker in chunk:
+        chunk = chunk.replace(typedef_marker, typedef_marker + _GL_LOADER_CORE_TYPEDEFS, 1)
+    ensure_marker = b"\nfunction gl.ensureExtensions()"
+    if b"loadCoreFromHostContext()" not in chunk and ensure_marker in chunk:
+        chunk = chunk.replace(ensure_marker, _GL_LOADER_CORE_PATCH + ensure_marker, 1)
+    return chunk
+
+
 def _read_bundled_lua_module_bytes(module_name: str) -> tuple[bytes, bytes]:
     relative = Path(*module_name.split("."))
     for suffix in (".ljbc", ".lua"):
@@ -71,7 +140,8 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
         module_path = module_paths.get(module_name)
         if module_path is None:
             return None, None
-        return _read_lua_chunk_bytes(module_path), ("@" + module_path.as_posix()).encode("utf-8")
+        chunk = _read_lua_chunk_bytes(module_path)
+        return _patch_lua_gl_loader(module_name, chunk), ("@" + module_path.as_posix()).encode("utf-8")
 
     lua.globals()[b"__bandori_lazy_lua_module_source"] = load_module_source
     lua.execute(
@@ -88,7 +158,21 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
 
 
 def _install_gl_proc_address_loader(lua: LuaRuntime):
+    def qt_gl_get_proc_address(name):
+        try:
+            from qt_gl import qt_gl_proc_address
+        except Exception:
+            return None
+        ptr = qt_gl_proc_address(name)
+        return format(ptr, "x").encode("ascii") if ptr else None
+
     if sys.platform != "win32":
+        lua.globals()[b"__bandori_gl_get_proc_address_py"] = qt_gl_get_proc_address
+        lua.execute(
+            b"function __bandori_gl_get_proc_address(name) "
+            b"return __bandori_gl_get_proc_address_py(name) "
+            b"end"
+        )
         return
 
     try:
@@ -105,6 +189,9 @@ def _install_gl_proc_address_loader(lua: LuaRuntime):
     invalid_ptrs = {0, 1, 2, 3, ctypes.c_void_p(-1).value}
 
     def gl_get_proc_address(name):
+        ptr = qt_gl_get_proc_address(name)
+        if ptr:
+            return ptr
         if isinstance(name, str):
             name = name.encode("ascii", errors="ignore")
         elif not isinstance(name, bytes):
@@ -114,9 +201,14 @@ def _install_gl_proc_address_loader(lua: LuaRuntime):
             ptr = kernel32.GetProcAddress(opengl32_handle, name)
         if ptr in invalid_ptrs:
             return None
-        return format(int(ptr), "x")
+        return format(int(ptr), "x").encode("ascii")
 
-    lua.globals()[b"__bandori_gl_get_proc_address"] = gl_get_proc_address
+    lua.globals()[b"__bandori_gl_get_proc_address_py"] = gl_get_proc_address
+    lua.execute(
+        b"function __bandori_gl_get_proc_address(name) "
+        b"return __bandori_gl_get_proc_address_py(name) "
+        b"end"
+    )
 
 
 def _require_bundled_lua_module(lua: LuaRuntime, module_name: str):
