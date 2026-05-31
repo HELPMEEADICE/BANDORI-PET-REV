@@ -150,7 +150,7 @@ class Live2DWidget(QOpenGLWidget):
         self._render_timer.timeout.connect(self.update)
         
         self._head_track_timer = QTimer(self)
-        self._head_track_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._head_track_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._head_track_timer.setInterval(self._hit_test_interval_ms)
         self._head_track_timer.timeout.connect(self._poll_head_tracking)
 
@@ -274,14 +274,17 @@ class Live2DWidget(QOpenGLWidget):
         if not self._head_tracking_enabled:
             self._last_cursor_x = -1
             self._last_cursor_y = -1
+        self._sync_timer_type()
 
     def set_gaze_target(self, global_x: float, global_y: float):
         """设置注视目标点（全局坐标），用于对视功能"""
         self._gaze_target = (global_x, global_y)
+        self._sync_timer_type()
 
     def clear_gaze_target(self):
         """清除注视目标，恢复鼠标追踪"""
         self._gaze_target = None
+        self._sync_timer_type()
 
     def set_model_path(self, model_json_path: str):
         self._pending_model = model_json_path
@@ -382,7 +385,13 @@ class Live2DWidget(QOpenGLWidget):
     def _sync_timer_type(self):
         timer_type = (
             Qt.TimerType.PreciseTimer
-            if self._fps > 75 or self._lip_sync_level > 0.01 or self._lip_sync_target > 0.01
+            if (
+                self._fps > 75
+                or self._lip_sync_level > 0.01
+                or self._lip_sync_target > 0.01
+                or self._head_tracking_enabled
+                or self._gaze_target is not None
+            )
             else Qt.TimerType.CoarseTimer
         )
         if self._render_timer.timerType() != timer_type:
@@ -395,7 +404,7 @@ class Live2DWidget(QOpenGLWidget):
             return
         self._sync_timer_type()
         self._render_timer.start(self._frame_interval_ms())
-        self._head_track_timer.start()
+        self._head_track_timer.stop()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -560,6 +569,9 @@ class Live2DWidget(QOpenGLWidget):
         self._perf_probe.add("head_track", self._perf_probe.now() - t0)
 
     def _poll_head_tracking(self):
+        self._track_current_head_target()
+
+    def _track_current_head_target(self):
         # 优先使用注视目标（对视功能）
         if self._gaze_target is not None:
             self._track_head_at_global(*self._gaze_target)
@@ -607,6 +619,8 @@ class Live2DWidget(QOpenGLWidget):
     def paintGL(self):
         if (self._static_render and self._static_render_done) or not self._live2d or not self._model:
             return
+
+        self._track_current_head_target()
 
         t0 = self._perf_probe.now()
         draw_start = 0.0
@@ -658,6 +672,10 @@ class Live2DWidget(QOpenGLWidget):
         local = self._get_valid_local_pos(global_pos)
         return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
 
+    def is_model_geometry_hit_at_global(self, global_pos: QPoint) -> bool:
+        local = self._get_valid_local_pos(global_pos)
+        return self._is_model_geometry_hit_at(local.x(), local.y()) if local else False
+
     def hit_area_name_at(self, x: float, y: float) -> str:
         if not self._model: return ""
         return self._custom_hit_area_name_at(x, y) or self._sdk_hit_area_name_at(x, y)
@@ -681,6 +699,18 @@ class Live2DWidget(QOpenGLWidget):
             return state is True
         finally:
             self._perf_probe.add("hit_test", self._perf_probe.now() - t0)
+
+    def _is_model_geometry_hit_at(self, x: float, y: float) -> bool:
+        if not self._model:
+            return False
+        if not (0 <= x < self._cache_w and 0 <= y < self._cache_h):
+            return False
+        try:
+            if self._custom_hit_areas is not None and self._custom_hit_areas.hit_test_name(x, y):
+                return True
+            return bool(self._model.HitTest("", x, y))
+        except Exception:
+            return False
 
     def _emit_right_click(self, x: float, y: float, gx: float, gy: float) -> bool:
         if self._right_click_callback and self._is_model_hit_at(x, y, sync=True):
