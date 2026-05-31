@@ -75,10 +75,14 @@ if os.name == "nt":
         ctypes.c_uint,
     ]
     _set_window_pos.restype = ctypes.wintypes.BOOL
+    _find_window = _user32.FindWindowW
+    _find_window.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+    _find_window.restype = ctypes.wintypes.HWND
 else:
     _get_window_long = None
     _set_window_long = None
     _set_window_pos = None
+    _find_window = None
 
 _x11 = None
 _xext = None
@@ -201,6 +205,7 @@ class PetWindow(QWidget):
             ) or [character]
         self._group_characters = self._normalize_chat_group_characters(group_characters)
         self._ensure_current_character_in_group()
+        self._layer_index = self._compute_layer_index()
         self._fps = fps
         self._opacity = opacity
         self._vsync = True
@@ -347,6 +352,7 @@ class PetWindow(QWidget):
         if self._should_bypass_x11_window_manager():
             flags |= Qt.WindowType.X11BypassWindowManagerHint
         self.setWindowFlags(flags)
+        self.setWindowTitle(f"BandoriPet-{self._current_char}")
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -438,6 +444,7 @@ class PetWindow(QWidget):
         frame_changed(hwnd)
         self._apply_no_activate_to_hwnd(hwnd)
         self._enforce_game_topmost()
+        self._enforce_layer_z_order()
 
     def _apply_no_activate_to_hwnd(self, hwnd: int):
         if os.name != "nt" or not hwnd:
@@ -485,10 +492,50 @@ class PetWindow(QWidget):
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
 
+    def _compute_layer_index(self) -> int:
+        try:
+            return self._group_characters.index(self._current_char)
+        except ValueError:
+            return 0
+
+    def _enforce_layer_z_order(self):
+        if os.name != "nt" or not self.isVisible():
+            return
+        if len(self._group_characters) <= 1:
+            return
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+        if self._layer_index == 0:
+            _set_window_pos(
+                hwnd,
+                HWND_TOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
+            return
+        above_char = self._group_characters[self._layer_index - 1]
+        above_title = f"BandoriPet-{above_char}"
+        above_hwnd = _find_window(None, above_title)
+        if not above_hwnd:
+            _set_window_pos(
+                hwnd,
+                HWND_TOPMOST,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            )
+            return
+        _set_window_pos(
+            hwnd,
+            above_hwnd,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+
     def _sync_windows_topmost_guard(self):
         if os.name != "nt":
             return
-        should_run = self._game_topmost and self.isVisible()
+        should_run = self.isVisible()
         if should_run and not self._windows_topmost_guard_timer.isActive():
             self._windows_topmost_guard_timer.start()
         elif not should_run and self._windows_topmost_guard_timer.isActive():
@@ -497,12 +544,14 @@ class PetWindow(QWidget):
     def _tick_windows_topmost_guard(self):
         if os.name != "nt":
             return
-        if not self._game_topmost or not self.isVisible():
+        if not self.isVisible():
             self._sync_windows_topmost_guard()
             return
         if self._is_radial_menu_visible():
             return
-        self._enforce_game_topmost()
+        if self._game_topmost:
+            self._enforce_game_topmost()
+        self._enforce_layer_z_order()
 
     def _schedule_windows_topmost_recovery(self):
         if os.name != "nt":
@@ -530,6 +579,7 @@ class PetWindow(QWidget):
             return
         self._last_topmost_interaction_refresh_at = now
         self._enforce_game_topmost()
+        self._enforce_layer_z_order()
 
     def eventFilter(self, obj, event):
         if self._is_radial_menu_visible():
