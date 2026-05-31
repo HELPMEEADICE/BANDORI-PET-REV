@@ -242,6 +242,16 @@ DEFAULTS = {
     "tts_streaming": True,
     "tts_temperature": 0.9,
     "tts_translate_to_selected_language": True,
+    "asr_enabled": False,
+    "asr_api_url": "http://127.0.0.1:8000/v1/audio/transcriptions",
+    "asr_api_key": "",
+    "asr_model_id": "whisper-large-v3",
+    "asr_language": "zh",
+    "asr_auto_send": False,
+    "asr_insert_mode": "append",
+    "asr_sample_rate": 16000,
+    "asr_max_record_seconds": 60,
+    "asr_timeout_seconds": 60,
 }
 
 MODEL_DEFAULTS = {

@@ -28,6 +28,11 @@ class DataManagementPageMixin:
                 _tr("SettingsWindow.data_category_tts_desc", default="TTS 开关、接口、语言、参考音色和生成参数。"),
             ),
             (
+                DATA_CATEGORY_ASR,
+                _tr("SettingsWindow.data_category_asr", default="ASR 语音输入配置"),
+                _tr("SettingsWindow.data_category_asr_desc", default="语音识别开关、接口、模型、语言和输入行为。"),
+            ),
+            (
                 DATA_CATEGORY_POV,
                 _tr("SettingsWindow.data_category_pov", default="POV 配置"),
                 _tr("SettingsWindow.data_category_pov_desc", default="POV 模式、自定义提示词、角色扮演对象和保存的人设。"),
@@ -230,6 +235,8 @@ class DataManagementPageMixin:
             self._save_llm_config(show_info=False)
         if self._tts_config_widgets_ready():
             self._save_tts_config(show_info=False)
+        if self._asr_config_widgets_ready():
+            self._save_asr_config(show_info=False)
         if self._compact_config_widgets_ready():
             self._save_compact_window_config(show_info=False, emit_update=False)
         if self._chat_integration_widgets_ready():

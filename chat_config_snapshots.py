@@ -47,6 +47,19 @@ TTS_CONFIG_KEYS = (
     "llm_aux_enable_thinking",
 )
 
+ASR_CONFIG_KEYS = (
+    "asr_enabled",
+    "asr_api_url",
+    "asr_api_key",
+    "asr_model_id",
+    "asr_language",
+    "asr_auto_send",
+    "asr_insert_mode",
+    "asr_sample_rate",
+    "asr_max_record_seconds",
+    "asr_timeout_seconds",
+)
+
 
 def tool_config_snapshot(config, *, include_chat_keys: bool = False, latest_user_text: str | None = None) -> dict:
     if not config:
@@ -60,6 +73,10 @@ def tool_config_snapshot(config, *, include_chat_keys: bool = False, latest_user
 
 def tts_config_snapshot(config) -> dict:
     return {key: config.get(key, None) for key in TTS_CONFIG_KEYS} if config else {}
+
+
+def asr_config_snapshot(config) -> dict:
+    return {key: config.get(key, None) for key in ASR_CONFIG_KEYS} if config else {}
 
 
 def memory_extraction_api_config(config, use_responses_api, chat_completions_api_url) -> tuple[str, str, str]:

@@ -11,6 +11,7 @@ from custom_model_import import (
 )
 from settings_window.pages.llm import LLMPageMixin
 from settings_window.pages.tts import TTSPageMixin
+from settings_window.pages.asr import ASRPageMixin
 from settings_window.pages.pov import POVPageMixin
 from settings_window.pages.memory import MemoryPageMixin
 from settings_window.pages.reminder import ReminderPageMixin
@@ -27,6 +28,7 @@ from settings_window.pages.statistics import StatisticsPageMixin
 class SettingsWindow(
     LLMPageMixin,
     TTSPageMixin,
+    ASRPageMixin,
     POVPageMixin,
     MemoryPageMixin,
     ReminderPageMixin,
@@ -101,6 +103,7 @@ class SettingsWindow(
         self._costume_page = None
         self._llm_page = None
         self._tts_page = None
+        self._asr_page = None
         self._pov_page = None
         self._memory_page = None
         self._relationship_guide_page = None
@@ -498,7 +501,7 @@ class SettingsWindow(
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_model_download_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_asr_test_worker', '_asr_test_request_worker', '_model_download_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
@@ -647,6 +650,7 @@ class SettingsWindow(
         self._pov_page.hide()
         self._llm_page = self._build_llm_page()
         self._tts_page = self._build_tts_page()
+        self._asr_page = self._build_asr_page()
         self._wizard_ai_page = self._build_wizard_ai_page()
 
         for page in (self._wizard_model_page, self._char_page, self._costume_page, self._wizard_ai_page):
@@ -689,6 +693,7 @@ class SettingsWindow(
         self._pages["costumes"] = self._costume_page
         self._pages["llm"] = self._llm_page
         self._pages["tts"] = self._tts_page
+        self._pages["asr"] = self._asr_page
         self._pages["pov"] = self._pov_page
 
         self._update_wizard_style()
@@ -798,6 +803,7 @@ class SettingsWindow(
         layout.addWidget(subtitle)
         layout.addWidget(self._llm_page)
         layout.addWidget(self._tts_page)
+        layout.addWidget(self._asr_page)
         layout.addStretch()
         return page
 
@@ -1209,6 +1215,9 @@ class SettingsWindow(
         if key == "tts":
             self._tts_page = self._add_lazy_page("tts", self._build_tts_page())
             return self._tts_page
+        if key == "asr":
+            self._asr_page = self._add_lazy_page("asr", self._build_asr_page())
+            return self._asr_page
         if key == "memory":
             self._memory_page = self._add_lazy_page("memory", self._build_memory_page())
             return self._memory_page
@@ -1361,6 +1370,11 @@ class SettingsWindow(
         btn_tts.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["tts"] = btn_tts
         nav_layout.addWidget(btn_tts)
+
+        btn_asr = NavButton("asr", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_asr", default="语音输入"), nav_content, "#06b6d4")
+        btn_asr.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["asr"] = btn_asr
+        nav_layout.addWidget(btn_asr)
 
         btn_pov = NavButton("pov", "avatar", _tr("SettingsWindow.nav_pov"), nav_content, "#ec4899")
         btn_pov.nav_activated.connect(self._on_nav_selected)
@@ -2586,6 +2600,7 @@ class SettingsWindow(
             return
         self._save_llm_config(show_info=False)
         self._save_tts_config(show_info=False)
+        self._save_asr_config(show_info=False)
         self._save_compact_window_config(show_info=False, emit_update=False)
         self._save_chat_integration_config(show_info=False, emit_update=False)
         self._save_mcp_computer_config(show_info=False)

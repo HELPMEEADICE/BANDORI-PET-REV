@@ -60,6 +60,7 @@ from llm_api_compat import chat_completions_api_url, supports_openai_responses_a
 from llm_error_hints import format_llm_error_message
 from vision_fallback import analyze_images_with_aux_model
 from chat_config_snapshots import (
+    asr_config_snapshot,
     memory_extraction_api_config,
     tool_config_snapshot,
     tts_config_snapshot,
@@ -87,6 +88,14 @@ except (ImportError, OSError):
 
     def flush_tts_sentence(buffer: str) -> str:
         return buffer.strip()
+
+try:
+    from asr_manager import ASRRecorderWorker, ASRRequestWorker
+    _ASR_AVAILABLE = True
+except (ImportError, OSError):
+    _ASR_AVAILABLE = False
+    ASRRecorderWorker = None
+    ASRRequestWorker = None
 
 from relationship_memory import (
     GLOBAL_MEMORY_CHARACTER,
@@ -2109,6 +2118,11 @@ class ChatWindow(QWidget):
         self._tts_player = TTSPlayer(self)
         self._tts_player.mouth_pose_changed.connect(self._on_tts_mouth_pose_changed)
         self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
+        self._asr_recorder_worker = None
+        self._asr_request_worker = None
+        self._asr_recording = False
+        self._asr_transcribing = False
+        self._asr_last_error = ""
         self._pending_actions.clear()
         self._seen_actions.clear()
         self._stream_flush_timer = QTimer(self)
@@ -3463,6 +3477,14 @@ class ChatWindow(QWidget):
         self._attach_btn.installEventFilter(self)
         layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self._asr_btn = IconButton(FluentIcon.MICROPHONE, self._composer)
+        self._asr_btn.setFixedSize(46, 46)
+        self._asr_btn.setIconSize(QSize(22, 22))
+        self._asr_btn.setToolTip(_tr("ChatWindow.asr_start_tooltip", default="开始语音输入"))
+        self._asr_btn.clicked.connect(self._toggle_asr_recording)
+        self._asr_btn.setEnabled(self._asr_enabled())
+        layout.addWidget(self._asr_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._input = FluentContextTextEdit()
         self._input.setPlaceholderText(_tr("ChatWindow.input_placeholder"))
         self._input.setAcceptRichText(False)
@@ -3510,6 +3532,7 @@ class ChatWindow(QWidget):
                 getattr(self, "_composer", None),
                 getattr(self, "_input_area", None),
                 getattr(self, "_attach_btn", None),
+                getattr(self, "_asr_btn", None),
                 getattr(self, "_send_btn", None),
             )
             if widget is not None
@@ -3715,6 +3738,8 @@ class ChatWindow(QWidget):
         self._sync_group_sidebar_toggle_buttons()
         self._send_btn.apply_theme()
         self._attach_btn.apply_theme()
+        self._asr_btn.apply_theme()
+        self._update_asr_button_state()
         if self._resize_grip:
             self._resize_grip.update()
         self._update_title_avatar()
@@ -4395,6 +4420,7 @@ class ChatWindow(QWidget):
         self._send_btn.setEnabled(True)
         if hasattr(self._send_btn, "set_busy"):
             self._send_btn.set_busy(busy)
+        self._update_asr_button_state()
         self._new_btn.setEnabled(not busy)
         if planning:
             status = _tr("ChatWindow.planning_group_response")
@@ -4405,6 +4431,133 @@ class ChatWindow(QWidget):
         self._composer_hint.setText(status)
         dot = _TEAMS_ACCENT if busy else _TELEGRAM_ACCENT
         self._status_dot.setStyleSheet(f"background: {dot}; border-radius: 3px;")
+
+    def _asr_enabled(self) -> bool:
+        return bool(_ASR_AVAILABLE and self._cfg and self._cfg.get("asr_enabled", False))
+
+    def _update_asr_button_state(self):
+        button = getattr(self, "_asr_btn", None)
+        if button is None:
+            return
+        enabled = self._asr_enabled()
+        button.setEnabled(enabled and not self._asr_transcribing)
+        if not _ASR_AVAILABLE:
+            button.setToolTip(_tr("ChatWindow.asr_unavailable_tooltip", default="当前环境缺少语音输入依赖"))
+        elif not enabled:
+            button.setToolTip(_tr("ChatWindow.asr_disabled_tooltip", default="请先在设置中启用 ASR 语音输入"))
+        elif self._asr_recording:
+            button.setToolTip(_tr("ChatWindow.asr_stop_tooltip", default="停止录音并识别"))
+        elif self._asr_transcribing:
+            button.setToolTip(_tr("ChatWindow.asr_transcribing_tooltip", default="正在识别语音"))
+        else:
+            button.setToolTip(_tr("ChatWindow.asr_start_tooltip", default="开始语音输入"))
+
+    def _toggle_asr_recording(self):
+        if self._asr_recording:
+            self._stop_asr_recording()
+            return
+        self._start_asr_recording()
+
+    def _start_asr_recording(self):
+        if not self._asr_enabled() or ASRRecorderWorker is None:
+            self._composer_hint.setText(_tr("ChatWindow.asr_not_enabled", default="请先在设置中启用 ASR 语音输入。"))
+            self._update_asr_button_state()
+            return
+        if self._asr_transcribing:
+            return
+        self._reload_runtime_config()
+        self._asr_last_error = ""
+        self._asr_recording = True
+        self._composer_hint.setText(_tr("ChatWindow.asr_recording", default="正在录音，再次点击麦克风结束识别。"))
+        self._status_dot.setStyleSheet("background: #ef4444; border-radius: 3px;")
+        if self._asr_btn is not None:
+            self._asr_btn.setStyleSheet("""
+                QToolButton {
+                    background: #ef4444;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 23px;
+                    padding: 0px;
+                }
+                QToolButton:hover { background: #dc2626; }
+                QToolButton:pressed { background: #b91c1c; }
+            """)
+        self._asr_recorder_worker = ASRRecorderWorker(asr_config_snapshot(self._cfg), self)
+        self._asr_recorder_worker.audio_ready.connect(self._on_asr_audio_ready)
+        self._asr_recorder_worker.error.connect(self._on_asr_error)
+        self._asr_recorder_worker.finished.connect(self._on_asr_recording_finished)
+        self._asr_recorder_worker.start()
+        self._update_asr_button_state()
+
+    def _stop_asr_recording(self):
+        worker = self._asr_recorder_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+        self._composer_hint.setText(_tr("ChatWindow.asr_stopping", default="正在整理录音..."))
+        self._update_asr_button_state()
+
+    def _on_asr_recording_finished(self):
+        self._asr_recording = False
+        self._asr_recorder_worker = None
+        if not self._asr_transcribing and not self._asr_last_error:
+            self._composer_hint.setText(self._idle_status_text())
+            self._status_dot.setStyleSheet(f"background: {_TELEGRAM_ACCENT}; border-radius: 3px;")
+        if self._asr_btn is not None:
+            self._asr_btn.apply_theme()
+        self._update_asr_button_state()
+
+    def _on_asr_audio_ready(self, audio: bytes, media_type: str):
+        if not self._asr_enabled() or ASRRequestWorker is None:
+            return
+        self._asr_transcribing = True
+        self._composer_hint.setText(_tr("ChatWindow.asr_transcribing", default="正在识别语音..."))
+        self._asr_request_worker = ASRRequestWorker(audio, media_type, asr_config_snapshot(self._cfg), self)
+        self._asr_request_worker.text_ready.connect(self._on_asr_text_ready)
+        self._asr_request_worker.error.connect(self._on_asr_error)
+        self._asr_request_worker.finished.connect(self._on_asr_request_finished)
+        self._asr_request_worker.start()
+        self._update_asr_button_state()
+
+    def _on_asr_text_ready(self, text: str):
+        text = str(text or "").strip()
+        if not text:
+            return
+        mode = str(self._cfg.get("asr_insert_mode", "append") if self._cfg else "append")
+        if mode == "replace":
+            self._input.setPlainText(text)
+        else:
+            current = self._input.toPlainText().strip()
+            self._input.setPlainText(f"{current}\n{text}" if current else text)
+        cursor = self._input.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self._input.setTextCursor(cursor)
+        self._input.setFocus()
+        self._sync_input_height()
+        self._composer_hint.setText(_tr("ChatWindow.asr_inserted", default="已填入语音识别文本。"))
+        if self._cfg and bool(self._cfg.get("asr_auto_send", False)):
+            QTimer.singleShot(0, self._send_message)
+
+    def _on_asr_request_finished(self):
+        self._asr_transcribing = False
+        self._asr_request_worker = None
+        had_error = bool(self._asr_last_error)
+        if not had_error and not self._generation_busy():
+            self._composer_hint.setText(self._idle_status_text())
+        if had_error:
+            self._asr_last_error = ""
+        self._update_asr_button_state()
+
+    def _on_asr_error(self, msg: str):
+        self._asr_recording = False
+        self._asr_transcribing = False
+        self._asr_last_error = msg or _tr("ChatWindow.asr_failed", default="语音识别失败。")
+        self._asr_recorder_worker = None
+        self._asr_request_worker = None
+        if self._asr_btn is not None:
+            self._asr_btn.apply_theme()
+        self._composer_hint.setText(self._asr_last_error)
+        self._status_dot.setStyleSheet(f"background: {_TELEGRAM_ACCENT}; border-radius: 3px;")
+        self._update_asr_button_state()
 
     def _update_composer_focus_style(self):
         if not self._composer_colors:
@@ -5240,6 +5393,7 @@ class ChatWindow(QWidget):
             self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT)
             self._user_avatar_path = str(self._cfg.get("user_avatar_path", "") or "").strip()
             self._show_reasoning = bool(self._cfg.get("llm_show_reasoning", True))
+            self._update_asr_button_state()
             next_user_key = self._user_memory_key()
             if next_user_key != previous_user_key:
                 self._chat_user_key = next_user_key
@@ -6305,6 +6459,11 @@ class ChatWindow(QWidget):
             self._vision_fallback_worker.requestInterruption()
             self._vision_fallback_worker.quit()
             self._vision_fallback_worker.wait(2000)
+        for worker in (self._asr_recorder_worker, self._asr_request_worker):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.quit()
+                worker.wait(2000)
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
                 worker.wait(1000)

@@ -99,6 +99,10 @@ TTSPlayer = None
 TTSRequestWorker = None
 _SETTINGS_TTS_AVAILABLE = True
 _SETTINGS_TTS_CHECKED = False
+ASRRecorderWorker = None
+ASRRequestWorker = None
+_SETTINGS_ASR_AVAILABLE = True
+_SETTINGS_ASR_CHECKED = False
 
 
 def _ensure_settings_tts_available() -> bool:
@@ -114,6 +118,22 @@ def _ensure_settings_tts_available() -> bool:
     TTSPlayer = player_class
     TTSRequestWorker = worker_class
     _SETTINGS_TTS_AVAILABLE = True
+    return True
+
+
+def _ensure_settings_asr_available() -> bool:
+    global ASRRecorderWorker, ASRRequestWorker, _SETTINGS_ASR_AVAILABLE, _SETTINGS_ASR_CHECKED
+    if _SETTINGS_ASR_CHECKED:
+        return _SETTINGS_ASR_AVAILABLE
+    _SETTINGS_ASR_CHECKED = True
+    try:
+        from asr_manager import ASRRecorderWorker as recorder_class, ASRRequestWorker as request_class
+    except (ImportError, OSError):
+        _SETTINGS_ASR_AVAILABLE = False
+        return False
+    ASRRecorderWorker = recorder_class
+    ASRRequestWorker = request_class
+    _SETTINGS_ASR_AVAILABLE = True
     return True
 
 import json
@@ -157,6 +177,7 @@ DATA_CATEGORY_ALL = "all"
 DATA_CATEGORY_LIVE2D = "live2d_models"
 DATA_CATEGORY_LLM = "llm"
 DATA_CATEGORY_TTS = "tts"
+DATA_CATEGORY_ASR = "asr"
 DATA_CATEGORY_POV = "pov"
 DATA_CATEGORY_RELATIONSHIP = "relationship"
 DATA_CATEGORY_REMINDERS = "reminders"
@@ -174,6 +195,7 @@ BUILTIN_LLM_API_PROFILE_NAMES = {
 SECRET_CONFIG_KEYS = {
     "llm_api_key",
     "llm_aux_api_key",
+    "asr_api_key",
 }
 
 DATA_CONFIG_KEYS = {
@@ -221,6 +243,17 @@ DATA_CONFIG_KEYS = {
         "tts_streaming",
         "tts_temperature",
         "tts_translate_to_selected_language",
+    ),
+    DATA_CATEGORY_ASR: (
+        "asr_enabled",
+        "asr_api_url",
+        "asr_model_id",
+        "asr_language",
+        "asr_auto_send",
+        "asr_insert_mode",
+        "asr_sample_rate",
+        "asr_max_record_seconds",
+        "asr_timeout_seconds",
     ),
     DATA_CATEGORY_POV: (
         "pov_mode",
@@ -318,6 +351,7 @@ DATA_EXPORT_ORDER = (
     DATA_CATEGORY_CLICK_PROFILES,
     DATA_CATEGORY_LLM,
     DATA_CATEGORY_TTS,
+    DATA_CATEGORY_ASR,
     DATA_CATEGORY_POV,
     DATA_CATEGORY_RELATIONSHIP,
     DATA_CATEGORY_REMINDERS,
