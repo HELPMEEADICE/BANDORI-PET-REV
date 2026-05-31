@@ -718,21 +718,12 @@ class Live2DWidget(QOpenGLWidget):
         self._last_hit_state = alpha > self._hit_alpha_threshold
         return self._last_hit_state
 
-    def _has_model_hit_areas(self) -> bool:
-        return self._has_sdk_hit_areas() or (self._custom_hit_areas is not None and self._custom_hit_areas.has_projected_areas())
-
     def _has_sdk_hit_areas(self) -> bool:
         return self._model and self._model.modelSetting.getHitAreaNum() > 0
-
-    def _is_in_sdk_hit_area(self, x: float, y: float) -> bool:
-        return bool(self._sdk_hit_area_name_at(x, y))
 
     def _sdk_hit_area_name_at(self, x: float, y: float) -> str:
         if not self._has_sdk_hit_areas(): return ""
         return (self._model.HitTest("", x, y) or "").strip().lower()
-
-    def _is_in_custom_hit_area(self, x: float, y: float) -> bool:
-        return bool(self._custom_hit_area_name_at(x, y))
 
     def _custom_hit_area_name_at(self, x: float, y: float) -> str:
         if self._custom_hit_areas is None: return ""
