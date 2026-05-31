@@ -1,0 +1,69 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-01",
+  "birthdays": {
+    "poppin_party": {
+      "rimi": {"month": 3, "day": 23, "name_zh": "牛込里美"},
+      "saaya": {"month": 5, "day": 19, "name_zh": "山吹沙绫"},
+      "kasumi": {"month": 7, "day": 14, "name_zh": "户山香澄"},
+      "arisa": {"month": 10, "day": 27, "name_zh": "市谷有咲"},
+      "tae": {"month": 12, "day": 4, "name_zh": "花园多惠"}
+    },
+    "afterglow": {
+      "tsugumi": {"month": 1, "day": 7, "name_zh": "羽泽鸫"},
+      "ran": {"month": 4, "day": 10, "name_zh": "美竹兰"},
+      "tomoe": {"month": 4, "day": 15, "name_zh": "宇田川巴"},
+      "moca": {"month": 9, "day": 3, "name_zh": "青叶摩卡"},
+      "himari": {"month": 10, "day": 23, "name_zh": "上原绯玛丽"}
+    },
+    "pastel_palettes": {
+      "hina": {"month": 3, "day": 20, "name_zh": "冰川日菜"},
+      "chisato": {"month": 4, "day": 6, "name_zh": "白鹭千圣"},
+      "eve": {"month": 6, "day": 27, "name_zh": "若宫伊芙"},
+      "maya": {"month": 11, "day": 3, "name_zh": "大和麻弥"},
+      "aya": {"month": 12, "day": 27, "name_zh": "丸山彩"}
+    },
+    "roselia": {
+      "sayo": {"month": 3, "day": 20, "name_zh": "冰川纱夜"},
+      "ako": {"month": 7, "day": 3, "name_zh": "宇田川亚子"},
+      "lisa": {"month": 8, "day": 25, "name_zh": "今井莉莎"},
+      "yukina": {"month": 10, "day": 26, "name_zh": "凑友希那"},
+      "rinko": {"month": 10, "day": 17, "name_zh": "白金燐子"}
+    },
+    "hello_happy_world": {
+      "kaoru": {"month": 2, "day": 28, "name_zh": "濑田薰"},
+      "kanon": {"month": 5, "day": 11, "name_zh": "松原花音"},
+      "kokoro": {"month": 8, "day": 8, "name_zh": "弦卷心"},
+      "misaki": {"month": 10, "day": 1, "name_zh": "奥泽美咲"},
+      "hagumi": {"month": 7, "day": 30, "name_zh": "北泽育美"}
+    },
+    "raise_a_suilen": {
+      "rei": {"month": 1, "day": 13, "name_zh": "和奏瑞依"},
+      "pareo": {"month": 3, "day": 25, "name_zh": "鳰原令王那"},
+      "masuki": {"month": 5, "day": 12, "name_zh": "佐藤益木"},
+      "chu2": {"month": 12, "day": 7, "name_zh": "珠手知由"},
+      "lock": {"month": 7, "day": 17, "name_zh": "朝日六花"}
+    },
+    "morfonica": {
+      "mashiro": {"month": 2, "day": 19, "name_zh": "仓田真白"},
+      "nanami": {"month": 6, "day": 16, "name_zh": "广町七深"},
+      "tsukushi": {"month": 9, "day": 15, "name_zh": "二叶筑紫"},
+      "rui": {"month": 11, "day": 19, "name_zh": "八潮瑠唯"},
+      "touko": {"month": 12, "day": 16, "name_zh": "桐谷透子"}
+    },
+    "my_go": {
+      "rana": {"month": 2, "day": 22, "name_zh": "要乐奈"},
+      "soyo": {"month": 5, "day": 27, "name_zh": "长崎爽世"},
+      "anon": {"month": 9, "day": 8, "name_zh": "千早爱音"},
+      "taki": {"month": 8, "day": 9, "name_zh": "椎名立希"},
+      "tomorin": {"month": 11, "day": 22, "name_zh": "高松灯"}
+    },
+    "ave_mujica": {
+      "mutsumi": {"month": 1, "day": 14, "name_zh": "若叶睦"},
+      "sakiko": {"month": 2, "day": 14, "name_zh": "丰川祥子"},
+      "umiri": {"month": 4, "day": 7, "name_zh": "八幡海铃"},
+      "uika": {"month": 6, "day": 26, "name_zh": "三角初华"},
+      "nyamu": {"month": 6, "day": 1, "name_zh": "祐天寺若麦"}
+    }
+  }
+}

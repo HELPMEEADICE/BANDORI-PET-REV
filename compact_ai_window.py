@@ -24,6 +24,7 @@ from llm_manager import (
     build_system_prompt,
     parse_action_tags,
     strip_action_tags,
+    _build_event_context,
 )
 from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
 from llm_error_hints import format_llm_error_message
@@ -834,6 +835,9 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             self._user_memory_key(),
             self._display_user_name(),
         )
+        event_context = _build_event_context(self._character)
+        if event_context:
+            dynamic_context += "\n\n【今日特殊事件 - 必须知晓】\n" + event_context
         if self._cfg and self._cfg.get("chat_integration_enabled", False) and self._cfg.get("chat_integration_include_context", True):
             external_context = self._db.external_chat_context_text()
             if external_context:

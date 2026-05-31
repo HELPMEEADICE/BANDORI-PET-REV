@@ -55,6 +55,7 @@ else:
 from llm_manager import (
     build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
+    _build_event_context,
 )
 from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
 from llm_error_hints import format_llm_error_message
@@ -5515,6 +5516,9 @@ class ChatWindow(QWidget):
             self._user_memory_key(),
             self._user_name or _tr("ChatWindow.you"),
         )
+        event_context = _build_event_context(character)
+        if event_context:
+            dynamic_context += "\n\n【今日特殊事件 - 必须知晓】\n" + event_context
         unified_history = self._unified_history_context(character)
         if unified_history:
             dynamic_context += "\n\n【跨聊天记录】\n" + unified_history

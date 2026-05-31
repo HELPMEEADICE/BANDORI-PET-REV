@@ -39,6 +39,8 @@ from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from alarm_manager import ReminderScheduler
 from gpu_acceleration import configure_qt_gpu_acceleration
+from special_event_manager import SpecialEventManager
+from event_db_manager import SpecialEvent
 
 
 class AiEventBridge(QObject):
@@ -92,6 +94,7 @@ def main():
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
     reminder_ref = {"scheduler": None}
+    event_manager_ref = {"manager": None}
     ai_event_bridge = AiEventBridge()
 
     char = cfg.get("character", "")
@@ -138,6 +141,7 @@ def main():
             return
         quit_ref["running"] = True
         notify_chat_processes_shutdown()
+        stop_special_event_manager()
         stop_ai_status_server()
         stop_chat_integration_server()
         stop_napcat_adapter()
@@ -235,6 +239,35 @@ def main():
         if scheduler is not None:
             scheduler.stop()
         reminder_ref["scheduler"] = None
+
+    def init_special_event_manager():
+        manager = event_manager_ref.get("manager")
+        if manager is not None:
+            manager.stop()
+            manager.deleteLater()
+        manager = SpecialEventManager(parent=app)
+
+        def on_special_event(event: SpecialEvent):
+            title = event.name.get("zh", "")
+            try:
+                text = event.prompt_template.format(
+                    name_zh=event.name.get("zh", ""),
+                    month=event.month,
+                    day=event.day,
+                )
+            except (KeyError, ValueError):
+                text = event.prompt_template
+            show_system_notification("BandoriPet", f"\U0001f389 {title}", text)
+
+        manager.event_detected.connect(on_special_event)
+        manager.start()
+        event_manager_ref["manager"] = manager
+
+    def stop_special_event_manager():
+        manager = event_manager_ref.get("manager")
+        if manager is not None:
+            manager.stop()
+        event_manager_ref["manager"] = None
 
     def stop_ai_status_server():
         server = ai_status_ref.get("server")
@@ -833,7 +866,11 @@ def main():
     def _read_process_error(process):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
         if data:
-            print(data)
+            try:
+                print(data)
+            except UnicodeEncodeError:
+                safe = data.encode("ascii", errors="replace").decode("ascii")
+                print(safe)
 
     def clear_pet_process(process):
         if not isValid(process):
@@ -1010,6 +1047,7 @@ def main():
     init_chat_integration_server()
     init_napcat_adapter()
     init_reminder_scheduler()
+    init_special_event_manager()
 
     def _handle_signal(_signum, _frame):
         QTimer.singleShot(0, quit_all)

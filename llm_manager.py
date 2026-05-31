@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import threading
 import urllib.request
@@ -25,6 +26,7 @@ from local_tools import (
     with_web_search_system_hint,
     web_search_prefetch_context,
 )
+from event_db_manager import EventDbManager
 
 
 CHARACTER_PROMPTS = {
@@ -455,12 +457,46 @@ def _get_user_display_name(config_manager, pov_mode: str) -> str:
     return config_manager.get("user_name", "").strip()
 
 
+def _build_event_context(current_character: str = "") -> str:
+    try:
+        event_db = EventDbManager()
+        today_events = event_db.get_today_events()
+        if not today_events:
+            return ""
+        current_band = event_db.get_character_band(current_character) if current_character else None
+        event_lines = []
+        for e in today_events:
+            if e.character == current_character:
+                data = {"name_zh": e.name.get("zh", ""), "month": e.month, "day": e.day}
+                text = (
+                    f"今天是{data['name_zh']}，也就是你自己的生日。"
+                    "你心里知道这件事，但只有用户明确问起生日相关话题时才回答。"
+                )
+                event_lines.append(f"【{e.name['zh']}】\n{text}")
+            elif e.band and e.band == current_band:
+                data = {"name_zh": e.name.get("zh", ""), "month": e.month, "day": e.day}
+                text = (
+                    f"今天是{data['name_zh']}。你知道这件事，"
+                    "但只有用户明确问起生日相关话题时才回答。"
+                )
+                event_lines.append(f"【{e.name['zh']}】\n{text}")
+        return "\n\n".join(event_lines)
+    except Exception:
+        return ""
+
+
 def build_system_prompt(character: str, config_manager=None) -> str:
     base = CHARACTER_PROMPTS.get(character, CHARACTER_PROMPTS.get("anon", ""))
     if not base:
         return ""
 
-    prompt = base + "\n\n" + COMMON_RULES
+    prompt = base
+
+    event_context = _build_event_context(character)
+    if event_context:
+        prompt += "\n\n【今日特殊事件】\n" + event_context
+
+    prompt += "\n\n" + COMMON_RULES
 
     md_prompt = _get_character_md_prompt(character)
     if md_prompt:
@@ -493,8 +529,8 @@ def build_system_prompt(character: str, config_manager=None) -> str:
                 role_name = _get_user_display_name(config_manager, pov_mode) or role_character
                 prompt += (
                     "\n\n【用户视角设定】\n"
-                    "用户正在皮上代入角色“" + role_name + "”。"
-                    "以下档案只描述用户扮演的角色，不会覆盖你的身份；档案里的“你/你是”都指用户侧角色。"
+                    "用户正在皮上代入角色\u201c" + role_name + "\u201d。"
+                    "以下档案只描述用户扮演的角色，不会覆盖你的身份；档案里的\u201c你/你是\u201d都指用户侧角色。"
                     "你仍然只扮演本次聊天设定的角色，不要代替用户侧角色说话。"
                 )
                 if role_character == character:

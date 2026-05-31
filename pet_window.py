@@ -2197,7 +2197,11 @@ class PetWindow(QWidget):
     def _read_chat_process_error(self, process: QProcess):
         data = bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
         if data:
-            print(data)
+            try:
+                print(data)
+            except UnicodeEncodeError:
+                safe = data.encode("ascii", errors="replace").decode("ascii")
+                print(safe)
 
     def _on_chat_process_finished(self, process: QProcess):
         if self._chat_process is process:

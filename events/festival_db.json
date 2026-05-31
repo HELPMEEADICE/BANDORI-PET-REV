@@ -1,0 +1,102 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-06-01",
+  "festivals": {
+    "valentines_day": {
+      "name_zh": "情人节",
+      "month": 2,
+      "day": 14,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是一个关于爱情和浪漫的节日。你可以讨论巧克力、约会、或者表达爱意的话题。",
+      "keywords": ["情人节", "巧克力", "爱情", "浪漫"]
+    },
+    "white_day": {
+      "name_zh": "白色情人节",
+      "month": 3,
+      "day": 14,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是情人节的回礼日，通常男生会给女生送礼物。你可以讨论回礼、糖果、或者浪漫话题。",
+      "keywords": ["白色情人节", "回礼", "糖果"]
+    },
+    "cherry_blossom": {
+      "name_zh": "樱花季",
+      "month": 4,
+      "day": 1,
+      "duration_days": 14,
+      "prompt_template": "现在是{name_zh}（{month}月{day}日-14日）。樱花盛开的季节，适合赏花、野餐、或者讨论春天的话题。",
+      "keywords": ["樱花", "赏花", "野餐", "春天"]
+    },
+    "golden_week": {
+      "name_zh": "黄金周",
+      "month": 4,
+      "day": 29,
+      "duration_days": 7,
+      "prompt_template": "现在是{name_zh}（{month}月{day}日-5月5日）。这是日本的长假期间，适合旅行、休息、或者讨论假期计划。",
+      "keywords": ["黄金周", "假期", "旅行", "休息"]
+    },
+    "tanabata": {
+      "name_zh": "七夕节",
+      "month": 7,
+      "day": 7,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是牛郎织女相会的日子，适合许愿、写短册、或者讨论浪漫传说。",
+      "keywords": ["七夕", "许愿", "短册", "牛郎织女"]
+    },
+    "summer_festival": {
+      "name_zh": "夏日祭",
+      "month": 8,
+      "day": 15,
+      "duration_days": 3,
+      "prompt_template": "现在是{name_zh}期间（{month}月{day}日-17日）。这是日本的盂兰盆节，适合穿浴衣、看烟花、逛庙会、或者讨论夏日活动。",
+      "keywords": ["夏日祭", "浴衣", "烟花", "庙会"]
+    },
+    "halloween": {
+      "name_zh": "万圣节",
+      "month": 10,
+      "day": 31,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是关于南瓜、鬼怪、化妆舞会的节日。你可以讨论服装、糖果、或者恐怖故事。",
+      "keywords": ["万圣节", "南瓜", "鬼怪", "化妆舞会"]
+    },
+    "christmas": {
+      "name_zh": "圣诞节",
+      "month": 12,
+      "day": 25,
+      "duration_days": 3,
+      "prompt_template": "现在是{name_zh}期间（{month}月{day}日-27日）。这是关于圣诞老人、礼物、家庭聚会的节日。你可以讨论装饰、大餐、或者圣诞愿望。",
+      "keywords": ["圣诞节", "圣诞老人", "礼物", "家庭聚会"]
+    },
+    "new_year_eve": {
+      "name_zh": "除夕",
+      "month": 12,
+      "day": 31,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是辞旧迎新的日子，适合倒计时、吃年夜饭、或者讨论新年计划。",
+      "keywords": ["除夕", "倒计时", "年夜饭", "新年计划"]
+    },
+    "new_year": {
+      "name_zh": "新年",
+      "month": 1,
+      "day": 1,
+      "duration_days": 3,
+      "prompt_template": "现在是{name_zh}期间（{month}月{day}日-3日）。这是庆祝新年开始的日子，适合拜年、吃年糕、或者讨论新年目标。",
+      "keywords": ["新年", "拜年", "年糕", "新年目标"]
+    },
+    "spring_equinox": {
+      "name_zh": "春分",
+      "month": 3,
+      "day": 20,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是昼夜等长的日子，标志着春天的正式开始。你可以讨论扫墓、赏花、或者春天的话题。",
+      "keywords": ["春分", "扫墓", "赏花", "春天"]
+    },
+    "autumn_equinox": {
+      "name_zh": "秋分",
+      "month": 9,
+      "day": 23,
+      "duration_days": 1,
+      "prompt_template": "今天是{name_zh}（{month}月{day}日）。这是昼夜等长的日子，标志着秋天的正式开始。你可以讨论赏月、红叶、或者秋天的话题。",
+      "keywords": ["秋分", "赏月", "红叶", "秋天"]
+    }
+  }
+}
