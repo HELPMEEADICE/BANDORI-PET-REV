@@ -399,6 +399,7 @@ class StatisticsPageMixin:
         self._stats_refresh_timer.start()
 
         self._style_statistics_page(page)
+        self._refresh_chart_themes()
         qconfig.themeChanged.connect(lambda: self._style_statistics_page(page))
         qconfig.themeChanged.connect(self._refresh_chart_themes)
 
@@ -704,18 +705,33 @@ class StatisticsPageMixin:
     def _apply_chart_theme(self, chart: QChart):
         dark = isDarkTheme()
         if dark:
-            chart.setBackgroundBrush(QColor("#1e1e1e"))
+            chart_bg = QColor("#1e1e1e")
+            chart_border = QColor("#3a3a3a")
+            chart.setBackgroundBrush(chart_bg)
             chart.setTitleBrush(QColor("#f0f0f0"))
             axis_brush = QColor("#c0c0c0")
         else:
-            chart.setBackgroundBrush(QColor("#ffffff"))
+            chart_bg = QColor("#ffffff")
+            chart_border = QColor("#dcdfe6")
+            chart.setBackgroundBrush(chart_bg)
             chart.setTitleBrush(QColor("#1f2328"))
             axis_brush = QColor("#555555")
+        chart.setBackgroundPen(QPen(chart_border, 1))
         for axis in chart.axes():
             axis.setLabelsColor(axis_brush)
             if isinstance(axis, QValueAxis):
                 axis.setLinePenColor(axis_brush)
                 axis.setGridLineColor(QColor("#3a3a3a" if dark else "#e0e0e0"))
+
+    def _apply_chart_view_theme(self, view: QChartView):
+        dark = isDarkTheme()
+        bg = "#1e1e1e" if dark else "#ffffff"
+        border = "#3a3a3a" if dark else "#dcdfe6"
+        view.setFrameShape(QFrame.Shape.NoFrame)
+        view.setBackgroundBrush(QBrush(QColor(bg)))
+        view.viewport().setAutoFillBackground(True)
+        view.viewport().setStyleSheet(f"background: {bg};")
+        view.setStyleSheet(f"QChartView {{ background: {bg}; border: 1px solid {border}; }}")
 
     def _refresh_chart_themes(self):
         for view in (
@@ -724,6 +740,7 @@ class StatisticsPageMixin:
             self._daily_msg_chart_view,
             self._daily_usage_chart_view,
         ):
+            self._apply_chart_view_theme(view)
             chart = view.chart()
             if chart:
                 self._apply_chart_theme(chart)
