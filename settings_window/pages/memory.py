@@ -129,24 +129,41 @@ class MemoryPageMixin:
         status_layout = QGridLayout(status_panel)
         status_layout.setContentsMargins(16, 14, 16, 14)
         status_layout.setHorizontalSpacing(18)
-        status_layout.setVerticalSpacing(8)
+        status_layout.setVerticalSpacing(12)
         self._memory_affection_value = StrongBodyLabel("", status_panel)
         self._memory_trust_value = StrongBodyLabel("", status_panel)
         self._memory_familiarity_value = StrongBodyLabel("", status_panel)
         self._memory_mood_value = StrongBodyLabel("", status_panel)
+        self._memory_affection_bar = ProgressBar(status_panel)
+        self._memory_trust_bar = ProgressBar(status_panel)
+        self._memory_familiarity_bar = ProgressBar(status_panel)
+        self._memory_mood_bar = ProgressBar(status_panel)
         self._memory_updated_value = BodyLabel("", status_panel)
-        for column, (label_key, value_label) in enumerate((
-            ("SettingsWindow.memory_affection", self._memory_affection_value),
-            ("SettingsWindow.memory_trust", self._memory_trust_value),
-            ("SettingsWindow.memory_familiarity", self._memory_familiarity_value),
-            ("SettingsWindow.memory_mood", self._memory_mood_value),
+        for bar in (
+            self._memory_affection_bar,
+            self._memory_trust_bar,
+            self._memory_familiarity_bar,
+            self._memory_mood_bar,
+        ):
+            bar.setRange(0, 100)
+            bar.setFixedHeight(8)
+        for index, (label_key, value_label, bar) in enumerate((
+            ("SettingsWindow.memory_affection", self._memory_affection_value, self._memory_affection_bar),
+            ("SettingsWindow.memory_trust", self._memory_trust_value, self._memory_trust_bar),
+            ("SettingsWindow.memory_familiarity", self._memory_familiarity_value, self._memory_familiarity_bar),
+            ("SettingsWindow.memory_mood", self._memory_mood_value, self._memory_mood_bar),
         )):
+            row = (index // 2) * 2
+            column = (index % 2) * 2
             caption = BodyLabel(_tr(label_key), status_panel)
             caption.setObjectName("memoryStatCaption")
-            status_layout.addWidget(caption, 0, column)
-            status_layout.addWidget(value_label, 1, column)
+            status_layout.addWidget(caption, row, column)
+            status_layout.addWidget(value_label, row, column + 1, alignment=Qt.AlignmentFlag.AlignRight)
+            status_layout.addWidget(bar, row + 1, column, 1, 2)
+            status_layout.setColumnStretch(column, 1)
+            status_layout.setColumnStretch(column + 1, 1)
         self._memory_updated_value.setObjectName("memoryUpdated")
-        status_layout.addWidget(self._memory_updated_value, 2, 0, 1, 4)
+        status_layout.addWidget(self._memory_updated_value, 4, 0, 1, 4)
         layout.addWidget(status_panel)
 
         memory_title = SubtitleLabel(_tr("SettingsWindow.memory_editor_title"), page)
@@ -155,10 +172,46 @@ class MemoryPageMixin:
         memory_hint.setObjectName("memoryHint")
         layout.addWidget(memory_hint)
 
-        self._memory_item_combo = OpaqueDropDownComboBox(page)
-        self._memory_item_combo.setFixedHeight(36)
-        self._memory_item_combo.currentIndexChanged.connect(self._on_memory_item_selected)
-        layout.addWidget(self._memory_item_combo)
+        list_panel = QWidget(page)
+        list_panel.setObjectName("memoryListPanel")
+        list_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(12, 10, 12, 12)
+        list_layout.setSpacing(8)
+
+        list_toolbar = QHBoxLayout()
+        list_toolbar.setContentsMargins(0, 0, 0, 0)
+        list_toolbar.setSpacing(8)
+        self._memory_count_label = BodyLabel("", list_panel)
+        self._memory_count_label.setObjectName("memoryListMeta")
+        self._memory_select_all_check = QCheckBox(_tr("SettingsWindow.memory_select_all", default="全选"), list_panel)
+        self._memory_select_all_check.setTristate(True)
+        self._memory_select_all_check.stateChanged.connect(self._toggle_all_memory_selection)
+        self._memory_batch_delete_btn = PushButton(
+            FluentIcon.DELETE,
+            _tr("SettingsWindow.memory_delete_selected", default="删除所选"),
+            list_panel,
+        )
+        self._memory_batch_delete_btn.setFixedHeight(32)
+        self._memory_batch_delete_btn.clicked.connect(self._delete_selected_memory_items)
+        list_toolbar.addWidget(self._memory_count_label)
+        list_toolbar.addStretch()
+        list_toolbar.addWidget(self._memory_select_all_check)
+        list_toolbar.addWidget(self._memory_batch_delete_btn)
+        list_layout.addLayout(list_toolbar)
+
+        self._memory_list_scroll = QScrollArea(list_panel)
+        self._memory_list_scroll.setObjectName("memoryListScroll")
+        self._memory_list_scroll.setWidgetResizable(True)
+        self._memory_list_scroll.setMinimumHeight(150)
+        self._memory_list_scroll.setMaximumHeight(230)
+        self._memory_list_container = QWidget(self._memory_list_scroll)
+        self._memory_list_layout = QVBoxLayout(self._memory_list_container)
+        self._memory_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._memory_list_layout.setSpacing(6)
+        self._memory_list_scroll.setWidget(self._memory_list_container)
+        list_layout.addWidget(self._memory_list_scroll)
+        layout.addWidget(list_panel)
 
         edit_row = QHBoxLayout()
         edit_row.setContentsMargins(0, 0, 0, 0)
@@ -270,7 +323,14 @@ class MemoryPageMixin:
                 "_memory_familiarity_value",
                 "_memory_mood_value",
                 "_memory_updated_value",
-                "_memory_item_combo",
+                "_memory_affection_bar",
+                "_memory_trust_bar",
+                "_memory_familiarity_bar",
+                "_memory_mood_bar",
+                "_memory_list_layout",
+                "_memory_count_label",
+                "_memory_select_all_check",
+                "_memory_batch_delete_btn",
                 "_memory_kind_combo",
                 "_memory_importance_slider",
                 "_memory_content",
@@ -284,6 +344,22 @@ class MemoryPageMixin:
         if len(content) > 56:
             content = content[:56].rstrip() + "..."
         return f"{kind} - {content or _tr('SettingsWindow.memory_empty_content')}"
+
+    def _memory_item_meta(self, memory: dict) -> str:
+        importance = int(memory.get("importance") or 0)
+        updated_at = memory.get("updated_at") or memory.get("created_at") or ""
+        if updated_at:
+            return _tr(
+                "SettingsWindow.memory_item_meta",
+                default="重要度 {importance} · 更新于 {time}",
+                importance=importance,
+                time=updated_at,
+            )
+        return _tr(
+            "SettingsWindow.memory_item_meta_no_time",
+            default="重要度 {importance}",
+            importance=importance,
+        )
 
     def _memory_user_display(self, user_key: str) -> str:
         role_character = role_character_from_user_key(user_key)
@@ -302,6 +378,165 @@ class MemoryPageMixin:
                 self._memory_kind_combo.setCurrentIndex(index)
                 return
         self._memory_kind_combo.setCurrentIndex(0)
+
+    @staticmethod
+    def _memory_check_state(state) -> Qt.CheckState:
+        try:
+            return Qt.CheckState(state)
+        except (TypeError, ValueError):
+            return state
+
+    def _clear_memory_list_layout(self):
+        while self._memory_list_layout.count():
+            item = self._memory_list_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def _repolish_memory_row(self, row: QWidget):
+        row.style().unpolish(row)
+        row.style().polish(row)
+        row.update()
+
+    def _sync_memory_row_selection(self):
+        selected_id = int(getattr(self, "_selected_memory_id", 0) or 0)
+        for memory_id, (row, _check) in getattr(self, "_memory_row_widgets", {}).items():
+            row.setProperty("selected", memory_id == selected_id)
+            self._repolish_memory_row(row)
+
+    def _update_memory_bulk_actions(self):
+        memories = getattr(self, "_memory_items", [])
+        memory_ids = {int(item.get("id") or 0) for item in memories if item.get("id")}
+        selected_ids = set(getattr(self, "_selected_memory_ids", set())) & memory_ids
+        self._selected_memory_ids = selected_ids
+
+        count = len(memories)
+        selected_count = len(selected_ids)
+        self._memory_count_label.setText(
+            _tr(
+                "SettingsWindow.memory_list_count",
+                default="{count} 条记忆 · 已选择 {selected} 条",
+                count=count,
+                selected=selected_count,
+            )
+        )
+        self._memory_batch_delete_btn.setEnabled(selected_count > 0)
+        self._memory_select_all_check.setEnabled(count > 0)
+
+        self._memory_select_all_check.blockSignals(True)
+        if not count or selected_count == 0:
+            self._memory_select_all_check.setCheckState(Qt.CheckState.Unchecked)
+        elif selected_count == count:
+            self._memory_select_all_check.setCheckState(Qt.CheckState.Checked)
+        else:
+            self._memory_select_all_check.setCheckState(Qt.CheckState.PartiallyChecked)
+        self._memory_select_all_check.blockSignals(False)
+
+    def _render_memory_list(self):
+        self._clear_memory_list_layout()
+        self._memory_row_widgets = {}
+        self._selected_memory_ids = set(getattr(self, "_selected_memory_ids", set()))
+        valid_ids = {int(item.get("id") or 0) for item in self._memory_items if item.get("id")}
+        self._selected_memory_ids &= valid_ids
+
+        if not self._memory_items:
+            empty = BodyLabel(_tr("SettingsWindow.memory_no_items", default="暂无长期记忆。"), self._memory_list_container)
+            empty.setObjectName("memoryListEmpty")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setMinimumHeight(84)
+            self._memory_list_layout.addWidget(empty)
+            self._memory_list_layout.addStretch()
+            self._update_memory_bulk_actions()
+            return
+
+        for memory in self._memory_items:
+            memory_id = int(memory.get("id") or 0)
+            row = QWidget(self._memory_list_container)
+            row.setObjectName("memoryListRow")
+            row.setProperty("selected", memory_id == int(getattr(self, "_selected_memory_id", 0) or 0))
+            row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.setToolTip(str(memory.get("content", "") or ""))
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(10)
+
+            check = QCheckBox(row)
+            check.setChecked(memory_id in self._selected_memory_ids)
+            check.stateChanged.connect(lambda state, mid=memory_id: self._update_memory_selection(mid, state))
+            row_layout.addWidget(check, alignment=Qt.AlignmentFlag.AlignTop)
+
+            text_col = QVBoxLayout()
+            text_col.setContentsMargins(0, 0, 0, 0)
+            text_col.setSpacing(3)
+            top_row = QHBoxLayout()
+            top_row.setContentsMargins(0, 0, 0, 0)
+            top_row.setSpacing(8)
+            kind = StrongBodyLabel(self._memory_kind_label(memory.get("kind", "note")), row)
+            kind.setObjectName("memoryRowKind")
+            meta = BodyLabel(self._memory_item_meta(memory), row)
+            meta.setObjectName("memoryRowMeta")
+            top_row.addWidget(kind)
+            top_row.addStretch()
+            top_row.addWidget(meta)
+            content = BodyLabel(str(memory.get("content", "") or _tr("SettingsWindow.memory_empty_content")), row)
+            content.setObjectName("memoryRowContent")
+            content.setWordWrap(True)
+            text_col.addLayout(top_row)
+            text_col.addWidget(content)
+            row_layout.addLayout(text_col, 1)
+
+            row.mousePressEvent = lambda event, mid=memory_id: self._select_memory_item_by_id(mid)
+            self._memory_list_layout.addWidget(row)
+            self._memory_row_widgets[memory_id] = (row, check)
+
+        self._memory_list_layout.addStretch()
+        self._update_memory_bulk_actions()
+        self._sync_memory_row_selection()
+
+    def _update_memory_selection(self, memory_id: int, state):
+        selected_ids = set(getattr(self, "_selected_memory_ids", set()))
+        if self._memory_check_state(state) == Qt.CheckState.Checked:
+            selected_ids.add(memory_id)
+        else:
+            selected_ids.discard(memory_id)
+        self._selected_memory_ids = selected_ids
+        self._update_memory_bulk_actions()
+
+    def _toggle_all_memory_selection(self, state):
+        check_state = self._memory_check_state(state)
+        if check_state == Qt.CheckState.PartiallyChecked:
+            check_state = Qt.CheckState.Checked
+        if check_state == Qt.CheckState.Checked:
+            selected_ids = {int(item.get("id") or 0) for item in self._memory_items if item.get("id")}
+        else:
+            selected_ids = set()
+        self._selected_memory_ids = selected_ids
+        for memory_id, (_row, check) in getattr(self, "_memory_row_widgets", {}).items():
+            check.blockSignals(True)
+            check.setChecked(memory_id in selected_ids)
+            check.blockSignals(False)
+        self._update_memory_bulk_actions()
+
+    def _load_memory_item(self, memory_id: int):
+        self._selected_memory_id = int(memory_id or 0)
+        memory = next((item for item in self._memory_items if item.get("id") == self._selected_memory_id), None)
+        if memory:
+            self._set_memory_kind(memory.get("kind", "note"))
+            self._memory_importance_slider.setValue(max(1, min(100, int(memory.get("importance") or 50))))
+            self._memory_content.setPlainText(memory.get("content", "") or "")
+            self._memory_delete_btn.setEnabled(True)
+        else:
+            self._set_memory_kind("profile")
+            self._memory_importance_slider.setValue(70)
+            self._memory_content.clear()
+            self._memory_delete_btn.setEnabled(False)
+        self._sync_memory_row_selection()
+
+    def _select_memory_item_by_id(self, memory_id: int):
+        if not self._memory_page_ready():
+            return
+        self._load_memory_item(memory_id)
 
     def _refresh_memory_page(self, prefer_memory_id: int | None = None):
         if not self._memory_page_ready():
@@ -338,44 +573,26 @@ class MemoryPageMixin:
                     value=state["mood_intensity"],
                 )
             )
+            self._memory_affection_bar.setValue(int(state["affection"]))
+            self._memory_trust_bar.setValue(int(state["trust"]))
+            self._memory_familiarity_bar.setValue(int(state["familiarity"]))
+            self._memory_mood_bar.setValue(int(state["mood_intensity"]))
             updated_at = state.get("updated_at") or _tr("SettingsWindow.memory_never_updated")
             self._memory_updated_value.setText(_tr("SettingsWindow.memory_updated_at", time=updated_at))
 
         self._memory_items = db.get_character_memories(character, user_key, limit=100)
         target_id = self._selected_memory_id if prefer_memory_id is None else int(prefer_memory_id or 0)
-        selected_index = 0
-        self._memory_item_combo.blockSignals(True)
-        self._memory_item_combo.clear()
-        self._memory_item_combo.addItem(_tr("SettingsWindow.memory_new_item"), userData=0)
-        for memory in self._memory_items:
-            self._memory_item_combo.addItem(self._memory_item_title(memory), userData=memory["id"])
-            if memory["id"] == target_id:
-                selected_index = self._memory_item_combo.count() - 1
-        self._memory_item_combo.setCurrentIndex(selected_index)
-        self._memory_item_combo.blockSignals(False)
-        self._on_memory_item_selected(selected_index)
-
-    def _on_memory_item_selected(self, index: int):
-        if not self._memory_page_ready():
-            return
-        memory_id = int(self._memory_item_combo.itemData(index) or 0)
-        self._selected_memory_id = memory_id
-        memory = next((item for item in self._memory_items if item.get("id") == memory_id), None)
-        if memory:
-            self._set_memory_kind(memory.get("kind", "note"))
-            self._memory_importance_slider.setValue(max(1, min(100, int(memory.get("importance") or 50))))
-            self._memory_content.setPlainText(memory.get("content", "") or "")
-            self._memory_delete_btn.setEnabled(True)
-            return
-        self._set_memory_kind("profile")
-        self._memory_importance_slider.setValue(70)
-        self._memory_content.clear()
-        self._memory_delete_btn.setEnabled(False)
+        valid_ids = {int(item.get("id") or 0) for item in self._memory_items if item.get("id")}
+        if target_id not in valid_ids:
+            target_id = 0
+        self._selected_memory_id = target_id
+        self._render_memory_list()
+        self._load_memory_item(target_id)
 
     def _start_new_memory(self):
         if not self._memory_page_ready():
             return
-        self._memory_item_combo.setCurrentIndex(0)
+        self._load_memory_item(0)
         self._memory_content.setFocus()
 
     def _save_memory_item(self):
@@ -467,6 +684,54 @@ class MemoryPageMixin:
                 parent=self,
             )
 
+    def _delete_selected_memory_items(self):
+        if not self._memory_page_ready():
+            return
+        selected_ids = set(getattr(self, "_selected_memory_ids", set()))
+        if not selected_ids:
+            return
+        count = len(selected_ids)
+        reply = QMessageBox.warning(
+            self,
+            _tr("SettingsWindow.memory_delete_selected_confirm_title", default="确认批量删除"),
+            _tr(
+                "SettingsWindow.memory_delete_selected_confirm_content",
+                default="将删除所选 {count} 条长期记忆，删除后不会再进入聊天上下文。是否继续？",
+                count=count,
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        character = self._selected_memory_character()
+        user_key = user_key_from_config(self._cfg)
+        try:
+            deleted = self._memory_database().delete_character_memories(selected_ids, character, user_key)
+            if self._selected_memory_id in selected_ids:
+                self._selected_memory_id = 0
+            self._selected_memory_ids = set()
+            self._refresh_memory_page(self._selected_memory_id)
+            InfoBar.success(
+                _tr("SettingsWindow.memory_deleted_title"),
+                _tr(
+                    "SettingsWindow.memory_deleted_selected_content",
+                    default="已删除 {count} 条长期记忆。",
+                    count=deleted,
+                ),
+                duration=2000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.memory_failed_title"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
     def _style_memory_page(self, page: QWidget):
         dark = isDarkTheme()
         page_bg = _BG_DARK if dark else _BG_LIGHT
@@ -481,6 +746,7 @@ class MemoryPageMixin:
                 background: {page_bg};
             }}
             QWidget#memoryStatusPanel,
+            QWidget#memoryListPanel,
             QWidget#memoryCommandPanel {{
                 background: {panel_bg};
                 border: 1px solid {panel_border};
@@ -495,6 +761,44 @@ class MemoryPageMixin:
             BodyLabel#memoryCommandLine {{
                 color: {text};
                 font-size: 13px;
+            }}
+            BodyLabel#memoryListMeta,
+            BodyLabel#memoryListEmpty,
+            BodyLabel#memoryRowMeta {{
+                color: {muted};
+                font-size: 12px;
+            }}
+            QScrollArea#memoryListScroll {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea#memoryListScroll > QWidget > QWidget {{
+                background: transparent;
+            }}
+            QWidget#memoryListRow {{
+                background: {"#2f2f2f" if dark else "#fbfbfc"};
+                border: 1px solid {"#404040" if dark else "#ece6ea"};
+                border-radius: 8px;
+            }}
+            QWidget#memoryListRow:hover {{
+                background: {"#363636" if dark else "#fff5f8"};
+                border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY_SOFT_HOVER};
+            }}
+            QWidget#memoryListRow[selected="true"] {{
+                background: {"#3a2630" if dark else "#fff0f5"};
+                border-color: {BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY};
+            }}
+            BodyLabel#memoryRowContent {{
+                color: {text};
+                font-size: 13px;
+            }}
+            StrongBodyLabel#memoryRowKind {{
+                color: {text};
+                font-size: 13px;
+            }}
+            QCheckBox {{
+                color: {text};
+                spacing: 6px;
             }}
             QTextEdit {{
                 background: {input_bg};
