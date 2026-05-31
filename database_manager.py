@@ -909,6 +909,29 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return bool(cur.rowcount)
 
+    def delete_character_memories(self, memory_ids, character: str = "", user_key: str = "") -> int:
+        ids = set()
+        for memory_id in memory_ids:
+            try:
+                normalized_id = int(memory_id or 0)
+            except (TypeError, ValueError):
+                continue
+            if normalized_id > 0:
+                ids.add(normalized_id)
+        ids = sorted(ids)
+        if not ids:
+            return 0
+        character_filter = str(character or "")
+        user_key_filter = self._normalize_user_key(user_key) if user_key else ""
+        placeholders = ",".join("?" for _ in ids)
+        cur = self._conn.execute(
+            "DELETE FROM character_memories "
+            f"WHERE id IN ({placeholders}) AND (?='' OR character=?) AND (?='' OR user_key=?)",
+            (*ids, character_filter, character_filter, user_key_filter, user_key_filter),
+        )
+        self._conn.commit()
+        return int(cur.rowcount or 0)
+
     def delete_character_memories_like(self, character: str, user_key: str, query: str) -> int:
         user_key = self._normalize_user_key(user_key)
         query = str(query or "").strip()
