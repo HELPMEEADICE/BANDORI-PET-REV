@@ -1065,6 +1065,46 @@ class GroupChatListRow(QWidget):
         event.accept()
 
 
+class _PickerRow(QWidget):
+    def __init__(self, checkbox: QCheckBox, parent=None):
+        super().__init__(parent)
+        self._check = checkbox
+        self._checked_bg = ""
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        checkbox.setParent(self)
+        checkbox.setTristate(False)
+        checkbox.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(checkbox)
+        checkbox.stateChanged.connect(self._on_state_changed)
+
+    def set_checked_bg(self, color: str):
+        self._checked_bg = color
+        self._on_state_changed(self._check.checkState())
+
+    def _on_state_changed(self, _state):
+        if self._check.isChecked() and self._checked_bg:
+            self.setStyleSheet(f"_PickerRow {{ background: {self._checked_bg}; border-radius: 7px; }}")
+        else:
+            self.setStyleSheet("")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._check.toggle()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        event.accept()
+
+    def contextMenuEvent(self, event):
+        event.accept()
+
+
 class ChatCharacterPickerPanel(QWidget):
     open_requested = Signal(object)
 
@@ -1073,9 +1113,11 @@ class ChatCharacterPickerPanel(QWidget):
         self._characters = list(characters)
         self._display_name_for = display_name_for
         self._checks: dict[str, QCheckBox] = {}
+        self._picker_rows: list[_PickerRow] = []
         selected_set = set(selected or [])
         self.setObjectName("ChatCharacterPickerPanel")
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(220)
+        self.setMaximumWidth(280)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 12)
@@ -1110,12 +1152,14 @@ class ChatCharacterPickerPanel(QWidget):
                 band_label.setObjectName("ChatPickerBandLabel")
                 list_layout.addWidget(band_label)
                 for character in members:
-                    check = QCheckBox(self._display_name_for(character), list_widget)
+                    check = QCheckBox(self._display_name_for(character))
                     check.setObjectName("ChatPickerCheck")
                     check.setChecked(character in selected_set)
                     check.stateChanged.connect(self._sync_action_button)
                     self._checks[character] = check
-                    list_layout.addWidget(check)
+                    row = _PickerRow(check, list_widget)
+                    self._picker_rows.append(row)
+                    list_layout.addWidget(row)
                     band_char_set.add(character)
             others = [c for c in self._characters if c not in band_char_set]
             if others:
@@ -1123,20 +1167,24 @@ class ChatCharacterPickerPanel(QWidget):
                 band_label.setObjectName("ChatPickerBandLabel")
                 list_layout.addWidget(band_label)
                 for character in others:
-                    check = QCheckBox(self._display_name_for(character), list_widget)
+                    check = QCheckBox(self._display_name_for(character))
                     check.setObjectName("ChatPickerCheck")
                     check.setChecked(character in selected_set)
                     check.stateChanged.connect(self._sync_action_button)
                     self._checks[character] = check
-                    list_layout.addWidget(check)
+                    row = _PickerRow(check, list_widget)
+                    self._picker_rows.append(row)
+                    list_layout.addWidget(row)
         else:
             for character in self._characters:
-                check = QCheckBox(self._display_name_for(character), list_widget)
+                check = QCheckBox(self._display_name_for(character))
                 check.setObjectName("ChatPickerCheck")
                 check.setChecked(character in selected_set)
                 check.stateChanged.connect(self._sync_action_button)
                 self._checks[character] = check
-                list_layout.addWidget(check)
+                row = _PickerRow(check, list_widget)
+                self._picker_rows.append(row)
+                list_layout.addWidget(row)
         list_layout.addStretch()
         scroll.setWidget(list_widget)
         layout.addWidget(scroll)
@@ -1206,6 +1254,14 @@ class ChatCharacterPickerPanel(QWidget):
             QWidget#ChatPickerList {{
                 background: {bg};
             }}
+            _PickerRow {{
+                background: transparent;
+                border-radius: 7px;
+                padding: 0px;
+            }}
+            _PickerRow:hover {{
+                background: {hover};
+            }}
             QCheckBox#ChatPickerCheck {{
                 color: {text};
                 background: transparent;
@@ -1214,7 +1270,10 @@ class ChatCharacterPickerPanel(QWidget):
                 font-size: 13px;
             }}
             QCheckBox#ChatPickerCheck:hover {{
-                background: {hover};
+                background: transparent;
+            }}
+            QCheckBox#ChatPickerCheck:checked {{
+                background: transparent;
             }}
             QCheckBox#ChatPickerCheck::indicator {{
                 width: 16px;
@@ -1251,6 +1310,8 @@ class ChatCharacterPickerPanel(QWidget):
                 height: 0px;
             }}
         """)
+        for row in self._picker_rows:
+            row.set_checked_bg(hover)
 
 
 class PlanDivider(QWidget):
