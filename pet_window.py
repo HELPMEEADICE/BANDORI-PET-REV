@@ -671,7 +671,7 @@ class PetWindow(QWidget):
             return
         global_pos = QCursor.pos()
         if not self.geometry().contains(global_pos):
-            self._set_mouse_passthrough(False)
+            self._set_mouse_passthrough(True)
             return
         hit = self._is_interaction_hit(global_pos)
         self._set_mouse_passthrough(not hit)
