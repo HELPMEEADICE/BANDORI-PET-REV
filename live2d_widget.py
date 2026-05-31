@@ -126,6 +126,7 @@ class Live2DWidget(QOpenGLWidget):
         self._hit_alpha_cache_ttl_ms = 100
         self._hit_test_interval_ms = round(1000 / 30)
         self._last_hit_test_ms = -1000
+        self._last_hit_test_key = None
         self._last_hit_state = False
         
         # PBO (Pixel Buffer Object) 属性
@@ -442,7 +443,7 @@ class Live2DWidget(QOpenGLWidget):
             return super().mousePressEvent(event)
             
         pos = event.scenePosition()
-        self._pressed_on_model = self._is_model_hit_at(pos.x(), pos.y())
+        self._pressed_on_model = self._is_model_hit_at(pos.x(), pos.y(), sync=True)
         if self._drag_locked:
             return super().mousePressEvent(event)
             
@@ -474,7 +475,7 @@ class Live2DWidget(QOpenGLWidget):
                 self._pressed_on_model and 
                 not self._drag_moved and 
                 self._click_callback and 
-                self._is_model_hit_at(x, y)
+                self._is_model_hit_at(x, y, sync=True)
             )
             self._pressed_on_model = False
 
@@ -676,23 +677,28 @@ class Live2DWidget(QOpenGLWidget):
 
     def _hit_state_at_sync(self, x: float, y: float) -> bool:
         if not self._model:
+            self._last_hit_test_key = None
             self._last_hit_state = False
             return False
         alpha = self._alpha_near(x, y, sync=True)
         self._last_hit_test_ms = self._hit_clock.elapsed()
+        self._last_hit_test_key = self._hit_key_for(x, y)
         self._last_hit_state = alpha > self._hit_alpha_threshold
         return self._last_hit_state
 
     def _hit_state_at(self, x: float, y: float):
         if not self._model:
+            self._last_hit_test_key = None
             self._last_hit_state = False
             return False
             
         now = self._hit_clock.elapsed()
-        if now - self._last_hit_test_ms < self._hit_test_interval_ms:
+        key = self._hit_key_for(x, y)
+        if key == self._last_hit_test_key and now - self._last_hit_test_ms < self._hit_test_interval_ms:
             return self._last_hit_state
             
         self._last_hit_test_ms = now
+        self._last_hit_test_key = key
         alpha = self._alpha_near(x, y, sync=False)
         
         if alpha is None:
@@ -731,6 +737,7 @@ class Live2DWidget(QOpenGLWidget):
         self._visible_bounds_cache = None
         self._visible_bounds_cache_at = -1000
         self._last_hit_test_ms = -1000
+        self._last_hit_test_key = None
         self._last_hit_state = False
         self._clear_pending_hit_pbos()
 
@@ -926,6 +933,14 @@ class Live2DWidget(QOpenGLWidget):
             return sx, sy, key, now, cached[0]
             
         return sx, sy, key, now, None
+
+    def _hit_key_for(self, x: float, y: float):
+        if not self._initialized_gl or not self._model:
+            return None
+        if not (0 <= x < self._cache_w and 0 <= y < self._cache_h):
+            return None
+        scale = self._system_scale or 1.0
+        return int(x * scale), int((self._cache_h - 1 - y) * scale)
 
     def _get_alpha_sync(self, x: float, y: float) -> int:
         ctx = self._get_alpha_read_context(x, y)
