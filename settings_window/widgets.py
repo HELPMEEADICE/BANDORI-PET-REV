@@ -327,27 +327,32 @@ class OpaqueDropDownComboBox(ComboBox):
 
 
 class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
+    _RADIUS = 8
+
     def __init__(self, parent=None):
         super().__init__(parent)
         dark = isDarkTheme()
         bg = "#2b2b2b" if dark else "#ffffff"
         border = "#4a4a4a" if dark else "#d8d8d8"
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(bg))
         palette.setColor(QPalette.ColorRole.Base, QColor(bg))
         self.setPalette(palette)
         self.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.view.setAutoFillBackground(True)
+        self.view.viewport().setAutoFillBackground(False)
+        self.view.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.view.viewport().setStyleSheet("background: transparent;")
         self.view.setGraphicsEffect(None)
         self.setStyleSheet(
             self.styleSheet()
             + f"""
-            QMenu {{
-                background: {bg};
+            OpaqueDropDownComboBoxMenu, RoundMenu {{
+                background: transparent;
                 border: none;
             }}
             """
@@ -355,17 +360,38 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
         self.view.setStyleSheet(
             self.view.styleSheet()
             + f"""
-            QListWidget#comboListWidget {{
+            MenuActionListWidget#comboListWidget {{
                 background: {bg};
                 border: 1px solid {border};
-                border-radius: 8px;
+                border-radius: {self._RADIUS}px;
             }}
             """
         )
 
+    def _rounded_region(self, rect):
+        rect = QRectF(rect)
+        if rect.isEmpty():
+            return QRegion()
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._RADIUS, self._RADIUS)
+        return QRegion(path.toFillPolygon().toPolygon())
+
+    def _apply_rounded_mask(self):
+        region = self._rounded_region(self.rect())
+        view_region = self._rounded_region(self.view.rect())
+        if region.isEmpty() or view_region.isEmpty():
+            return
+        self.setMask(region)
+        self.view.setMask(view_region)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_rounded_mask()
+
     def exec(self, pos, ani=True, aniType=MenuAnimationType.DROP_DOWN):
         self.view.adjustSize(pos, aniType)
         self.adjustSize()
+        self._apply_rounded_mask()
         if not ani:
             aniType = MenuAnimationType.NONE
         self.aniManager = MenuAnimationManager.make(self, aniType)
