@@ -1,9 +1,9 @@
 import sys
 
-import OpenGL.GL as gl
 from PySide6.QtGui import QOpenGLContext
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
+from qt_gl import gl
 from settings_window.constants import *
 
 
