@@ -1433,6 +1433,24 @@ class LightweightPet:
         return self._call_original_wndproc(hwnd, msg, wparam, lparam)
 
     def _set_mouse_passthrough(self, enabled: bool):
+        if os.name == "nt" and self.hwnd and self.native_hit_test:
+            # WM_NCHITTEST already provides per-pixel click-through. Avoid
+            # toggling whole-window transparency, which can stick per instance
+            # when several topmost pet windows are polling the same cursor.
+            style = _get_window_long(self.hwnd, GWL_EXSTYLE)
+            if style & WS_EX_TRANSPARENT:
+                _set_window_long(self.hwnd, GWL_EXSTYLE, style & ~WS_EX_TRANSPARENT)
+                _set_window_pos(
+                    self.hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                )
+            self.mouse_passthrough = enabled
+            return
         if enabled == self.mouse_passthrough:
             return
         if self.mouse_passthrough_supported and self.window is not None:
