@@ -460,8 +460,22 @@ class RadialMenu(QWidget):
             return
         if self._ignore_outside_click_until_release:
             return
-        if not self.geometry().contains(QCursor.pos()):
+        cursor_pos = QCursor.pos()
+        if not self.geometry().contains(cursor_pos):
             self.dismiss()
+            return
+        local_pos = self.mapFromGlobal(cursor_pos)
+        if not self._is_interactive_point(local_pos):
+            self.dismiss()
+
+    def _is_interactive_point(self, pos: QPoint) -> bool:
+        if any(item.widget.isVisible() and item.widget.geometry().contains(pos) for item in self._items):
+            return True
+        cx = self.width() // 2
+        cy = self.height() // 2
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        return dx * dx + dy * dy < 40 * 40
 
     def _play_show_animation(self):
         group = QParallelAnimationGroup(self)
