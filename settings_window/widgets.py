@@ -325,6 +325,46 @@ class OpaqueDropDownComboBox(ComboBox):
     def _createComboMenu(self):
         return OpaqueDropDownComboBoxMenu(self)
 
+    def _showComboMenu(self):
+        if not self.items:
+            return
+
+        menu = self._createComboMenu()
+        for item in self.items:
+            action = QAction(item.icon, item.text)
+            action.setEnabled(item.isEnabled)
+            menu.addAction(action)
+
+        menu.view.itemClicked.connect(lambda i: self._onItemClicked(self.findText(i.text().lstrip())))
+
+        if menu.view.width() < self.width():
+            menu.view.setMinimumWidth(self.width())
+            menu.adjustSize()
+
+        menu.setMaxVisibleItems(self.maxVisibleItems())
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.closedSignal.connect(self._onDropMenuClosed)
+        self.dropMenu = menu
+
+        if self.currentIndex() >= 0 and self.items:
+            menu.setDefaultAction(menu.actions()[self.currentIndex()])
+
+        x = -menu.width() // 2 + menu.layout().contentsMargins().left() + self.width() // 2
+        pd = self.mapToGlobal(QPoint(x, self.height()))
+        hd = menu.view.heightForAnimation(pd, MenuAnimationType.DROP_DOWN)
+        margins = menu.view.viewportMargins()
+        first_item_height = menu.view.item(0).sizeHint().height() if menu.view.count() else menu.itemHeight
+        min_down_height = min(menu.view.itemsHeight(), first_item_height + margins.top() + margins.bottom())
+
+        if hd >= min_down_height:
+            menu.view.adjustSize(pd, MenuAnimationType.DROP_DOWN)
+            menu.exec(pd, aniType=MenuAnimationType.DROP_DOWN)
+            return
+
+        pu = self.mapToGlobal(QPoint(x, 0))
+        menu.view.adjustSize(pu, MenuAnimationType.PULL_UP)
+        menu.exec(pu, aniType=MenuAnimationType.PULL_UP)
+
 
 class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
     _RADIUS = 8
@@ -389,6 +429,10 @@ class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
         self._apply_rounded_mask()
 
     def exec(self, pos, ani=True, aniType=MenuAnimationType.DROP_DOWN):
+        if aniType == MenuAnimationType.DROP_DOWN:
+            aniType = MenuAnimationType.FADE_IN_DROP_DOWN
+        elif aniType == MenuAnimationType.PULL_UP:
+            aniType = MenuAnimationType.FADE_IN_PULL_UP
         self.view.adjustSize(pos, aniType)
         self.adjustSize()
         self._apply_rounded_mask()

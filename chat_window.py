@@ -1068,14 +1068,14 @@ class GroupChatListRow(QWidget):
 class ChatCharacterPickerPanel(QWidget):
     open_requested = Signal(object)
 
-    def __init__(self, characters: list[str], display_name_for, selected=None, parent=None):
+    def __init__(self, characters: list[str], display_name_for, selected=None, bands=None, parent=None):
         super().__init__(parent)
         self._characters = list(characters)
         self._display_name_for = display_name_for
         self._checks: dict[str, QCheckBox] = {}
         selected_set = set(selected or [])
         self.setObjectName("ChatCharacterPickerPanel")
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(280)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 12)
@@ -1091,20 +1091,52 @@ class ChatCharacterPickerPanel(QWidget):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setMaximumHeight(320)
+        scroll.setMaximumHeight(360)
 
         list_widget = QWidget(scroll)
         list_widget.setObjectName("ChatPickerList")
         list_layout = QVBoxLayout(list_widget)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(2)
-        for character in self._characters:
-            check = QCheckBox(self._display_name_for(character), list_widget)
-            check.setObjectName("ChatPickerCheck")
-            check.setChecked(character in selected_set)
-            check.stateChanged.connect(self._sync_action_button)
-            self._checks[character] = check
-            list_layout.addWidget(check)
+
+        char_set = set(self._characters)
+        if bands:
+            band_char_set = set()
+            for band in bands:
+                members = [c for c in band.get("characters", []) if c in char_set]
+                if not members:
+                    continue
+                band_label = QLabel(band.get("display", ""), list_widget)
+                band_label.setObjectName("ChatPickerBandLabel")
+                list_layout.addWidget(band_label)
+                for character in members:
+                    check = QCheckBox(self._display_name_for(character), list_widget)
+                    check.setObjectName("ChatPickerCheck")
+                    check.setChecked(character in selected_set)
+                    check.stateChanged.connect(self._sync_action_button)
+                    self._checks[character] = check
+                    list_layout.addWidget(check)
+                    band_char_set.add(character)
+            others = [c for c in self._characters if c not in band_char_set]
+            if others:
+                band_label = QLabel(_tr("ChatWindow.new_chat_picker_others", default="其他"), list_widget)
+                band_label.setObjectName("ChatPickerBandLabel")
+                list_layout.addWidget(band_label)
+                for character in others:
+                    check = QCheckBox(self._display_name_for(character), list_widget)
+                    check.setObjectName("ChatPickerCheck")
+                    check.setChecked(character in selected_set)
+                    check.stateChanged.connect(self._sync_action_button)
+                    self._checks[character] = check
+                    list_layout.addWidget(check)
+        else:
+            for character in self._characters:
+                check = QCheckBox(self._display_name_for(character), list_widget)
+                check.setObjectName("ChatPickerCheck")
+                check.setChecked(character in selected_set)
+                check.stateChanged.connect(self._sync_action_button)
+                self._checks[character] = check
+                list_layout.addWidget(check)
         list_layout.addStretch()
         scroll.setWidget(list_widget)
         layout.addWidget(scroll)
@@ -1159,6 +1191,13 @@ class ChatCharacterPickerPanel(QWidget):
                 background: transparent;
                 font-size: 13px;
                 font-weight: 700;
+            }}
+            QLabel#ChatPickerBandLabel {{
+                color: {muted};
+                background: transparent;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 6px 8px 2px 8px;
             }}
             QScrollArea#ChatPickerScroll {{
                 background: {bg};
@@ -3119,6 +3158,7 @@ class ChatWindow(QWidget):
             characters,
             lambda character: self._model_manager.get_display_name(character),
             selected=current_selection,
+            bands=self._model_manager.bands,
             parent=menu,
         )
         action = QWidgetAction(menu)
