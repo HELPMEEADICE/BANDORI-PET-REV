@@ -5,7 +5,7 @@ import time
 import numpy as np
 import OpenGL.GL as gl
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 
@@ -122,7 +122,7 @@ class Live2DWidget(QOpenGLWidget):
         self._hit_alpha_cache = {}
         self._visible_bounds_cache = None
         self._visible_bounds_cache_at = -1000
-        self._visible_bounds_cache_ttl_ms = 500
+        self._visible_bounds_cache_ttl_ms = 1500
         self._hit_alpha_cache_ttl_ms = 100
         self._hit_test_interval_ms = round(1000 / 30)
         self._last_hit_test_ms = -1000
@@ -150,7 +150,7 @@ class Live2DWidget(QOpenGLWidget):
         self._render_timer.timeout.connect(self.update)
         
         self._head_track_timer = QTimer(self)
-        self._head_track_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._head_track_timer.setTimerType(Qt.TimerType.CoarseTimer)
         self._head_track_timer.setInterval(self._hit_test_interval_ms)
         self._head_track_timer.timeout.connect(self._poll_head_tracking)
 
@@ -203,6 +203,7 @@ class Live2DWidget(QOpenGLWidget):
             wglSwapIntervalEXT(1 if self._vsync else 0)
         except Exception:
             pass
+        self._update_render_timer()
         if not self._static_render:
             self.update()
 
@@ -233,6 +234,7 @@ class Live2DWidget(QOpenGLWidget):
         self._lip_sync_target = max(0.0, min(float(level), self._lip_sync_max_open))
         self._lip_sync_form_target = max(-1.0, min(float(form), 1.0))
         self._lip_sync_last_ms = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
+        self._update_render_timer()
         self.update()
 
     def set_hit_alpha_threshold(self, threshold: int):
@@ -377,11 +379,21 @@ class Live2DWidget(QOpenGLWidget):
     def _frame_interval_ms(self) -> int:
         return max(1, round(1000 / self._fps))
 
+    def _sync_timer_type(self):
+        timer_type = (
+            Qt.TimerType.PreciseTimer
+            if self._fps > 75 or self._lip_sync_level > 0.01 or self._lip_sync_target > 0.01
+            else Qt.TimerType.CoarseTimer
+        )
+        if self._render_timer.timerType() != timer_type:
+            self._render_timer.setTimerType(timer_type)
+
     def _update_render_timer(self):
         if not self._initialized_gl or self._static_render or not self._model or not self.isVisible():
             self._render_timer.stop()
             self._head_track_timer.stop()
             return
+        self._sync_timer_type()
         self._render_timer.start(self._frame_interval_ms())
         self._head_track_timer.start()
 
@@ -567,8 +579,6 @@ class Live2DWidget(QOpenGLWidget):
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glDisable(gl.GL_DITHER)
         
-        from PySide6.QtGui import QGuiApplication
-
         self._system_scale = QGuiApplication.primaryScreen().devicePixelRatio()
         self._initialized_gl = True
         self._cache_w, self._cache_h = self.width(), self.height()

@@ -5,6 +5,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import uuid
 
@@ -149,6 +150,9 @@ LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
+LIVE2D_PREWARM_MAX_MOTIONS = 18
+LIVE2D_PREWARM_MAX_EXPRESSIONS = 10
+LIVE2D_PREWARM_STEP_MS = 90
 
 
 _PIXEL_PET_WIDGET_CLASS = None
@@ -273,6 +277,10 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = []
         self._live2d_prewarm_expression_queue = []
         self._live2d_prewarm_prefetched = False
+        self._motion_names_cache = []
+        self._motion_names_cache_id = None
+        self._expression_names_cache = []
+        self._expression_names_cache_id = None
         self._exp_map_cache = ({}, [])
         self._exp_map_cache_id = None
         self._click_expression_hold_until = 0.0
@@ -910,6 +918,10 @@ class PetWindow(QWidget):
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
+        self._motion_names_cache = []
+        self._motion_names_cache_id = None
+        self._expression_names_cache = []
+        self._expression_names_cache_id = None
         self._exp_map_cache = ({}, [])
         self._exp_map_cache_id = None
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
@@ -920,19 +932,32 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()
         self._live2d_prewarm_expression_queue = self._build_live2d_prewarm_expression_queue()
         self._live2d_prewarm_prefetched = False
-        QTimer.singleShot(350, lambda t=token: self._prewarm_next_live2d_action(t))
+        QTimer.singleShot(250, lambda t=token: self._prefetch_live2d_action_resources(t))
+        QTimer.singleShot(1200, lambda t=token: self._prewarm_next_live2d_action(t))
 
-    def _prefetch_live2d_action_resources(self):
+    def _prefetch_live2d_action_resources(self, token: int):
+        if token != self._live2d_prewarm_token:
+            return
         if self._live2d_prewarm_prefetched:
             return
         self._live2d_prewarm_prefetched = True
+        model_path = self._live2d_widget.model_path
+        motions = list(self._live2d_prewarm_motion_queue)
+        expressions = list(self._live2d_prewarm_expression_queue)
+        if not motions and not expressions:
+            return
         try:
-            from zst_model_archive import prefetch_virtual_action_resources
-            prefetch_virtual_action_resources(
-                self._live2d_widget.model_path,
-                self._live2d_prewarm_motion_queue,
-                self._live2d_prewarm_expression_queue,
-            )
+            from zst_model_archive import is_virtual_path, prefetch_virtual_action_resources
+            if not is_virtual_path(model_path):
+                return
+
+            def worker():
+                try:
+                    prefetch_virtual_action_resources(model_path, motions, expressions)
+                except Exception:
+                    pass
+
+            threading.Thread(target=worker, name="Live2DActionPrefetch", daemon=True).start()
         except Exception:
             pass
 
@@ -965,7 +990,7 @@ class PetWindow(QWidget):
                 add(name)
         for name in motion_names:
             add(name)
-        return ordered
+        return ordered[:LIVE2D_PREWARM_MAX_MOTIONS]
 
     def _build_live2d_prewarm_expression_queue(self) -> list[str]:
         from live2d_click_actions import normalize_click_motion_actions
@@ -990,7 +1015,7 @@ class PetWindow(QWidget):
             add(self._find_expression_tag(tag))
         for name in expression_names:
             add(name)
-        return ordered
+        return ordered[:LIVE2D_PREWARM_MAX_EXPRESSIONS]
 
     def _prewarm_next_live2d_action(self, token: int):
         if token != self._live2d_prewarm_token or self._pixel_mode:
@@ -998,14 +1023,14 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return
-        self._prefetch_live2d_action_resources()
+        self._prefetch_live2d_action_resources(token)
         if self._live2d_prewarm_motion_queue:
             name = self._live2d_prewarm_motion_queue.pop(0)
             try:
                 model.PreloadMotionGroup(name)
             except Exception:
                 pass
-            QTimer.singleShot(45, lambda t=token: self._prewarm_next_live2d_action(t))
+            QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
             return
         if self._live2d_prewarm_expression_queue:
             name = self._live2d_prewarm_expression_queue.pop(0)
@@ -1013,7 +1038,7 @@ class PetWindow(QWidget):
                 model.PreloadExpression(name)
             except Exception:
                 pass
-            QTimer.singleShot(45, lambda t=token: self._prewarm_next_live2d_action(t))
+            QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()
@@ -1171,7 +1196,11 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return []
-        return list(model.modelSetting.getMotionNames())
+        cache_id = id(model.modelSetting)
+        if cache_id != self._motion_names_cache_id:
+            self._motion_names_cache_id = cache_id
+            self._motion_names_cache = list(model.modelSetting.getMotionNames())
+        return list(self._motion_names_cache)
 
     def _choose_context_idle_motion(self, kind: str, motion_names: list[str]) -> str:
         if not motion_names:
@@ -1479,20 +1508,22 @@ class PetWindow(QWidget):
 
     def _click_motion_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
-        visible_bounds = self._live2d_widget.visible_model_bounds()
         if area_name in {"head", "face"}:
-            return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
+            return (
+                self._live2d_widget.hit_area_bounds(area_name)
+                or self._live2d_widget.visible_model_bounds()
+            )
         if area_name in {"body", "hit", ""}:
             return (
-                visible_bounds
-                or self._live2d_widget.hit_area_bounds("body")
+                self._live2d_widget.hit_area_bounds("body")
                 or self._live2d_widget.hit_area_union_bounds()
+                or self._live2d_widget.visible_model_bounds()
             )
-        return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
+        return self._live2d_widget.hit_area_bounds(area_name) or self._live2d_widget.visible_model_bounds()
 
     def _configured_click_motion_feedback(self, region: str) -> dict[str, str]:
         from live2d_click_actions import normalize_click_motion_actions
-        motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
+        motion_names = self._current_motion_names()
         expression_names = self._current_expression_names()
         actions = normalize_click_motion_actions(
             self._current_model_entry().get("click_motion_actions", {}),
@@ -1506,7 +1537,11 @@ class PetWindow(QWidget):
         if model is None:
             return []
         try:
-            return list(model.expressions.keys())
+            cache_id = id(model.expressions)
+            if cache_id != self._expression_names_cache_id:
+                self._expression_names_cache_id = cache_id
+                self._expression_names_cache = list(model.expressions.keys())
+            return list(self._expression_names_cache)
         except Exception:
             return []
 
@@ -1563,7 +1598,7 @@ class PetWindow(QWidget):
 
     def _choose_click_action_motion(self, region: str) -> str:
         from live2d_click_actions import click_motion_auto_buckets
-        motion_names = list(self._live2d_widget.model.modelSetting.getMotionNames())
+        motion_names = self._current_motion_names()
         if not motion_names:
             return ""
 
@@ -2154,7 +2189,7 @@ class PetWindow(QWidget):
                     return ename
             return None
 
-        motion_names = list(model.modelSetting.getMotionNames())
+        motion_names = self._current_motion_names()
 
         char_lower = char_prefix.lower()
 
@@ -2350,7 +2385,7 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return
-        motion_names = list(model.modelSetting.getMotionNames())
+        motion_names = self._current_motion_names()
         configured_motion = self._current_model_entry().get("default_motion", "")
         if configured_motion in motion_names:
             priority = self._live2d.MotionPriority.NORMAL if smooth else self._live2d.MotionPriority.FORCE

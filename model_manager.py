@@ -1,6 +1,4 @@
 import json
-import os
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -10,6 +8,7 @@ from PySide6.QtWidgets import QMessageBox
 from i18n_manager import tr as _tr
 from process_utils import app_base_dir
 from zst_model_archive import (
+    VIRTUAL_SEP,
     is_virtual_path,
     list_archive_files,
     load_virtual_bytes,
@@ -138,11 +137,10 @@ class ModelManager:
         if not archive_paths:
             return
 
-        max_workers = min(len(archive_paths), os.cpu_count() or 1)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for result in executor.map(self._read_model_archive, archive_paths):
-                if result is not None:
-                    self._apply_archive_scan_result(result)
+        for archive_path in archive_paths:
+            result = self._read_model_archive(archive_path)
+            if result is not None:
+                self._apply_archive_scan_result(result)
 
     def _scan_model_dir(self, entry: Path):
         char_name = entry.name
@@ -174,14 +172,15 @@ class ModelManager:
             print(f"Failed to scan model archive {archive_path}: {exc}")
             return None
 
+        archive_resolved = str(archive_path.resolve())
         costumes = []
         model_paths = []
         for member in files:
-            if Path(member).name != "model.json":
+            if member != "model.json" and not member.endswith("/model.json"):
                 continue
-            parent = Path(member).parent
-            costume_id = parent.name if str(parent) != "." else "default"
-            model_path = make_virtual_path(archive_path, member)
+            parent = member.rsplit("/", 1)[0] if "/" in member else ""
+            costume_id = parent.rsplit("/", 1)[-1] if parent else "default"
+            model_path = f"{archive_resolved}{VIRTUAL_SEP}{member}"
             costumes.append({
                 "id": costume_id,
                 "path": model_path,
