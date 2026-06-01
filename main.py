@@ -630,6 +630,8 @@ def main():
             broadcast_ipc_line(line)
         elif line.startswith("PEER_POS\t"):
             broadcast_ipc_line(line)
+        elif line.startswith("PEER_DRAG\t"):
+            broadcast_ipc_line(line)
         elif line.startswith("PREVIEW_MOTION\t"):
             broadcast_ipc_line(line)
         elif line.startswith("LAYER_ORDER\t"):
@@ -732,6 +734,7 @@ def main():
             ("live2d_idle_actions_enabled", "live2d_idle_actions_enabled", True),
             ("live2d_head_tracking_enabled", "live2d_head_tracking_enabled", True),
             ("live2d_mutual_gaze_enabled", "live2d_mutual_gaze_enabled", False),
+            ("move_all_roles_together", "move_all_roles_together", False),
             ("birthday_tray_notifications_enabled", "birthday_tray_notifications_enabled", True),
             ("live2d_quality", "live2d_quality", "balanced"),
             ("live2d_scale", "live2d_scale", 100),
@@ -820,7 +823,8 @@ def main():
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
             "live2d_idle_actions_enabled", "live2d_head_tracking_enabled",
-            "live2d_mutual_gaze_enabled", "birthday_tray_notifications_enabled",
+            "live2d_mutual_gaze_enabled", "move_all_roles_together",
+            "birthday_tray_notifications_enabled",
             "live2d_quality", "live2d_scale",
             "compact_ai_window_enabled", "compact_ai_window_opacity",
             "compact_ai_window_font_size", "compact_ai_window_background_color",

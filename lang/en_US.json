@@ -96,6 +96,8 @@
   "SettingsWindow.live2d_head_tracking_hint": "Global setting: when disabled, the character will not follow the mouse cursor.",
   "SettingsWindow.live2d_mutual_gaze": "Mutual Gaze",
   "SettingsWindow.live2d_mutual_gaze_hint": "When enabled, characters will look at the nearest character.",
+  "SettingsWindow.move_all_roles_together": "Move All Characters Together",
+  "SettingsWindow.move_all_roles_together_hint": "Off by default. When enabled, dragging any character moves the other desktop characters by the same distance.",
   "SettingsWindow.behavior_title": "Character Behavior",
   "SettingsWindow.behavior_subtitle": "Configure idle motions, gaze tracking, and multi-character interactions.",
   "SettingsWindow.behavior_live2d_section": "Live2D Behavior",

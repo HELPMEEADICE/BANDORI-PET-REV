@@ -222,6 +222,9 @@ class PetWindow(QWidget):
         self._live2d_mutual_gaze_enabled = (
             bool(config_manager.get("live2d_mutual_gaze_enabled", False))
         )
+        self._move_all_roles_together = bool(
+            config_manager.get("move_all_roles_together", False)
+        )
         self._peer_window_positions = {}  # {character: (x, y)}
         self._peer_pos_broadcast_timer = QTimer(self)
         self._peer_pos_broadcast_timer.setInterval(200)
@@ -853,6 +856,39 @@ class PetWindow(QWidget):
         self._peer_window_positions[char] = (x, y)
         self._update_mutual_gaze()
 
+    def _broadcast_peer_drag(self, dx: int, dy: int):
+        if not self._move_all_roles_together:
+            return
+        if not self._ipc_socket or not self._ipc_socket.isOpen():
+            return
+        payload = json.dumps({
+            "character": self._current_char,
+            "dx": int(dx),
+            "dy": int(dy),
+        }, ensure_ascii=False)
+        self._ipc_socket.write((f"PEER_DRAG\t{payload}\n").encode("utf-8"))
+        self._ipc_socket.flush()
+
+    def _handle_peer_drag(self, data: dict):
+        if not self._move_all_roles_together:
+            return
+        char = str(data.get("character", "") or "")
+        if not char or char == self._current_char:
+            return
+        try:
+            dx = int(data.get("dx", 0))
+            dy = int(data.get("dy", 0))
+        except (TypeError, ValueError):
+            return
+        if dx == 0 and dy == 0:
+            return
+        self._suppress_compact_ai_sync = True
+        try:
+            self._move_unconstrained(self.x() + dx, self.y() + dy)
+        finally:
+            self._suppress_compact_ai_sync = False
+        self._move_compact_ai_with_pet(dx, dy)
+
     def _update_mutual_gaze(self):
         """更新对视状态，让角色看向最近的另一个角色"""
         if not self._live2d_mutual_gaze_enabled:
@@ -1446,6 +1482,7 @@ class PetWindow(QWidget):
             "live2d_idle_actions_enabled",
             "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled",
+            "move_all_roles_together",
         }
         if self._cfg and any(key in data for key in compact_keys):
             self._cfg.load()
@@ -1481,6 +1518,8 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_head_tracking_enabled", bool(data["live2d_head_tracking_enabled"]))
             if "live2d_mutual_gaze_enabled" in data:
                 self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
+            if "move_all_roles_together" in data:
+                self._cfg.set("move_all_roles_together", bool(data["move_all_roles_together"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
             if "user_avatar_path" in data:
@@ -1515,6 +1554,8 @@ class PetWindow(QWidget):
             self.set_live2d_head_tracking_enabled(data["live2d_head_tracking_enabled"])
         if "live2d_mutual_gaze_enabled" in data:
             self.set_live2d_mutual_gaze_enabled(data["live2d_mutual_gaze_enabled"])
+        if "move_all_roles_together" in data:
+            self._move_all_roles_together = bool(data["move_all_roles_together"])
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -1589,6 +1630,7 @@ class PetWindow(QWidget):
         finally:
             self._suppress_compact_ai_sync = False
         self._move_compact_ai_with_pet(dx, dy)
+        self._broadcast_peer_drag(dx, dy)
 
     def _move_unconstrained(self, x: int, y: int):
         if not self._should_bypass_x11_window_manager() or _x11 is None:
@@ -2043,6 +2085,11 @@ class PetWindow(QWidget):
         elif line.startswith("PEER_POS\t"):
             try:
                 self._handle_peer_pos(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+        elif line.startswith("PEER_DRAG\t"):
+            try:
+                self._handle_peer_drag(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
         elif line.startswith("OPEN_CHAT"):
@@ -2775,6 +2822,7 @@ class PetWindow(QWidget):
             self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
             self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
             self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
+            self._cfg.set("move_all_roles_together", self._move_all_roles_together)
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)

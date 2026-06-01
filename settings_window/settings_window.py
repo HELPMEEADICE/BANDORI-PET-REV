@@ -140,6 +140,9 @@ class SettingsWindow(
         self._live2d_mutual_gaze_enabled = (
             bool(self._cfg.get("live2d_mutual_gaze_enabled", False)) if self._cfg else False
         )
+        self._move_all_roles_together = (
+            bool(self._cfg.get("move_all_roles_together", False)) if self._cfg else False
+        )
         self._birthday_tray_notifications_enabled = (
             bool(self._cfg.get("birthday_tray_notifications_enabled", True)) if self._cfg else True
         )
@@ -2621,6 +2624,7 @@ class SettingsWindow(
             "live2d_idle_actions_enabled": self._live2d_idle_actions_enabled,
             "live2d_head_tracking_enabled": self._live2d_head_tracking_enabled,
             "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_enabled,
+            "move_all_roles_together": self._move_all_roles_together,
             "birthday_tray_notifications_enabled": self._birthday_tray_notifications_enabled,
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
@@ -2672,6 +2676,7 @@ class SettingsWindow(
             self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
             self._cfg.set("live2d_head_tracking_enabled", settings["live2d_head_tracking_enabled"])
             self._cfg.set("live2d_mutual_gaze_enabled", settings["live2d_mutual_gaze_enabled"])
+            self._cfg.set("move_all_roles_together", settings["move_all_roles_together"])
             self._cfg.set("birthday_tray_notifications_enabled", settings["birthday_tray_notifications_enabled"])
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])

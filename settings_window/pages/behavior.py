@@ -79,6 +79,7 @@ class BehaviorPageMixin:
         self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
         self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
+        self._cfg.set("move_all_roles_together", self._move_all_roles_together)
         self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
         self._cfg.save()
 
@@ -106,6 +107,10 @@ class BehaviorPageMixin:
         if self._live2d_mutual_gaze_enabled:
             self._live2d_head_tracking_enabled = False
         self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
+
+    def _on_move_all_roles_together_changed(self, checked: bool):
+        self._move_all_roles_together = bool(checked)
         self._save_live2d_behavior_config()
 
     def _populate_default_motion_combo(self, item: dict):
@@ -608,6 +613,14 @@ class BehaviorPageMixin:
             "_behavior_mutual_gaze_switch",
             self._live2d_mutual_gaze_enabled,
             self._on_live2d_mutual_gaze_changed,
+        ))
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.move_all_roles_together",
+            "SettingsWindow.move_all_roles_together_hint",
+            "_move_all_roles_together_switch",
+            self._move_all_roles_together,
+            self._on_move_all_roles_together_changed,
         ))
 
         notify_section = StrongBodyLabel(_tr(

@@ -148,6 +148,7 @@ DEFAULTS = {
     "live2d_lip_sync_max_open": 0.55,
     "live2d_head_tracking_enabled": True,
     "live2d_mutual_gaze_enabled": False,
+    "move_all_roles_together": False,
     "birthday_tray_notifications_enabled": True,
     "auto_start": False,
     "drag_locked": False,
