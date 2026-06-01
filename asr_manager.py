@@ -42,6 +42,8 @@ from faster_whisper import WhisperModel
 MODEL_NAME = os.environ.get("ASR_MODEL", "Systran/faster-whisper-small")
 DEVICE = os.environ.get("ASR_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
+HOST = os.environ.get("ASR_HOST", "127.0.0.1")
+PORT = int(os.environ.get("ASR_PORT", "8000"))
 
 app = FastAPI()
 model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
@@ -49,7 +51,7 @@ model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
 
 @app.get("/health")
 def health():
-    return {"ok": True, "model": MODEL_NAME, "device": DEVICE}
+    return {"ok": True, "model": MODEL_NAME, "device": DEVICE, "host": HOST, "port": PORT}
 
 
 @app.post("/v1/audio/transcriptions")
@@ -81,7 +83,7 @@ async def transcribe(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)
 '''
 
 
@@ -89,6 +91,8 @@ _LOCAL_ASR_START_PS1 = '''$ErrorActionPreference = "Stop"
 $env:ASR_MODEL = if ($env:ASR_MODEL) { $env:ASR_MODEL } else { "Systran/faster-whisper-small" }
 $env:ASR_DEVICE = if ($env:ASR_DEVICE) { $env:ASR_DEVICE } else { "cpu" }
 $env:ASR_COMPUTE_TYPE = if ($env:ASR_COMPUTE_TYPE) { $env:ASR_COMPUTE_TYPE } else { "int8" }
+$env:ASR_HOST = if ($env:ASR_HOST) { $env:ASR_HOST } else { "127.0.0.1" }
+$env:ASR_PORT = if ($env:ASR_PORT) { $env:ASR_PORT } else { "8000" }
 & "$PSScriptRoot\\.venv\\Scripts\\python.exe" "$PSScriptRoot\\server.py"
 '''
 
@@ -114,6 +118,26 @@ def _venv_create_command() -> list[str]:
 
 def _local_asr_log_path() -> Path:
     return ASR_LOCAL_SERVER_DIR / "server.log"
+
+
+def _local_asr_runtime_endpoint() -> tuple[str, int]:
+    host = str(os.environ.get("ASR_HOST", "127.0.0.1") or "127.0.0.1").strip()
+    try:
+        port = int(os.environ.get("ASR_PORT", "8000") or "8000")
+    except (TypeError, ValueError):
+        port = 8000
+    return host, port
+
+
+def _local_asr_connect_host(host: str) -> str:
+    return "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+
+
+def _local_asr_api_url(host: str, port: int) -> str:
+    connect_host = _local_asr_connect_host(host)
+    if ":" in connect_host and not connect_host.startswith("["):
+        connect_host = f"[{connect_host}]"
+    return f"http://{connect_host}:{port}/v1/audio/transcriptions"
 
 
 def _is_local_asr_port_open(host: str = "127.0.0.1", port: int = 8000, timeout: float = 0.35) -> bool:
@@ -162,8 +186,10 @@ def _tail_local_asr_log(max_chars: int = 1800) -> str:
 
 def _launch_local_asr_server() -> tuple[bool, str]:
     global _LOCAL_ASR_PROCESS
-    if _is_local_asr_port_open():
-        return True, "ASR local server is already listening on 127.0.0.1:8000."
+    host, port = _local_asr_runtime_endpoint()
+    connect_host = _local_asr_connect_host(host)
+    if _is_local_asr_port_open(connect_host, port):
+        return True, f"ASR local server is already listening on {connect_host}:{port}."
     python = _local_asr_python()
     server = ASR_LOCAL_SERVER_DIR / "server.py"
     if not python.exists() or not server.exists():
@@ -173,6 +199,8 @@ def _launch_local_asr_server() -> tuple[bool, str]:
     env.setdefault("ASR_MODEL", ASR_LOCAL_MODEL)
     env.setdefault("ASR_DEVICE", ASR_LOCAL_DEVICE)
     env.setdefault("ASR_COMPUTE_TYPE", ASR_LOCAL_COMPUTE_TYPE)
+    env.setdefault("ASR_HOST", host)
+    env.setdefault("ASR_PORT", str(port))
     log = _local_asr_log_path().open("a", encoding="utf-8", errors="replace")
     creationflags = 0
     if sys.platform == "win32":
@@ -187,7 +215,7 @@ def _launch_local_asr_server() -> tuple[bool, str]:
         creationflags=creationflags,
     )
     for _ in range(80):
-        if _is_local_asr_port_open(timeout=0.15):
+        if _is_local_asr_port_open(connect_host, port, timeout=0.15):
             return True, "ASR local server is ready."
         if _LOCAL_ASR_PROCESS.poll() is not None:
             detail = _tail_local_asr_log()
@@ -219,8 +247,9 @@ class ASRLocalServerInstallWorker(QThread):
 
             self.progress.emit("正在启动本地 ASR 服务...")
             ready, message = _launch_local_asr_server()
+            host, port = _local_asr_runtime_endpoint()
             self.installed.emit({
-                "api_url": ASR_LOCAL_API_URL,
+                "api_url": _local_asr_api_url(host, port),
                 "server_dir": str(ASR_LOCAL_SERVER_DIR),
                 "ready": ready,
                 "message": message,
@@ -262,16 +291,59 @@ def _soundfile():
 
 
 def normalize_asr_api_url(url: str) -> str:
-    url = str(url or "").strip() or "http://127.0.0.1:8000/v1/audio/transcriptions"
+    url = str(url or "").strip() or ASR_LOCAL_API_URL
+    if "://" not in url:
+        url = f"http://{url}"
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme and parsed.netloc and parsed.path in ("", "/"):
-        return url.rstrip("/") + "/v1/audio/transcriptions"
-    lowered = url.rstrip("/").lower()
-    if lowered.endswith("/v1") or lowered.endswith("/v1/audio"):
-        return url.rstrip("/") + "/audio/transcriptions" if lowered.endswith("/v1") else url.rstrip("/") + "/transcriptions"
-    if url.endswith("/"):
-        return url + "v1/audio/transcriptions"
+        return urllib.parse.urlunparse(parsed._replace(path="/v1/audio/transcriptions"))
+    normalized_path = parsed.path.rstrip("/").lower()
+    if normalized_path == "/v1":
+        return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/audio/transcriptions"))
+    if normalized_path == "/v1/audio":
+        return urllib.parse.urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/transcriptions"))
+    if parsed.scheme and parsed.netloc and parsed.path.endswith("/"):
+        return urllib.parse.urlunparse(parsed._replace(path=parsed.path + "v1/audio/transcriptions"))
     return url
+
+
+def _response_text_excerpt(response, max_chars: int = 600) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = getattr(response, "text", "") or ""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            payload = error.get("message") or error.get("detail") or payload
+        elif isinstance(error, str):
+            payload = error
+        elif "detail" in payload:
+            payload = payload.get("detail")
+    text = str(payload or "").strip()
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "..."
+    return text
+
+
+def format_asr_request_error(exc: Exception, url: str) -> str:
+    response = getattr(exc, "response", None)
+    if response is not None:
+        detail = _response_text_excerpt(response)
+        suffix = f"；服务返回：{detail}" if detail else ""
+        return f"ASR 请求失败: HTTP {response.status_code} {response.reason}，地址 {url}{suffix}"
+
+    try:
+        requests_module = _requests()
+    except Exception:
+        return f"ASR 请求失败: {exc}"
+    if isinstance(exc, requests_module.exceptions.MissingSchema):
+        return f"ASR 请求失败: API 地址缺少 http:// 或 https://，当前地址 {url}"
+    if isinstance(exc, requests_module.exceptions.ConnectionError):
+        return f"ASR 请求失败: 无法连接到 {url}，请确认 Whisper 服务已启动、监听地址不是仅限容器/服务器本机的 127.0.0.1，并检查端口和防火墙。"
+    if isinstance(exc, requests_module.exceptions.Timeout):
+        return f"ASR 请求失败: 连接 {url} 超时，模型可能仍在加载或服务端处理过慢。"
+    return f"ASR 请求失败: {exc}"
 
 
 class ASRRecorderWorker(QThread):
@@ -360,7 +432,7 @@ class ASRRequestWorker(QThread):
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
-            self.error.emit(f"ASR 请求失败: {exc}")
+            self.error.emit(format_asr_request_error(exc, url))
             return
 
         text = ""
