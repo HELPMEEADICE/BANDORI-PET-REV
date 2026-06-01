@@ -190,10 +190,12 @@ def main():
         except RuntimeError:
             remove_ipc_client(socket)
 
-    def broadcast_ipc_line(line: str):
+    def broadcast_ipc_line(line: str, exclude_socket=None):
         with ipc_ref["lock"]:
             sockets = list(ipc_ref.get("clients", []))
         for socket in sockets:
+            if exclude_socket is not None and socket is exclude_socket:
+                continue
             write_ipc_line(socket, line)
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
@@ -617,9 +619,9 @@ def main():
             else:
                 buffers[socket] = ""
         for raw_line in lines:
-            handle_ipc_line(raw_line.rstrip("\r\n"))
+            handle_ipc_line(raw_line.rstrip("\r\n"), source_socket=socket)
 
-    def handle_ipc_line(line: str):
+    def handle_ipc_line(line: str, source_socket=None):
         if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
         elif line.startswith("AI_EVENT\t"):
@@ -639,7 +641,7 @@ def main():
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
             if line.startswith("SETTINGS\t"):
-                broadcast_ipc_line(line)
+                broadcast_ipc_line(line, exclude_socket=source_socket)
 
     def notify_chat_processes_shutdown():
         with ipc_ref["lock"]:
@@ -794,6 +796,7 @@ def main():
             "models",
             "alarms",
             "pomodoros",
+            "proactive_companion",
             "reminder_display_mode",
         ):
             value = data.get(key)

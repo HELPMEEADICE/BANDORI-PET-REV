@@ -79,6 +79,7 @@ from relationship_memory import (
 )
 from reminder_core import (
     ALARM_CONFIG_KEY,
+    PROACTIVE_COMPANION_CONFIG_KEY,
     DISPLAY_MODE_FLOATING,
     DISPLAY_MODE_SYSTEM,
     POMODORO_CONFIG_KEY,
@@ -89,6 +90,7 @@ from reminder_core import (
     normalize_alarms,
     normalize_display_mode,
     normalize_pomodoros,
+    normalize_proactive_companion,
     parse_iso_datetime,
     pomodoro_phase_label,
     repeat_days_label,
@@ -267,6 +269,7 @@ DATA_CONFIG_KEYS = {
     DATA_CATEGORY_REMINDERS: (
         "alarms",
         "pomodoros",
+        "proactive_companion",
         "reminder_display_mode",
     ),
     DATA_CATEGORY_COMPACT: (

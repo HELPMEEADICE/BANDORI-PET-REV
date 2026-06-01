@@ -7,7 +7,7 @@ from pathlib import Path
 from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
-from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros
+from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros, normalize_proactive_companion
 
 
 def _try_replace_file(src, dst) -> OSError | None:
@@ -243,6 +243,7 @@ DEFAULTS = {
     "napcat_private_retention_days": 30,
     "alarms": [],
     "pomodoros": [],
+    "proactive_companion": {},
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -465,6 +466,7 @@ class ConfigManager:
         self._normalize_computer_use_settings()
         self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
         self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
+        self._data["proactive_companion"] = normalize_proactive_companion(self._data.get("proactive_companion", {}))
         self._normalize_click_motion_profiles()
         self._data["reminder_display_mode"] = normalize_display_mode(
             self._data.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
