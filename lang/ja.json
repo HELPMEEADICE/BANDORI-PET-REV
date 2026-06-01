@@ -98,8 +98,6 @@
   "SettingsWindow.live2d_mutual_gaze_hint": "オンにすると、キャラクターは最も近いキャラクターを見ます。",
   "SettingsWindow.move_all_roles_together": "ドラッグ時に全員を一緒に移動",
   "SettingsWindow.move_all_roles_together_hint": "既定ではオフです。オンにすると、任意のキャラクターをドラッグしたとき、デスクトップ上の他のキャラクターも同じ距離だけ移動します。",
-  "SettingsWindow.model_mouse_passthrough": "モデルマウス透過",
-  "SettingsWindow.model_mouse_passthrough_hint": "オンにすると、モデル領域をクリックしても背後にあるウィンドウに透過し、下層のアプリケーションを操作しやすくなります。",
   "SettingsWindow.behavior_title": "キャラクター動作",
   "SettingsWindow.behavior_subtitle": "待機モーション、視線追従、複数キャラクター間の動作を設定します。",
   "SettingsWindow.behavior_live2d_section": "Live2D 動作",

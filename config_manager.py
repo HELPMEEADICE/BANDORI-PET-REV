@@ -149,7 +149,6 @@ DEFAULTS = {
     "live2d_head_tracking_enabled": True,
     "live2d_mutual_gaze_enabled": False,
     "move_all_roles_together": False,
-    "model_mouse_passthrough": False,
     "birthday_tray_notifications_enabled": True,
     "auto_start": False,
     "drag_locked": False,

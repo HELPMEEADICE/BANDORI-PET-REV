@@ -98,8 +98,6 @@
   "SettingsWindow.live2d_mutual_gaze_hint": "开启后，角色会看向最近的角色。",
   "SettingsWindow.move_all_roles_together": "拖动时所有角色一起移动",
   "SettingsWindow.move_all_roles_together_hint": "默认关闭。开启后，拖动任意一个角色时，桌面上的其他角色会按相同距离同步移动。",
-  "SettingsWindow.model_mouse_passthrough": "模型鼠标穿透",
-  "SettingsWindow.model_mouse_passthrough_hint": "开启后，鼠标点击模型区域时会穿透到背后的窗口，方便操作下层程序。",
   "SettingsWindow.behavior_title": "角色行为",
   "SettingsWindow.behavior_subtitle": "设置角色的待机动作、视线跟随和多角色互动行为。",
   "SettingsWindow.behavior_live2d_section": "Live2D 行为",

@@ -80,7 +80,6 @@ class BehaviorPageMixin:
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
         self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
         self._cfg.set("move_all_roles_together", self._move_all_roles_together)
-        self._cfg.set("model_mouse_passthrough", self._model_mouse_passthrough)
         self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
         self._cfg.save()
 
@@ -112,10 +111,6 @@ class BehaviorPageMixin:
 
     def _on_move_all_roles_together_changed(self, checked: bool):
         self._move_all_roles_together = bool(checked)
-        self._save_live2d_behavior_config()
-
-    def _on_model_mouse_passthrough_changed(self, checked: bool):
-        self._model_mouse_passthrough = bool(checked)
         self._save_live2d_behavior_config()
 
     def _populate_default_motion_combo(self, item: dict):
@@ -626,14 +621,6 @@ class BehaviorPageMixin:
             "_move_all_roles_together_switch",
             self._move_all_roles_together,
             self._on_move_all_roles_together_changed,
-        ))
-        layout.addWidget(self._build_behavior_switch_row(
-            page,
-            "SettingsWindow.model_mouse_passthrough",
-            "SettingsWindow.model_mouse_passthrough_hint",
-            "_model_mouse_passthrough_switch",
-            self._model_mouse_passthrough,
-            self._on_model_mouse_passthrough_changed,
         ))
 
         notify_section = StrongBodyLabel(_tr(
