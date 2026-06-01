@@ -184,7 +184,7 @@ class MemoryPageMixin:
         list_toolbar.setSpacing(8)
         self._memory_count_label = BodyLabel("", list_panel)
         self._memory_count_label.setObjectName("memoryListMeta")
-        self._memory_select_all_check = QCheckBox(_tr("SettingsWindow.memory_select_all", default="全选"), list_panel)
+        self._memory_select_all_check = CheckBox(_tr("SettingsWindow.memory_select_all", default="全选"), list_panel)
         self._memory_select_all_check.setTristate(True)
         self._memory_select_all_check.stateChanged.connect(self._toggle_all_memory_selection)
         self._memory_batch_delete_btn = PushButton(
@@ -461,7 +461,7 @@ class MemoryPageMixin:
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(10)
 
-            check = QCheckBox(row)
+            check = CheckBox(row)
             check.setChecked(memory_id in self._selected_memory_ids)
             check.stateChanged.connect(lambda state, mid=memory_id: self._update_memory_selection(mid, state))
             row_layout.addWidget(check, alignment=Qt.AlignmentFlag.AlignTop)
@@ -795,10 +795,6 @@ class MemoryPageMixin:
             StrongBodyLabel#memoryRowKind {{
                 color: {text};
                 font-size: 13px;
-            }}
-            QCheckBox {{
-                color: {text};
-                spacing: 6px;
             }}
             QTextEdit {{
                 background: {input_bg};

@@ -24,7 +24,7 @@ from shiboken6 import isValid
 from qfluentwidgets import (
     CardWidget, PushButton, PrimaryPushButton, TransparentPushButton,
     BodyLabel, StrongBodyLabel, TitleLabel, SubtitleLabel,
-    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit,
+    FluentIcon, Slider, SwitchButton, ScrollArea, ComboBox, LineEdit, CheckBox,
     TimeEdit, SpinBox,
     isDarkTheme, InfoBar, InfoBarPosition, ProgressBar,
     MessageBoxBase,
