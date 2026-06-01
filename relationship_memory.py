@@ -47,6 +47,7 @@ _MOOD_INTENSITY_MAP = [
 
 MEMORY_KIND_LABELS = {
     "manual": "手动记忆",
+    "favorite": "收藏语句",
     "profile": "用户信息",
     "preference": "偏好",
     "relationship": "关系",
@@ -73,6 +74,9 @@ MEMORY_EXTRACTOR_SYSTEM_PROMPT = (
     "- Relationship-specific facts about THIS character: nicknames they use for the character, inside jokes, "
     "promises, shared plans or recurring rituals with this character.\n"
     "- Anything the user explicitly asks you to remember.\n"
+    "- Favorite/bookmarked lines: if the user asks the character to 收藏/保存/加入回忆相册 a sentence, save "
+    "the requested line as kind \"favorite\" under relationship scope. Preserve the quoted sentence or the "
+    "clearest sentence the user pointed at; do not summarize it away. Write content as \"收藏语句：<原句>\".\n"
     "\n"
     "WHAT TO SKIP: one-off or momentary things (today's weather, what they are doing right now, a single "
     "question, a passing mood), pure task requests already handled in the reply (translate this, write code, "
@@ -94,13 +98,14 @@ MEMORY_EXTRACTOR_SYSTEM_PROMPT = (
     "Return ONLY valid JSON with this exact shape:\n"
     "{\"relationship\":{\"affection_delta\":0,\"trust_delta\":0,\"familiarity_delta\":1,\"mood\":\"calm\","
     "\"mood_intensity\":24,\"reason\":\"...\"},"
-    "\"memories\":[{\"scope\":\"user|relationship\",\"kind\":\"profile|preference|relationship|note\","
+    "\"memories\":[{\"scope\":\"user|relationship\",\"kind\":\"profile|preference|relationship|note|favorite\","
     "\"content\":\"...\",\"importance\":1-100}],"
     "\"outdated\":[\"<verbatim existing memory line to delete>\"]}.\n"
     "Relationship deltas range -5..5. familiarity_delta is 1 for a substantive user message, otherwise 0. "
     "mood must be one of calm, happy, excited, soft, concerned, sad, hurt, annoyed, angry, shy, thoughtful, "
     "surprised, tired. importance: 80-100 for core identity/boundaries, 55-79 for stable preferences and "
-    "relationship facts, 30-54 for minor notes. If nothing is worth saving use \"memories\":[] and \"outdated\":[].\n"
+    "relationship facts, 90-100 for favorite/bookmarked lines, 30-54 for minor notes. If nothing is worth "
+    "saving use \"memories\":[] and \"outdated\":[].\n"
     "\n"
     "Examples (saved content is illustrative):\n"
     "User: \"以后叫我小K就好，我不太喜欢别人喊全名\" -> memories:[{\"scope\":\"user\",\"kind\":\"preference\","

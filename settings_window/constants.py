@@ -376,7 +376,7 @@ CLICK_MOTION_SCOPES = {
     CLICK_MOTION_SCOPE_CHARACTER,
     CLICK_MOTION_SCOPE_COSTUME,
 }
-MEMORY_KIND_ORDER = ("profile", "preference", "relationship", "manual", "note")
+MEMORY_KIND_ORDER = ("profile", "preference", "relationship", "favorite", "manual", "note")
 MODEL_PICKER_STATE_KEY = "model_picker_state"
 MODEL_PICKER_RECENT_LIMIT = 8
 MODEL_PICKER_FILTER_ALL = "all"

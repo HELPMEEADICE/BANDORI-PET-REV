@@ -4917,6 +4917,127 @@ class ChatWindow(QWidget):
             )
         self._show_local_assistant_message(_tr("ChatWindow.memory_remembered", "已记住：{content}", content=content))
 
+    @staticmethod
+    def _looks_like_favorite_request(text: str) -> bool:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return False
+        return bool(
+            re.search(
+                r"(加入回忆相册|放进回忆相册|存到回忆相册|"
+                r"(收藏|保存|记下).*(这句|这句话|这条|这段话|这段|刚才|上一句|上一条|回忆相册)|"
+                r"收藏\s*[：:、“\"『「])",
+                stripped,
+            )
+        )
+
+    @staticmethod
+    def _quoted_favorite_phrase(text: str) -> str:
+        candidates = []
+        for pattern in (r"[“\"『「](.+?)[”\"』」]", r"['‘](.+?)['’]"):
+            candidates.extend(match.strip() for match in re.findall(pattern, text, flags=re.DOTALL))
+        candidates = [item for item in candidates if item]
+        if candidates:
+            return max(candidates, key=len)[:500].strip()
+        match = re.search(r"(?:收藏|加入回忆相册|放进回忆相册|存到回忆相册|保存)[^：:，,。.!！?？]{0,12}[：:]\s*(.+)$", text, re.DOTALL)
+        if match:
+            phrase = match.group(1).strip()
+            if phrase and not re.search(r"^(这句|这句话|刚才|上一句|这段话)\b", phrase):
+                return phrase[:500].strip()
+        return ""
+
+    def _last_assistant_message_for_favorite(self) -> dict | None:
+        if self._is_group_chat:
+            if not self._group_conv_id:
+                return None
+            messages = self._db.get_group_messages(
+                self._conversation_key,
+                self._group_conv_id,
+                limit=16,
+                user_key=self._chat_user_key,
+            )
+        elif self._conv_id:
+            messages = self._db.get_messages(self._conv_id, limit=16)
+        else:
+            return None
+        for message in reversed(messages):
+            if message.get("role") == "assistant" and str(message.get("content", "") or "").strip():
+                return message
+        return None
+
+    def _favorite_request_target(self, text: str) -> tuple[str, dict | None, str]:
+        if not self._looks_like_favorite_request(text):
+            return "", None, ""
+        explicit = self._quoted_favorite_phrase(text)
+        if explicit:
+            return explicit, None, ""
+        source_message = self._last_assistant_message_for_favorite()
+        if not source_message:
+            return "", None, ""
+        phrase = self._message_content(source_message.get("content", ""), "assistant").strip()
+        phrase = re.sub(r"\s+", " ", strip_action_tags(phrase)).strip()
+        if len(phrase) > 500:
+            phrase = phrase[:500].rstrip() + "..."
+        source_character = ""
+        if self._is_group_chat:
+            source_character = self._message_character(source_message.get("content", ""), "assistant")
+        return phrase, source_message, source_character
+
+    def _store_requested_favorite(
+        self,
+        phrase: str,
+        source_message: dict | None,
+        source_character: str,
+        user_message_id: int | None,
+        group_user_message_id: int | None,
+    ):
+        phrase = str(phrase or "").strip()
+        if not phrase:
+            return
+        user_key = self._user_memory_key()
+        if self._is_group_chat and source_character:
+            targets = [source_character]
+        else:
+            targets = self._memory_target_characters()
+        source_message_id = None
+        source_group_message_id = None
+        if source_message:
+            if source_message.get("source") == "group" or "group_key" in source_message:
+                source_group_message_id = source_message.get("id")
+            else:
+                source_message_id = source_message.get("id")
+        elif self._is_group_chat:
+            source_group_message_id = group_user_message_id
+        else:
+            source_message_id = user_message_id
+
+        saved = 0
+        for character in targets:
+            if not character:
+                continue
+            if self._db.add_character_memory(
+                character,
+                user_key,
+                "favorite",
+                "收藏语句：" + phrase,
+                98,
+                source_message_id=source_message_id,
+                source_group_message_id=source_group_message_id,
+            ):
+                saved += 1
+            self._db.apply_relationship_delta(
+                character,
+                user_key,
+                trust_delta=1,
+                familiarity_delta=1,
+                mood="soft",
+                mood_intensity=45,
+                event_type="favorite_quote",
+                reason="用户收藏了一句话作为回忆相册依据",
+            )
+        if saved:
+            self._composer_hint.setText(_tr("ChatWindow.favorite_saved_hint", default="已收藏到回忆相册。"))
+
     def _forget_memory_text(self, text: str):
         query = text.strip()
         if not query:
@@ -5889,6 +6010,7 @@ class ChatWindow(QWidget):
         self._input.setFocus()
 
     def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
+        favorite_phrase, favorite_source_message, favorite_source_character = self._favorite_request_target(text)
         if self._is_group_chat:
             self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments, user_key=self._chat_user_key)
             self._last_user_message_id = None
@@ -5897,6 +6019,13 @@ class ChatWindow(QWidget):
                 self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
             self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
             self._last_group_user_message_id = None
+        self._store_requested_favorite(
+            favorite_phrase,
+            favorite_source_message,
+            favorite_source_character,
+            self._last_user_message_id,
+            self._last_group_user_message_id,
+        )
         self._last_user_text = text
         self._refresh_group_list()
         if not start_response:

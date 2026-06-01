@@ -13,6 +13,7 @@ from settings_window.pages.tts import TTSPageMixin
 from settings_window.pages.asr import ASRPageMixin
 from settings_window.pages.pov import POVPageMixin
 from settings_window.pages.memory import MemoryPageMixin
+from settings_window.pages.memory_album import MemoryAlbumPageMixin
 from settings_window.pages.reminder import ReminderPageMixin
 from settings_window.pages.compact import CompactPageMixin
 from settings_window.pages.chat_integration import ChatIntegrationPageMixin
@@ -30,6 +31,7 @@ class SettingsWindow(
     ASRPageMixin,
     POVPageMixin,
     MemoryPageMixin,
+    MemoryAlbumPageMixin,
     ReminderPageMixin,
     CompactPageMixin,
     ChatIntegrationPageMixin,
@@ -105,6 +107,7 @@ class SettingsWindow(
         self._asr_page = None
         self._pov_page = None
         self._memory_page = None
+        self._memory_album_page = None
         self._relationship_guide_page = None
         self._reminder_page = None
         self._memory_db = None
@@ -142,6 +145,9 @@ class SettingsWindow(
         )
         self._move_all_roles_together = (
             bool(self._cfg.get("move_all_roles_together", False)) if self._cfg else False
+        )
+        self._model_mouse_passthrough = (
+            bool(self._cfg.get("model_mouse_passthrough", False)) if self._cfg else False
         )
         self._birthday_tray_notifications_enabled = (
             bool(self._cfg.get("birthday_tray_notifications_enabled", True)) if self._cfg else True
@@ -1226,6 +1232,9 @@ class SettingsWindow(
         if key == "memory":
             self._memory_page = self._add_lazy_page("memory", self._build_memory_page())
             return self._memory_page
+        if key == "memory_album":
+            self._memory_album_page = self._add_lazy_page("memory_album", self._build_memory_album_page())
+            return self._memory_album_page
         if key == "relationship_guide":
             self._relationship_guide_page = self._add_lazy_page(
                 "relationship_guide",
@@ -1391,6 +1400,17 @@ class SettingsWindow(
         self._nav_buttons["memory"] = btn_memory
         nav_layout.addWidget(btn_memory)
 
+        btn_memory_album = NavButton(
+            "memory_album",
+            FluentIcon.HISTORY,
+            _tr("SettingsWindow.nav_memory_album", default="回忆相册"),
+            nav_content,
+            "#0ea5e9",
+        )
+        btn_memory_album.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["memory_album"] = btn_memory_album
+        nav_layout.addWidget(btn_memory_album)
+
         btn_relationship_guide = NavButton(
             "relationship_guide",
             FluentIcon.QUICK_NOTE,
@@ -1524,6 +1544,8 @@ class SettingsWindow(
             page.show()
             if nav_key == "memory":
                 self._refresh_memory_page()
+            elif nav_key == "memory_album":
+                self._refresh_memory_album_page()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -2625,6 +2647,7 @@ class SettingsWindow(
             "live2d_head_tracking_enabled": self._live2d_head_tracking_enabled,
             "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_enabled,
             "move_all_roles_together": self._move_all_roles_together,
+            "model_mouse_passthrough": self._model_mouse_passthrough,
             "birthday_tray_notifications_enabled": self._birthday_tray_notifications_enabled,
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
@@ -2677,14 +2700,15 @@ class SettingsWindow(
             self._cfg.set("live2d_head_tracking_enabled", settings["live2d_head_tracking_enabled"])
             self._cfg.set("live2d_mutual_gaze_enabled", settings["live2d_mutual_gaze_enabled"])
             self._cfg.set("move_all_roles_together", settings["move_all_roles_together"])
+            self._cfg.set("model_mouse_passthrough", settings["model_mouse_passthrough"])
             self._cfg.set("birthday_tray_notifications_enabled", settings["birthday_tray_notifications_enabled"])
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
             self._cfg.save()
+        self.settings_changed.emit(settings)
         if self._current_char and self._selected_costume:
             self.model_selected.emit(self._current_char, self._selected_costume)
-        self.settings_changed.emit(settings)
         if self._show_launch:
             self.launch_requested.emit()
         self.close()
