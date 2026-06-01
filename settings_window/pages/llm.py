@@ -227,6 +227,22 @@ class LLMPageMixin:
         web_search_sources_row.addWidget(self._llm_web_search_show_sources)
         layout.addLayout(web_search_sources_row)
 
+        cross_chat_history_row = QHBoxLayout()
+        cross_chat_history_row.setContentsMargins(0, 0, 0, 0)
+        cross_chat_history_label = BodyLabel(_tr(
+            "SettingsWindow.llm_cross_chat_history_enabled",
+            default="注入跨聊天记录",
+        ), page)
+        self._llm_cross_chat_history_enabled = SwitchButton(page)
+        cross_chat_history_row.addWidget(cross_chat_history_label)
+        cross_chat_history_row.addStretch()
+        cross_chat_history_row.addWidget(self._llm_cross_chat_history_enabled)
+        layout.addLayout(cross_chat_history_row)
+        layout.addWidget(_wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_cross_chat_history_enabled_hint",
+            default="关闭后，模型不会额外读取其他私聊或群聊的历史摘录，只保留当前会话、长期记忆和当前时间等上下文。",
+        ), page)))
+
         layout.addWidget(SubtitleLabel(_tr("SettingsWindow.llm_chat_commands_title", default="LLM 对话命令"), page))
         layout.addWidget(_wrap_label(BodyLabel(_tr(
             "SettingsWindow.llm_chat_commands_hint",
@@ -340,6 +356,7 @@ class LLMPageMixin:
                 "_llm_web_search_enabled",
                 "_llm_web_search_engine",
                 "_llm_web_search_show_sources",
+                "_llm_cross_chat_history_enabled",
                 "_llm_custom_system_prompt_enabled",
                 "_llm_custom_system_prompt",
                 "_llm_enable_thinking",
@@ -434,6 +451,7 @@ class LLMPageMixin:
                     self._llm_web_search_engine.setCurrentIndex(i)
                     break
             self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
+            self._llm_cross_chat_history_enabled.setChecked(bool(self._cfg.get("llm_cross_chat_history_enabled", True)))
             self._llm_custom_system_prompt_enabled.setChecked(bool(self._cfg.get("llm_custom_system_prompt_enabled", True)))
             self._llm_custom_system_prompt.setPlainText(self._cfg.get("llm_custom_system_prompt", ""))
             self._on_llm_custom_system_prompt_enabled_changed(
@@ -512,6 +530,7 @@ class LLMPageMixin:
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
                 "llm_web_search_engine": str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn"),
                 "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
+                "llm_cross_chat_history_enabled": bool(profile.get("llm_cross_chat_history_enabled", True)),
                 "llm_enable_thinking": profile.get("llm_enable_thinking", None)
                 if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
                 "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
@@ -537,6 +556,7 @@ class LLMPageMixin:
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
             "llm_web_search_engine": self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn",
             "llm_web_search_show_sources": self._llm_web_search_show_sources.isChecked(),
+            "llm_cross_chat_history_enabled": self._llm_cross_chat_history_enabled.isChecked(),
             "llm_enable_thinking": thinking,
             "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
         }
@@ -559,6 +579,7 @@ class LLMPageMixin:
             "llm_web_search_enabled": bool(self._cfg.get("llm_web_search_enabled", False)),
             "llm_web_search_engine": self._cfg.get("llm_web_search_engine", "bing_cn") or "bing_cn",
             "llm_web_search_show_sources": bool(self._cfg.get("llm_web_search_show_sources", True)),
+            "llm_cross_chat_history_enabled": bool(self._cfg.get("llm_cross_chat_history_enabled", True)),
             "llm_enable_thinking": self._cfg.get("llm_enable_thinking", None)
             if self._cfg.get("llm_enable_thinking", None) in (True, False, None) else None,
             "llm_show_reasoning": bool(self._cfg.get("llm_show_reasoning", True)),
@@ -578,6 +599,7 @@ class LLMPageMixin:
             "llm_web_search_enabled",
             "llm_web_search_engine",
             "llm_web_search_show_sources",
+            "llm_cross_chat_history_enabled",
             "llm_enable_thinking",
             "llm_show_reasoning",
         )
@@ -706,6 +728,7 @@ class LLMPageMixin:
                 self._llm_web_search_engine.setCurrentIndex(i)
                 break
         self._llm_web_search_show_sources.setChecked(bool(profile.get("llm_web_search_show_sources", True)))
+        self._llm_cross_chat_history_enabled.setChecked(bool(profile.get("llm_cross_chat_history_enabled", True)))
         self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
         thinking = profile.get("llm_enable_thinking", None)
         self._llm_enable_thinking.setCurrentIndex(1 if thinking is True else 2 if thinking is False else 0)
@@ -848,6 +871,7 @@ class LLMPageMixin:
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
             self._cfg.set("llm_web_search_show_sources", self._llm_web_search_show_sources.isChecked())
+            self._cfg.set("llm_cross_chat_history_enabled", self._llm_cross_chat_history_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt_enabled", self._llm_custom_system_prompt_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt", self._llm_custom_system_prompt.toPlainText().strip())
             pov_mode = self._pov_mode.itemData(self._pov_mode.currentIndex()) or "off"

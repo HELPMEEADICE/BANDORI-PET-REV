@@ -53,7 +53,7 @@ else:
     macos_patch = None
 
 from llm_manager import (
-    build_system_prompt, format_current_time_context, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
+    build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
     _build_event_context,
 )
@@ -5583,6 +5583,16 @@ class ChatWindow(QWidget):
             "content": text,
         })
 
+    @staticmethod
+    def _history_time_label(created_at: str) -> str:
+        text = str(created_at or "").strip()
+        if not text:
+            return "未知时间"
+        try:
+            return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return text
+
     def _unified_history_context(self, character: str, limit: int = 18) -> str:
         related = self._current_chat_members() if self._is_group_chat else [character]
         related = self._normalize_group_characters(related)
@@ -5628,7 +5638,14 @@ class ChatWindow(QWidget):
         recent = items[-limit:]
         if not recent:
             return ""
-        return "\n".join(f"{item['label']}：{item['content']}" for item in recent)
+        lines = [
+            "以下是过去聊天摘录，仅供参考；其中提到的晚上、凌晨、昨天等都只代表当时，不代表现在。",
+        ]
+        lines.extend(
+            f"[{self._history_time_label(item['created_at'])}] {item['label']}：{item['content']}"
+            for item in recent
+        )
+        return "\n".join(lines)
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
@@ -5641,7 +5658,7 @@ class ChatWindow(QWidget):
         event_context = _build_event_context(character)
         if event_context:
             dynamic_context += "\n\n【今日特殊事件 - 必须知晓】\n" + event_context
-        unified_history = self._unified_history_context(character)
+        unified_history = self._unified_history_context(character) if self._cfg.get("llm_cross_chat_history_enabled", True) else ""
         if unified_history:
             dynamic_context += "\n\n【跨聊天记录】\n" + unified_history
         if self._is_group_chat and spoken_names:
@@ -5695,8 +5712,7 @@ class ChatWindow(QWidget):
                 }
                 for m in history
             )
-        time_str = format_current_time_context()
-        dynamic_context += f"\n\n【后置提示词】\n当前时间：{time_str}"
+        dynamic_context += f"\n\n【后置提示词】\n{current_time_instruction()}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
         if self._auto_active:
             has_user_message = any(m["role"] == "user" for m in messages)

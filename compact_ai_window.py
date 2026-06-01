@@ -20,7 +20,7 @@ from llm_manager import (
     NonStreamWorker,
     ResponsesStreamWorker,
     build_system_prompt,
-    format_current_time_context,
+    current_time_instruction,
     parse_action_tags,
     strip_action_tags,
     _build_event_context,
@@ -844,7 +844,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         messages.extend(history)
-        dynamic_context += f"\n\n【后置提示词】\n当前时间：{format_current_time_context()}"
+        dynamic_context += f"\n\n【后置提示词】\n{current_time_instruction()}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
         return messages
 

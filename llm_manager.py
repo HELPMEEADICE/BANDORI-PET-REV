@@ -558,6 +558,14 @@ def format_current_time_context(now: datetime | None = None) -> str:
     return f"{now.strftime('%Y-%m-%d %H:%M')}（{period}）"
 
 
+def current_time_instruction(now: datetime | None = None) -> str:
+    return (
+        "当前时间："
+        + format_current_time_context(now)
+        + "\n现在的时间判断只以上面这条为准。历史消息、长期记忆或引用内容里如果提到晚上、凌晨、昨天等，都只代表当时情境，不代表现在。"
+    )
+
+
 class LLMStreamWorker(QThread):
     chunk_received = Signal(str, str)
     finished = Signal(str, str, list)

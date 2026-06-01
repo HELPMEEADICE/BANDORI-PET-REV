@@ -222,6 +222,7 @@ DATA_CONFIG_KEYS = {
         "llm_web_search_enabled",
         "llm_web_search_engine",
         "llm_web_search_show_sources",
+        "llm_cross_chat_history_enabled",
         "llm_custom_system_prompt_enabled",
         "llm_custom_system_prompt",
         "llm_api_profiles",
