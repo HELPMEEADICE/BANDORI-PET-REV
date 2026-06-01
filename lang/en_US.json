@@ -99,6 +99,7 @@
   "SettingsWindow.behavior_title": "Character Behavior",
   "SettingsWindow.behavior_subtitle": "Configure idle motions, gaze tracking, and multi-character interactions.",
   "SettingsWindow.behavior_live2d_section": "Live2D Behavior",
+  "SettingsWindow.behavior_notifications_section": "Notification Behavior",
   "SettingsWindow.behavior_apply_hint": "These options are saved globally; click Apply on the right to refresh the current pet.",
   "SettingsWindow.model_default": "Default",
   "SettingsWindow.follow_model_default": "Use model default",

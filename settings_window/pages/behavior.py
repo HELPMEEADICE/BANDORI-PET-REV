@@ -22,12 +22,6 @@ class BehaviorPageMixin:
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_hint.setStyleSheet(f"color: {hint_color};")
-        birthday_label = getattr(self, "_detail_birthday_label", None)
-        if birthday_label is not None:
-            birthday_label.setStyleSheet(f"color: {hint_color};")
-        birthday_hint = getattr(self, "_detail_birthday_hint", None)
-        if birthday_hint is not None:
-            birthday_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_scope_label.setStyleSheet(f"color: {hint_color};")
         self._switch_model_btn.setStyleSheet(f"""
             QPushButton {{
@@ -614,6 +608,21 @@ class BehaviorPageMixin:
             "_behavior_mutual_gaze_switch",
             self._live2d_mutual_gaze_enabled,
             self._on_live2d_mutual_gaze_changed,
+        ))
+
+        notify_section = StrongBodyLabel(_tr(
+            "SettingsWindow.behavior_notifications_section",
+            default="提醒行为",
+        ), page)
+        layout.addWidget(notify_section)
+
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.birthday_tray_notifications",
+            "SettingsWindow.birthday_tray_notifications_hint",
+            "_birthday_tray_notifications_switch",
+            self._birthday_tray_notifications_enabled,
+            self._on_birthday_tray_notifications_changed,
         ))
 
         note = BodyLabel(_tr(
