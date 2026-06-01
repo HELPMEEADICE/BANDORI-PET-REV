@@ -594,7 +594,7 @@ class Live2DWidget(QOpenGLWidget):
         gl.glDisable(gl.GL_DITHER)
         log_opengl_renderer_once(gl)
         
-        self._system_scale = QGuiApplication.primaryScreen().devicePixelRatio()
+        self._system_scale = self._current_device_pixel_ratio()
         self._initialized_gl = True
         self._cache_w, self._cache_h = self.width(), self.height()
         self._cache_w_half, self._cache_h_half = self._cache_w * 0.5, self._cache_h * 0.5
@@ -608,6 +608,7 @@ class Live2DWidget(QOpenGLWidget):
         self.update()
 
     def resizeGL(self, w: int, h: int):
+        self._system_scale = self._current_device_pixel_ratio()
         self._cache_w, self._cache_h = w, h
         self._cache_w_half, self._cache_h_half = w * 0.5, h * 0.5
         self._clear_hit_framebuffer_cache()
@@ -615,6 +616,40 @@ class Live2DWidget(QOpenGLWidget):
         if self._model:
             self._model.Resize(w, h)
             self._update_custom_hit_area_projection()
+
+    def refresh_screen_scale(self):
+        scale = self._current_device_pixel_ratio()
+        if abs(scale - (self._system_scale or 1.0)) < 0.001:
+            return
+        self._system_scale = scale
+        self._clear_hit_framebuffer_cache()
+        if not self._initialized_gl:
+            return
+        self._safe_make_current()
+        gl.glViewport(0, 0, int(self._cache_w * scale), int(self._cache_h * scale))
+        if self._model:
+            self._model.Resize(self._cache_w, self._cache_h)
+            self._update_custom_hit_area_projection()
+        self.update()
+
+    def _current_device_pixel_ratio(self) -> float:
+        screen = None
+        try:
+            handle = self.window().windowHandle() if self.window() is not None else None
+            screen = handle.screen() if handle is not None else None
+        except Exception:
+            screen = None
+        if screen is None:
+            try:
+                screen = QGuiApplication.screenAt(self.mapToGlobal(self.rect().center()))
+            except Exception:
+                screen = None
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        try:
+            return max(1.0, float(screen.devicePixelRatio())) if screen is not None else 1.0
+        except Exception:
+            return 1.0
 
     def paintGL(self):
         if (self._static_render and self._static_render_done) or not self._live2d or not self._model:

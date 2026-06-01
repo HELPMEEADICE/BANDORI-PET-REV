@@ -14,6 +14,8 @@ from process_utils import (
 configure_debug_logging()
 
 BASE_DIR = str(app_base_dir())
+os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QIcon
@@ -81,6 +83,12 @@ def main():
     set_language(lang)
 
     set_windows_app_user_model_id("BandoriPet.Chat")
+    try:
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
 
     app = QApplication(sys.argv)
     install_parent_death_watch(app)

@@ -4642,7 +4642,7 @@ class ChatWindow(QWidget):
 
     def position_next_to_pet(self, pet_window: QWidget):
         pet_geo = pet_window if isinstance(pet_window, QRect) else pet_window.geometry()
-        screen = QApplication.primaryScreen()
+        screen = QApplication.screenAt(pet_geo.center()) or self.screen() or QApplication.primaryScreen()
         if screen:
             screen_geo = screen.availableGeometry()
         else:

@@ -130,19 +130,8 @@ def main():
         group_characters=group_characters,
     )
 
-    entry = _model_entry(cfg, args.character)
-    if pet._pixel_mode:
-        x = entry.get("pixel_window_x", cfg.get("pixel_window_x", -1))
-        y = entry.get("pixel_window_y", cfg.get("pixel_window_y", -1))
-        if x >= 0 and y >= 0:
-            pet.move(x + args.index * 28 if "pixel_window_x" not in entry else x, y)
-            pet._show_pos_set = True
-    else:
-        x = entry.get("window_x", cfg.get("window_x", -1))
-        y = entry.get("window_y", cfg.get("window_y", -1))
-        if x >= 0 and y >= 0:
-            pet.move(x + args.index * 36 if "window_x" not in entry else x, y)
-            pet._show_pos_set = True
+    offset_x = args.index * (28 if pet._pixel_mode else 36)
+    pet.restore_saved_position(offset_x=offset_x)
 
     pet._live2d_widget.set_vsync(cfg.get("vsync", True))
     if cfg.get("drag_locked", False):

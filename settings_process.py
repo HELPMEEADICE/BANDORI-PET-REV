@@ -124,7 +124,10 @@ def main():
     screen = app.primaryScreen()
     if screen:
         geo = screen.availableGeometry()
-        window.move((geo.width() - window.width()) // 2, (geo.height() - window.height()) // 2)
+        window.move(
+            geo.left() + (geo.width() - window.width()) // 2,
+            geo.top() + (geo.height() - window.height()) // 2,
+        )
 
     window.show()
     return app.exec()
