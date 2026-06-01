@@ -22,6 +22,12 @@ class BehaviorPageMixin:
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_hint.setStyleSheet(f"color: {hint_color};")
+        birthday_label = getattr(self, "_detail_birthday_label", None)
+        if birthday_label is not None:
+            birthday_label.setStyleSheet(f"color: {hint_color};")
+        birthday_hint = getattr(self, "_detail_birthday_hint", None)
+        if birthday_hint is not None:
+            birthday_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_click_motion_scope_label.setStyleSheet(f"color: {hint_color};")
         self._switch_model_btn.setStyleSheet(f"""
             QPushButton {{
@@ -79,7 +85,16 @@ class BehaviorPageMixin:
         self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
         self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
+        self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
         self._cfg.save()
+
+    def _on_birthday_tray_notifications_changed(self, checked: bool):
+        self._birthday_tray_notifications_enabled = bool(checked)
+        self._save_live2d_behavior_config()
+        if self._cfg:
+            self.settings_changed.emit({
+                "birthday_tray_notifications_enabled": self._birthday_tray_notifications_enabled,
+            })
 
     def _on_live2d_idle_actions_changed(self, checked: bool):
         self._live2d_idle_actions_enabled = bool(checked)
