@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import json
+import re
 import threading
 import time
 from functools import wraps
@@ -166,6 +167,14 @@ def _memory_row_dict(row) -> dict:
         "created_at": _db_text(row[8]),
         "updated_at": _db_text(row[9]),
     }
+
+
+def _album_message_row_dict(row, grouped: bool = False) -> dict | None:
+    message = _message_row_dict(row, grouped=grouped)
+    if message is None:
+        return None
+    message["source"] = "group" if grouped else "private"
+    return message
 
 
 def _state_row_dict(row) -> dict:
@@ -877,6 +886,27 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "FROM character_memories WHERE character=? AND user_key=? "
             "ORDER BY importance DESC, updated_at DESC, id DESC LIMIT ?",
             (character, user_key, limit),
+        ).fetchall()
+        return [_memory_row_dict(row) for row in rows]
+
+    def get_character_memories_by_kind(
+        self,
+        character: str,
+        user_key: str = "",
+        kind: str = "",
+        limit: int = 50,
+    ) -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        kind = str(kind or "").strip()
+        limit = _clamp_int(limit, 1, 200, 50)
+        if not kind:
+            return self.get_character_memories(character, user_key, limit)
+        rows = self._conn.execute(
+            "SELECT id, character, user_key, kind, content, importance, source_message_id, "
+            "source_group_message_id, created_at, updated_at "
+            "FROM character_memories WHERE character=? AND user_key=? AND kind=? "
+            "ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (character, user_key, kind, limit),
         ).fetchall()
         return [_memory_row_dict(row) for row in rows]
 
@@ -1885,6 +1915,176 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             if 0 <= iso_day < 7 and 0 <= hour < 24:
                 grid[iso_day][hour] = count
         return grid
+
+    @staticmethod
+    def _group_key_contains_character(group_key: str, character: str) -> bool:
+        prefix = "__group__:"
+        if not group_key.startswith(prefix) or not character:
+            return False
+        members = [part for part in group_key[len(prefix):].split("|") if part]
+        return character in members
+
+    def get_character_recent_messages(
+        self,
+        character: str,
+        user_key: str = "",
+        limit: int = 24,
+    ) -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        limit = _clamp_int(limit, 1, 200, 24)
+        private_rows = self._conn.execute(
+            "SELECT m.id, m.conversation_id, m.role, m.content, m.reasoning_content, "
+            "m.attachments_json, m.tool_trace_json, m.created_at "
+            "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
+            "WHERE c.character=? AND c.user_key=? "
+            "ORDER BY m.id DESC LIMIT ?",
+            (character, user_key, limit),
+        ).fetchall()
+        messages = []
+        for row in private_rows:
+            message = _album_message_row_dict(row)
+            if message is not None:
+                messages.append(message)
+
+        group_rows = self._conn.execute(
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, "
+            "attachments_json, tool_trace_json, created_at "
+            "FROM group_messages WHERE user_key=? AND group_key LIKE '__group__:%' "
+            "ORDER BY id DESC LIMIT ?",
+            (user_key, min(1000, max(limit * 8, 120))),
+        ).fetchall()
+        for row in group_rows:
+            group_key = _db_text(row[1])
+            if not self._group_key_contains_character(group_key, character):
+                continue
+            message = _album_message_row_dict(row, grouped=True)
+            if message is not None:
+                messages.append(message)
+
+        messages.sort(key=lambda item: (item.get("created_at", ""), int(item.get("id") or 0)), reverse=True)
+        result = messages[:limit]
+        result.reverse()
+        return result
+
+    def get_character_conversation_chain(
+        self,
+        character: str,
+        user_key: str = "",
+        limit: int = 20,
+    ) -> list[dict]:
+        user_key = self._normalize_user_key(user_key)
+        limit = _clamp_int(limit, 1, 100, 20)
+        rows = self._conn.execute(
+            "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
+            "MIN(m.created_at) AS first_message_at, MAX(m.created_at) AS last_message_at, "
+            "COUNT(m.id) AS message_count, "
+            "(SELECT content FROM messages WHERE conversation_id=c.id AND role='user' AND content!='' ORDER BY id ASC LIMIT 1) AS first_user "
+            "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
+            "WHERE c.character=? AND c.user_key=? "
+            "GROUP BY c.id, c.character, c.user_key, c.title, c.created_at "
+            "ORDER BY MAX(m.id) DESC LIMIT ?",
+            (character, user_key, limit),
+        ).fetchall()
+        result = []
+        for row in rows:
+            result.append({
+                "source": "private",
+                "conversation_id": _db_int(row[0]) or 0,
+                "group_key": "",
+                "user_key": _db_text(row[2]),
+                "title": _db_text(row[3]),
+                "created_at": _db_text(row[4]),
+                "first_message_at": _db_text(row[5]),
+                "last_message_at": _db_text(row[6]),
+                "message_count": int(row[7] or 0),
+                "first_user": _db_text(row[8]),
+            })
+
+        group_rows = self._conn.execute(
+            "SELECT group_key, conversation_id, MIN(created_at), MAX(created_at), COUNT(id), "
+            "(SELECT content FROM group_messages gm2 "
+            " WHERE gm2.group_key=gm.group_key AND gm2.conversation_id=gm.conversation_id "
+            " AND gm2.user_key=gm.user_key AND gm2.role='user' AND gm2.content!='' ORDER BY gm2.id ASC LIMIT 1) AS first_user "
+            "FROM group_messages gm WHERE gm.user_key=? AND gm.group_key LIKE '__group__:%' "
+            "GROUP BY group_key, conversation_id, user_key "
+            "ORDER BY MAX(id) DESC LIMIT ?",
+            (user_key, min(300, max(limit * 6, 60))),
+        ).fetchall()
+        for row in group_rows:
+            group_key = _db_text(row[0])
+            if not self._group_key_contains_character(group_key, character):
+                continue
+            result.append({
+                "source": "group",
+                "conversation_id": _db_text(row[1], "default") or "default",
+                "group_key": group_key,
+                "user_key": user_key,
+                "title": "",
+                "created_at": _db_text(row[2]),
+                "first_message_at": _db_text(row[2]),
+                "last_message_at": _db_text(row[3]),
+                "message_count": int(row[4] or 0),
+                "first_user": _db_text(row[5]),
+            })
+
+        result.sort(key=lambda item: item.get("last_message_at", ""), reverse=True)
+        return result[:limit]
+
+    def get_character_album_days(
+        self,
+        character: str,
+        user_key: str = "",
+        limit: int = 30,
+    ) -> list[dict]:
+        limit = _clamp_int(limit, 1, 120, 30)
+        messages = self.get_character_recent_messages(character, user_key, limit=600)
+        by_day: dict[str, dict] = {}
+        for message in messages:
+            created_at = str(message.get("created_at") or "")
+            day = created_at[:10] if len(created_at) >= 10 else ""
+            if not day:
+                continue
+            entry = by_day.setdefault(day, {
+                "day": day,
+                "message_count": 0,
+                "user_count": 0,
+                "assistant_count": 0,
+                "first_at": created_at,
+                "last_at": created_at,
+                "snippets": [],
+            })
+            entry["message_count"] += 1
+            if message.get("role") == "user":
+                entry["user_count"] += 1
+            elif message.get("role") == "assistant":
+                entry["assistant_count"] += 1
+            entry["first_at"] = min(entry["first_at"], created_at)
+            entry["last_at"] = max(entry["last_at"], created_at)
+            content = re.sub(r"\s+", " ", _db_text(message.get("content"))).strip()
+            if content and len(entry["snippets"]) < 3:
+                entry["snippets"].append(content[:120])
+
+        memories = self.get_character_memories(character, user_key, limit=100)
+        for memory in memories:
+            created_at = str(memory.get("created_at") or memory.get("updated_at") or "")
+            day = created_at[:10] if len(created_at) >= 10 else ""
+            if not day:
+                continue
+            entry = by_day.setdefault(day, {
+                "day": day,
+                "message_count": 0,
+                "user_count": 0,
+                "assistant_count": 0,
+                "first_at": created_at,
+                "last_at": created_at,
+                "snippets": [],
+            })
+            entry["memory_count"] = int(entry.get("memory_count") or 0) + 1
+            if memory.get("kind") == "favorite":
+                entry["favorite_count"] = int(entry.get("favorite_count") or 0) + 1
+
+        days = sorted(by_day.values(), key=lambda item: item.get("day", ""), reverse=True)
+        return days[:limit]
 
     def close(self):
         if self._closed:
