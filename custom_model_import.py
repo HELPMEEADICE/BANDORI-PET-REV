@@ -70,16 +70,6 @@ def is_custom_character(character: str) -> bool:
     return (MODELS_DIR / character / CUSTOM_MARKER_FILENAME).is_file()
 
 
-def list_custom_characters() -> list[str]:
-    if not MODELS_DIR.is_dir():
-        return []
-    return [
-        entry.name
-        for entry in sorted(MODELS_DIR.iterdir())
-        if entry.is_dir() and (entry / CUSTOM_MARKER_FILENAME).is_file()
-    ]
-
-
 def delete_custom_character(character: str) -> None:
     """Delete an imported custom character. Refuses to touch built-ins."""
     target = MODELS_DIR / character

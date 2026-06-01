@@ -338,13 +338,6 @@ class MemoryPageMixin:
             )
         )
 
-    def _memory_item_title(self, memory: dict) -> str:
-        kind = self._memory_kind_label(memory.get("kind", "note"))
-        content = str(memory.get("content", "") or "").replace("\n", " ").strip()
-        if len(content) > 56:
-            content = content[:56].rstrip() + "..."
-        return f"{kind} - {content or _tr('SettingsWindow.memory_empty_content')}"
-
     def _memory_item_meta(self, memory: dict) -> str:
         importance = int(memory.get("importance") or 0)
         updated_at = memory.get("updated_at") or memory.get("created_at") or ""
