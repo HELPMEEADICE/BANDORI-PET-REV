@@ -528,10 +528,10 @@ class PetWindow(QWidget):
     def _bring_to_front(self):
         if len(self._group_characters) <= 1:
             return
-        if self._layer_index == len(self._group_characters) - 1:
+        if self._layer_index == 0:
             return
         self._group_characters.remove(self._current_char)
-        self._group_characters.append(self._current_char)
+        self._group_characters.insert(0, self._current_char)
         self._layer_index = self._compute_layer_index()
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
