@@ -187,6 +187,9 @@ DEFAULTS = {
     "computer_use_allow_keyboard": False,
     "computer_use_allow_clipboard": False,
     "computer_use_allow_wait": True,
+    "desktop_state_awareness_enabled": False,
+    "desktop_state_idle_seconds": 180,
+    "desktop_state_include_window_title": True,
     "llm_api_profiles": BUILTIN_LLM_API_PROFILES,
     "llm_active_api_profile": "",
     "user_name": "",
@@ -622,6 +625,10 @@ class ConfigManager:
             640,
             min(1920, _int_value(self._data.get("computer_use_max_screenshot_width", 1280), 1280)),
         )
+        self._data["desktop_state_idle_seconds"] = max(
+            30,
+            min(1800, _int_value(self._data.get("desktop_state_idle_seconds", 180), 180)),
+        )
         for key in (
             "llm_hide_tool_call_details",
             "llm_custom_system_prompt_enabled",
@@ -635,6 +642,8 @@ class ConfigManager:
             "computer_use_allow_keyboard",
             "computer_use_allow_clipboard",
             "computer_use_allow_wait",
+            "desktop_state_awareness_enabled",
+            "desktop_state_include_window_title",
         ):
             self._data[key] = bool(self._data.get(key, DEFAULTS.get(key, False)))
 

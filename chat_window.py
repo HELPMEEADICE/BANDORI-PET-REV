@@ -67,6 +67,7 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
+from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import clean_tts_payload
 try:
@@ -5667,6 +5668,9 @@ class ChatWindow(QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
+        desktop_context = desktop_state_context(self._cfg)
+        if desktop_context:
+            dynamic_context += "\n\n" + desktop_context
         if self._auto_active:
             other_characters = [c for c in self._group_characters if c != character]
             other_names = [self._model_manager.get_display_name(c) for c in other_characters]

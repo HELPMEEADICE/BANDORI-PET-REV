@@ -33,6 +33,7 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
+from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import SingleShotTTSCallbacksMixin, clean_tts_payload
 try:
@@ -841,6 +842,9 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
+        desktop_context = desktop_state_context(self._cfg)
+        if desktop_context:
+            dynamic_context += "\n\n" + desktop_context
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         messages.extend(history)

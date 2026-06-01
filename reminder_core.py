@@ -56,6 +56,17 @@ DEFAULT_PROACTIVE_ITEMS = (
         "active_end": "22:00",
     },
     {
+        "id": "desktop_state",
+        "enabled": True,
+        "kind": "desktop_state",
+        "title": "桌面状态关心",
+        "description": "根据当前桌面状态给出不同反应，例如写代码、看网页、打游戏或发呆。",
+        "schedule_type": PROACTIVE_INTERVAL,
+        "interval_minutes": 45,
+        "active_start": "09:00",
+        "active_end": "23:30",
+    },
+    {
         "id": "evening_review",
         "enabled": True,
         "kind": "evening_review",
