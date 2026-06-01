@@ -88,6 +88,8 @@
   "SettingsWindow.detail_band": "Band: {band}",
   "SettingsWindow.default_motion": "Default Motion",
   "SettingsWindow.default_expression": "Default Expression",
+  "SettingsWindow.birthday_tray_notifications": "Birthday tray notifications",
+  "SettingsWindow.birthday_tray_notifications_hint": "When disabled, character birthdays no longer show system tray notifications. Festival, alarm, and chat birthday behavior is unchanged.",
   "SettingsWindow.live2d_idle_actions": "Idle Motions",
   "SettingsWindow.live2d_idle_actions_hint": "Global setting: when multiple Live2D models are on the desktop, all of them are affected together.",
   "SettingsWindow.live2d_head_tracking": "Look at Mouse",

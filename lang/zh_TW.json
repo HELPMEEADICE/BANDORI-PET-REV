@@ -88,6 +88,8 @@
   "SettingsWindow.detail_band": "樂團：{band}",
   "SettingsWindow.default_motion": "預設動作",
   "SettingsWindow.default_expression": "預設表情",
+  "SettingsWindow.birthday_tray_notifications": "角色生日托盤提醒",
+  "SettingsWindow.birthday_tray_notifications_hint": "關閉後，角色生日當天不再彈出系統托盤通知；不會影響節日、鬧鐘和聊天中的生日設定。",
   "SettingsWindow.live2d_idle_actions": "角色待機動作",
   "SettingsWindow.live2d_idle_actions_hint": "這是全域選項：如果桌面上同時有多個 Live2D 形象，所有形象會一起開啟或關閉待機動作。",
   "SettingsWindow.live2d_head_tracking": "看向滑鼠",
