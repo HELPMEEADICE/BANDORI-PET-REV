@@ -115,8 +115,8 @@ TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 WINDOWS_MOUSE_PASSTHROUGH_INTERVAL_MS = 16
 WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
-LIVE2D_PREWARM_MAX_MOTIONS = 18
-LIVE2D_PREWARM_MAX_EXPRESSIONS = 10
+LIVE2D_PREWARM_MAX_MOTIONS = 64
+LIVE2D_PREWARM_MAX_EXPRESSIONS = 32
 LIVE2D_PREWARM_STEP_MS = 90
 
 
@@ -250,6 +250,8 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = []
         self._live2d_prewarm_expression_queue = []
         self._live2d_prewarm_prefetched = False
+        self._live2d_prewarmed_motions = set()
+        self._live2d_prewarmed_expressions = set()
         self._motion_names_cache = []
         self._motion_names_cache_id = None
         self._expression_names_cache = []
@@ -1049,8 +1051,10 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()
         self._live2d_prewarm_expression_queue = self._build_live2d_prewarm_expression_queue()
         self._live2d_prewarm_prefetched = False
-        QTimer.singleShot(250, lambda t=token: self._prefetch_live2d_action_resources(t))
-        QTimer.singleShot(1200, lambda t=token: self._prewarm_next_live2d_action(t))
+        self._live2d_prewarmed_motions = set()
+        self._live2d_prewarmed_expressions = set()
+        QTimer.singleShot(0, lambda t=token: self._prefetch_live2d_action_resources(t))
+        QTimer.singleShot(120, lambda t=token: self._prewarm_next_live2d_action(t))
 
     def _prefetch_live2d_action_resources(self, token: int):
         if token != self._live2d_prewarm_token:
@@ -1141,10 +1145,24 @@ class PetWindow(QWidget):
         if model is None:
             return
         self._prefetch_live2d_action_resources(token)
+        prefer_expression = bool(self._live2d_prewarm_expression_queue) and (
+            not self._live2d_prewarmed_expressions
+            or len(self._live2d_prewarmed_motions) > len(self._live2d_prewarmed_expressions) * 2
+        )
+        if prefer_expression:
+            name = self._live2d_prewarm_expression_queue.pop(0)
+            try:
+                model.PreloadExpression(name)
+                self._live2d_prewarmed_expressions.add(name)
+            except Exception:
+                pass
+            QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
+            return
         if self._live2d_prewarm_motion_queue:
             name = self._live2d_prewarm_motion_queue.pop(0)
             try:
                 model.PreloadMotionGroup(name)
+                self._live2d_prewarmed_motions.add(name)
             except Exception:
                 pass
             QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
@@ -1153,6 +1171,7 @@ class PetWindow(QWidget):
             name = self._live2d_prewarm_expression_queue.pop(0)
             try:
                 model.PreloadExpression(name)
+                self._live2d_prewarmed_expressions.add(name)
             except Exception:
                 pass
             QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
@@ -1261,9 +1280,11 @@ class PetWindow(QWidget):
             kwargs["onFinishMotionHandler"] = on_finish
         try:
             model.StartRandomMotion(motion_name, priority=priority, **kwargs)
+            self._live2d_prewarmed_motions.add(str(motion_name))
             return True
         except Exception:
             model.StartMotion(motion_name, 0, priority, **kwargs)
+            self._live2d_prewarmed_motions.add(str(motion_name))
             return True
 
     def _start_context_idle_behavior(self, kind: str) -> bool:
@@ -1681,6 +1702,10 @@ class PetWindow(QWidget):
         if motion_name:
             started = self._safe_start_motion(model, motion_name)
         else:
+            warmed_motion = self._choose_prewarmed_click_motion()
+            if warmed_motion:
+                started = self._safe_start_motion(model, warmed_motion)
+        if not started and not motion_name:
             try:
                 model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE)
                 started = True
@@ -1719,6 +1744,7 @@ class PetWindow(QWidget):
         if expression not in model.expressions:
             return
         model.SetExpression(expression)
+        self._live2d_prewarmed_expressions.add(str(expression))
 
     def _choose_click_action_motion(self, region: str) -> str:
         from live2d_click_actions import click_motion_auto_buckets
@@ -1732,13 +1758,26 @@ class PetWindow(QWidget):
                 if (motion := self._resolve_motion_tag(tag, motion_names))
             ]
             if available:
-                return random.choice(available)
+                warmed = [motion for motion in available if motion in self._live2d_prewarmed_motions]
+                return random.choice(warmed or available)
 
         non_idle = [
             name for name in motion_names
             if not str(name).lower().startswith(("idle", "sys-"))
         ]
-        return random.choice(non_idle) if non_idle else ""
+        warmed = [name for name in non_idle if name in self._live2d_prewarmed_motions]
+        return random.choice(warmed or non_idle) if non_idle else ""
+
+    def _choose_prewarmed_click_motion(self) -> str:
+        motion_names = self._current_motion_names()
+        if not motion_names:
+            return ""
+        warmed = [
+            name for name in motion_names
+            if name in self._live2d_prewarmed_motions
+            and not str(name).lower().startswith(("idle", "sys-"))
+        ]
+        return random.choice(warmed) if warmed else ""
 
     def _resolve_motion_tag(self, tag: str, motion_names: list[str]) -> str:
         tag_low = tag.lower()
