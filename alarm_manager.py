@@ -11,6 +11,7 @@ _log = logging.getLogger(__name__)
 from action_bus import publish_lip_sync
 from chat_config_snapshots import memory_extraction_api_config, tts_config_snapshot
 from database_manager import DatabaseManager
+from desktop_state import desktop_state_payload
 from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
@@ -356,6 +357,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "Reminder.llm_instruction",
             default="你正在为桌宠应用生成闹钟、番茄钟或主动生活节奏陪伴提醒。请严格保持角色口吻，结合好感度、长期记忆、"
                     "当前提醒描述和提醒阶段输出。主动陪伴要自然、短促，像日常关心而不是系统公告。"
+                    "如果 payload 中包含 desktop_state，请根据用户正在写代码、看网页、打游戏或发呆/离开的状态调整反应，"
+                    "但不要主动复述窗口标题、进程名等隐私细节。"
                     "只输出 1 到 2 句简短中文提醒，不要解释设置过程，不要使用 Markdown。可以在末尾保留一个合适动作标签。",
         )
         payload = {
@@ -363,6 +366,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "character_display_name": display_name,
             "relationship_context": relationship,
         }
+        desktop_state = desktop_state_payload(self._cfg)
+        if desktop_state:
+            payload["desktop_state"] = desktop_state
         messages = [
             {"role": "system", "content": (system_prompt + "\n\n" + instruction).strip()},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -462,6 +468,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return _tr("Reminder.fallback_done", default="{name}：{purpose}完成了，辛苦啦。", name=display_name, purpose=purpose)
         if kind == "proactive_companion":
             proactive_kind = str(context.get("proactive_kind") or "")
+            if proactive_kind == "desktop_state":
+                return self._desktop_state_fallback(context, display_name)
             fallback_key = f"Reminder.fallback_proactive_{proactive_kind}"
             defaults = {
                 "morning": "{name}：早上好，今天也慢慢进入状态吧。要不要先想想最重要的一件事？",
@@ -469,9 +477,30 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
                 "sedentary": "{name}：坐了有一会儿了，起来伸展一下肩颈和手腕吧。",
                 "evening_review": "{name}：今天快收尾了，要不要简单复盘一下完成了什么？",
                 "bedtime": "{name}：时间不早了，差不多该把事情放一放准备休息啦。",
+                "desktop_state": "{name}：我在旁边留意着，你先按自己的节奏来，需要整理一下当前任务也可以叫我。",
             }
             return _tr(fallback_key, default=defaults.get(proactive_kind, "{name}：来照顾一下现在的生活节奏吧。"), name=display_name)
         return _tr("Reminder.fallback_default", default="{name}：提醒时间到了。", name=display_name)
+
+    def _desktop_state_fallback(self, context: dict, display_name: str) -> str:
+        state = desktop_state_payload(self._cfg)
+        state_key = str(state.get("state") or "unknown")
+        defaults = {
+            "coding": "{name}：还在写代码呢。先别急，遇到卡住的地方就停一下整理思路。",
+            "web": "{name}：你在看网页呀，别被标签页带跑太远，记得回到原本想查的事。",
+            "gaming": "{name}：在打游戏的话就好好享受，不过这一局结束后要不要休息一下眼睛？",
+            "idle": "{name}：你安静了一会儿。没关系，发会儿呆也算是在充电。",
+            "media": "{name}：在看视频或听音乐的话，放松一下也很好，不过别忘了现在的节奏。",
+            "writing": "{name}：还在写东西呢。慢慢来，先把最想表达的那一句放下来。",
+        }
+        return _tr(
+            f"Reminder.fallback_desktop_state_{state_key}",
+            default=defaults.get(
+                state_key,
+                "{name}：我在旁边留意着，你先按自己的节奏来，需要整理一下当前任务也可以叫我。",
+            ),
+            name=display_name,
+        )
 
     def _show_reminder(self, context: dict, text: str, action: str):
         title = str(context.get("title", "") or "提醒")

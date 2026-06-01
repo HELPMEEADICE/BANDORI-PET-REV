@@ -318,6 +318,9 @@ DATA_CONFIG_KEYS = {
         "computer_use_allow_keyboard",
         "computer_use_allow_clipboard",
         "computer_use_allow_wait",
+        "desktop_state_awareness_enabled",
+        "desktop_state_idle_seconds",
+        "desktop_state_include_window_title",
     ),
     DATA_CATEGORY_MISC: (
         "language",

@@ -767,6 +767,9 @@ def main():
             ("napcat_group_retention_days", "napcat_group_retention_days", 7),
             ("napcat_private_retention_mode", "napcat_private_retention_mode", "manual"),
             ("napcat_private_retention_days", "napcat_private_retention_days", 30),
+            ("desktop_state_awareness_enabled", "desktop_state_awareness_enabled", False),
+            ("desktop_state_idle_seconds", "desktop_state_idle_seconds", 180),
+            ("desktop_state_include_window_title", "desktop_state_include_window_title", True),
         )
         language = data.get("language")
         if language:
@@ -836,6 +839,8 @@ def main():
             "chat_integration_enabled", "chat_integration_overlay_enabled",
             "chat_integration_include_context", "chat_integration_port",
             "chat_integration_token",
+            "desktop_state_awareness_enabled", "desktop_state_idle_seconds",
+            "desktop_state_include_window_title",
         )
         for key in _pet_window_keys:
             value = pet_window_ref.get(key, _sentinel)

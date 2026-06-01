@@ -99,6 +99,8 @@ class MCPPageMixin:
         self._computer_use_allow_keyboard = SwitchButton(page)
         self._computer_use_allow_clipboard = SwitchButton(page)
         self._computer_use_allow_wait = SwitchButton(page)
+        self._desktop_state_awareness_enabled = SwitchButton(page)
+        self._desktop_state_include_window_title = SwitchButton(page)
         for label, widget in (
             (_tr("SettingsWindow.computer_use_enabled", default="启用 Computer Use"), self._computer_use_enabled),
             (_tr("SettingsWindow.computer_use_auto_detect", default="让模型按自然语义自行判断是否使用"), self._computer_use_auto_detect),
@@ -124,6 +126,34 @@ class MCPPageMixin:
         layout.addWidget(_wrap_label(BodyLabel(_tr(
             "SettingsWindow.computer_use_hint",
             default="DeepSeek/OpenRouter 等兼容接口会通过 tool_calls/function calling 使用这些能力。模型需要支持图片输入，才能稳定理解屏幕截图；鼠标工具会把截图坐标映射到真实桌面坐标。",
+        ), page)))
+
+        layout.addWidget(SubtitleLabel(_tr("SettingsWindow.desktop_state_title", default="桌面状态感知"), page))
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.desktop_state_awareness_enabled", default="让角色知道当前桌面状态"),
+            self._desktop_state_awareness_enabled,
+        )
+        self._add_switch_row(
+            layout,
+            page,
+            _tr("SettingsWindow.desktop_state_include_window_title", default="允许读取前台窗口标题"),
+            self._desktop_state_include_window_title,
+        )
+        idle_row = QHBoxLayout()
+        idle_row.setSpacing(8)
+        idle_row.addWidget(BodyLabel(_tr("SettingsWindow.desktop_state_idle_seconds", default="判定发呆/离开的空闲秒数"), page))
+        self._desktop_state_idle_seconds = FluentContextLineEdit(page)
+        self._desktop_state_idle_seconds.setValidator(QIntValidator(30, 1800, self._desktop_state_idle_seconds))
+        self._desktop_state_idle_seconds.setFixedHeight(34)
+        self._desktop_state_idle_seconds.setMaximumWidth(120)
+        idle_row.addWidget(self._desktop_state_idle_seconds)
+        idle_row.addStretch()
+        layout.addLayout(idle_row)
+        layout.addWidget(_wrap_label(BodyLabel(_tr(
+            "SettingsWindow.desktop_state_hint",
+            default="开启后，聊天和主动陪伴会读取前台应用类别、窗口标题和键鼠空闲时长，用来判断你是在写代码、看网页、打游戏或发呆；不会自动截屏。",
         ), page)))
 
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
@@ -196,6 +226,9 @@ class MCPPageMixin:
                 "_computer_use_allow_clipboard",
                 "_computer_use_allow_wait",
                 "_computer_use_max_screenshot_width",
+                "_desktop_state_awareness_enabled",
+                "_desktop_state_include_window_title",
+                "_desktop_state_idle_seconds",
             )
         )
 
@@ -240,6 +273,9 @@ class MCPPageMixin:
         self._computer_use_allow_clipboard.setChecked(bool(self._cfg.get("computer_use_allow_clipboard", False)))
         self._computer_use_allow_wait.setChecked(bool(self._cfg.get("computer_use_allow_wait", True)))
         self._computer_use_max_screenshot_width.setText(str(self._cfg.get("computer_use_max_screenshot_width", 1280)))
+        self._desktop_state_awareness_enabled.setChecked(bool(self._cfg.get("desktop_state_awareness_enabled", False)))
+        self._desktop_state_include_window_title.setChecked(bool(self._cfg.get("desktop_state_include_window_title", True)))
+        self._desktop_state_idle_seconds.setText(str(self._cfg.get("desktop_state_idle_seconds", 180)))
 
     def _parse_mcp_servers_text(self) -> list[dict] | None:
         text = self._llm_mcp_servers_text.toPlainText().strip()
@@ -357,6 +393,11 @@ class MCPPageMixin:
         except ValueError:
             max_width = 1280
         max_width = max(640, min(1920, max_width))
+        try:
+            idle_seconds = int(self._desktop_state_idle_seconds.text().strip() or "180")
+        except ValueError:
+            idle_seconds = 180
+        idle_seconds = max(30, min(1800, idle_seconds))
         self._cfg.set("llm_hide_tool_call_details", self._llm_hide_tool_call_details.isChecked())
         self._cfg.set("llm_mcp_enabled", self._llm_mcp_enabled.isChecked())
         self._cfg.set("llm_mcp_use_native", self._llm_mcp_use_native.isChecked())
@@ -370,6 +411,9 @@ class MCPPageMixin:
         self._cfg.set("computer_use_allow_keyboard", self._computer_use_allow_keyboard.isChecked())
         self._cfg.set("computer_use_allow_clipboard", self._computer_use_allow_clipboard.isChecked())
         self._cfg.set("computer_use_allow_wait", self._computer_use_allow_wait.isChecked())
+        self._cfg.set("desktop_state_awareness_enabled", self._desktop_state_awareness_enabled.isChecked())
+        self._cfg.set("desktop_state_include_window_title", self._desktop_state_include_window_title.isChecked())
+        self._cfg.set("desktop_state_idle_seconds", idle_seconds)
         self._cfg.save()
         if show_info:
             InfoBar.success(

@@ -214,6 +214,11 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "鼠标移动/点击/滚动请使用最近一次截图图片上的像素坐标，程序会自动映射到真实桌面坐标。"
             "不要执行购买、支付、删除、发送消息、发布内容、登录、修改安全设置等高风险操作。"
         )
+    if config.get("desktop_state_awareness_enabled", False):
+        hints.append(
+            "如果需要判断用户当前是在写代码、看网页、打游戏、发呆/离开等桌面状态，可以调用 computer_desktop_state；"
+            "这只读取前台窗口类别和键鼠空闲时长，不截屏。最终回复要把它自然融入角色反应，不要主动暴露窗口标题或进程名。"
+        )
     if not hints:
         return ""
     return "【工具使用边界】\n" + "\n".join(hints)
