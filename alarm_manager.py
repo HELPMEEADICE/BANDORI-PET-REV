@@ -21,15 +21,18 @@ from reminder_core import (
     FOCUS_SECONDS,
     LONG_BREAK_SECONDS,
     POMODORO_CONFIG_KEY,
+    PROACTIVE_COMPANION_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
     SHORT_BREAK_SECONDS,
     compute_next_alarm_at,
+    compute_next_proactive_at,
     default_reminder_character,
     isoformat,
     local_now,
     normalize_alarms,
     normalize_display_mode,
     normalize_pomodoros,
+    normalize_proactive_companion,
     parse_iso_datetime,
     pomodoro_phase_label,
     repeat_days_label,
@@ -89,9 +92,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         now = local_now()
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []), now)
         pomodoros = normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, []), now)
-        if alarms != self._cfg.get(ALARM_CONFIG_KEY, []) or pomodoros != self._cfg.get(POMODORO_CONFIG_KEY, []):
+        proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}), now)
+        if (
+            alarms != self._cfg.get(ALARM_CONFIG_KEY, [])
+            or pomodoros != self._cfg.get(POMODORO_CONFIG_KEY, [])
+            or proactive != self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})
+        ):
             self._cfg.set(ALARM_CONFIG_KEY, alarms)
             self._cfg.set(POMODORO_CONFIG_KEY, pomodoros)
+            self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
             self._cfg.save()
 
     def stop(self):
@@ -119,6 +128,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         now = local_now()
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []), now)
         pomodoros = normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, []), now)
+        proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}), now)
         changed = False
 
         for alarm in alarms:
@@ -151,9 +161,22 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._advance_pomodoro(pomodoro, now)
             changed = True
 
+        if proactive.get("enabled"):
+            for item in proactive.get("items", []):
+                if not item.get("enabled"):
+                    continue
+                next_at = parse_iso_datetime(item.get("next_at"))
+                if next_at is None or next_at > now:
+                    continue
+                self._trigger_proactive_item(item, proactive, next_at)
+                item["last_triggered_at"] = isoformat(now)
+                item["next_at"] = isoformat(compute_next_proactive_at(item, now + timedelta(seconds=30)))
+                changed = True
+
         if changed:
             self._cfg.set(ALARM_CONFIG_KEY, alarms)
             self._cfg.set(POMODORO_CONFIG_KEY, pomodoros)
+            self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
             try:
                 self._cfg.save()
             except OSError as exc:
@@ -173,6 +196,34 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "scheduled_at": isoformat(scheduled_at),
             "repeat_label": repeat_days_label(alarm.get("repeat_days", [])),
             "triggered_at": isoformat(trigger_now),
+        }
+        self._start_text_generation(context)
+
+    def _trigger_proactive_item(self, item: dict, proactive: dict, scheduled_at):
+        character = self._reminder_character(item.get("character", "") or proactive.get("character", ""))
+        proactive_kind = str(item.get("kind") or item.get("id") or "")
+        title = _tr(
+            f"Reminder.proactive_{proactive_kind}_title",
+            default=str(item.get("title") or _tr("Reminder.title_proactive", default="生活节奏提醒")),
+        )
+        description = _tr(
+            f"Reminder.proactive_{proactive_kind}_description",
+            default=str(item.get("description", "") or ""),
+        )
+        trigger_now = local_now()
+        context = {
+            "kind": "proactive_companion",
+            "proactive_kind": proactive_kind,
+            "title": title,
+            "notification_title": _tr("Reminder.title_proactive", default="生活节奏提醒"),
+            "character": character,
+            "description": description,
+            "scheduled_at": isoformat(scheduled_at),
+            "triggered_at": isoformat(trigger_now),
+            "schedule_type": item.get("schedule_type", ""),
+            "interval_minutes": item.get("interval_minutes", 0),
+            "active_start": item.get("active_start", ""),
+            "active_end": item.get("active_end", ""),
         }
         self._start_text_generation(context)
 
@@ -303,9 +354,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         system_prompt = build_system_prompt(character, self._cfg) if character else ""
         instruction = _tr(
             "Reminder.llm_instruction",
-            default="你正在为桌宠应用生成闹钟或番茄钟提醒。请严格保持角色口吻，结合好感度、长期记忆、"
-                    "当前提醒描述和提醒阶段输出。只输出 1 到 2 句简短中文提醒，不要解释设置过程，"
-                    "不要使用 Markdown。可以在末尾保留一个合适动作标签。",
+            default="你正在为桌宠应用生成闹钟、番茄钟或主动生活节奏陪伴提醒。请严格保持角色口吻，结合好感度、长期记忆、"
+                    "当前提醒描述和提醒阶段输出。主动陪伴要自然、短促，像日常关心而不是系统公告。"
+                    "只输出 1 到 2 句简短中文提醒，不要解释设置过程，不要使用 Markdown。可以在末尾保留一个合适动作标签。",
         )
         payload = {
             "reminder": context,
@@ -409,6 +460,17 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         if kind == "pomodoro_done":
             purpose = f"\u201c{description}\u201d" if description else _tr("Reminder.fallback_done_default_purpose", default="番茄钟")
             return _tr("Reminder.fallback_done", default="{name}：{purpose}完成了，辛苦啦。", name=display_name, purpose=purpose)
+        if kind == "proactive_companion":
+            proactive_kind = str(context.get("proactive_kind") or "")
+            fallback_key = f"Reminder.fallback_proactive_{proactive_kind}"
+            defaults = {
+                "morning": "{name}：早上好，今天也慢慢进入状态吧。要不要先想想最重要的一件事？",
+                "water": "{name}：先喝点水吧，别等口渴了才想起来。",
+                "sedentary": "{name}：坐了有一会儿了，起来伸展一下肩颈和手腕吧。",
+                "evening_review": "{name}：今天快收尾了，要不要简单复盘一下完成了什么？",
+                "bedtime": "{name}：时间不早了，差不多该把事情放一放准备休息啦。",
+            }
+            return _tr(fallback_key, default=defaults.get(proactive_kind, "{name}：来照顾一下现在的生活节奏吧。"), name=display_name)
         return _tr("Reminder.fallback_default", default="{name}：提醒时间到了。", name=display_name)
 
     def _show_reminder(self, context: dict, text: str, action: str):

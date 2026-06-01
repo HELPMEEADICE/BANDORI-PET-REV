@@ -169,8 +169,58 @@ class ReminderPageMixin:
         pomodoro_layout.addWidget(self._pomodoro_list_widget)
         layout.addWidget(pomodoro_panel)
 
+        proactive_panel = QWidget(page)
+        proactive_panel.setObjectName("reminderPanel")
+        proactive_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        proactive_layout = QVBoxLayout(proactive_panel)
+        proactive_layout.setContentsMargins(16, 14, 16, 14)
+        proactive_layout.setSpacing(10)
+
+        proactive_header = QHBoxLayout()
+        proactive_header.setContentsMargins(0, 0, 0, 0)
+        proactive_header.setSpacing(10)
+        proactive_title_col = QVBoxLayout()
+        proactive_title_col.setContentsMargins(0, 0, 0, 0)
+        proactive_title_col.setSpacing(2)
+        proactive_title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.proactive_section_title", default="主动陪伴 / 生活节奏"), proactive_panel))
+        proactive_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.proactive_section_hint",
+            default="早安、喝水、久坐、计划复盘和睡前提醒会复用角色口吻，并结合好感度与长期记忆生成自然关心。",
+        ), proactive_panel))
+        proactive_hint.setObjectName("reminderHint")
+        proactive_title_col.addWidget(proactive_hint)
+        proactive_header.addLayout(proactive_title_col, 1)
+        self._proactive_enabled_switch = SwitchButton(proactive_panel)
+        proactive_header.addWidget(self._proactive_enabled_switch)
+        proactive_layout.addLayout(proactive_header)
+
+        proactive_character_row = QHBoxLayout()
+        proactive_character_row.setContentsMargins(0, 0, 0, 0)
+        proactive_character_row.setSpacing(10)
+        proactive_character_row.addWidget(BodyLabel(_tr("SettingsWindow.reminder_character", default="提醒角色"), proactive_panel))
+        self._proactive_character_combo = OpaqueDropDownComboBox(proactive_panel)
+        self._proactive_character_combo.setFixedHeight(34)
+        proactive_character_row.addWidget(self._proactive_character_combo, 1)
+        save_proactive_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), proactive_panel)
+        save_proactive_btn.setFixedHeight(34)
+        save_proactive_btn.clicked.connect(lambda: self._save_reminder_config(show_info=True, emit_update=True))
+        proactive_character_row.addWidget(save_proactive_btn)
+        proactive_layout.addLayout(proactive_character_row)
+
+        self._proactive_list_widget = QWidget(proactive_panel)
+        self._proactive_list_layout = QVBoxLayout(self._proactive_list_widget)
+        self._proactive_list_layout.setContentsMargins(0, 4, 0, 0)
+        self._proactive_list_layout.setSpacing(8)
+        proactive_layout.addWidget(self._proactive_list_widget)
+        layout.addWidget(proactive_panel)
+        self._proactive_save_timer = QTimer(page)
+        self._proactive_save_timer.setSingleShot(True)
+        self._proactive_save_timer.timeout.connect(self._save_proactive_controls_now)
+
         layout.addStretch()
         self._load_reminder_config()
+        self._proactive_enabled_switch.checkedChanged.connect(self._on_proactive_global_enabled_changed)
+        self._proactive_character_combo.currentIndexChanged.connect(lambda _index: self._schedule_proactive_save())
         self._style_reminder_page(page)
         qconfig.themeChanged.connect(lambda: self._style_reminder_page(page))
         return page
@@ -236,6 +286,11 @@ class ReminderPageMixin:
                 break
         self._fill_reminder_character_combo(self._alarm_character_combo)
         self._fill_reminder_character_combo(self._pomodoro_character_combo)
+        proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}))
+        self._loading_proactive_controls = True
+        self._proactive_enabled_switch.setChecked(bool(proactive.get("enabled", False)))
+        self._fill_reminder_character_combo(self._proactive_character_combo, proactive.get("character", ""))
+        self._loading_proactive_controls = False
         self._on_alarm_repeat_changed()
         self._refresh_reminder_lists()
 
@@ -243,13 +298,27 @@ class ReminderPageMixin:
         """Reflect reminder changes pushed from other processes (e.g. chat @clock / @pomodoro)."""
         if not isinstance(data, dict) or not self._cfg:
             return
-        reminder_keys = (ALARM_CONFIG_KEY, POMODORO_CONFIG_KEY, REMINDER_DISPLAY_MODE_KEY)
+        reminder_keys = (ALARM_CONFIG_KEY, POMODORO_CONFIG_KEY, PROACTIVE_COMPANION_CONFIG_KEY, REMINDER_DISPLAY_MODE_KEY)
         if not any(key in data for key in reminder_keys):
             return
         if ALARM_CONFIG_KEY in data:
             self._cfg.set(ALARM_CONFIG_KEY, normalize_alarms(data.get(ALARM_CONFIG_KEY, [])))
         if POMODORO_CONFIG_KEY in data:
             self._cfg.set(POMODORO_CONFIG_KEY, normalize_pomodoros(data.get(POMODORO_CONFIG_KEY, [])))
+        if PROACTIVE_COMPANION_CONFIG_KEY in data:
+            save_timer = getattr(self, "_proactive_save_timer", None)
+            if save_timer is not None and save_timer.isActive():
+                save_timer.stop()
+            proactive = normalize_proactive_companion(data.get(PROACTIVE_COMPANION_CONFIG_KEY, {}))
+            self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
+            self._loading_proactive_controls = True
+            try:
+                if hasattr(self, "_proactive_enabled_switch"):
+                    self._proactive_enabled_switch.setChecked(bool(proactive.get("enabled", False)))
+                if hasattr(self, "_proactive_character_combo"):
+                    self._fill_reminder_character_combo(self._proactive_character_combo, proactive.get("character", ""))
+            finally:
+                self._loading_proactive_controls = False
         if REMINDER_DISPLAY_MODE_KEY in data:
             mode = normalize_display_mode(data.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING))
             self._cfg.set(REMINDER_DISPLAY_MODE_KEY, mode)
@@ -266,21 +335,28 @@ class ReminderPageMixin:
             return {
                 ALARM_CONFIG_KEY: [],
                 POMODORO_CONFIG_KEY: [],
+                PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion({}),
                 REMINDER_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
             }
         return {
             ALARM_CONFIG_KEY: normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, [])),
             POMODORO_CONFIG_KEY: normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, [])),
+            PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})),
             REMINDER_DISPLAY_MODE_KEY: normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)),
         }
 
     def _save_reminder_config(self, show_info: bool = True, emit_update: bool = True):
         if not self._cfg or not hasattr(self, "_reminder_display_mode"):
             return
+        save_timer = getattr(self, "_proactive_save_timer", None)
+        if save_timer is not None and save_timer.isActive():
+            save_timer.stop()
+        self._sync_proactive_config_from_ui()
         mode = self._reminder_display_mode.itemData(self._reminder_display_mode.currentIndex()) or DISPLAY_MODE_FLOATING
         self._cfg.set(REMINDER_DISPLAY_MODE_KEY, normalize_display_mode(mode))
         self._cfg.set(ALARM_CONFIG_KEY, normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, [])))
         self._cfg.set(POMODORO_CONFIG_KEY, normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, [])))
+        self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})))
         try:
             self._cfg.save()
             if emit_update:
@@ -416,6 +492,19 @@ class ReminderPageMixin:
                 self._pomodoro_list_layout.addWidget(self._pomodoro_row(pomodoro))
         self._pomodoro_list_layout.addStretch()
 
+        if hasattr(self, "_proactive_list_layout"):
+            self._loading_proactive_controls = True
+            try:
+                self._clear_layout(self._proactive_list_layout)
+                proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}))
+                self._proactive_item_widgets = {}
+                for item in proactive.get("items", []):
+                    row = self._proactive_row(item)
+                    self._proactive_list_layout.addWidget(row)
+                self._proactive_list_layout.addStretch()
+            finally:
+                self._loading_proactive_controls = False
+
     def _alarm_row(self, alarm: dict) -> QWidget:
         row = QWidget(self._alarm_list_widget)
         row.setObjectName("reminderRow")
@@ -500,6 +589,154 @@ class ReminderPageMixin:
         delete_btn.clicked.connect(lambda checked=False, pid=pomodoro.get("id", ""): self._delete_pomodoro(pid))
         layout.addWidget(delete_btn)
         return row
+
+    def _proactive_row(self, item: dict) -> QWidget:
+        row = QWidget(self._proactive_list_widget)
+        row.setObjectName("reminderRow")
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+
+        title = StrongBodyLabel(self._proactive_item_title(item), row)
+        detail_text = self._proactive_schedule_label(item)
+        subtitle = BodyLabel(detail_text, row)
+        subtitle.setObjectName("reminderHint")
+        subtitle.setWordWrap(True)
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+        text_col.addWidget(title)
+        text_col.addWidget(subtitle)
+        layout.addLayout(text_col, 1)
+
+        enabled = SwitchButton(row)
+        enabled.setChecked(bool(item.get("enabled", True)))
+        enabled.checkedChanged.connect(lambda checked, iid=item.get("id", ""): self._set_proactive_item_enabled(iid, checked))
+        layout.addWidget(enabled)
+
+        if item.get("schedule_type") == "interval":
+            interval = SpinBox(row)
+            interval.setRange(10, 480)
+            interval.setSingleStep(10)
+            interval.setValue(int(item.get("interval_minutes") or 60))
+            interval.setFixedWidth(92)
+            interval.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
+            interval.valueChanged.connect(lambda _value, iid=item.get("id", ""): self._on_proactive_item_control_changed(iid))
+            layout.addWidget(interval)
+            primary_control = interval
+        else:
+            time_edit = TimeEdit(row)
+            time_edit.setDisplayFormat("HH:mm")
+            time_edit.setTime(QTime.fromString(str(item.get("time") or "08:30"), "HH:mm"))
+            time_edit.setFixedWidth(92)
+            time_edit.timeChanged.connect(lambda _value, iid=item.get("id", ""): self._on_proactive_item_control_changed(iid))
+            layout.addWidget(time_edit)
+            primary_control = time_edit
+
+        self._proactive_item_widgets[str(item.get("id") or "")] = {
+            "enabled": enabled,
+            "primary": primary_control,
+            "subtitle": subtitle,
+            "schedule_type": item.get("schedule_type", "daily"),
+        }
+        primary_control.setEnabled(bool(item.get("enabled", True)))
+        return row
+
+    def _proactive_schedule_label(self, item: dict) -> str:
+        if item.get("schedule_type") == "interval":
+            return _tr(
+                "SettingsWindow.proactive_interval_label",
+                default="每 {minutes} 分钟 · {start}-{end}",
+                minutes=item.get("interval_minutes", 60),
+                start=item.get("active_start", "09:00"),
+                end=item.get("active_end", "22:00"),
+            )
+        return _tr("SettingsWindow.proactive_daily_label", default="每天 {time}", time=item.get("time", ""))
+
+    def _proactive_item_title(self, item: dict) -> str:
+        item_id = str(item.get("id") or item.get("kind") or "").strip()
+        return _tr(
+            f"SettingsWindow.proactive_{item_id}_title",
+            default=str(item.get("title") or item_id),
+        )
+
+    def _set_proactive_item_enabled(self, item_id: str, enabled: bool):
+        widgets = getattr(self, "_proactive_item_widgets", {}).get(str(item_id or ""))
+        if widgets:
+            widgets["primary"].setEnabled(bool(enabled))
+        self._on_proactive_item_control_changed(item_id)
+
+    def _on_proactive_global_enabled_changed(self, _checked: bool):
+        if getattr(self, "_loading_proactive_controls", False):
+            return
+        self._schedule_proactive_save()
+
+    def _on_proactive_item_control_changed(self, item_id: str):
+        if getattr(self, "_loading_proactive_controls", False):
+            return
+        if not self._cfg:
+            return
+        self._update_proactive_row_preview(item_id)
+        self._schedule_proactive_save()
+
+    def _schedule_proactive_save(self):
+        if getattr(self, "_loading_proactive_controls", False):
+            return
+        if not self._cfg:
+            return
+        timer = getattr(self, "_proactive_save_timer", None)
+        if timer is None:
+            self._save_proactive_controls_now()
+            return
+        timer.start(350)
+
+    def _save_proactive_controls_now(self):
+        if getattr(self, "_loading_proactive_controls", False):
+            return
+        if not self._cfg:
+            return
+        self._sync_proactive_config_from_ui()
+        self._cfg.save()
+        self.settings_changed.emit(self._reminder_settings_data())
+
+    def _update_proactive_row_preview(self, item_id: str):
+        widgets = getattr(self, "_proactive_item_widgets", {}).get(str(item_id or ""))
+        if not widgets:
+            return
+        item = {
+            "schedule_type": widgets.get("schedule_type", "daily"),
+        }
+        primary = widgets["primary"]
+        if item["schedule_type"] == "interval":
+            item["interval_minutes"] = int(primary.value())
+            item["active_start"] = "09:00"
+            item["active_end"] = "22:00"
+        else:
+            item["time"] = primary.time().toString("HH:mm")
+        subtitle = widgets.get("subtitle")
+        if subtitle is not None:
+            subtitle.setText(self._proactive_schedule_label(item))
+
+    def _sync_proactive_config_from_ui(self):
+        if not self._cfg or not hasattr(self, "_proactive_enabled_switch"):
+            return
+        proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}))
+        item_by_id = {str(item.get("id") or ""): item for item in proactive.get("items", [])}
+        for item_id, widgets in getattr(self, "_proactive_item_widgets", {}).items():
+            item = item_by_id.get(item_id)
+            if not item:
+                continue
+            item["enabled"] = bool(widgets["enabled"].isChecked())
+            primary = widgets["primary"]
+            if item.get("schedule_type") == "interval":
+                item["interval_minutes"] = int(primary.value())
+            else:
+                item["time"] = primary.time().toString("HH:mm")
+            item["next_at"] = ""
+        proactive["enabled"] = bool(self._proactive_enabled_switch.isChecked())
+        proactive["character"] = self._selected_reminder_character(self._proactive_character_combo)
+        self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, normalize_proactive_companion(proactive))
 
     def _empty_reminder_label(self, text: str, parent: QWidget) -> QLabel:
         label = BodyLabel(text, parent)

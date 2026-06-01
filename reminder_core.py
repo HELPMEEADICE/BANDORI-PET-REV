@@ -10,6 +10,7 @@ from i18n_manager import tr as _tr
 ALARM_CONFIG_KEY = "alarms"
 POMODORO_CONFIG_KEY = "pomodoros"
 REMINDER_DISPLAY_MODE_KEY = "reminder_display_mode"
+PROACTIVE_COMPANION_CONFIG_KEY = "proactive_companion"
 
 DISPLAY_MODE_FLOATING = "floating"
 DISPLAY_MODE_SYSTEM = "system"
@@ -18,6 +19,61 @@ DISPLAY_MODES = {DISPLAY_MODE_FLOATING, DISPLAY_MODE_SYSTEM}
 FOCUS_SECONDS = 25 * 60
 SHORT_BREAK_SECONDS = 5 * 60
 LONG_BREAK_SECONDS = 15 * 60
+
+PROACTIVE_DAILY = "daily"
+PROACTIVE_INTERVAL = "interval"
+
+DEFAULT_PROACTIVE_ITEMS = (
+    {
+        "id": "morning",
+        "enabled": True,
+        "kind": "morning",
+        "title": "早安问候",
+        "description": "早上问候用户，轻轻确认今天要做什么。",
+        "schedule_type": PROACTIVE_DAILY,
+        "time": "08:30",
+    },
+    {
+        "id": "water",
+        "enabled": True,
+        "kind": "water",
+        "title": "喝水提醒",
+        "description": "提醒用户喝水，语气自然一点。",
+        "schedule_type": PROACTIVE_INTERVAL,
+        "interval_minutes": 90,
+        "active_start": "09:00",
+        "active_end": "22:00",
+    },
+    {
+        "id": "sedentary",
+        "enabled": True,
+        "kind": "sedentary",
+        "title": "久坐提醒",
+        "description": "提醒用户站起来活动一下，照顾肩颈和眼睛。",
+        "schedule_type": PROACTIVE_INTERVAL,
+        "interval_minutes": 60,
+        "active_start": "09:00",
+        "active_end": "22:00",
+    },
+    {
+        "id": "evening_review",
+        "enabled": True,
+        "kind": "evening_review",
+        "title": "计划复盘",
+        "description": "提醒用户简单复盘今天的计划、完成情况和明天要处理的事。",
+        "schedule_type": PROACTIVE_DAILY,
+        "time": "21:30",
+    },
+    {
+        "id": "bedtime",
+        "enabled": True,
+        "kind": "bedtime",
+        "title": "睡前提醒",
+        "description": "提醒用户差不多该收尾休息了。",
+        "schedule_type": PROACTIVE_DAILY,
+        "time": "23:30",
+    },
+)
 
 
 def local_now() -> datetime:
@@ -154,6 +210,64 @@ def compute_next_alarm_at(time_text: str, repeat_days=None, after: datetime | No
     return None
 
 
+def _clamp_minutes(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        minutes = default
+    return max(minimum, min(maximum, minutes))
+
+
+def _minutes_of_day(time_text: str) -> int | None:
+    normalized = normalize_time(time_text)
+    if not normalized:
+        return None
+    hour, minute = [int(part) for part in normalized.split(":", 1)]
+    return hour * 60 + minute
+
+
+def _is_in_active_window(dt: datetime, active_start: str, active_end: str) -> bool:
+    start = _minutes_of_day(active_start)
+    end = _minutes_of_day(active_end)
+    if start is None or end is None:
+        return True
+    current = dt.hour * 60 + dt.minute
+    if start <= end:
+        return start <= current <= end
+    return current >= start or current <= end
+
+
+def _next_active_window_start(after: datetime, active_start: str, active_end: str) -> datetime | None:
+    start = _minutes_of_day(active_start)
+    end = _minutes_of_day(active_end)
+    if start is None or end is None:
+        return after
+    for offset in range(0, 3):
+        date = (after + timedelta(days=offset)).date()
+        candidate = datetime.combine(date, datetime.min.time()) + timedelta(minutes=start)
+        if candidate <= after:
+            continue
+        return candidate
+    return None
+
+
+def compute_next_proactive_at(item: dict, after: datetime | None = None) -> datetime | None:
+    if not isinstance(item, dict):
+        return None
+    after = (after or local_now()).replace(microsecond=0)
+    schedule_type = str(item.get("schedule_type") or PROACTIVE_DAILY).strip().lower()
+    if schedule_type == PROACTIVE_DAILY:
+        return compute_next_alarm_at(item.get("time", ""), list(range(7)), after)
+
+    interval = _clamp_minutes(item.get("interval_minutes"), 60, 10, 480)
+    active_start = normalize_time(item.get("active_start") or "09:00") or "09:00"
+    active_end = normalize_time(item.get("active_end") or "22:00") or "22:00"
+    candidate = after + timedelta(minutes=interval)
+    if _is_in_active_window(candidate, active_start, active_end):
+        return candidate
+    return _next_active_window_start(after, active_start, active_end)
+
+
 def normalize_alarm(item, now: datetime | None = None) -> dict | None:
     if not isinstance(item, dict):
         return None
@@ -212,6 +326,83 @@ def create_alarm(time_text: str, repeat_days=None, description: str = "", charac
         "created_at": isoformat(now),
         "next_at": isoformat(next_at),
         "last_triggered_at": "",
+    }
+
+
+def _default_proactive_item_map() -> dict[str, dict]:
+    return {str(item["id"]): dict(item) for item in DEFAULT_PROACTIVE_ITEMS}
+
+
+def normalize_proactive_item(item, template: dict | None = None, now: datetime | None = None) -> dict | None:
+    if not isinstance(item, dict):
+        item = {}
+    template = dict(template or {})
+    merged = dict(template)
+    merged.update(item)
+    item_id = str(merged.get("id") or "").strip()
+    if not item_id:
+        return None
+    now = now or local_now()
+    schedule_type = str(merged.get("schedule_type") or PROACTIVE_DAILY).strip().lower()
+    if schedule_type not in {PROACTIVE_DAILY, PROACTIVE_INTERVAL}:
+        schedule_type = PROACTIVE_DAILY
+    normalized = {
+        "id": item_id,
+        "enabled": bool(merged.get("enabled", True)),
+        "kind": str(merged.get("kind") or item_id).strip(),
+        "title": str(merged.get("title") or item_id).strip()[:80],
+        "description": str(merged.get("description") or "").strip()[:240],
+        "schedule_type": schedule_type,
+        "character": str(merged.get("character", "") or "").strip(),
+        "next_at": str(merged.get("next_at", "") or ""),
+        "last_triggered_at": str(merged.get("last_triggered_at", "") or ""),
+    }
+    if schedule_type == PROACTIVE_DAILY:
+        normalized["time"] = normalize_time(merged.get("time", "")) or normalize_time(template.get("time", "")) or "08:30"
+    else:
+        normalized["interval_minutes"] = _clamp_minutes(merged.get("interval_minutes"), template.get("interval_minutes", 60), 10, 480)
+        normalized["active_start"] = normalize_time(merged.get("active_start", "")) or normalize_time(template.get("active_start", "")) or "09:00"
+        normalized["active_end"] = normalize_time(merged.get("active_end", "")) or normalize_time(template.get("active_end", "")) or "22:00"
+
+    if normalized["enabled"]:
+        next_at = parse_iso_datetime(normalized.get("next_at"))
+        if next_at is None:
+            next_at = compute_next_proactive_at(normalized, now)
+        normalized["next_at"] = isoformat(next_at)
+    else:
+        normalized["next_at"] = ""
+    return normalized
+
+
+def normalize_proactive_companion(value, now: datetime | None = None) -> dict:
+    now = now or local_now()
+    raw = value if isinstance(value, dict) else {}
+    templates = _default_proactive_item_map()
+    raw_items = raw.get("items", [])
+    raw_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in raw_items
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    } if isinstance(raw_items, list) else {}
+    items = []
+    seen = set()
+    for item_id, template in templates.items():
+        normalized = normalize_proactive_item(raw_by_id.get(item_id, {}), template, now)
+        if normalized:
+            items.append(normalized)
+            seen.add(item_id)
+    for item in raw_by_id.values():
+        item_id = str(item.get("id") or "").strip()
+        if item_id in seen:
+            continue
+        normalized = normalize_proactive_item(item, None, now)
+        if normalized:
+            items.append(normalized)
+            seen.add(item_id)
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "character": str(raw.get("character", "") or "").strip(),
+        "items": items,
     }
 
 
