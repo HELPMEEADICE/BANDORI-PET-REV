@@ -463,6 +463,13 @@ def _database_is_locked_error(exc: Exception) -> bool:
     return isinstance(exc, sqlite3.OperationalError) and "database is locked" in str(exc).lower()
 
 
+def _try_database_operation(operation):
+    try:
+        return True, operation()
+    except sqlite3.OperationalError as exc:
+        return False, exc
+
+
 def _rollback_quietly(conn):
     if conn is None:
         return
@@ -474,13 +481,14 @@ def _rollback_quietly(conn):
 
 def _run_with_locked_retry(conn, operation, attempts: int = 5, delay: float = 0.25):
     for attempt in range(max(1, attempts)):
-        try:
-            return operation()
-        except sqlite3.OperationalError as exc:
-            if not _database_is_locked_error(exc) or attempt >= attempts - 1:
-                raise
-            _rollback_quietly(conn)
-            time.sleep(delay * (attempt + 1))
+        ok, result = _try_database_operation(operation)
+        if ok:
+            return result
+        exc = result
+        if not _database_is_locked_error(exc) or attempt >= attempts - 1:
+            raise exc
+        _rollback_quietly(conn)
+        time.sleep(delay * (attempt + 1))
 
 
 class _DatabaseManagerMeta(type):

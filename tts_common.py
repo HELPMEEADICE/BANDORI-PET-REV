@@ -14,7 +14,7 @@ def strip_tts_action_tags(text: str) -> str:
 def clean_tts_payload(text: str, strip_search_sources: bool = False) -> str:
     text = str(text or "")
     if strip_search_sources:
-        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.S)
+        text = re.sub(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*", "", text, flags=re.DOTALL)
     return strip_tts_action_tags(text).strip()
 
 

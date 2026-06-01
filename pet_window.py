@@ -613,9 +613,7 @@ class PetWindow(QWidget):
             if ch in current:
                 restored.append(ch)
                 current.discard(ch)
-        for ch in self._group_characters:
-            if ch in current:
-                restored.append(ch)
+        restored.extend(ch for ch in self._group_characters if ch in current)
         if len(restored) == len(self._group_characters):
             self._group_characters = restored
 
@@ -869,7 +867,7 @@ class PetWindow(QWidget):
         # 计算与所有其他角色的距离，选择最近的
         nearest_pos = None
         nearest_dist_sq = float('inf')
-        for char, (tx, ty) in self._peer_window_positions.items():
+        for tx, ty in self._peer_window_positions.values():
             dx = tx - my_x
             dy = ty - my_y
             dist_sq = dx * dx + dy * dy
@@ -2324,7 +2322,7 @@ class PetWindow(QWidget):
         if model is None:
             return
 
-        char_prefix = self._current_char if self._current_char else "anon"
+        char_prefix = self._current_char or "anon"
         normalized = action_name.strip().lower()
         normalized = normalized.strip("[] \t\r\n")
         normalized = normalized.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]

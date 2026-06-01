@@ -441,10 +441,11 @@ def _searcher_for_engine(engine: str):
 
 def _content_to_text(content) -> str:
     if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") in ("text", "input_text"):
-                parts.append(str(item.get("text", "") or ""))
+        parts = [
+            str(item.get("text", "") or "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") in ("text", "input_text")
+        ]
         return "\n".join(parts)
     return str(content or "")
 
@@ -770,8 +771,7 @@ def _clean_bing_url(raw_url: str) -> str:
     parsed = urllib.parse.urlsplit(link)
     if "bing.com" in parsed.netloc and parsed.path.startswith("/ck/"):
         encoded = urllib.parse.parse_qs(parsed.query).get("u", [""])[0]
-        if encoded.startswith("a1"):
-            encoded = encoded[2:]
+        encoded = encoded.removeprefix("a1")
         if encoded:
             padding = "=" * ((4 - len(encoded) % 4) % 4)
             try:

@@ -7,7 +7,7 @@ from llm_thinking import apply_thinking_options
 
 
 def _strip_thinking_text(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.S | re.I).strip()
+    return re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.DOTALL | re.IGNORECASE).strip()
 
 
 def analyze_images_with_aux_model(

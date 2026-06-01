@@ -73,11 +73,11 @@ def is_custom_character(character: str) -> bool:
 def list_custom_characters() -> list[str]:
     if not MODELS_DIR.is_dir():
         return []
-    result = []
-    for entry in sorted(MODELS_DIR.iterdir()):
-        if entry.is_dir() and (entry / CUSTOM_MARKER_FILENAME).is_file():
-            result.append(entry.name)
-    return result
+    return [
+        entry.name
+        for entry in sorted(MODELS_DIR.iterdir())
+        if entry.is_dir() and (entry / CUSTOM_MARKER_FILENAME).is_file()
+    ]
 
 
 def delete_custom_character(character: str) -> None:

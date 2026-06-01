@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimat
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTextEdit, QScrollArea, QSizePolicy, QToolButton, QMenu,
+    QScrollArea, QSizePolicy, QToolButton, QMenu,
     QApplication, QGraphicsOpacityEffect, QWidgetAction,
     QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
     QSplitter, QSplitterHandle, QCheckBox,
@@ -68,7 +68,7 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
-from tts_common import clean_tts_payload, strip_tts_action_tags
+from tts_common import clean_tts_payload
 try:
     from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
     _TTS_AVAILABLE = True
@@ -4879,15 +4879,16 @@ class ChatWindow(QWidget):
 
     def _relationship_status_text(self, sections: tuple[str, ...] | None = None) -> str:
         user_key = self._user_memory_key()
-        parts = []
-        for character in self._memory_target_characters():
-            parts.append(format_character_status(
+        parts = [
+            format_character_status(
                 self._db,
                 character,
                 user_key,
                 self._model_manager.get_display_name(character),
                 sections=sections,
-            ))
+            )
+            for character in self._memory_target_characters()
+        ]
         return "\n\n".join(parts)
 
     def _remember_manual_text(self, text: str):
@@ -5556,19 +5557,23 @@ class ChatWindow(QWidget):
                 limit=max_history * 2,
                 user_key=self._chat_user_key,
             ) if self._group_conv_id else []
-            for m in history:
-                messages.append({
+            messages.extend(
+                {
                     "role": m["role"],
                     "content": self._chat_message_content(m["content"], m.get("attachments_json")),
-                })
+                }
+                for m in history
+            )
         elif self._conv_id:
             max_history = 20
             history = self._db.get_messages(self._conv_id, limit=max_history * 2)
-            for m in history:
-                messages.append({
+            messages.extend(
+                {
                     "role": m["role"],
                     "content": self._chat_message_content(m["content"], m.get("attachments_json")),
-                })
+                }
+                for m in history
+            )
         now = datetime.now()
         time_str = now.strftime("%Y-%m-%d %I:%M %p")
         dynamic_context += f"\n\n【后置提示词】\n当前时间：{time_str}"
@@ -5645,7 +5650,7 @@ class ChatWindow(QWidget):
                 self._auto_topic = arg
                 self._auto_round = 0
                 self._start_auto_round()
-                topic_display = arg if arg else _tr("ChatWindow.auto_free_talk", default="自由对话")
+                topic_display = arg or _tr("ChatWindow.auto_free_talk", default="自由对话")
                 return _tr("ChatWindow.auto_enabled_topic", default="已开启自动聊天模式，话题：{topic}", topic=topic_display)
 
         return None
@@ -5917,15 +5922,13 @@ class ChatWindow(QWidget):
             {"key": character, "name": self._model_manager.get_display_name(character)}
             for character in self._group_characters
         ]
-        recent = []
         history = self._db.get_group_messages(
             self._conversation_key,
             self._group_conv_id,
             limit=12,
             user_key=self._chat_user_key,
         ) if self._group_conv_id else []
-        for m in history:
-            recent.append({"role": m["role"], "content": m["content"]})
+        recent = [{"role": m["role"], "content": m["content"]} for m in history]
         planner_prompt = (
             "你是群聊发言调度器。根据用户最新发言、成员关系和最近上下文，决定接下来哪些角色发言以及发言条数。"
             "输出必须是严格 JSON，格式：{\"speakers\":[\"角色key\",...]}。"
@@ -5980,7 +5983,7 @@ class ChatWindow(QWidget):
     def _parse_group_plan(self, text: str) -> list[str]:
         allowed = set(self._group_characters)
         try:
-            match = re.search(r"\{.*\}", text, re.S)
+            match = re.search(r"\{.*\}", text, re.DOTALL)
             data = json.loads(match.group(0) if match else text)
             speakers = data.get("speakers", [])
         except Exception:

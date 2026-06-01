@@ -276,7 +276,7 @@ def _json_object_from_text(text: str) -> dict:
     try:
         data = json.loads(source)
     except (TypeError, ValueError):
-        match = re.search(r"\{.*\}", source, flags=re.S)
+        match = re.search(r"\{.*\}", source, flags=re.DOTALL)
         if match:
             try:
                 data = json.loads(match.group(0))

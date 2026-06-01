@@ -559,11 +559,8 @@ class TTSPlayer(QObject):
         self.level_changed.emit(0.0)
         self.mouth_pose_changed.emit(0.0, 0.0)
         self._level_timer.stop()
-        while True:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
+        with self._queue.mutex:
+            self._queue.queue.clear()
 
     def prepare_lip_sync_text(self, text: str, language: str = ""):
         self._pending_visemes = deque(_estimate_viseme_units(text, language))

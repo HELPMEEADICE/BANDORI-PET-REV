@@ -117,11 +117,8 @@ def _resolve_allowed_path(value, roots: list[Path]) -> Path:
         candidate = roots[0] / candidate
     resolved = candidate.resolve()
     for root in roots:
-        try:
-            resolved.relative_to(root)
+        if resolved.is_relative_to(root):
             return resolved
-        except ValueError:
-            continue
     allowed = ", ".join(str(root) for root in roots)
     raise PermissionError(f"Path is outside allowed roots. Allowed roots: {allowed}")
 
@@ -179,10 +176,8 @@ def _search_files(path: Path, roots: list[Path], query: str, limit: int) -> str:
 
 def _display_path(path: Path, roots: list[Path]) -> str:
     for root in roots:
-        try:
+        if path.is_relative_to(root):
             return str(path.relative_to(root)).replace("\\", "/")
-        except ValueError:
-            continue
     return str(path)
 
 

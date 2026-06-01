@@ -9,10 +9,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QHBoxLayout,
     QVBoxLayout,
-    QFrame,
     QLabel,
-    QSpacerItem,
-    QSizePolicy,
 )
 from qfluentwidgets.components.widgets.menu import TextEditMenu
 
