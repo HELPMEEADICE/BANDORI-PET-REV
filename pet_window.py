@@ -183,6 +183,9 @@ class PetWindow(QWidget):
         self._move_all_roles_together = bool(
             config_manager.get("move_all_roles_together", False)
         )
+        self._model_mouse_passthrough = bool(
+            config_manager.get("model_mouse_passthrough", False)
+        )
         self._peer_window_positions = {}  # {character: (x, y)}
         self._peer_pos_broadcast_timer = QTimer(self)
         self._peer_pos_broadcast_timer.setInterval(200)
@@ -1338,7 +1341,9 @@ class PetWindow(QWidget):
             "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled",
             "move_all_roles_together",
+            "model_mouse_passthrough",
         }
+
         if self._cfg and any(key in data for key in compact_keys):
             self._cfg.load()
             if "compact_ai_window_enabled" in data:
@@ -1375,6 +1380,8 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
             if "move_all_roles_together" in data:
                 self._cfg.set("move_all_roles_together", bool(data["move_all_roles_together"]))
+            if "model_mouse_passthrough" in data:
+                self._cfg.set("model_mouse_passthrough", bool(data["model_mouse_passthrough"]))
             if "user_avatar_color" in data:
                 self._cfg.set("user_avatar_color", data["user_avatar_color"])
             if "user_avatar_path" in data:
@@ -1411,6 +1418,8 @@ class PetWindow(QWidget):
             self.set_live2d_mutual_gaze_enabled(data["live2d_mutual_gaze_enabled"])
         if "move_all_roles_together" in data:
             self._move_all_roles_together = bool(data["move_all_roles_together"])
+        if "model_mouse_passthrough" in data:
+            self._model_mouse_passthrough = bool(data["model_mouse_passthrough"])
         if "live2d_quality" in data:
             self._live2d_quality = normalize_live2d_quality(data["live2d_quality"])
             self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -2671,11 +2680,7 @@ class PetWindow(QWidget):
                 self._cfg.set("dark_theme", _THEME_ON if isDarkTheme() else _THEME_OFF)
             self._cfg.set("vsync", self._vsync)
             self._cfg.set("game_topmost", self._game_topmost)
-            self._cfg.set("hide_live2d_model", self._hide_live2d_model)
-            self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
-            self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
-            self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
-            self._cfg.set("move_all_roles_together", self._move_all_roles_together)
+
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)

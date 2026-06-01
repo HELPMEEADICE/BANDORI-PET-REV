@@ -296,9 +296,9 @@ class PixelPetWidget(QWidget):
             if total_dx * total_dx + total_dy * total_dy < 16:
                 return
             self._drag_moved = True
-        dx = int(gpos.x() - self._drag_start_x)
-        dy = int(gpos.y() - self._drag_start_y)
+        dx = round(gpos.x() - self._drag_start_x)
+        dy = round(gpos.y() - self._drag_start_y)
+        self._drag_start_x = gpos.x()
+        self._drag_start_y = gpos.y()
         if dx != 0 or dy != 0:
             self._window_drag_callback(dx, dy)
-            self._drag_start_x = gpos.x()
-            self._drag_start_y = gpos.y()

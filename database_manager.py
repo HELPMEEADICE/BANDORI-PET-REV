@@ -1850,17 +1850,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "total_group_messages": int(gmsg_row[0]) if gmsg_row else 0,
         }
 
-    def get_messages_per_character(self, user_key: str = "") -> list[dict]:
-        user_key = self._normalize_user_key(user_key)
-        rows = self._conn.execute(
-            "SELECT c.character, COUNT(m.id) AS msg_count "
-            "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
-            "WHERE c.user_key=? "
-            "GROUP BY c.character ORDER BY msg_count DESC",
-            (user_key,),
-        ).fetchall()
-        return [{"character": r[0], "count": int(r[1])} for r in rows]
-
     def get_daily_message_counts(self, days: int = 30) -> list[dict]:
         rows = self._conn.execute(
             "SELECT date(created_at) AS day, COUNT(*) AS cnt "
@@ -1870,12 +1859,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             (f"-{days} days",),
         ).fetchall()
         return [{"day": r[0], "count": int(r[1])} for r in rows]
-
-    def get_active_days(self) -> int:
-        row = self._conn.execute(
-            "SELECT COUNT(DISTINCT date(created_at)) FROM messages"
-        ).fetchone()
-        return int(row[0]) if row else 0
 
     def get_messages_per_character_range(self, days: int = 0, user_key: str = "") -> list[dict]:
         user_key = self._normalize_user_key(user_key)

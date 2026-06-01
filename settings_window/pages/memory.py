@@ -184,7 +184,7 @@ class MemoryPageMixin:
         list_toolbar.setSpacing(8)
         self._memory_count_label = BodyLabel("", list_panel)
         self._memory_count_label.setObjectName("memoryListMeta")
-        self._memory_select_all_check = QCheckBox(_tr("SettingsWindow.memory_select_all", default="全选"), list_panel)
+        self._memory_select_all_check = CheckBox(_tr("SettingsWindow.memory_select_all", default="全选"), list_panel)
         self._memory_select_all_check.setTristate(True)
         self._memory_select_all_check.stateChanged.connect(self._toggle_all_memory_selection)
         self._memory_batch_delete_btn = PushButton(
@@ -338,13 +338,6 @@ class MemoryPageMixin:
             )
         )
 
-    def _memory_item_title(self, memory: dict) -> str:
-        kind = self._memory_kind_label(memory.get("kind", "note"))
-        content = str(memory.get("content", "") or "").replace("\n", " ").strip()
-        if len(content) > 56:
-            content = content[:56].rstrip() + "..."
-        return f"{kind} - {content or _tr('SettingsWindow.memory_empty_content')}"
-
     def _memory_item_meta(self, memory: dict) -> str:
         importance = int(memory.get("importance") or 0)
         updated_at = memory.get("updated_at") or memory.get("created_at") or ""
@@ -461,7 +454,7 @@ class MemoryPageMixin:
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(10)
 
-            check = QCheckBox(row)
+            check = CheckBox(row)
             check.setChecked(memory_id in self._selected_memory_ids)
             check.stateChanged.connect(lambda state, mid=memory_id: self._update_memory_selection(mid, state))
             row_layout.addWidget(check, alignment=Qt.AlignmentFlag.AlignTop)
@@ -795,10 +788,6 @@ class MemoryPageMixin:
             StrongBodyLabel#memoryRowKind {{
                 color: {text};
                 font-size: 13px;
-            }}
-            QCheckBox {{
-                color: {text};
-                spacing: 6px;
             }}
             QTextEdit {{
                 background: {input_bg};

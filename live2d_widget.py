@@ -528,12 +528,12 @@ class Live2DWidget(QOpenGLWidget):
                 return
             self._drag_moved = True
             
-        dx = int(gpos.x() - self._drag_start_x)
-        dy = int(gpos.y() - self._drag_start_y)
+        dx = round(gpos.x() - self._drag_start_x)
+        dy = round(gpos.y() - self._drag_start_y)
+        self._drag_start_x = gpos.x()
+        self._drag_start_y = gpos.y()
         if dx != 0 or dy != 0:
             self._window_drag_callback(dx, dy)
-            self._drag_start_x = gpos.x()
-            self._drag_start_y = gpos.y()
 
     def _track_head_at_global(self, gx: float, gy: float):
         t0 = self._perf_probe.now()
