@@ -87,6 +87,8 @@ from faster_whisper import WhisperModel
 MODEL_NAME = os.environ.get("ASR_MODEL", "Systran/faster-whisper-small")
 DEVICE = os.environ.get("ASR_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
+HOST = os.environ.get("ASR_HOST", "127.0.0.1")
+PORT = int(os.environ.get("ASR_PORT", "8000"))
 
 app = FastAPI()
 model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
@@ -121,7 +123,7 @@ async def transcribe(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=HOST, port=PORT)
 ```
 
 这里真正“加载 ASR 模型”的代码是：
@@ -190,6 +192,20 @@ $env:ASR_MODEL="Systran/faster-whisper-medium"
 http://127.0.0.1:8000/v1/audio/transcriptions
 ```
 
+如果 Whisper 服务部署在另一台机器或容器里，需要让服务监听外部地址，并在 BandoriPet 里填写那台机器的实际 IP 或域名：
+
+```powershell
+$env:ASR_HOST="0.0.0.0"
+$env:ASR_PORT="8000"
+python server.py
+```
+
+BandoriPet 侧填写：
+
+```text
+http://服务器IP:8000/v1/audio/transcriptions
+```
+
 7. 「ASR API Key」本地服务可留空。
 8. 「ASR 模型名」填写后端需要的模型名。使用上面的示例服务时，这里可以填 `whisper-large-v3`，实际加载哪个模型由服务启动时的 `ASR_MODEL` 决定。
 9. 「识别语言」建议中文用户选「中文」。
@@ -237,6 +253,8 @@ http://127.0.0.1:8000/v1/audio/transcriptions
 - API 地址是否填写为 `http://127.0.0.1:8000/v1/audio/transcriptions`。
 - 端口是否被防火墙或其他程序占用。
 - 后端终端是否有模型加载失败、CUDA 不可用、显存不足等报错。
+- 如果服务在远端机器或容器里，后端不能只监听 `127.0.0.1`；请设置 `ASR_HOST=0.0.0.0`，并在 BandoriPet 里填远端机器的 IP 或域名。
+- 如果只填写了 `IP:端口`，新版 BandoriPet 会自动补成 `http://IP:端口/v1/audio/transcriptions`。
 
 ### 第一次启动很慢
 
