@@ -668,18 +668,6 @@ class Live2DWidget(QOpenGLWidget):
         local = self.mapFromGlobal(global_pos)
         return local if self.rect().contains(local) else None
 
-    def is_model_hit_at_global(self, global_pos: QPoint, *, sync: bool = False) -> bool:
-        local = self._get_valid_local_pos(global_pos)
-        return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
-
-    def is_model_interaction_hit_at_global(self, global_pos: QPoint) -> bool:
-        local = self._get_valid_local_pos(global_pos)
-        if not local:
-            return False
-        if self._initialized_gl and self._model:
-            return self._is_model_hit_at(local.x(), local.y(), sync=True)
-        return self._is_model_geometry_hit_at(local.x(), local.y())
-
     def is_model_geometry_hit_at_global(self, global_pos: QPoint) -> bool:
         local = self._get_valid_local_pos(global_pos)
         return self._is_model_geometry_hit_at(local.x(), local.y()) if local else False
