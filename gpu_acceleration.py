@@ -22,6 +22,8 @@ def is_gpu_acceleration_enabled(cfg=None) -> bool:
 
 def configure_qt_opengl_environment(enabled: bool = True) -> None:
     """Choose Qt's OpenGL backend before QApplication is created."""
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
     if enabled:
         if sys.platform != "darwin":
             os.environ.setdefault("QT_OPENGL", "desktop")
@@ -31,6 +33,12 @@ def configure_qt_opengl_environment(enabled: bool = True) -> None:
 
 
 def apply_qt_opengl_policy(qapplication, qt, enabled: bool = True) -> None:
+    try:
+        qapplication.setHighDpiScaleFactorRoundingPolicy(
+            qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
     qapplication.setAttribute(qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     if sys.platform == "darwin":
         return

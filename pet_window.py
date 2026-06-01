@@ -12,7 +12,7 @@ import uuid
 if os.name == "nt":
     import ctypes.wintypes
 
-from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
@@ -124,6 +124,45 @@ _PIXEL_PET_WIDGET_CLASS = None
 _PIXEL_FRAME_LOADER = None
 _PIXEL_PATH_RESOLVER = None
 _COMPACT_AI_WINDOW_CLASS = None
+
+
+def _safe_screen_attr(screen, name: str) -> str:
+    try:
+        value = getattr(screen, name)()
+    except Exception:
+        value = ""
+    return str(value or "")
+
+
+def _rect_to_list(rect: QRect) -> list[int]:
+    return [int(rect.left()), int(rect.top()), int(rect.width()), int(rect.height())]
+
+
+def _rect_from_list(value) -> QRect | None:
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+    try:
+        return QRect(int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _screen_signature(screen) -> dict:
+    if screen is None:
+        return {}
+    return {
+        "name": _safe_screen_attr(screen, "name"),
+        "serial": _safe_screen_attr(screen, "serialNumber"),
+        "manufacturer": _safe_screen_attr(screen, "manufacturer"),
+        "model": _safe_screen_attr(screen, "model"),
+    }
+
+
+def _as_int(value, default: int = -1) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _pixel_pet_support():
@@ -363,6 +402,179 @@ class PetWindow(QWidget):
             return "xcb" in QGuiApplication.platformName().lower()
         except Exception:
             return False
+
+    def _all_screens(self):
+        screens = QGuiApplication.screens()
+        if screens:
+            return screens
+        primary = QGuiApplication.primaryScreen()
+        return [primary] if primary is not None else []
+
+    def _screen_for_current_window(self):
+        try:
+            center = self.geometry().center()
+            screen = QGuiApplication.screenAt(center)
+            if screen is not None:
+                return screen
+        except Exception:
+            pass
+        try:
+            screen = self.screen()
+            if screen is not None:
+                return screen
+        except Exception:
+            pass
+        return QGuiApplication.primaryScreen()
+
+    def _screen_for_placement(self, placement: dict):
+        if not isinstance(placement, dict):
+            return None
+        saved_name = str(placement.get("screen_name", "") or "")
+        saved_serial = str(placement.get("screen_serial", "") or "")
+        saved_manufacturer = str(placement.get("screen_manufacturer", "") or "")
+        saved_model = str(placement.get("screen_model", "") or "")
+        saved_geo = _rect_from_list(placement.get("screen_geometry"))
+        saved_available = _rect_from_list(placement.get("screen_available_geometry"))
+
+        screens = self._all_screens()
+        for screen in screens:
+            sig = _screen_signature(screen)
+            if saved_serial and sig.get("serial") == saved_serial:
+                return screen
+        for screen in screens:
+            sig = _screen_signature(screen)
+            if saved_name and sig.get("name") == saved_name:
+                if not saved_model or sig.get("model") == saved_model:
+                    return screen
+        for screen in screens:
+            sig = _screen_signature(screen)
+            if saved_name and sig.get("name") == saved_name:
+                return screen
+            if saved_model and saved_manufacturer:
+                if sig.get("model") == saved_model and sig.get("manufacturer") == saved_manufacturer:
+                    return screen
+        for screen in screens:
+            try:
+                if saved_available is not None and screen.availableGeometry() == saved_available:
+                    return screen
+                if saved_geo is not None and screen.geometry() == saved_geo:
+                    return screen
+            except Exception:
+                continue
+        return None
+
+    def _window_placement(self) -> dict:
+        screen = self._screen_for_current_window()
+        if screen is None:
+            return {}
+        available = screen.availableGeometry()
+        geometry = screen.geometry()
+        x, y, w, h = int(self.x()), int(self.y()), int(self.width()), int(self.height())
+        span_x = max(1, available.width() - w)
+        span_y = max(1, available.height() - h)
+        signature = _screen_signature(screen)
+        try:
+            device_pixel_ratio = float(screen.devicePixelRatio())
+        except Exception:
+            device_pixel_ratio = 1.0
+        return {
+            "x": x,
+            "y": y,
+            "width": w,
+            "height": h,
+            "screen_name": signature.get("name", ""),
+            "screen_serial": signature.get("serial", ""),
+            "screen_manufacturer": signature.get("manufacturer", ""),
+            "screen_model": signature.get("model", ""),
+            "screen_geometry": _rect_to_list(geometry),
+            "screen_available_geometry": _rect_to_list(available),
+            "relative_x": (x - available.left()) / span_x,
+            "relative_y": (y - available.top()) / span_y,
+            "right_offset": available.left() + available.width() - (x + w),
+            "bottom_offset": available.top() + available.height() - (y + h),
+            "device_pixel_ratio": device_pixel_ratio,
+        }
+
+    def _position_intersects_any_screen(self, x: int, y: int, w: int | None = None, h: int | None = None) -> bool:
+        w = int(w if w is not None else self.width())
+        h = int(h if h is not None else self.height())
+        rect = QRect(int(x), int(y), max(1, w), max(1, h))
+        for screen in self._all_screens():
+            if screen.availableGeometry().intersects(rect):
+                return True
+        return False
+
+    def _constrain_position_to_screen(self, x: int, y: int, screen) -> tuple[int, int]:
+        if screen is None:
+            return int(x), int(y)
+        geo = screen.availableGeometry()
+        w, h = max(1, self.width()), max(1, self.height())
+        min_x = geo.left() - max(0, w - 32)
+        max_x = geo.left() + geo.width() - 32
+        min_y = geo.top() - max(0, h - 32)
+        max_y = geo.top() + geo.height() - 32
+        return (
+            max(min_x, min(int(x), max_x)),
+            max(min_y, min(int(y), max_y)),
+        )
+
+    def _saved_position(self, mode: str, *, offset_x: int = 0) -> tuple[int, int] | None:
+        if not self._cfg:
+            return None
+        entry = self._current_model_entry()
+        if mode == "pixel":
+            placement_key = "pixel_window_placement"
+            x_key, y_key = "pixel_window_x", "pixel_window_y"
+        else:
+            placement_key = "window_placement"
+            x_key, y_key = "window_x", "window_y"
+
+        placement = entry.get(placement_key)
+        using_global_fallback = False
+        if not isinstance(placement, dict) or not placement:
+            placement = self._cfg.get(placement_key, {})
+            using_global_fallback = True
+
+        legacy_x = entry.get(x_key, None)
+        legacy_y = entry.get(y_key, None)
+        if legacy_x is None or legacy_y is None or (legacy_x == -1 and legacy_y == -1):
+            legacy_x = self._cfg.get(x_key, -1)
+            legacy_y = self._cfg.get(y_key, -1)
+            using_global_fallback = True
+        x = _as_int(legacy_x)
+        y = _as_int(legacy_y)
+
+        if isinstance(placement, dict) and placement:
+            screen = self._screen_for_placement(placement)
+            if screen is not None:
+                geo = screen.availableGeometry()
+                rel_x = _clamp_float(placement.get("relative_x", 0.5), -4.0, 4.0, 0.5)
+                rel_y = _clamp_float(placement.get("relative_y", 0.5), -4.0, 4.0, 0.5)
+                target_x = geo.left() + int(round(rel_x * max(0, geo.width() - self.width())))
+                target_y = geo.top() + int(round(rel_y * max(0, geo.height() - self.height())))
+                if using_global_fallback:
+                    target_x += int(offset_x)
+                return self._constrain_position_to_screen(target_x, target_y, screen)
+            if not (x == -1 and y == -1) and self._position_intersects_any_screen(x, y):
+                if using_global_fallback:
+                    x += int(offset_x)
+                return int(x), int(y)
+
+        if x == -1 and y == -1:
+            return None
+        if using_global_fallback:
+            x += int(offset_x)
+        if self._position_intersects_any_screen(x, y):
+            return int(x), int(y)
+        return None
+
+    def restore_saved_position(self, *, offset_x: int = 0) -> bool:
+        pos = self._saved_position("pixel" if self._pixel_mode else "live2d", offset_x=offset_x)
+        if pos is None:
+            return False
+        self.move(pos[0], pos[1])
+        self._show_pos_set = True
+        return True
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -852,6 +1064,7 @@ class PetWindow(QWidget):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        self._live2d_widget.refresh_screen_scale()
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
             self._sync_compact_ai_window()
         self._schedule_position_save()
@@ -2664,36 +2877,35 @@ class PetWindow(QWidget):
         if not self._cfg:
             return
         path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
+        placement = self._window_placement()
         if self._pixel_mode:
             self._cfg.set("pixel_window_x", self.x())
             self._cfg.set("pixel_window_y", self.y())
+            self._cfg.set("pixel_window_placement", placement)
         else:
             self._cfg.set("window_x", self.x())
             self._cfg.set("window_y", self.y())
             self._cfg.set("window_width", self.width())
             self._cfg.set("window_height", self.height())
+            self._cfg.set("window_placement", placement)
         self._sync_current_model_entry(path, save=False)
 
     def _restore_live2d_position(self):
         if not self._cfg:
             self.resize(*self._live2d_size())
             return
-        entry = self._current_model_entry()
         w, h = self._live2d_size()
-        x = entry.get("window_x", self._cfg.get("window_x", -1))
-        y = entry.get("window_y", self._cfg.get("window_y", -1))
         self.resize(w, h)
-        if x >= 0 and y >= 0:
-            self.move(x, y)
+        pos = self._saved_position("live2d")
+        if pos is not None:
+            self.move(pos[0], pos[1])
 
     def _restore_pixel_position(self):
         if not self._cfg:
             return
-        entry = self._current_model_entry()
-        x = entry.get("pixel_window_x", self._cfg.get("pixel_window_x", -1))
-        y = entry.get("pixel_window_y", self._cfg.get("pixel_window_y", -1))
-        if x >= 0 and y >= 0:
-            self.move(x, y)
+        pos = self._saved_position("pixel")
+        if pos is not None:
+            self.move(pos[0], pos[1])
 
     def _enable_pixel_mode(self, save: bool = True) -> bool:
         if not self._load_pixel_for_current_character():
@@ -2806,11 +3018,13 @@ class PetWindow(QWidget):
                 if self._pixel_mode:
                     self._cfg.set("pixel_window_x", self.x())
                     self._cfg.set("pixel_window_y", self.y())
+                    self._cfg.set("pixel_window_placement", self._window_placement())
                 else:
                     self._cfg.set("window_x", self.x())
                     self._cfg.set("window_y", self.y())
                     self._cfg.set("window_width", self.width())
                     self._cfg.set("window_height", self.height())
+                    self._cfg.set("window_placement", self._window_placement())
             self._cfg.save()
 
     def _sync_current_model_entry(self, path: str, save: bool = True):
@@ -2837,6 +3051,7 @@ class PetWindow(QWidget):
             entry.update({
                 "pixel_window_x": self.x(),
                 "pixel_window_y": self.y(),
+                "pixel_window_placement": self._window_placement(),
             })
         else:
             entry.update({
@@ -2844,6 +3059,7 @@ class PetWindow(QWidget):
                 "window_y": self.y(),
                 "window_width": self.width(),
                 "window_height": self.height(),
+                "window_placement": self._window_placement(),
             })
         updated = False
         for idx, item in enumerate(models):
@@ -2903,7 +3119,7 @@ class PetWindow(QWidget):
         if self._show_pos_set and self._is_position_on_screen():
             self._sync_compact_ai_window(allow_create=True)
             return
-        screen = QGuiApplication.primaryScreen()
+        screen = self._screen_for_current_window() or QGuiApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
             self.move(
@@ -2915,14 +3131,7 @@ class PetWindow(QWidget):
         self._sync_compact_ai_window(allow_create=True)
 
     def _is_position_on_screen(self) -> bool:
-        screen = QGuiApplication.primaryScreen()
-        if screen is None:
-            return False
-        geo = screen.availableGeometry()
-        return (self.x() + self.width() > geo.left() and
-                self.x() < geo.right() and
-                self.y() + self.height() > geo.top() and
-                self.y() < geo.bottom())
+        return self._position_intersects_any_screen(self.x(), self.y(), self.width(), self.height())
 
     def _play_entrance(self):
         self.setWindowOpacity(0.0)
