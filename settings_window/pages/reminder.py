@@ -484,7 +484,7 @@ class ReminderPageMixin:
                 default="{desc} · {character} · 下次切换 {time}",
                 desc=desc,
                 character=display,
-                time=next_at if next_at else _tr("SettingsWindow.pomodoro_ended", default="已结束"),
+                time=next_at or _tr("SettingsWindow.pomodoro_ended", default="已结束"),
             ),
             row,
         )

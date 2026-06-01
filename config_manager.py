@@ -9,6 +9,15 @@ from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
 from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros
 
+
+def _try_replace_file(src, dst) -> OSError | None:
+    try:
+        os.replace(src, dst)
+        return None
+    except OSError as exc:
+        return exc
+
+
 BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
 DEFAULT_USER_PROFILE_KEY = "__default__"
@@ -701,20 +710,15 @@ class ConfigManager:
                 json.dump(self._data, f, indent=2, ensure_ascii=False)
                 f.flush()
                 os.fsync(f.fileno())
+            last_error = None
             for attempt in range(3):
-                try:
-                    os.replace(tmp_path, self._path)
+                last_error = _try_replace_file(tmp_path, self._path)
+                if last_error is None:
                     return
-                except PermissionError:
-                    if attempt < 2:
-                        time.sleep(0.1 * (attempt + 1))
-                    else:
-                        raise
-                except OSError:
-                    if attempt < 2:
-                        time.sleep(0.1 * (attempt + 1))
-                    else:
-                        raise
+                if attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
         except Exception:
             try:
                 os.unlink(tmp_path)

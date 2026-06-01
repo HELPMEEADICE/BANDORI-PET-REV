@@ -1,7 +1,6 @@
 import ctypes
 import ctypes.wintypes
 import os
-import re
 import sys
 from datetime import datetime
 

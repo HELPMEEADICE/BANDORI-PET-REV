@@ -7,7 +7,6 @@ from custom_model_import import (
     import_from_folder,
     import_from_zip,
     is_custom_character,
-    list_custom_characters,
 )
 from settings_window.pages.llm import LLMPageMixin
 from settings_window.pages.tts import TTSPageMixin

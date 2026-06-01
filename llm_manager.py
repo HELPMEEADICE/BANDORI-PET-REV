@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import threading
 import urllib.request
@@ -410,8 +409,7 @@ def _character_prompt_cache_token() -> tuple[tuple[str, int, int], ...]:
         paths.append(_OUTFIT_JSON_PATH)
     if not _CHARACTERS_DIR.exists():
         return _path_cache_token(paths)
-    for md_file in _CHARACTERS_DIR.glob("*/*.md"):
-        paths.append(md_file)
+    paths.extend(_CHARACTERS_DIR.glob("*/*.md"))
     return _path_cache_token(paths)
 
 
@@ -438,9 +436,7 @@ def _load_character_md_prompt(character: str, _cache_token: tuple[tuple[str, int
     character_dir = _CHARACTERS_DIR / character_dir_name
     if not character_dir.is_dir():
         return ""
-    parts = []
-    for md_file in sorted(character_dir.glob("*.md")):
-        parts.append(md_file.read_text(encoding="utf-8"))
+    parts = [md_file.read_text(encoding="utf-8") for md_file in sorted(character_dir.glob("*.md"))]
     return "\n\n".join(parts)
 
 
@@ -1050,7 +1046,7 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
         except (TypeError, ValueError):
             return match.group(0)
 
-    pattern = re.compile(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.S)
+    pattern = re.compile(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.DOTALL)
     cleaned = pattern.sub(replace_json, text)
     return cleaned.rstrip(), sources
 
@@ -1101,10 +1097,11 @@ def _responses_content(content):
 
 def _content_to_text(content) -> str:
     if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
-                parts.append(str(part.get("text", "")))
+        parts = [
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") in ("text", "input_text")
+        ]
         return "\n".join(p for p in parts if p).strip()
     return str(content or "").strip()
 

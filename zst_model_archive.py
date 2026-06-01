@@ -263,37 +263,35 @@ def _join_member(base_dir: str, path: str) -> str:
     return _normalize_member(normalized)
 
 
+def _safe_normalize_member(path: str) -> str:
+    try:
+        return _normalize_member(path)
+    except ValueError:
+        return ""
+
+
 def list_archive_files(archive_path: Path | str) -> list[str]:
     files = []
     with _open_tar_zst(str(Path(archive_path).resolve())) as archive:
         members = iter(archive)
         first = next(members, None)
         if first is not None:
-            try:
-                first_name = _normalize_member(first.name)
-            except ValueError:
-                first_name = ""
+            first_name = _safe_normalize_member(first.name)
             if first.isfile() and first_name == INDEX_MEMBER:
                 extracted = archive.extractfile(first)
                 if extracted is not None:
                     data = json.loads(_read_member_bytes(extracted, first, _INDEX_MEMBER_MAX_BYTES).decode("utf-8"))
                     indexed_files = data.get("files", [])
                     if isinstance(indexed_files, list):
-                        files = []
-                        for path in indexed_files:
-                            try:
-                                files.append(_normalize_member(path))
-                            except ValueError:
-                                continue
+                        files = [name for name in (_safe_normalize_member(path) for path in indexed_files) if name]
                         return sorted(files)
             elif first.isfile() and first_name:
                 files.append(first_name)
         for member in members:
             if member.isfile():
-                try:
-                    files.append(_normalize_member(member.name))
-                except ValueError:
-                    continue
+                member_name = _safe_normalize_member(member.name)
+                if member_name:
+                    files.append(member_name)
     return sorted(files)
 
 

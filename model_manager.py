@@ -401,8 +401,5 @@ class ModelManager:
         expressions = data.get("expressions", [])
         if not isinstance(expressions, list):
             return []
-        names = []
-        for item in expressions:
-            if isinstance(item, dict) and item.get("name"):
-                names.append(str(item["name"]))
+        names = [str(item["name"]) for item in expressions if isinstance(item, dict) and item.get("name")]
         return sorted(names)
