@@ -45,23 +45,6 @@ def _get_ns_window(view_ptr: int) -> int:
     return _send_id(view_ptr, "window")
 
 
-def set_ignores_mouse_events(widget, enabled: bool):
-    if not _init_objc() or widget is None:
-        return
-    try:
-        win_id = int(widget.winId())
-    except (TypeError, ValueError):
-        return
-    if not win_id:
-        return
-    window = _get_ns_window(win_id)
-    if not window:
-        return
-    f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
-    sender = ctypes.cast(_OBJC.objc_msgSend, f)
-    sender(window, _sel("setIgnoresMouseEvents:"), ctypes.c_bool(enabled))
-
-
 def set_window_level_floating(widget) -> bool:
     return _set_window_level(widget, 3)
 

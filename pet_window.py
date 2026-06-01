@@ -49,11 +49,8 @@ PBT_APMRESUMECRITICAL = 0x0006
 PBT_APMRESUMESUSPEND = 0x0007
 PBT_APMRESUMEAUTOMATIC = 0x0012
 WTS_SESSION_UNLOCK = 0x0008
-HTTRANSPARENT = -1
-HTCLIENT = 1
 GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
-WS_EX_TRANSPARENT = 0x00000020
 WS_EX_NOACTIVATE = 0x08000000
 
 if os.name == "nt":
@@ -85,19 +82,6 @@ else:
     _find_window = None
 
 _x11 = None
-_xext = None
-_SHAPE_SET = 0
-_SHAPE_INPUT = 2
-
-
-class _XRectangle(ctypes.Structure):
-    _fields_ = [
-        ("x", ctypes.c_short),
-        ("y", ctypes.c_short),
-        ("width", ctypes.c_ushort),
-        ("height", ctypes.c_ushort),
-    ]
-
 
 if sys.platform.startswith("linux"):
     try:
@@ -112,32 +96,6 @@ if sys.platform.startswith("linux"):
         _x11.XMoveWindow.restype = ctypes.c_int
     except Exception:
         _x11 = None
-    try:
-        _xext = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xext") or "libXext.so.6")
-        _xext.XShapeCombineRectangles.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_ulong,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.POINTER(_XRectangle),
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-        ]
-        _xext.XShapeCombineRectangles.restype = None
-        _xext.XShapeCombineMask.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_ulong,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_ulong,
-            ctypes.c_int,
-        ]
-        _xext.XShapeCombineMask.restype = None
-    except Exception:
-        _xext = None
 
 
 LIVE2D_BASE_WIDTH = 400
@@ -309,13 +267,6 @@ class PetWindow(QWidget):
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
         self._daily_context_idle_seen = set()
-        self._mouse_passthrough = False
-        # QOpenGLWidget alpha reads are not reliable during WM_NCHITTEST on
-        # Windows 11; keep hit sampling on the Qt timer path.
-        self._use_native_hit_test_passthrough = False
-        self._passthrough_timer = QTimer(self)
-        self._passthrough_timer.setInterval(16 if sys.platform == "darwin" else 50)
-        self._passthrough_timer.timeout.connect(self._update_mouse_passthrough)
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
         self._context_idle_timer.timeout.connect(self._tick_context_idle_behavior)
@@ -340,7 +291,6 @@ class PetWindow(QWidget):
         if self._enable_tray:
             self._init_tray()
         self._load_initial_model()
-        self._passthrough_timer.start()
         self._context_idle_timer.start()
         self._apply_game_topmost_state()
         self._connect_ipc_socket()
@@ -431,15 +381,6 @@ class PetWindow(QWidget):
                     self._schedule_windows_topmost_recovery()
                 elif msg.message == WM_DISPLAYCHANGE:
                     self._schedule_windows_topmost_recovery()
-                if msg.message == WM_NCHITTEST and self._use_native_hit_test_passthrough:
-                    lparam = int(msg.lParam)
-                    x = ctypes.c_short(lparam & 0xFFFF).value
-                    y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
-                    point = QPoint(x, y)
-                    hit = self._is_interaction_hit(point)
-                    if not hit:
-                        return True, HTTRANSPARENT
-                    return True, HTCLIENT
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
@@ -681,95 +622,6 @@ class PetWindow(QWidget):
             elif obj is self and event_type == QEvent.Type.WindowDeactivate:
                 self._send_radial_menu_command("CLOSE")
         return super().eventFilter(obj, event)
-
-    def _set_mouse_passthrough(self, enabled: bool):
-        if self._use_native_hit_test_passthrough or enabled == self._mouse_passthrough:
-            return
-        if os.name == "nt":
-            self._apply_passthrough_to_hwnd(int(self.winId()), enabled)
-        elif sys.platform == "darwin" and macos_patch is not None:
-            macos_patch.set_ignores_mouse_events(self, enabled)
-        elif sys.platform.startswith("linux"):
-            if not self._apply_passthrough_to_x11_window(int(self.winId()), enabled):
-                return
-        else:
-            return
-        self._mouse_passthrough = enabled
-
-    def _apply_passthrough_to_hwnd(self, hwnd: int, enabled: bool):
-        if not hwnd:
-            return
-        style = _get_window_long(hwnd, GWL_EXSTYLE)
-        if enabled:
-            style |= WS_EX_TRANSPARENT
-        else:
-            style &= ~WS_EX_TRANSPARENT
-        _set_window_long(hwnd, GWL_EXSTYLE, style)
-        _set_window_pos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        )
-
-    def _apply_passthrough_to_x11_window(self, window: int, enabled: bool) -> bool:
-        if not self._should_bypass_x11_window_manager() or _x11 is None or _xext is None or not window:
-            return False
-        display = _x11.XOpenDisplay(None)
-        if not display:
-            return False
-        try:
-            if enabled:
-                _xext.XShapeCombineRectangles(
-                    display,
-                    ctypes.c_ulong(window),
-                    _SHAPE_INPUT,
-                    0,
-                    0,
-                    None,
-                    0,
-                    _SHAPE_SET,
-                    0,
-                )
-            else:
-                _xext.XShapeCombineMask(
-                    display,
-                    ctypes.c_ulong(window),
-                    _SHAPE_INPUT,
-                    0,
-                    0,
-                    0,
-                    _SHAPE_SET,
-                )
-            _x11.XFlush(display)
-            return True
-        finally:
-            _x11.XCloseDisplay(display)
-
-    def _is_interaction_hit(self, global_pos: QPoint) -> bool:
-        if self._pixel_mode:
-            return self._pixel_widget.is_sprite_hit_at_global(global_pos)
-        return self._live2d_widget.is_model_interaction_hit_at_global(global_pos)
-
-    def _update_mouse_passthrough(self):
-        if self._use_native_hit_test_passthrough or not self.isVisible():
-            return
-        if os.name != "nt" and sys.platform != "darwin" and not sys.platform.startswith("linux"):
-            return
-        if self._model_mouse_passthrough:
-            self._set_mouse_passthrough(True)
-            return
-        if self._live2d_widget._dragging or self._pixel_widget._dragging:
-            return
-        global_pos = QCursor.pos()
-        if not self.geometry().contains(global_pos):
-            self._set_mouse_passthrough(True)
-            return
-        hit = self._is_interaction_hit(global_pos)
-        self._set_mouse_passthrough(not hit)
 
     def set_fps(self, fps: int):
         self._fps = fps
@@ -1635,7 +1487,6 @@ class PetWindow(QWidget):
     def _on_drag(self, dx: int, dy: int):
         self._note_user_interaction()
         self._refresh_topmost_for_interaction()
-        self._set_mouse_passthrough(False)
         self._suppress_compact_ai_sync = True
         try:
             self._move_unconstrained(self.x() + dx, self.y() + dy)
@@ -1835,7 +1686,6 @@ class PetWindow(QWidget):
     def _on_right_click(self, gx: int, gy: int):
         self._note_user_interaction()
         self._refresh_topmost_for_interaction(force=True)
-        self._set_mouse_passthrough(False)
         # Always SHOW on right-click. The child dismisses on outside-click
         # already, and toggling here races with the child's hide animation
         # (parent's _radial_menu_visible can lag the actual menu state by
