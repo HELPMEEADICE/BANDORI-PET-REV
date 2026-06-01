@@ -400,9 +400,7 @@ class PetWindow(QWidget):
         apply_no_rounding(hwnd, windows_11_only=True)
         frame_changed(hwnd)
         self._apply_no_activate_to_hwnd(hwnd)
-        if self._game_topmost:
-            self._enforce_game_topmost()
-        self._enforce_layer_z_order()
+        self._enforce_windows_z_order()
 
     def _apply_no_activate_to_hwnd(self, hwnd: int):
         if os.name != "nt" or not hwnd:
@@ -423,7 +421,7 @@ class PetWindow(QWidget):
 
     def _apply_game_topmost_state(self):
         if os.name == "nt":
-            self._enforce_game_topmost()
+            self._enforce_windows_z_order()
             self._sync_windows_topmost_guard()
         elif sys.platform == "darwin" and macos_patch is not None and self.isVisible():
             # macOS: bump to pop-up-menu level (above almost everything) when
@@ -454,6 +452,14 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = True
         self._last_layer_insert_after = HWND_TOPMOST
 
+    def _enforce_windows_z_order(self):
+        if os.name != "nt" or not self.isVisible():
+            return
+        if len(self._group_characters) <= 1:
+            self._enforce_game_topmost()
+            return
+        self._enforce_layer_z_order()
+
     def _compute_layer_index(self) -> int:
         try:
             return self._group_characters.index(self._current_char)
@@ -462,8 +468,6 @@ class PetWindow(QWidget):
 
     def _enforce_layer_z_order(self):
         if os.name != "nt" or not self.isVisible():
-            return
-        if self._game_topmost:
             return
         if len(self._group_characters) <= 1:
             return
@@ -532,7 +536,7 @@ class PetWindow(QWidget):
         self._layer_index = self._compute_layer_index()
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
-        self._enforce_layer_z_order()
+        self._enforce_windows_z_order()
 
     def _bring_to_front(self):
         if len(self._group_characters) <= 1:
@@ -545,7 +549,7 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
         self._broadcast_layer_order()
-        self._enforce_layer_z_order()
+        self._enforce_windows_z_order()
         self._save_layer_order()
 
     def _save_layer_order(self):
@@ -658,9 +662,7 @@ class PetWindow(QWidget):
             return
         if self._is_radial_menu_visible():
             return
-        if self._game_topmost:
-            self._enforce_game_topmost()
-        self._enforce_layer_z_order()
+        self._enforce_windows_z_order()
 
     def _schedule_windows_topmost_recovery(self):
         if os.name != "nt":
@@ -672,7 +674,7 @@ class PetWindow(QWidget):
             if token != self._topmost_recovery_token or not self.isVisible():
                 return
             self._apply_windows_frameless_fix()
-            self._enforce_game_topmost()
+            self._enforce_windows_z_order()
 
         for delay_ms in TOPMOST_RECOVERY_DELAYS_MS:
             QTimer.singleShot(delay_ms, recover)
@@ -687,9 +689,7 @@ class PetWindow(QWidget):
         ):
             return
         self._last_topmost_interaction_refresh_at = now
-        if self._game_topmost:
-            self._enforce_game_topmost()
-        self._enforce_layer_z_order()
+        self._enforce_windows_z_order()
 
     def eventFilter(self, obj, event):
         if self._is_radial_menu_visible():
