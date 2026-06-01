@@ -19,6 +19,25 @@ class ASRPageMixin:
         ), page))
         layout.addWidget(subtitle)
 
+        asr_install_row = QHBoxLayout()
+        asr_install_row.setContentsMargins(0, 0, 0, 0)
+        asr_install_row.setSpacing(8)
+        self._asr_install_button = PrimaryPushButton(
+            FluentIcon.DOWNLOAD,
+            _tr("SettingsWindow.asr_one_click_install", default="一键安装本地 ASR"),
+            page,
+        )
+        self._asr_install_button.setFixedHeight(36)
+        self._asr_install_button.clicked.connect(self._install_local_asr_server)
+        self._asr_install_status = BodyLabel(
+            _tr("SettingsWindow.asr_one_click_status_idle", default="本地 ASR 会安装到 .runtime/asr-server，并自动使用 CPU 小模型。"),
+            page,
+        )
+        self._asr_install_status.setWordWrap(True)
+        asr_install_row.addWidget(self._asr_install_button)
+        asr_install_row.addWidget(self._asr_install_status, 1)
+        layout.addLayout(asr_install_row)
+
         asr_enable_row = QHBoxLayout()
         asr_enable_row.setContentsMargins(0, 0, 0, 0)
         asr_enable_label = BodyLabel(_tr("SettingsWindow.asr_enabled", default="启用聊天语音输入"), page)
@@ -201,6 +220,78 @@ class ASRPageMixin:
             "asr_max_record_seconds": max_record_seconds,
             "asr_timeout_seconds": 60,
         }
+
+    def _install_local_asr_server(self):
+        worker = getattr(self, "_asr_install_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        try:
+            from asr_manager import ASRLocalServerInstallWorker
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.asr_install_failed_title", default="ASR 安装失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+
+        self._asr_install_button.setEnabled(False)
+        self._asr_install_button.setText(_tr("SettingsWindow.asr_installing", default="正在安装..."))
+        self._asr_install_status.setText(_tr("SettingsWindow.asr_install_starting", default="正在准备本地 ASR 服务..."))
+        self._asr_install_worker = ASRLocalServerInstallWorker(self)
+        self._asr_install_worker.progress.connect(self._on_asr_install_progress)
+        self._asr_install_worker.installed.connect(self._on_asr_install_done)
+        self._asr_install_worker.error.connect(self._on_asr_install_error)
+        self._asr_install_worker.start()
+
+    def _on_asr_install_progress(self, message: str):
+        if hasattr(self, "_asr_install_status"):
+            self._asr_install_status.setText(message)
+
+    def _on_asr_install_done(self, result: dict):
+        self._asr_install_worker = None
+        self._asr_install_button.setEnabled(True)
+        self._asr_install_button.setText(_tr("SettingsWindow.asr_one_click_install", default="一键安装本地 ASR"))
+        api_url = str(result.get("api_url") or "http://127.0.0.1:8000/v1/audio/transcriptions")
+        self._asr_enabled.setChecked(True)
+        self._asr_api_url.setText(api_url)
+        self._asr_api_key.setText("")
+        self._asr_model_id.setText("whisper-large-v3")
+        for i in range(self._asr_language.count()):
+            if self._asr_language.itemData(i) == "zh":
+                self._asr_language.setCurrentIndex(i)
+                break
+        self._save_asr_config(show_info=False)
+
+        ready = bool(result.get("ready"))
+        message = str(result.get("message") or "")
+        status = _tr(
+            "SettingsWindow.asr_install_ready" if ready else "SettingsWindow.asr_install_loading",
+            default="本地 ASR 已安装并启动。" if ready else "本地 ASR 已安装，模型仍在后台加载；稍后可点击测试录音。",
+        )
+        self._asr_install_status.setText(status)
+        InfoBar.success(
+            _tr("SettingsWindow.asr_install_done_title", default="ASR 已准备好"),
+            message or status,
+            duration=3500,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+
+    def _on_asr_install_error(self, message: str):
+        self._asr_install_worker = None
+        self._asr_install_button.setEnabled(True)
+        self._asr_install_button.setText(_tr("SettingsWindow.asr_one_click_install", default="一键安装本地 ASR"))
+        self._asr_install_status.setText(_tr("SettingsWindow.asr_install_failed_status", default="安装失败，请检查网络、Python 和 pip 环境。"))
+        InfoBar.error(
+            _tr("SettingsWindow.asr_install_failed_title", default="ASR 安装失败"),
+            message,
+            duration=6000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
     def _save_asr_config(self, show_info: bool = True):
         if self._cfg and self._asr_config_widgets_ready():

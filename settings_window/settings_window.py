@@ -501,7 +501,7 @@ class SettingsWindow(
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_asr_test_worker', '_asr_test_request_worker', '_model_download_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker', '_model_download_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
