@@ -53,7 +53,7 @@ else:
     macos_patch = None
 
 from llm_manager import (
-    build_system_prompt, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
+    build_system_prompt, format_current_time_context, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     parse_action_tags, strip_action_tags, extract_inline_search_sources,
     _build_event_context,
 )
@@ -5695,8 +5695,7 @@ class ChatWindow(QWidget):
                 }
                 for m in history
             )
-        now = datetime.now()
-        time_str = now.strftime("%Y-%m-%d %I:%M %p")
+        time_str = format_current_time_context()
         dynamic_context += f"\n\n【后置提示词】\n当前时间：{time_str}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
         if self._auto_active:

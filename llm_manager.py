@@ -3,6 +3,7 @@ import re
 import threading
 import urllib.request
 import urllib.error
+from datetime import datetime
 from functools import lru_cache
 from PySide6.QtCore import QThread, Signal
 
@@ -537,6 +538,24 @@ def build_system_prompt(character: str, config_manager=None) -> str:
                 prompt += "\n\n【用户扮演角色档案】\n" + role_prompt
 
     return prompt
+
+
+def format_current_time_context(now: datetime | None = None) -> str:
+    now = now or datetime.now()
+    hour = now.hour
+    if hour < 5:
+        period = "凌晨"
+    elif hour < 9:
+        period = "早上"
+    elif hour < 12:
+        period = "上午"
+    elif hour < 14:
+        period = "中午"
+    elif hour < 18:
+        period = "下午"
+    else:
+        period = "晚上"
+    return f"{now.strftime('%Y-%m-%d %H:%M')}（{period}）"
 
 
 class LLMStreamWorker(QThread):

@@ -2,7 +2,6 @@ import ctypes
 import ctypes.wintypes
 import os
 import sys
-from datetime import datetime
 
 from PySide6.QtCore import QEvent, QEasingCurve, QObject, QPoint, QPropertyAnimation, Qt, QTimer, Signal, QRect, QRectF
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QBrush
@@ -21,6 +20,7 @@ from llm_manager import (
     NonStreamWorker,
     ResponsesStreamWorker,
     build_system_prompt,
+    format_current_time_context,
     parse_action_tags,
     strip_action_tags,
     _build_event_context,
@@ -843,9 +843,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
                 dynamic_context += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
-        now = datetime.now().strftime("%Y-%m-%d %I:%M %p")
         messages.extend(history)
-        dynamic_context += f"\n\n【后置提示词】\n当前时间：{now}"
+        dynamic_context += f"\n\n【后置提示词】\n当前时间：{format_current_time_context()}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
         return messages
 
