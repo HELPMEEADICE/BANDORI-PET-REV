@@ -40,7 +40,25 @@ language=zh
 
 如果你已经有兼容 `/v1/audio/transcriptions` 的服务，可以跳到「3. 在 BandoriPet 中启用」。
 
-如果没有，可以单独开一个本地 Python 环境，用 faster-whisper 包一层简单 API 服务。这个服务与 BandoriPet 分开运行，方便之后替换模型或升级后端。
+如果没有，推荐先用设置页的一键安装：
+
+1. 打开设置面板。
+2. 进入「语音输入」。
+3. 点击「一键安装本地 ASR」。
+4. 等待依赖安装完成。首次启动会下载并加载 `Systran/faster-whisper-small` CPU 小模型，可能需要几分钟。
+5. 安装完成后，设置页会自动启用聊天语音输入，并把 API 地址设置为：
+
+```text
+http://127.0.0.1:8000/v1/audio/transcriptions
+```
+
+一键安装会在项目目录创建 `.runtime/asr-server`，里面包含独立虚拟环境、`server.py`、`requirements.txt` 和 `start_asr_server.ps1`。如果需要手动启动本地服务，可以运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .runtime\asr-server\start_asr_server.ps1
+```
+
+如果你想自定义模型、设备或后端实现，也可以单独开一个本地 Python 环境，用 faster-whisper 包一层简单 API 服务。这个服务与 BandoriPet 分开运行，方便之后替换模型或升级后端。
 
 ### 2.1 创建本地 ASR 服务目录
 
