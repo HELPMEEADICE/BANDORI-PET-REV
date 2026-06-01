@@ -99,6 +99,7 @@
   "SettingsWindow.behavior_title": "角色行为",
   "SettingsWindow.behavior_subtitle": "设置角色的待机动作、视线跟随和多角色互动行为。",
   "SettingsWindow.behavior_live2d_section": "Live2D 行为",
+  "SettingsWindow.behavior_notifications_section": "提醒行为",
   "SettingsWindow.behavior_apply_hint": "这些选项会保存为全局设置；点击右侧应用后，当前桌宠会立即刷新。",
   "SettingsWindow.model_default": "默认",
   "SettingsWindow.follow_model_default": "跟随模型默认",

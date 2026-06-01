@@ -99,6 +99,7 @@
   "SettingsWindow.behavior_title": "キャラクター動作",
   "SettingsWindow.behavior_subtitle": "待機モーション、視線追従、複数キャラクター間の動作を設定します。",
   "SettingsWindow.behavior_live2d_section": "Live2D 動作",
+  "SettingsWindow.behavior_notifications_section": "通知動作",
   "SettingsWindow.behavior_apply_hint": "これらの項目はグローバル設定として保存されます。右側の適用をクリックすると、現在のデスクトップペットに反映されます。",
   "SettingsWindow.model_default": "デフォルト",
   "SettingsWindow.follow_model_default": "モデルのデフォルトに従う",
