@@ -714,6 +714,13 @@ class Live2DWidget(QOpenGLWidget):
         local = self._get_valid_local_pos(global_pos)
         return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
 
+    def is_model_opaque_at_global(self, global_pos: QPoint, *, sync: bool = True) -> bool:
+        local = self._get_valid_local_pos(global_pos)
+        if not local or not self._model:
+            return False
+        alpha = self._alpha_at(local.x(), local.y(), sync=sync)
+        return bool(alpha is not None and alpha > self._hit_alpha_threshold)
+
     def hit_area_name_at(self, x: float, y: float) -> str:
         if not self._model: return ""
         return self._custom_hit_area_name_at(x, y) or self._sdk_hit_area_name_at(x, y)
@@ -986,6 +993,18 @@ class Live2DWidget(QOpenGLWidget):
                 
         result = alpha if (known or sync) else None
         self._perf_probe.add("alpha_sync" if sync else "alpha_fast", self._perf_probe.now() - t0)
+        return result
+
+    def _alpha_at(self, x: float, y: float, sync: bool = False):
+        t0 = self._perf_probe.now()
+        fetch_method = self._get_alpha_sync if sync else self._get_alpha_fast
+        self._safe_make_current()
+        if self._hit_pbo_supported is not False:
+            self._init_hit_pbos()
+            self._process_hit_pbo_results()
+        alpha = fetch_method(x, y)
+        result = alpha if (alpha is not None or sync) else None
+        self._perf_probe.add("alpha_point_sync" if sync else "alpha_point_fast", self._perf_probe.now() - t0)
         return result
 
     def _get_alpha_read_context(self, x: float, y: float):

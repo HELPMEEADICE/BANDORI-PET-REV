@@ -389,8 +389,16 @@ class TTSRequestWorker(QThread):
             if prompt_text:
                 payload["prompt_text"] = prompt_text
             self._apply_qwen_lora(payload)
+            speed_applied = self._apply_speed_factor(payload)
 
             response = _requests().post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+            if response.status_code != 200 and speed_applied:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                payload.pop("speed_factor", None)
+                response = _requests().post(self._tts_url(), json=payload, stream=streaming, timeout=120)
             if response.status_code != 200:
                 self.error.emit(f"TTS HTTP {response.status_code}: {response.text[:240]}")
                 return
@@ -490,6 +498,17 @@ class TTSRequestWorker(QThread):
             _requests().post(self._tts_url() + "lora/unload", timeout=5)
         except Exception:
             pass
+
+    def _apply_speed_factor(self, payload: dict) -> bool:
+        try:
+            speed = float(self._config.get("tts_speed_rate", 1.0))
+        except (TypeError, ValueError):
+            speed = 1.0
+        speed = max(0.75, min(1.25, speed))
+        if abs(speed - 1.0) < 0.015:
+            return False
+        payload["speed_factor"] = round(speed, 3)
+        return True
 
     def _reference_lora_id(self) -> str:
         path = app_base_dir() / "audio_reference" / "dialog.json"

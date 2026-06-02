@@ -96,6 +96,8 @@
   "SettingsWindow.live2d_head_tracking_hint": "这是全局选项：关闭后角色将不再跟随鼠标移动视线。",
   "SettingsWindow.live2d_mutual_gaze": "角色对视",
   "SettingsWindow.live2d_mutual_gaze_hint": "开启后，角色会看向最近的角色。",
+  "SettingsWindow.emotion_behavior": "LLM 回复情绪联动",
+  "SettingsWindow.emotion_behavior_hint": "开启后，聊天回复中的情绪会自动联动 Live2D 表情、动作、TTS 语速和窗口轻微动作。",
   "SettingsWindow.move_all_roles_together": "拖动时所有角色一起移动",
   "SettingsWindow.move_all_roles_together_hint": "默认关闭。开启后，拖动任意一个角色时，桌面上的其他角色会按相同距离同步移动。",
   "SettingsWindow.behavior_title": "角色行为",
