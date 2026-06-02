@@ -231,6 +231,22 @@ class PixelPetWidget(QWidget):
             return False
         return self._sprite_alpha_near(local.x(), local.y()) > self._hit_alpha_threshold
 
+    def is_sprite_opaque_at_global(self, global_pos: QPoint) -> bool:
+        local = self.mapFromGlobal(global_pos)
+        if not self.rect().contains(local) or self._sheet_image.isNull():
+            return False
+        return self._sprite_alpha_at(local.x(), local.y()) > self._hit_alpha_threshold
+
+    def _sprite_alpha_at(self, local_x: int, local_y: int) -> int:
+        anim = self._frames.get(self._animation, {})
+        row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
+        frame = max(0, min(self._frame_index, self._total_cols - 1))
+        x = frame * self._frame_w + local_x
+        y = row * self._frame_h + local_y
+        if x < 0 or y < 0 or x >= self._sheet_image.width() or y >= self._sheet_image.height():
+            return 0
+        return (self._sheet_image.pixel(x, y) >> 24) & 0xff
+
     def _sprite_alpha_near(self, local_x: int, local_y: int) -> int:
         anim = self._frames.get(self._animation, {})
         row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))

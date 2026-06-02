@@ -96,6 +96,8 @@
   "SettingsWindow.live2d_head_tracking_hint": "Global setting: when disabled, the character will not follow the mouse cursor.",
   "SettingsWindow.live2d_mutual_gaze": "Mutual Gaze",
   "SettingsWindow.live2d_mutual_gaze_hint": "When enabled, characters will look at the nearest character.",
+  "SettingsWindow.emotion_behavior": "LLM Reply Emotion Sync",
+  "SettingsWindow.emotion_behavior_hint": "When enabled, emotions inferred from chat replies drive Live2D expressions, motions, TTS speaking rate, and subtle window movement.",
   "SettingsWindow.move_all_roles_together": "Move All Characters Together",
   "SettingsWindow.move_all_roles_together_hint": "Off by default. When enabled, dragging any character moves the other desktop characters by the same distance.",
   "SettingsWindow.behavior_title": "Character Behavior",

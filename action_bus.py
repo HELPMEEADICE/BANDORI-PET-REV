@@ -1,10 +1,22 @@
 from ipc_bus import send_ipc_message
+import json
 
 
 def publish_action(character: str, action: str):
     if not character or not action:
         return
     send_ipc_message(f"ACTION\t{character}\t{action}\n", 200)
+
+
+def publish_emotion_behavior(character: str, behavior: dict):
+    if not character or not isinstance(behavior, dict) or not behavior:
+        return
+    payload = dict(behavior)
+    payload["character"] = character
+    try:
+        send_ipc_message(f"EMOTION\t{json.dumps(payload, ensure_ascii=False)}\n", 200)
+    except Exception:
+        pass
 
 
 def publish_lip_sync(character: str, level: float, form: float | None = None):

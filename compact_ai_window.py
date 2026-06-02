@@ -20,11 +20,13 @@ from llm_manager import (
     NonStreamWorker,
     ResponsesStreamWorker,
     build_system_prompt,
+    consume_stream_action_tags,
     current_time_instruction,
     parse_action_tags,
     strip_action_tags,
     _build_event_context,
 )
+from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
 from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
 from llm_error_hints import format_llm_error_message
 from chat_config_snapshots import (
@@ -65,7 +67,7 @@ from relationship_memory import (
     store_extracted_memories,
     user_key_from_config,
 )
-from action_bus import publish_lip_sync
+from action_bus import publish_emotion_behavior, publish_lip_sync
 from ui_helpers import INTERRUPT_COMMANDS
 from win32_dwm import apply_windows_11_border_fix
 
@@ -192,6 +194,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._last_user_message_id: int | None = None
         self._stream_text = ""
         self._thinking_text = ""
+        self._current_response_actions: list[str] = []
+        self._action_tag_stream_buffer = ""
         self._tts_worker = None
         self._tts_generation = 0
         self._tts_playing_character = ""
@@ -753,6 +757,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             self._external_stream_text = ""
             self._stream_text = ""
             self._thinking_text = ""
+            self._current_response_actions = []
+            self._action_tag_stream_buffer = ""
             self._set_output_text("")
             return
         if self._worker is not None:
@@ -783,6 +789,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._last_user_text = text
         self._stream_text = ""
         self._thinking_text = ""
+        self._current_response_actions = []
+        self._action_tag_stream_buffer = ""
         self._set_output_text("...")
         self._set_busy(True)
 
@@ -877,6 +885,15 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             return
         if reasoning:
             self._thinking_text += reasoning
+        chunk_actions, self._action_tag_stream_buffer = consume_stream_action_tags(
+            self._action_tag_stream_buffer,
+            text,
+        )
+        if chunk_actions:
+            self._current_response_actions.extend(
+                action for action in chunk_actions
+                if action not in self._current_response_actions
+            )
         clean = strip_action_tags(text)
         if not clean:
             return
@@ -888,9 +905,17 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         if self.sender() is not self._worker:
             return
         del actions
-        acts = parse_action_tags(full_text)
+        acts = self._merged_action_tags(
+            self._current_response_actions,
+            parse_action_tags(self._action_tag_stream_buffer + full_text),
+        )
+        self._action_tag_stream_buffer = ""
         clean = strip_action_tags(full_text)
         reasoning_clean = strip_action_tags(reasoning_text or self._thinking_text)
+        behavior = infer_emotion_behavior(full_text, acts)
+        if behavior and (not self._cfg or self._cfg.get("emotion_behavior_enabled", True)):
+            publish_emotion_behavior(self._character, behavior)
+        self._current_tts_rate = emotion_tts_rate(full_text, acts)
         if clean:
             self._stream_text = clean
             self._set_output_text(clean)
@@ -904,6 +929,20 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
+
+    @staticmethod
+    def _merged_action_tags(*groups: list[str]) -> list[str]:
+        seen = set()
+        result = []
+        for group in groups:
+            for action in group or []:
+                key = str(action or "").strip()
+                dedupe_key = key.lower()
+                if not key or dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                result.append(key)
+        return result
 
     def _user_memory_key(self) -> str:
         return user_key_from_config(self._cfg)
@@ -1161,6 +1200,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         generation = self._tts_generation
         self._tts_playing_character = character
         config = tts_config_snapshot(self._cfg)
+        config["tts_speed_rate"] = getattr(self, "_current_tts_rate", emotion_tts_rate(text, []))
         worker = TTSRequestWorker(0, generation, payload, character, config, self)
         self._tts_worker = worker
         worker.audio_ready.connect(self._on_tts_audio_ready)
@@ -1172,6 +1212,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         if self.sender() is not self._worker:
             return
         self._set_output_text(format_llm_error_message(error_msg))
+        self._current_response_actions = []
+        self._action_tag_stream_buffer = ""
         self._reset_tts(stop_player=False)
         self._worker = None
         self._set_busy(False)
@@ -1196,6 +1238,8 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             self._park_cancelled_worker(worker)
         self._worker = None
         self._thinking_text = ""
+        self._current_response_actions = []
+        self._action_tag_stream_buffer = ""
         self._reset_tts()
         if not self._stream_text.strip():
             self._set_output_text(_tr("CompactAIWindow.response_interrupted", default="已中断当前回复。"))

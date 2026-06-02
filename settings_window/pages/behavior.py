@@ -72,6 +72,8 @@ class BehaviorPageMixin:
             )
         for attr in ("_live2d_mutual_gaze_switch", "_behavior_mutual_gaze_switch"):
             self._set_switch_state(getattr(self, attr, None), self._live2d_mutual_gaze_enabled)
+        for attr in ("_emotion_behavior_switch",):
+            self._set_switch_state(getattr(self, attr, None), self._emotion_behavior_enabled)
 
     def _save_live2d_behavior_config(self):
         if not self._cfg:
@@ -79,6 +81,7 @@ class BehaviorPageMixin:
         self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
         self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
+        self._cfg.set("emotion_behavior_enabled", self._emotion_behavior_enabled)
         self._cfg.set("move_all_roles_together", self._move_all_roles_together)
         self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
         self._cfg.save()
@@ -106,6 +109,11 @@ class BehaviorPageMixin:
         self._live2d_mutual_gaze_enabled = bool(checked)
         if self._live2d_mutual_gaze_enabled:
             self._live2d_head_tracking_enabled = False
+        self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
+
+    def _on_emotion_behavior_changed(self, checked: bool):
+        self._emotion_behavior_enabled = bool(checked)
         self._sync_live2d_behavior_switches()
         self._save_live2d_behavior_config()
 
@@ -613,6 +621,14 @@ class BehaviorPageMixin:
             "_behavior_mutual_gaze_switch",
             self._live2d_mutual_gaze_enabled,
             self._on_live2d_mutual_gaze_changed,
+        ))
+        layout.addWidget(self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.emotion_behavior",
+            "SettingsWindow.emotion_behavior_hint",
+            "_emotion_behavior_switch",
+            self._emotion_behavior_enabled,
+            self._on_emotion_behavior_changed,
         ))
         layout.addWidget(self._build_behavior_switch_row(
             page,
