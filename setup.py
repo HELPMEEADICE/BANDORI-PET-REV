@@ -21,7 +21,11 @@ from cx_Freeze.command.build_exe import build_exe
 
 BASE_DIR = Path(__file__).resolve().parent
 BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
-WINDOWS_INSTALLER_UTF8_CODEPAGE = 65001
+# Windows Installer database strings are not reliably installable when authored
+# as UTF-8 (65001). The bundled resources contain Chinese filenames, so use the
+# Simplified Chinese ANSI code page by default and allow CI to override it.
+DEFAULT_WINDOWS_INSTALLER_CODEPAGE = 936
+WINDOWS_INSTALLER_CODEPAGE_ENV = "BANDORIPET_MSI_CODEPAGE"
 INNO_RESOURCE_DIRS = (
     "audio_reference",
     "characters",
@@ -61,6 +65,11 @@ def _force_msi_database_codepage(db, installer_name: str, codepage: int) -> None
     import tempfile
     import _msi
     from ctypes import wintypes
+
+    if codepage <= 0:
+        raise ValueError(f"MSI codepage must be a positive integer: {codepage}")
+    if not ctypes.windll.kernel32.IsValidCodePage(codepage):
+        raise ValueError(f"Windows does not recognize MSI codepage: {codepage}")
 
     db.Commit()
     db.Close()
@@ -120,13 +129,27 @@ def _force_msi_database_codepage(db, installer_name: str, codepage: int) -> None
             msi.MsiCloseHandle(handle.value)
 
 
-def _init_utf8_msi_database(original_init_database):
-    def init_database_utf8(installer_name, *args, **kwargs):
+def _windows_installer_codepage() -> int:
+    raw_codepage = os.environ.get(WINDOWS_INSTALLER_CODEPAGE_ENV)
+    if not raw_codepage:
+        return DEFAULT_WINDOWS_INSTALLER_CODEPAGE
+    try:
+        return int(raw_codepage)
+    except ValueError as exc:
+        raise ValueError(
+            f"{WINDOWS_INSTALLER_CODEPAGE_ENV} must be an integer codepage, "
+            f"got {raw_codepage!r}"
+        ) from exc
+
+
+def _init_msi_database_with_codepage(original_init_database):
+    def init_database_with_codepage(installer_name, *args, **kwargs):
         db = original_init_database(installer_name, *args, **kwargs)
+        codepage = _windows_installer_codepage()
         _force_msi_database_codepage(
             db,
             installer_name,
-            WINDOWS_INSTALLER_UTF8_CODEPAGE,
+            codepage,
         )
 
         import _msi
@@ -135,14 +158,14 @@ def _init_utf8_msi_database(original_init_database):
         summary_info = db.GetSummaryInformation(20)
         summary_info.SetProperty(
             _msi.PID_CODEPAGE,
-            WINDOWS_INSTALLER_UTF8_CODEPAGE,
+            codepage,
         )
         summary_info.Persist()
         summary_info = None
         db.Commit()
         return db
 
-    return init_database_utf8
+    return init_database_with_codepage
 
 
 class BuildMsiAlias(bdist_msi):
@@ -155,7 +178,7 @@ class BuildMsiAlias(bdist_msi):
 
         bdist_msi_module = importlib.import_module("cx_Freeze.command.bdist_msi")
         original_init_database = bdist_msi_module.init_database
-        bdist_msi_module.init_database = _init_utf8_msi_database(
+        bdist_msi_module.init_database = _init_msi_database_with_codepage(
             original_init_database
         )
         try:
