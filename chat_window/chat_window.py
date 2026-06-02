@@ -54,9 +54,10 @@ else:
 
 from llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
-    parse_action_tags, strip_action_tags, extract_inline_search_sources,
+    consume_stream_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
     _build_event_context,
 )
+from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
 from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
 from llm_error_hints import format_llm_error_message
 from vision_fallback import analyze_images_with_aux_model
@@ -109,7 +110,7 @@ from relationship_memory import (
     store_extracted_memories,
     user_key_from_config,
 )
-from action_bus import publish_action, publish_lip_sync
+from action_bus import publish_action, publish_emotion_behavior, publish_lip_sync
 
 from .constants import (
     _BG_LIGHT, _BG_DARK,
@@ -178,6 +179,9 @@ class ChatWindow(QWidget):
         self._tts_characters: dict[int, str] = {}
         self._tts_completed_sequences: set[int] = set()
         self._tts_generation = 0
+        self._current_response_actions: list[str] = []
+        self._action_tag_stream_buffer = ""
+        self._current_tts_rate = 1.0
         self._tts_next_sequence = 0
         self._tts_next_play_sequence = 0
         self._tts_playing_sequence: int | None = None
@@ -2921,6 +2925,8 @@ class ChatWindow(QWidget):
         current_text = (self._visible_stream_text + self._stream_buffer).strip()
         self._stream_buffer = ""
         self._visible_stream_text = current_text
+        self._current_response_actions = []
+        self._action_tag_stream_buffer = ""
         if self._current_bubble:
             self._current_bubble.set_streaming(False)
             self._current_bubble.set_text(current_text or _tr("ChatWindow.response_interrupted", default="已中断当前回复。"))
@@ -4224,6 +4230,10 @@ class ChatWindow(QWidget):
         model_id = self._cfg.get("llm_model_id", "")
         self._active_response_character = character
         self._pending_action_character = character
+        self._seen_actions.clear()
+        self._current_response_actions = []
+        self._action_tag_stream_buffer = ""
+        self._current_tts_rate = 1.0
         self._stream_search_sources = []
         self._pending_source_json = ""
         avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(character)
@@ -4312,8 +4322,21 @@ class ChatWindow(QWidget):
                 self._scroll_to_bottom()
 
         text = self._extract_stream_search_sources(text)
+        chunk_actions, self._action_tag_stream_buffer = consume_stream_action_tags(
+            self._action_tag_stream_buffer,
+            text,
+        )
+        if chunk_actions:
+            self._current_response_actions.extend(
+                action for action in chunk_actions
+                if action not in self._current_response_actions
+            )
         tts_clean = self._clean_tts_stream_text(text)
         if tts_clean:
+            self._current_tts_rate = emotion_tts_rate(
+                self._visible_stream_text + self._stream_buffer + tts_clean,
+                self._current_response_actions,
+            )
             self._enqueue_tts_text(tts_clean, self._active_response_character)
 
         clean = strip_action_tags(text)
@@ -4343,7 +4366,15 @@ class ChatWindow(QWidget):
         if self.sender() is not self._worker:
             return
         self._merge_search_sources(actions)
-        acts = parse_action_tags(full_text)
+        acts = self._merged_action_tags(
+            self._current_response_actions,
+            parse_action_tags(self._action_tag_stream_buffer + full_text),
+        )
+        self._action_tag_stream_buffer = ""
+        behavior = infer_emotion_behavior(full_text, acts)
+        if behavior and (not self._cfg or self._cfg.get("emotion_behavior_enabled", True)):
+            publish_emotion_behavior(self._active_response_character, behavior)
+        self._current_tts_rate = emotion_tts_rate(full_text, acts)
         self._pending_action_character = self._active_response_character
         self._pending_actions.extend(acts)
         self._flush_actions()
@@ -4398,6 +4429,8 @@ class ChatWindow(QWidget):
             self._current_bubble.set_text(format_llm_error_message(error_msg))
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
+        self._action_tag_stream_buffer = ""
+        self._current_response_actions = []
         self._reset_tts_stream(stop_player=False)
         if self._auto_active:
             self._auto_active = False
@@ -4419,6 +4452,20 @@ class ChatWindow(QWidget):
             self._seen_actions.add(key)
             self.action_triggered.emit(self._pending_action_character, action)
         self._pending_actions.clear()
+
+    @staticmethod
+    def _merged_action_tags(*groups: list[str]) -> list[str]:
+        seen = set()
+        result = []
+        for group in groups:
+            for action in group or []:
+                key = str(action or "").strip()
+                dedupe_key = key.lower()
+                if not key or dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                result.append(key)
+        return result
 
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
@@ -4540,6 +4587,7 @@ class ChatWindow(QWidget):
         sequence, text, character = self._tts_queue.pop(next_index)
         config = tts_config_snapshot(self._cfg)
         config["tts_translate_to_selected_language"] = False
+        config["tts_speed_rate"] = self._current_tts_rate
         worker = TTSRequestWorker(sequence, self._tts_generation, text, character, config, self)
         self._tts_active_workers[sequence] = worker
         worker.audio_ready.connect(self._on_tts_audio_ready)

@@ -987,6 +987,19 @@ def parse_action_tags(text: str) -> list[str]:
     return result
 
 
+def consume_stream_action_tags(buffer: str, chunk: str) -> tuple[list[str], str]:
+    source = str(buffer or "") + str(chunk or "")
+    next_buffer = ""
+    complete = source
+    last_open = source.rfind("[")
+    if last_open >= 0 and source.find("]", last_open + 1) < 0:
+        fragment = source[last_open:]
+        if re.fullmatch(r"\[[A-Za-z0-9_.\-]*", fragment):
+            complete = source[:last_open]
+            next_buffer = fragment
+    return parse_action_tags(complete), next_buffer
+
+
 def strip_action_tags(text: str) -> str:
     text = text.replace("[DONE]", "")
     return ACTION_PATTERN.sub("", text).strip()

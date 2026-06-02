@@ -12,7 +12,7 @@ import uuid
 if os.name == "nt":
     import ctypes.wintypes
 
-from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
@@ -42,6 +42,7 @@ else:
 
 WM_NCHITTEST = 0x0084
 WM_NCCALCSIZE = 0x0083
+HTTRANSPARENT = -1
 WM_DISPLAYCHANGE = 0x007E
 WM_POWERBROADCAST = 0x0218
 WM_WTSSESSION_CHANGE = 0x02B1
@@ -222,6 +223,9 @@ class PetWindow(QWidget):
         self._live2d_mutual_gaze_enabled = (
             bool(config_manager.get("live2d_mutual_gaze_enabled", False))
         )
+        self._emotion_behavior_enabled = bool(
+            config_manager.get("emotion_behavior_enabled", True)
+        )
         self._move_all_roles_together = bool(
             config_manager.get("move_all_roles_together", False)
         )
@@ -279,6 +283,8 @@ class PetWindow(QWidget):
         self._chat_process = None
         self._settings_process = None
         self._entrance_anim = None
+        self._emotion_window_anim = None
+        self._emotion_window_animating = False
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_frames = None
         self._pixel_ready = False
@@ -582,6 +588,10 @@ class PetWindow(QWidget):
                 msg = ctypes.wintypes.MSG.from_address(int(message))
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
+                if msg.message == WM_NCHITTEST:
+                    pos = self._global_pos_from_lparam(int(msg.lParam))
+                    if self._windows_should_passthrough_at(pos):
+                        return True, HTTRANSPARENT
                 if (
                     msg.message == WM_POWERBROADCAST
                     and int(msg.wParam)
@@ -602,6 +612,15 @@ class PetWindow(QWidget):
             except Exception:
                 pass
         return super().nativeEvent(event_type, message)
+
+    @staticmethod
+    def _signed_word(value: int) -> int:
+        value &= 0xFFFF
+        return value - 0x10000 if value & 0x8000 else value
+
+    @classmethod
+    def _global_pos_from_lparam(cls, value: int) -> QPoint:
+        return QPoint(cls._signed_word(value), cls._signed_word(value >> 16))
 
     def _apply_windows_frameless_fix(self):
         if os.name != "nt":
@@ -810,16 +829,7 @@ class PetWindow(QWidget):
         if os.name != "nt" or not self.isVisible():
             self._set_windows_mouse_passthrough(False)
             return
-        global_pos = QCursor.pos()
-        sample_pos = self._windows_passthrough_sample_pos(global_pos)
-        if sample_pos is None:
-            self._set_windows_mouse_passthrough(False)
-            return
-        try:
-            hit = self._is_pet_hit_at_global(sample_pos)
-        except Exception:
-            hit = True
-        self._set_windows_mouse_passthrough(not hit)
+        self._set_windows_mouse_passthrough(self._windows_should_passthrough_at(QCursor.pos()))
 
     def _windows_passthrough_sample_pos(self, global_pos: QPoint):
         geometry = self.geometry()
@@ -842,6 +852,22 @@ class PetWindow(QWidget):
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
         return self._live2d_widget.is_model_hit_at_global(global_pos, sync=True)
+
+    def _is_pet_opaque_at_global(self, global_pos: QPoint) -> bool:
+        if self._pixel_mode:
+            return self._pixel_widget.is_sprite_opaque_at_global(global_pos)
+        return self._live2d_widget.is_model_opaque_at_global(global_pos, sync=True)
+
+    def _windows_should_passthrough_at(self, global_pos: QPoint) -> bool:
+        if os.name != "nt" or not self.isVisible():
+            return False
+        sample_pos = self._windows_passthrough_sample_pos(global_pos)
+        if sample_pos is None:
+            return False
+        try:
+            return not self._is_pet_opaque_at_global(sample_pos)
+        except Exception:
+            return False
 
     def _set_windows_mouse_passthrough(self, enabled: bool):
         if os.name != "nt" or self._windows_mouse_passthrough_enabled == bool(enabled):
@@ -1067,7 +1093,8 @@ class PetWindow(QWidget):
         self._live2d_widget.refresh_screen_scale()
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
             self._sync_compact_ai_window()
-        self._schedule_position_save()
+        if not self._emotion_window_animating:
+            self._schedule_position_save()
         # 窗口移动时更新对视目标（最近优先）
         if self._live2d_mutual_gaze_enabled:
             self._update_mutual_gaze()
@@ -1653,6 +1680,7 @@ class PetWindow(QWidget):
             "live2d_idle_actions_enabled",
             "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled",
+            "emotion_behavior_enabled",
             "move_all_roles_together",
         }
 
@@ -1690,6 +1718,8 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_head_tracking_enabled", bool(data["live2d_head_tracking_enabled"]))
             if "live2d_mutual_gaze_enabled" in data:
                 self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
+            if "emotion_behavior_enabled" in data:
+                self._cfg.set("emotion_behavior_enabled", bool(data["emotion_behavior_enabled"]))
             if "move_all_roles_together" in data:
                 self._cfg.set("move_all_roles_together", bool(data["move_all_roles_together"]))
             if "user_avatar_color" in data:
@@ -1726,6 +1756,8 @@ class PetWindow(QWidget):
             self.set_live2d_head_tracking_enabled(data["live2d_head_tracking_enabled"])
         if "live2d_mutual_gaze_enabled" in data:
             self.set_live2d_mutual_gaze_enabled(data["live2d_mutual_gaze_enabled"])
+        if "emotion_behavior_enabled" in data:
+            self._emotion_behavior_enabled = bool(data["emotion_behavior_enabled"])
         if "move_all_roles_together" in data:
             self._move_all_roles_together = bool(data["move_all_roles_together"])
         if "live2d_quality" in data:
@@ -2253,6 +2285,11 @@ class PetWindow(QWidget):
                     self._live2d_widget.set_lip_sync_pose(level, form)
                 except ValueError:
                     pass
+        elif line.startswith("EMOTION\t"):
+            try:
+                self._handle_emotion_behavior(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
         elif line.startswith("SETTINGS\t"):
             try:
                 if self._cfg:
@@ -2555,6 +2592,181 @@ class PetWindow(QWidget):
         ):
             return
         self._compact_ai_window.follow_pet_delta(dx, dy, self.geometry())
+
+    def _handle_emotion_behavior(self, event: dict):
+        if not isinstance(event, dict):
+            return
+        if not self._emotion_behavior_enabled:
+            return
+        target = str(event.get("character") or event.get("target_character") or "").strip()
+        if target and target != self._current_char:
+            return
+
+        try:
+            intensity = max(20, min(100, int(event.get("intensity", 60))))
+        except (TypeError, ValueError):
+            intensity = 60
+
+        if not self._pixel_mode:
+            self._apply_emotion_expression(event, intensity)
+            self._apply_emotion_motion(event, intensity)
+        self._play_emotion_window_feedback(str(event.get("window", "") or "").strip().lower(), intensity)
+
+    def _apply_emotion_expression(self, event: dict, intensity: int):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        for tag in event.get("expression_tags", []) or []:
+            expression = self._find_expression_tag(str(tag or "").strip().lower())
+            if not expression:
+                continue
+            try:
+                self._expression_guard_token += 1
+                token = self._expression_guard_token
+                model.SetExpression(expression)
+                self._live2d_prewarmed_expressions.add(str(expression))
+                hold_ms = 2600 + int(intensity * 38)
+                QTimer.singleShot(hold_ms, lambda t=token: self._restore_default_expression_if_current(t))
+            except Exception:
+                pass
+            return
+
+    def _apply_emotion_motion(self, event: dict, intensity: int):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        motion_names = self._current_motion_names()
+        if not motion_names:
+            return
+        source_actions = {
+            str(action or "").strip().lower().strip("[]")
+            for action in event.get("source_actions", []) or []
+        }
+        tags = [str(tag or "").strip().lower() for tag in event.get("motion_tags", []) or []]
+        ordered_tags = [tag for tag in tags if tag and tag not in source_actions] + [
+            tag for tag in tags if tag and tag in source_actions
+        ]
+        for tag in ordered_tags:
+            motion = self._resolve_motion_tag(tag, motion_names)
+            if not motion:
+                continue
+            try:
+                self._motion_guard_token += 1
+                token = self._motion_guard_token
+                if self._safe_start_motion(
+                    model,
+                    motion,
+                    priority=self._live2d.MotionPriority.FORCE,
+                    on_finish=self._on_motion_finished,
+                ):
+                    hold_ms = 2600 + int(intensity * 54)
+                    QTimer.singleShot(hold_ms, lambda t=token: self._clear_motion_if_current(t))
+                    QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
+                    return
+            except Exception:
+                pass
+
+    def _play_emotion_window_feedback(self, kind: str, intensity: int):
+        if kind not in {"back", "forward", "hop", "shake", "wobble", "settle"}:
+            return
+        current = self.pos()
+        if kind in {"forward", "back"} and self._live2d_widget._drag_locked:
+            return
+
+        animation = getattr(self, "_emotion_window_anim", None)
+        if animation is not None:
+            try:
+                animation.stop()
+            except RuntimeError:
+                pass
+
+        distance = max(8, min(42, int(10 + intensity * 0.32)))
+        target = current
+        keyframes: list[tuple[float, QPoint]] = []
+        duration = 360
+
+        if kind in {"forward", "back"}:
+            dx, dy = self._emotion_cursor_direction()
+            if kind == "back":
+                dx, dy = -dx, -dy
+            target = QPoint(current.x() + int(round(dx * distance)), current.y() + int(round(dy * distance)))
+            target = self._constrained_emotion_point(target)
+            duration = 300
+        elif kind == "hop":
+            lift = max(10, min(34, int(8 + intensity * 0.24)))
+            keyframes = [
+                (0.0, current),
+                (0.38, self._constrained_emotion_point(QPoint(current.x(), current.y() - lift))),
+                (0.72, self._constrained_emotion_point(QPoint(current.x(), current.y() + max(2, lift // 5)))),
+                (1.0, current),
+            ]
+            duration = 420
+        elif kind == "shake":
+            amp = max(8, min(26, int(6 + intensity * 0.2)))
+            keyframes = [
+                (0.0, current),
+                (0.18, self._constrained_emotion_point(QPoint(current.x() - amp, current.y()))),
+                (0.36, self._constrained_emotion_point(QPoint(current.x() + amp, current.y()))),
+                (0.55, self._constrained_emotion_point(QPoint(current.x() - amp // 2, current.y()))),
+                (0.74, self._constrained_emotion_point(QPoint(current.x() + amp // 2, current.y()))),
+                (1.0, current),
+            ]
+            duration = 360
+        elif kind == "wobble":
+            amp = max(5, min(16, int(4 + intensity * 0.12)))
+            keyframes = [
+                (0.0, current),
+                (0.25, self._constrained_emotion_point(QPoint(current.x() + amp, current.y() + 2))),
+                (0.50, self._constrained_emotion_point(QPoint(current.x() - amp, current.y() - 1))),
+                (0.75, self._constrained_emotion_point(QPoint(current.x() + amp // 2, current.y()))),
+                (1.0, current),
+            ]
+            duration = 420
+        elif kind == "settle":
+            drop = max(3, min(10, int(2 + intensity * 0.08)))
+            keyframes = [
+                (0.0, current),
+                (0.45, self._constrained_emotion_point(QPoint(current.x(), current.y() + drop))),
+                (1.0, current),
+            ]
+            duration = 340
+
+        anim = QVariantAnimation(self)
+        anim.setDuration(duration)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._emotion_window_anim = anim
+        self._emotion_window_animating = True
+        if keyframes:
+            for step, point in keyframes:
+                anim.setKeyValueAt(step, point)
+        else:
+            anim.setStartValue(current)
+            anim.setEndValue(target)
+        anim.valueChanged.connect(self._move_emotion_window)
+        anim.finished.connect(self._finish_emotion_window_feedback)
+        anim.start()
+
+    def _emotion_cursor_direction(self) -> tuple[float, float]:
+        center = self.geometry().center()
+        cursor = QCursor.pos()
+        dx = float(cursor.x() - center.x())
+        dy = float(cursor.y() - center.y())
+        length = (dx * dx + dy * dy) ** 0.5
+        if length < 8.0:
+            return 0.0, -1.0
+        return dx / length, dy / length
+
+    def _constrained_emotion_point(self, point: QPoint) -> QPoint:
+        screen = QGuiApplication.screenAt(self.geometry().center()) or self.screen() or QGuiApplication.primaryScreen()
+        x, y = self._constrain_position_to_screen(point.x(), point.y(), screen)
+        return QPoint(x, y)
+
+    def _move_emotion_window(self, value):
+        if isinstance(value, QPoint):
+            self._move_unconstrained(value.x(), value.y())
+
+    def _finish_emotion_window_feedback(self):
+        self._emotion_window_animating = False
 
     def _on_chat_action(self, action_name: str):
         self._note_user_interaction()
