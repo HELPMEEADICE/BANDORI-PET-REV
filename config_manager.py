@@ -467,7 +467,6 @@ class ConfigManager:
             self._data["pinned_chat_keys"] = normalized_pinned
         else:
             self._data["pinned_chat_keys"] = []
-        self._data["fluent_chat_window_enabled"] = True
         self._data["user_avatar_path"] = str(self._data.get("user_avatar_path", "")).strip()
         self._normalize_user_profiles()
         self._normalize_llm_api_profiles()
@@ -748,14 +747,9 @@ class ConfigManager:
         return self._data.get(key, default)
 
     def set(self, key, value):
-        if key == "fluent_chat_window_enabled":
-            value = True
         self._data[key] = value
 
     def update(self, d: dict):
-        if "fluent_chat_window_enabled" in d:
-            d = dict(d)
-            d["fluent_chat_window_enabled"] = True
         self._data.update(d)
 
     def get_user_profiles(self) -> list[dict]:
