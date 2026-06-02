@@ -42,9 +42,3 @@ class SpecialEventManager(QObject):
 
     def stop(self):
         self.check_timer.stop()
-
-    def get_today_events(self):
-        return self.event_db.get_today_events()
-
-    def get_upcoming_events(self, days=7):
-        return self.event_db.get_upcoming_events(days)

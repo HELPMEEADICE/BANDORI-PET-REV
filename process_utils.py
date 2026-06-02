@@ -1,4 +1,5 @@
 import atexit
+import hmac
 import os
 import sys
 import hashlib
@@ -281,6 +282,11 @@ def clamp_float(value: object, minimum: float, maximum: float, default: float) -
     except (TypeError, ValueError):
         number = default
     return max(minimum, min(maximum, number))
+
+
+def token_matches(expected: str, candidate: str) -> bool:
+    """Constant-time token comparison to avoid leaking the token via timing."""
+    return hmac.compare_digest(str(expected or ""), str(candidate or ""))
 
 
 def install_parent_death_watch(app, interval_ms: int = 2000):

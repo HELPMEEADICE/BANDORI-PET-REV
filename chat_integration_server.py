@@ -1,15 +1,10 @@
-import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from onebot_message import normalize_onebot_event
-
-
-def _token_matches(expected: str, candidate: str) -> bool:
-    """Constant-time token comparison to avoid leaking the token via timing."""
-    return hmac.compare_digest(str(expected or ""), str(candidate or ""))
+from process_utils import token_matches
 
 
 class ChatIntegrationHttpServer:
@@ -209,12 +204,12 @@ class ChatIntegrationHttpServer:
                 if not token:
                     return True
                 auth = self.headers.get("Authorization", "")
-                if _token_matches(f"Bearer {token}", auth):
+                if token_matches(f"Bearer {token}", auth):
                     return True
-                if _token_matches(token, self.headers.get("X-Bandori-Token", "")):
+                if token_matches(token, self.headers.get("X-Bandori-Token", "")):
                     return True
                 query_token = parse_qs(parsed.query).get("token", [""])[0]
-                return _token_matches(token, query_token)
+                return token_matches(token, query_token)
 
             def _send_json(self, data: dict, status: int = 200):
                 payload = b"" if status == 204 else json.dumps(data, ensure_ascii=False).encode("utf-8")

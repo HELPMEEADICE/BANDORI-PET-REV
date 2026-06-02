@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import json
 import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import lru_cache
-from typing import List, Optional
 
 
 @dataclass
@@ -16,7 +17,7 @@ class SpecialEvent:
     prompt_template: str = ""
     character: str = ""
     band: str = ""
-    keywords: List[str] = None
+    keywords: list[str] = None
 
     def __post_init__(self):
         if self.keywords is None:
@@ -78,7 +79,7 @@ class EventDbManager:
             keywords=festival_data.get("keywords", [])
         )
 
-    def get_today_events(self) -> List[SpecialEvent]:
+    def get_today_events(self) -> list[SpecialEvent]:
         today = date.today()
         events = []
 
@@ -104,7 +105,7 @@ class EventDbManager:
 
         return events
 
-    def get_upcoming_events(self, days: int = 7) -> List[SpecialEvent]:
+    def get_upcoming_events(self, days: int = 7) -> list[SpecialEvent]:
         today = date.today()
         upcoming = []
 
@@ -132,7 +133,7 @@ class EventDbManager:
 
         return upcoming
 
-    def get_character_band(self, character_name: str) -> Optional[str]:
+    def get_character_band(self, character_name: str) -> str | None:
         if not self.birthdays or "birthdays" not in self.birthdays:
             return None
         for band, characters in self.birthdays["birthdays"].items():
