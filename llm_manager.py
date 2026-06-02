@@ -477,6 +477,12 @@ def _build_event_context(current_character: str = "") -> str:
                     "但只有用户明确问起生日相关话题时才回答。"
                 )
                 event_lines.append(f"【{e.name['zh']}】\n{text}")
+            elif e.event_type == "festival":
+                text = (
+                    f"今天是{e.name.get('zh', '')}（{e.month}月{e.day}日）。"
+                    "你知道今天是这个特殊的日子，但只有用户主动提起相关话题时才主动回应。"
+                )
+                event_lines.append(f"【{e.name['zh']}】\n{text}")
         return "\n\n".join(event_lines)
     except Exception:
         return ""
