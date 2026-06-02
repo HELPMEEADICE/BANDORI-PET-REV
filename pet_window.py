@@ -663,13 +663,17 @@ class PetWindow(QWidget):
             else:
                 macos_patch.set_window_level_status_bar(self)
 
-    def _enforce_game_topmost(self):
+    def _enforce_game_topmost(self, *, force: bool = False):
         if os.name != "nt" or not self.isVisible():
             return
         hwnd = int(self.winId())
         if not hwnd:
             return
-        if self._last_game_topmost_applied and self._last_layer_insert_after == HWND_TOPMOST:
+        if (
+            not force
+            and self._last_game_topmost_applied
+            and self._last_layer_insert_after == HWND_TOPMOST
+        ):
             return
         _set_window_pos(
             hwnd,
@@ -683,13 +687,13 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = True
         self._last_layer_insert_after = HWND_TOPMOST
 
-    def _enforce_windows_z_order(self):
+    def _enforce_windows_z_order(self, *, force: bool = False):
         if os.name != "nt" or not self.isVisible():
             return
         if len(self._group_characters) <= 1:
-            self._enforce_game_topmost()
+            self._enforce_game_topmost(force=force)
             return
-        self._enforce_layer_z_order()
+        self._enforce_layer_z_order(force=force)
 
     def _compute_layer_index(self) -> int:
         try:
@@ -697,7 +701,7 @@ class PetWindow(QWidget):
         except ValueError:
             return 0
 
-    def _enforce_layer_z_order(self):
+    def _enforce_layer_z_order(self, *, force: bool = False):
         if os.name != "nt" or not self.isVisible():
             return
         if len(self._group_characters) <= 1:
@@ -706,7 +710,7 @@ class PetWindow(QWidget):
         if not hwnd:
             return
         if self._layer_index == 0:
-            if self._last_layer_insert_after == HWND_TOPMOST:
+            if not force and self._last_layer_insert_after == HWND_TOPMOST:
                 return
             _set_window_pos(
                 hwnd,
@@ -721,7 +725,7 @@ class PetWindow(QWidget):
         above_title = f"BandoriPet-{above_char}"
         above_hwnd = _find_window(None, above_title)
         if not above_hwnd:
-            if self._last_layer_insert_after == HWND_TOPMOST:
+            if not force and self._last_layer_insert_after == HWND_TOPMOST:
                 return
             _set_window_pos(
                 hwnd,
@@ -732,7 +736,7 @@ class PetWindow(QWidget):
             self._last_game_topmost_applied = False
             self._last_layer_insert_after = HWND_TOPMOST
             return
-        if self._last_layer_insert_after == above_hwnd:
+        if not force and self._last_layer_insert_after == above_hwnd:
             return
         _set_window_pos(
             hwnd,
@@ -769,10 +773,12 @@ class PetWindow(QWidget):
         self._last_layer_insert_after = None
         self._enforce_windows_z_order()
 
-    def _bring_to_front(self):
+    def _bring_to_front(self, *, force: bool = False):
         if len(self._group_characters) <= 1:
+            self._enforce_windows_z_order(force=force)
             return
         if self._layer_index == 0:
+            self._enforce_windows_z_order(force=force)
             return
         self._group_characters.remove(self._current_char)
         self._group_characters.insert(0, self._current_char)
@@ -780,7 +786,7 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
         self._broadcast_layer_order()
-        self._enforce_windows_z_order()
+        self._enforce_windows_z_order(force=force)
         self._save_layer_order()
 
     def _save_layer_order(self):
@@ -927,7 +933,7 @@ class PetWindow(QWidget):
         ):
             return
         self._last_topmost_interaction_refresh_at = now
-        self._enforce_windows_z_order()
+        self._enforce_windows_z_order(force=force)
 
     def eventFilter(self, obj, event):
         if self._is_radial_menu_visible():
@@ -1857,8 +1863,7 @@ class PetWindow(QWidget):
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         self._note_user_interaction()
-        self._refresh_topmost_for_interaction(force=True)
-        self._bring_to_front()
+        self._bring_to_front(force=True)
         if self._is_radial_menu_visible():
             self._send_radial_menu_command("CLOSE")
             return
