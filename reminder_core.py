@@ -229,6 +229,30 @@ def _clamp_minutes(value, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, minutes))
 
 
+def _coerce_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on", "enabled", "enable", "开", "开启", "启用", "是"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled", "disable", "关", "关闭", "禁用", "否"}:
+        return False
+    return default
+
+
+def _coerce_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _minutes_of_day(time_text: str) -> int | None:
     normalized = normalize_time(time_text)
     if not normalized:
@@ -287,7 +311,7 @@ def normalize_alarm(item, now: datetime | None = None) -> dict | None:
     if not time_text:
         return None
     repeat_days = normalize_repeat_days(item.get("repeat_days", item.get("repeat", [])))
-    enabled = bool(item.get("enabled", True))
+    enabled = _coerce_bool(item.get("enabled", True), True)
     next_at = parse_iso_datetime(item.get("next_at"))
     if enabled and next_at is None:
         next_at = compute_next_alarm_at(time_text, repeat_days, now)
@@ -359,7 +383,7 @@ def normalize_proactive_item(item, template: dict | None = None, now: datetime |
         schedule_type = PROACTIVE_DAILY
     normalized = {
         "id": item_id,
-        "enabled": bool(merged.get("enabled", True)),
+        "enabled": _coerce_bool(merged.get("enabled", True), True),
         "kind": str(merged.get("kind") or item_id).strip(),
         "title": str(merged.get("title") or item_id).strip()[:80],
         "description": str(merged.get("description") or "").strip()[:240],
@@ -411,7 +435,7 @@ def normalize_proactive_companion(value, now: datetime | None = None) -> dict:
             items.append(normalized)
             seen.add(item_id)
     return {
-        "enabled": bool(raw.get("enabled", False)),
+        "enabled": _coerce_bool(raw.get("enabled", False), False),
         "character": str(raw.get("character", "") or "").strip(),
         "items": items,
     }
@@ -430,14 +454,14 @@ def normalize_pomodoro(item, now: datetime | None = None) -> dict | None:
         return None
     now = now or local_now()
     repeat_count = clamp_repeat_count(item.get("repeat_count", 1))
-    completed = max(0, min(repeat_count, int(item.get("completed_focus_count", 0) or 0)))
+    completed = max(0, min(repeat_count, _coerce_int(item.get("completed_focus_count", 0), 0)))
     status = str(item.get("status", "running") or "running").strip().lower()
     if status not in {"running", "paused", "completed", "cancelled"}:
         status = "running"
     phase = str(item.get("phase", "focus") or "focus").strip().lower()
     if phase not in {"focus", "short_break", "long_break", "completed"}:
         phase = "focus"
-    duration = int(item.get("phase_duration_sec", 0) or 0)
+    duration = _coerce_int(item.get("phase_duration_sec", 0), 0)
     if duration <= 0:
         duration = FOCUS_SECONDS if phase == "focus" else LONG_BREAK_SECONDS if phase == "long_break" else SHORT_BREAK_SECONDS
     next_at = parse_iso_datetime(item.get("next_at"))

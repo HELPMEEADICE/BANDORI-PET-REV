@@ -180,7 +180,7 @@ class CommandCompleter(QWidget):
     def _build_items(self, items: list[tuple]):
         self._clear()
         self._items = list(items)
-        for primary, display, desc in items:
+        for _primary, display, desc in items:
             row_item = QListWidgetItem()
             row_item.setSizeHint(QSize(0, self.ITEM_HEIGHT))
             self._list.addItem(row_item)
