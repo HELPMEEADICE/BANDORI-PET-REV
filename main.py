@@ -552,13 +552,18 @@ def main():
         worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking, app)
         raw_event = event.get("raw_event") if isinstance(event, dict) else None
         character_for_event = character
+        cleanup_state = {"done": False}
 
         def _cleanup(delete_later=True):
             with napcat_ref["lock"]:
+                if cleanup_state["done"]:
+                    return False
+                cleanup_state["done"] = True
                 if worker in napcat_ref["workers"]:
                     napcat_ref["workers"].remove(worker)
             if delete_later and isValid(worker):
                 worker.deleteLater()
+            return True
 
         def _on_timeout():
             if isValid(worker) and worker.isRunning():
@@ -567,10 +572,13 @@ def main():
 
         def _on_destroyed():
             with napcat_ref["lock"]:
+                cleanup_state["done"] = True
                 if worker in napcat_ref["workers"]:
                     napcat_ref["workers"].remove(worker)
 
         def _on_finished(full_text, _reasoning, _actions):
+            if not _cleanup(delete_later=False):
+                return
             clean = strip_action_tags(full_text)
             with napcat_ref["lock"]:
                 client = napcat_ref.get("client")
@@ -592,7 +600,8 @@ def main():
                     "character": character_for_event,
                 }
                 ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
-            _cleanup()
+            if isValid(worker):
+                worker.deleteLater()
 
         def _on_error(message):
             print(f"NapCat auto-reply failed: {message}")
@@ -669,14 +678,14 @@ def main():
                     model_costume = mgr.get_default_costume(model_char)
                 if not model_costume:
                     continue
-                path = ModelManager.get_model_json_path(model_char, model_costume)
+                path = mgr.get_model_json_path(model_char, model_costume)
                 if not path:
                     continue
                 entry = {**item, "character": model_char, "costume": model_costume, "path": path}
                 result.append(entry)
                 seen.add(model_char)
-        if not result and char and costume and ModelManager.get_model_json_path(char, costume):
-            result.append({"character": char, "costume": costume, "path": ModelManager.get_model_json_path(char, costume)})
+        if not result and char and costume and mgr.get_model_json_path(char, costume):
+            result.append({"character": char, "costume": costume, "path": mgr.get_model_json_path(char, costume)})
         return result
 
     def save_config():
@@ -863,7 +872,7 @@ def main():
         selected_char = pet_window_ref.get("char")
         selected_costume = pet_window_ref.get("costume")
         if not models and selected_char and selected_costume:
-            path = ModelManager.get_model_json_path(selected_char, selected_costume)
+            path = mgr.get_model_json_path(selected_char, selected_costume)
             if path:
                 models.append({"character": selected_char, "costume": selected_costume, "path": path})
         group_characters = []
@@ -1042,7 +1051,7 @@ def main():
         current_model_valid = bool(
             current_char and current_costume
             and current_char in mgr.characters
-            and ModelManager.get_model_json_path(current_char, current_costume)
+            and mgr.get_model_json_path(current_char, current_costume)
         )
         first_run_wizard = not (configured_models() or current_model_valid)
         process = QProcess(app)
@@ -1070,7 +1079,7 @@ def main():
     model_valid = bool(
         char and costume
         and char in mgr.characters
-        and ModelManager.get_model_json_path(char, costume)
+        and mgr.get_model_json_path(char, costume)
     )
     has_configured_models = bool(configured_models())
 

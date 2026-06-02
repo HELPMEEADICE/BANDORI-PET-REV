@@ -249,6 +249,9 @@ class Live2DWidget(QOpenGLWidget):
         self._live2d = module
 
     def dispose(self):
+        if self._initialized_gl:
+            self._safe_make_current()
+            self._delete_hit_pbos()
         if self._custom_hit_areas is not None:
             self._custom_hit_areas.dispose()
             self._custom_hit_areas = None
@@ -870,7 +873,7 @@ class Live2DWidget(QOpenGLWidget):
             self._hit_pbo_supported = False
             return
         try:
-            required_funcs = ("glGenBuffers", "glBindBuffer", "glBufferData", "glFenceSync", 
+            required_funcs = ("glGenBuffers", "glBindBuffer", "glBufferData", "glDeleteBuffers", "glFenceSync", 
                               "glClientWaitSync", "glDeleteSync", "glMapBuffer", "glUnmapBuffer")
             if not all(hasattr(gl, name) for name in required_funcs):
                 raise RuntimeError("PBO sync functions are unavailable")
@@ -887,6 +890,11 @@ class Live2DWidget(QOpenGLWidget):
             self._hit_pbo_supported = True
         except Exception:
             self._safe_unbind_pbo()
+            if self._hit_pbo_ids:
+                try:
+                    gl.glDeleteBuffers(len(self._hit_pbo_ids), self._hit_pbo_ids)
+                except Exception:
+                    pass
             self._hit_pbo_ids = []
             self._hit_pbo_pending = []
             self._hit_pbo_pending_keys.clear()
@@ -902,6 +910,18 @@ class Live2DWidget(QOpenGLWidget):
             fence = request.get("fence")
             if fence:
                 gl.glDeleteSync(fence)
+
+    def _delete_hit_pbos(self):
+        self._clear_pending_hit_pbos()
+        if self._hit_pbo_ids:
+            try:
+                self._safe_unbind_pbo()
+                gl.glDeleteBuffers(len(self._hit_pbo_ids), self._hit_pbo_ids)
+            except Exception:
+                pass
+        self._hit_pbo_ids = []
+        self._hit_pbo_next = 0
+        self._hit_pbo_supported = None
 
     def _process_hit_pbo_results(self):
         if not self._hit_pbo_supported or not self._hit_pbo_pending: return

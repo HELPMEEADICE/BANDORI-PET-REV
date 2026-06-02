@@ -42,10 +42,9 @@ def prompt_download_model_resources(parent=None) -> None:
 
 
 class ModelManager:
-    _model_paths: dict[tuple[str, str], str] = {}
-    _character_images: dict[str, str] = {}
-
     def __init__(self, scan_models: bool = True):
+        self._model_paths: dict[tuple[str, str], str] = {}
+        self._character_images: dict[str, str] = {}
         self._characters: dict[str, dict] = {}
         self._costume_names: dict[str, dict[str, str]] = {}
         self._bands: list[dict] = []
@@ -72,8 +71,8 @@ class ModelManager:
         self._parse_band_json()
 
     def _scan_model_keys(self):
-        ModelManager._model_paths = {}
-        ModelManager._character_images = {}
+        self._model_paths = {}
+        self._character_images = {}
         if not models_dir_exists():
             return
         for entry in sorted(MODELS_DIR.iterdir()):
@@ -92,7 +91,7 @@ class ModelManager:
             else:
                 continue
             if image_path:
-                ModelManager._character_images[character] = image_path
+                self._character_images[character] = image_path
             self._characters.setdefault(character, {"costumes": [{"id": "default", "path": ""}]})
 
     def _scan_advanced_roleplay_support(self) -> dict[str, bool]:
@@ -118,8 +117,8 @@ class ModelManager:
         return support
 
     def _scan(self):
-        ModelManager._model_paths = {}
-        ModelManager._character_images = {}
+        self._model_paths = {}
+        self._character_images = {}
         if not models_dir_exists():
             return
         entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
@@ -155,10 +154,10 @@ class ModelManager:
                     "id": costume_dir.name,
                     "path": model_path,
                 })
-                ModelManager._model_paths[(char_name, costume_dir.name)] = model_path
+                self._model_paths[(char_name, costume_dir.name)] = model_path
         image_path = self._find_dir_character_image(entry)
         if image_path:
-            ModelManager._character_images[char_name] = image_path
+            self._character_images[char_name] = image_path
         if costumes:
             self._characters[char_name] = {
                 "costumes": costumes,
@@ -199,10 +198,10 @@ class ModelManager:
 
     def _apply_archive_scan_result(self, result: dict):
         for char_name, costume_id, model_path in result["model_paths"]:
-            ModelManager._model_paths[(char_name, costume_id)] = model_path
+            self._model_paths[(char_name, costume_id)] = model_path
         image_path = result["image_path"]
         if image_path:
-            ModelManager._character_images[result["character"]] = image_path
+            self._character_images[result["character"]] = image_path
         self._characters[result["character"]] = {
             "costumes": result["costumes"],
         }
@@ -303,17 +302,15 @@ class ModelManager:
     def get_display_name(self, character: str) -> str:
         return self._characters.get(character, {}).get("display", character.title())
 
-    @staticmethod
-    def get_character_image_path(character: str) -> str:
-        image_path = ModelManager._character_images.get(character, "")
+    def get_character_image_path(self, character: str) -> str:
+        image_path = self._character_images.get(character, "")
         if image_path:
             return "" if is_virtual_path(image_path) else image_path
         char_dir = MODELS_DIR / character
-        return ModelManager._find_dir_character_image(char_dir)
+        return self._find_dir_character_image(char_dir)
 
-    @staticmethod
-    def get_character_image_data(character: str) -> bytes:
-        image_path = ModelManager._character_images.get(character, "")
+    def get_character_image_data(self, character: str) -> bytes:
+        image_path = self._character_images.get(character, "")
         if not is_virtual_path(image_path):
             return b""
         try:
@@ -361,9 +358,8 @@ class ModelManager:
                 return pref
         return costumes[0]["id"]
 
-    @staticmethod
-    def get_model_json_path(character: str, costume: str) -> str:
-        model_path = ModelManager._model_paths.get((character, costume), "")
+    def get_model_json_path(self, character: str, costume: str) -> str:
+        model_path = self._model_paths.get((character, costume), "")
         if model_path:
             return model_path
         path = MODELS_DIR / character / costume / "model.json"

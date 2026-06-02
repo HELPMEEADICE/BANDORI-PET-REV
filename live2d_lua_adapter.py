@@ -390,6 +390,22 @@ class LuaLive2DModule:
                 self._embed.dispose()
             except Exception:
                 pass
+        self._load_model = None
+        self._resize = None
+        self._draw = None
+        self._drag = None
+        self._hit_test = None
+        self._set_parameter = None
+        self._set_offset = None
+        self._apply_texture_quality = None
+        self._model_info = None
+        self._start_motion = None
+        self._clear_motions = None
+        self._is_motion_finished = None
+        self._set_expression = None
+        self._preload_expression = None
+        self._preload_motion_group = None
+        self._reset_expression = None
         self._lua = None
         self._embed = None
         self._initialized = False

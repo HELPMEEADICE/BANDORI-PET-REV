@@ -57,6 +57,7 @@ class SingleModelManager:
         self._character = character
         self._costume = costume
         self._model_path = model_path
+        self._fallback_manager = None
 
     @property
     def characters(self) -> list[str]:
@@ -68,7 +69,9 @@ class SingleModelManager:
     def get_model_json_path(self, character: str, costume: str) -> str:
         if character == self._character and costume == self._costume:
             return self._model_path
-        return ModelManager.get_model_json_path(character, costume)
+        if self._fallback_manager is None:
+            self._fallback_manager = ModelManager()
+        return self._fallback_manager.get_model_json_path(character, costume)
 
     def get_display_name(self, character: str) -> str:
         return character.title()

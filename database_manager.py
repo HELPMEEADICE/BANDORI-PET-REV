@@ -15,6 +15,8 @@ from process_utils import app_base_dir, clamp_int as _clamp_int
 
 BASE_DIR = app_base_dir()
 DB_PATH = os.path.join(BASE_DIR, "data.db")
+_DB_LOCKS: dict[str, threading.RLock] = {}
+_DB_LOCKS_GUARD = threading.Lock()
 
 _REQUIRED_TABLES = {"conversations", "messages", "group_messages"}
 _REQUIRED_COLUMNS = {
@@ -488,7 +490,30 @@ def _rollback_quietly(conn):
         pass
 
 
-def _run_with_locked_retry(conn, operation, attempts: int = 5, delay: float = 0.25):
+def _shared_database_lock(db_path: str) -> threading.RLock:
+    key = str(Path(db_path).resolve())
+    with _DB_LOCKS_GUARD:
+        lock = _DB_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _DB_LOCKS[key] = lock
+        return lock
+
+
+def _sleep_outside_rlock(lock, seconds: float):
+    release_save = getattr(lock, "_release_save", None)
+    acquire_restore = getattr(lock, "_acquire_restore", None)
+    if release_save is None or acquire_restore is None:
+        time.sleep(seconds)
+        return
+    state = release_save()
+    try:
+        time.sleep(seconds)
+    finally:
+        acquire_restore(state)
+
+
+def _run_with_locked_retry(conn, operation, attempts: int = 5, delay: float = 0.25, lock=None):
     for attempt in range(max(1, attempts)):
         ok, result = _try_database_operation(operation)
         if ok:
@@ -497,13 +522,17 @@ def _run_with_locked_retry(conn, operation, attempts: int = 5, delay: float = 0.
         if not _database_is_locked_error(exc) or attempt >= attempts - 1:
             raise exc
         _rollback_quietly(conn)
-        time.sleep(delay * (attempt + 1))
+        seconds = delay * (attempt + 1)
+        if lock is not None:
+            _sleep_outside_rlock(lock, seconds)
+        else:
+            time.sleep(seconds)
 
 
 class _DatabaseManagerMeta(type):
     def __new__(mcls, name, bases, namespace):
         for attr_name, attr_value in list(namespace.items()):
-            if attr_name == "__init__" or attr_name.startswith("__"):
+            if attr_name in {"__init__", "close"} or attr_name.startswith("__"):
                 continue
             if isinstance(attr_value, FunctionType):
                 namespace[attr_name] = _with_database_lock(attr_value)
@@ -512,7 +541,7 @@ class _DatabaseManagerMeta(type):
 
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
-        self._lock = threading.RLock()
+        self._lock = _shared_database_lock(db_path)
         self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
         self._conn.execute("PRAGMA busy_timeout=2000")
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -1205,7 +1234,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 )
             self._conn.commit()
 
-        _run_with_locked_retry(self._conn, operation)
+        _run_with_locked_retry(self._conn, operation, lock=self._lock)
 
     def get_group_conversations(self, group_key: str, user_key: str | None = None) -> list[dict]:
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
@@ -1304,7 +1333,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
             self._conn.commit()
 
-        _run_with_locked_retry(self._conn, operation)
+        _run_with_locked_retry(self._conn, operation, lock=self._lock)
 
     def delete_empty_conversations(self, character: str = "", user_key: str | None = None):
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
@@ -2070,7 +2099,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return days[:limit]
 
     def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        self._conn.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._conn.close()

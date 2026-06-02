@@ -3,6 +3,7 @@ import io
 import queue
 import re
 import struct
+import threading
 import urllib.error
 import urllib.request
 from collections import deque
@@ -542,6 +543,7 @@ class TTSPlayer(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._queue = queue.Queue()
+        self._state_lock = threading.RLock()
         self._stream = None
         self._sample_rate = 0
         self._channels = 1
@@ -566,15 +568,16 @@ class TTSPlayer(QObject):
         except Exception:
             pass
         self._stream = None
-        self._current_chunk = None
-        self._current_visemes = ()
-        self._current_pos = 0
-        self._level = 0.0
-        self._mouth_open_base = 0.0
-        self._mouth_form_base = 0.0
-        self._playback_active = False
-        self._pending_visemes.clear()
-        self._pending_language = ""
+        with self._state_lock:
+            self._current_chunk = None
+            self._current_visemes = ()
+            self._current_pos = 0
+            self._level = 0.0
+            self._mouth_open_base = 0.0
+            self._mouth_form_base = 0.0
+            self._playback_active = False
+            self._pending_visemes.clear()
+            self._pending_language = ""
         self.level_changed.emit(0.0)
         self.mouth_pose_changed.emit(0.0, 0.0)
         self._level_timer.stop()
@@ -582,8 +585,9 @@ class TTSPlayer(QObject):
             self._queue.queue.clear()
 
     def prepare_lip_sync_text(self, text: str, language: str = ""):
-        self._pending_visemes = deque(_estimate_viseme_units(text, language))
-        self._pending_language = str(language or "")
+        with self._state_lock:
+            self._pending_visemes = deque(_estimate_viseme_units(text, language))
+            self._pending_language = str(language or "")
 
     def enqueue(self, audio: bytes, media_type: str = "wav"):
         if not audio:
@@ -602,9 +606,11 @@ class TTSPlayer(QObject):
         if self._stream is not None and sample_rate != self._sample_rate:
             self.stop()
         self._ensure_stream(sample_rate, data.shape[1])
-        visemes = self._allocate_chunk_visemes(len(data), sample_rate)
+        with self._state_lock:
+            visemes = self._allocate_chunk_visemes(len(data), sample_rate)
         self._queue.put_nowait((data, tuple(visemes)))
-        self._playback_active = True
+        with self._state_lock:
+            self._playback_active = True
         if not self._level_timer.isActive():
             self._level_timer.start()
 
@@ -627,13 +633,14 @@ class TTSPlayer(QObject):
         return result
 
     def is_idle(self) -> bool:
-        return (
-            not self._playback_active
-            or (
-                self._queue.empty()
-                and (self._current_chunk is None or self._current_pos >= len(self._current_chunk))
+        with self._state_lock:
+            return (
+                not self._playback_active
+                or (
+                    self._queue.empty()
+                    and (self._current_chunk is None or self._current_pos >= len(self._current_chunk))
+                )
             )
-        )
 
     def _ensure_stream(self, sample_rate: int, channels: int):
         if self._stream is not None:
@@ -659,33 +666,34 @@ class TTSPlayer(QObject):
         del time_info, status
         outdata.fill(0)
         filled = 0
-        while filled < frames:
-            if self._current_chunk is None or self._current_pos >= len(self._current_chunk):
-                try:
-                    self._current_chunk, self._current_visemes = self._queue.get_nowait()
-                except queue.Empty:
-                    return
-                self._current_pos = 0
+        with self._state_lock:
+            while filled < frames:
+                if self._current_chunk is None or self._current_pos >= len(self._current_chunk):
+                    try:
+                        self._current_chunk, self._current_visemes = self._queue.get_nowait()
+                    except queue.Empty:
+                        return
+                    self._current_pos = 0
 
-            available = len(self._current_chunk) - self._current_pos
-            take = min(available, frames - filled)
-            chunk = self._current_chunk[self._current_pos:self._current_pos + take]
-            try:
-                np = _numpy()
-                rms = float(np.sqrt(np.mean(chunk * chunk)))
-                peak = float(np.max(np.abs(chunk)))
-                self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
-            except Exception:
-                pass
-            self._update_mouth_pose_for_range(self._current_pos, take)
-            if chunk.shape[1] == self._channels:
-                outdata[filled:filled + take] = chunk
-            elif self._channels == 1:
-                outdata[filled:filled + take, 0] = chunk[:, 0]
-            else:
-                outdata[filled:filled + take, :chunk.shape[1]] = chunk
-            self._current_pos += take
-            filled += take
+                available = len(self._current_chunk) - self._current_pos
+                take = min(available, frames - filled)
+                chunk = self._current_chunk[self._current_pos:self._current_pos + take]
+                try:
+                    np = _numpy()
+                    rms = float(np.sqrt(np.mean(chunk * chunk)))
+                    peak = float(np.max(np.abs(chunk)))
+                    self._level = max(self._level, min(max(rms * 4.0, peak * 0.35), 0.55))
+                except Exception:
+                    pass
+                self._update_mouth_pose_for_range(self._current_pos, take)
+                if chunk.shape[1] == self._channels:
+                    outdata[filled:filled + take] = chunk
+                elif self._channels == 1:
+                    outdata[filled:filled + take, 0] = chunk[:, 0]
+                else:
+                    outdata[filled:filled + take, :chunk.shape[1]] = chunk
+                self._current_pos += take
+                filled += take
 
     def _update_mouth_pose_for_range(self, start_frame: int, frame_count: int):
         if not self._current_visemes:
@@ -700,25 +708,28 @@ class TTSPlayer(QObject):
         self._mouth_open_base, self._mouth_form_base = self._current_visemes[-1][1:]
 
     def _emit_level(self):
-        level = self._level
-        self._level *= 0.55
-        if self._mouth_open_base < 0.05:
-            mouth_open = min(level * 0.2, 0.04)
-            mouth_form = 0.0
-        else:
-            activity = min(1.0, level / 0.18) if level > 0.01 else 0.0
-            mouth_open = min(0.55, max(level * 0.9, self._mouth_open_base * activity))
-            mouth_form = self._mouth_form_base * max(0.25, activity) if activity > 0.0 else 0.0
-        done = (
-            self._queue.empty()
-            and (self._current_chunk is None or self._current_pos >= len(self._current_chunk))
-        )
+        with self._state_lock:
+            level = self._level
+            self._level *= 0.55
+            if self._mouth_open_base < 0.05:
+                mouth_open = min(level * 0.2, 0.04)
+                mouth_form = 0.0
+            else:
+                activity = min(1.0, level / 0.18) if level > 0.01 else 0.0
+                mouth_open = min(0.55, max(level * 0.9, self._mouth_open_base * activity))
+                mouth_form = self._mouth_form_base * max(0.25, activity) if activity > 0.0 else 0.0
+            done = (
+                self._queue.empty()
+                and (self._current_chunk is None or self._current_pos >= len(self._current_chunk))
+            )
+            playback_active = self._playback_active
+            if done and level < 0.01:
+                self._playback_active = False
         if done and level < 0.01:
             self._level_timer.stop()
             self.level_changed.emit(0.0)
             self.mouth_pose_changed.emit(0.0, 0.0)
-            if self._playback_active:
-                self._playback_active = False
+            if playback_active:
                 self.playback_finished.emit()
             return
         self.level_changed.emit(level)
