@@ -87,6 +87,9 @@ class PixelPetWidget(QWidget):
 
     def set_drag_locked(self, locked: bool):
         self._drag_locked = locked
+        self._dragging = False
+        self._drag_moved = False
+        self._pressed_on_sprite = False
         if locked:
             self._wander_timer.stop()
             self.set_animation("idle")

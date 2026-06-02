@@ -268,6 +268,9 @@ class Live2DWidget(QOpenGLWidget):
 
     def set_drag_locked(self, locked: bool):
         self._drag_locked = locked
+        self._dragging = False
+        self._drag_moved = False
+        self._pressed_on_model = False
 
     def set_head_tracking_enabled(self, enabled: bool):
         self._head_tracking_enabled = bool(enabled)
