@@ -17,7 +17,7 @@ BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QLockFile, QRect, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
@@ -66,6 +66,26 @@ def _parse_group_characters(value: str, valid_characters: set[str], current_char
     return _normalize_characters(parsed, valid_characters, current_character)
 
 
+def _chat_lock_path() -> str:
+    runtime_dir = os.path.join(BASE_DIR, ".runtime")
+    os.makedirs(runtime_dir, exist_ok=True)
+    server_name = ipc_server_name() or "BandoriPet"
+    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in server_name)
+    return os.path.join(runtime_dir, f"{safe_name}-chat.lock")
+
+
+def _send_ipc_line(line: str, timeout_ms: int = 300):
+    socket = QLocalSocket()
+    socket.connectToServer(ipc_server_name())
+    if socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+        socket.waitForConnected(timeout_ms)
+    if socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+        socket.write((line + "\n").encode("utf-8"))
+        socket.flush()
+        socket.waitForBytesWritten(timeout_ms)
+        socket.disconnectFromServer()
+
+
 def _apply_app_icon(app: QApplication) -> QIcon:
     icon_path = os.path.join(BASE_DIR, "logo.ico")
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
@@ -92,6 +112,11 @@ def main():
 
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
+
+    chat_lock = QLockFile(_chat_lock_path())
+    if not chat_lock.tryLock(100):
+        _send_ipc_line("FOCUS_CHAT")
+        return 0
 
     normal_window_mode = bool(cfg.get("chat_window_normal_window", False))
 
@@ -133,12 +158,27 @@ def main():
 
     shutdown_socket = QLocalSocket(app)
 
+    def focus_window():
+        if window.isMinimized():
+            window.showNormal()
+        else:
+            window.show()
+        window.raise_()
+        window.activateWindow()
+
     def read_shutdown_messages():
         for line in bytes(shutdown_socket.readAll()).decode("utf-8", errors="ignore").splitlines():
             if line == "SHUTDOWN":
                 window.close()
                 break
+            if line == "FOCUS_CHAT":
+                focus_window()
 
+    def register_chat_window():
+        shutdown_socket.write(f"REGISTER\tCHAT\t{args.character}\n".encode("utf-8"))
+        shutdown_socket.flush()
+
+    shutdown_socket.connected.connect(register_chat_window)
     shutdown_socket.readyRead.connect(read_shutdown_messages)
     shutdown_socket.connectToServer(ipc_server_name())
 
@@ -153,6 +193,7 @@ def main():
     ret = app.exec()
     cfg.load()
     cfg.save()
+    chat_lock.unlock()
     return ret
 
 
