@@ -6,6 +6,7 @@ import sys
 from process_utils import (
     app_base_dir,
     configure_debug_logging,
+    ensure_windows_app_user_model_shortcut,
     install_parent_death_watch,
     ipc_server_name,
     set_windows_app_user_model_id,
@@ -86,8 +87,35 @@ def _send_ipc_line(line: str, timeout_ms: int = 300):
         socket.disconnectFromServer()
 
 
-def _apply_app_icon(app: QApplication) -> QIcon:
+def _app_icon_path() -> str:
     icon_path = os.path.join(BASE_DIR, "logo.ico")
+    return icon_path if os.path.exists(icon_path) else ""
+
+
+def _ensure_taskbar_icon_identity(app_id: str) -> bool:
+    if sys.platform != "win32":
+        return True
+    icon_path = _app_icon_path()
+    target_path = sys.executable
+    arguments = ""
+    if getattr(sys, "frozen", False):
+        candidate = os.path.join(BASE_DIR, "BandoriPet.exe")
+        if os.path.exists(candidate):
+            target_path = candidate
+    else:
+        arguments = f'"{os.path.join(BASE_DIR, "main.py")}"'
+    return ensure_windows_app_user_model_shortcut(
+        app_id,
+        "BandoriPet Chat",
+        icon_path,
+        target_path=target_path,
+        arguments=arguments,
+        working_dir=BASE_DIR,
+    )
+
+
+def _apply_app_icon(app: QApplication) -> QIcon:
+    icon_path = _app_icon_path()
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
     if not icon.isNull():
         app.setWindowIcon(icon)
@@ -102,7 +130,10 @@ def main():
     lang = cfg.get("language", "") or detect_system_language()
     set_language(lang)
 
-    set_windows_app_user_model_id("BandoriPet.Chat")
+    app_user_model_id = "BandoriPet.Chat"
+    if not _ensure_taskbar_icon_identity(app_user_model_id):
+        app_user_model_id = "BandoriPet"
+    set_windows_app_user_model_id(app_user_model_id)
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough

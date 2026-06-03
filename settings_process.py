@@ -3,7 +3,14 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, install_parent_death_watch, ipc_server_name, set_windows_app_user_model_id
+from process_utils import (
+    app_base_dir,
+    configure_debug_logging,
+    ensure_windows_app_user_model_shortcut,
+    install_parent_death_watch,
+    ipc_server_name,
+    set_windows_app_user_model_id,
+)
 from config_manager import ConfigManager
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
@@ -39,8 +46,35 @@ def _parse_args():
     return parser.parse_args()
 
 
-def _apply_app_icon(app: QApplication) -> None:
+def _app_icon_path() -> str:
     icon_path = os.path.join(BASE_DIR, "logo.ico")
+    return icon_path if os.path.exists(icon_path) else ""
+
+
+def _ensure_taskbar_icon_identity(app_id: str) -> bool:
+    if sys.platform != "win32":
+        return True
+    icon_path = _app_icon_path()
+    target_path = sys.executable
+    arguments = ""
+    if getattr(sys, "frozen", False):
+        candidate = os.path.join(BASE_DIR, "BandoriPet.exe")
+        if os.path.exists(candidate):
+            target_path = candidate
+    else:
+        arguments = f'"{os.path.join(BASE_DIR, "main.py")}"'
+    return ensure_windows_app_user_model_shortcut(
+        app_id,
+        "BandoriPet Settings",
+        icon_path,
+        target_path=target_path,
+        arguments=arguments,
+        working_dir=BASE_DIR,
+    )
+
+
+def _apply_app_icon(app: QApplication) -> None:
+    icon_path = _app_icon_path()
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
@@ -55,7 +89,10 @@ def main():
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
     Live2DWidget.configure_default_surface_format()
 
-    set_windows_app_user_model_id("BandoriPet.Settings")
+    app_user_model_id = "BandoriPet.Settings"
+    if not _ensure_taskbar_icon_identity(app_user_model_id):
+        app_user_model_id = "BandoriPet"
+    set_windows_app_user_model_id(app_user_model_id)
 
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
