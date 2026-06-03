@@ -8,6 +8,7 @@ BandoriPet.egg-info/
 chat_attachments/
 third_party/
 venv/
+.venv-build/
 config.json
 config.json.*.tmp
 .runtime/

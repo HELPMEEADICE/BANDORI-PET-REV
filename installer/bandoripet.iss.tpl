@@ -42,7 +42,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 Name: "autostart"; Description: "Start with Windows"; GroupDescription: "Other:"; Flags: unchecked
 
 [Files]
-Source: "{BUILD_DIR}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "{BUILD_DIR}\*"; DestDir: "{app}"; Excludes: "config.json,data.db,data.db-shm,data.db-wal"; Flags: recursesubdirs ignoreversion
 
 [Icons]
 Name: "{group}\BandoriPet"; Filename: "{app}\BandoriPet.exe"

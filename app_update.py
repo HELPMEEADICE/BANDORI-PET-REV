@@ -18,6 +18,12 @@ from process_utils import app_base_dir, hidden_subprocess_kwargs
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+){0,3}")
 _PROCESS_NAMES = ("BandoriPet", "pet_process", "settings_process", "chat_process")
+_PORTABLE_UPDATE_PROTECTED_FILES = (
+    "config.json",
+    "data.db",
+    "data.db-shm",
+    "data.db-wal",
+)
 
 
 @dataclass
@@ -438,12 +444,14 @@ def _launch_portable_zip_updater(archive_path: Path) -> None:
     target_dir = app_base_dir()
     app_exe = target_dir / MAIN_EXECUTABLE
     process_names = ", ".join(_ps_quote(name) for name in _PROCESS_NAMES)
+    protected_files = ", ".join(_ps_quote(name) for name in _PORTABLE_UPDATE_PROTECTED_FILES)
     script = f"""
 $ErrorActionPreference = 'Stop'
 $zip = {_ps_quote(archive_path)}
 $target = {_ps_quote(target_dir)}
 $app = {_ps_quote(app_exe)}
 $processNames = @({process_names})
+$protectedFiles = @({protected_files})
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetUpdate-' + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
@@ -458,6 +466,7 @@ Get-Process -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Get-ChildItem -LiteralPath $source -Force |
+    Where-Object {{ -not ($protectedFiles -contains $_.Name) }} |
     Copy-Item -Destination $target -Recurse -Force
 Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path -LiteralPath $app) {{

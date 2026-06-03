@@ -33,6 +33,12 @@ INNO_RESOURCE_DIRS = (
     "lang",
     "band_logo",
 )
+USER_DATA_FILENAMES = (
+    "config.json",
+    "data.db",
+    "data.db-shm",
+    "data.db-wal",
+)
 PYOPENGL_PLATFORM_MODULES = (
     "OpenGL.platform.win32",
     "OpenGL.platform.baseplatform",
@@ -56,6 +62,11 @@ class BuildExeWithEmptyModels(build_exe):
         super().run()
         if BYTECODE_BUILD_DIR.exists():
             shutil.rmtree(BYTECODE_BUILD_DIR)
+        build_dir = Path(self.build_exe)
+        for filename in USER_DATA_FILENAMES:
+            path = build_dir / filename
+            if path.exists():
+                path.unlink()
         models_dir = Path(self.build_exe) / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
 
