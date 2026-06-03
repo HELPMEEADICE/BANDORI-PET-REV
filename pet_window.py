@@ -510,19 +510,38 @@ class PetWindow(QWidget):
                 return True
         return False
 
-    def _constrain_position_to_screen(self, x: int, y: int, screen) -> tuple[int, int]:
+    def _constrain_position_to_screen(self, x: int, y: int, screen, *, allow_partial: bool = True) -> tuple[int, int]:
         if screen is None:
             return int(x), int(y)
         geo = screen.availableGeometry()
         w, h = max(1, self.width()), max(1, self.height())
-        min_x = geo.left() - max(0, w - 32)
-        max_x = geo.left() + geo.width() - 32
-        min_y = geo.top() - max(0, h - 32)
-        max_y = geo.top() + geo.height() - 32
+        if allow_partial:
+            min_x = geo.left() - max(0, w - 32)
+            max_x = geo.left() + geo.width() - 32
+            min_y = geo.top() - max(0, h - 32)
+            max_y = geo.top() + geo.height() - 32
+        else:
+            min_x = geo.left()
+            max_x = geo.left() + max(0, geo.width() - w)
+            min_y = geo.top()
+            max_y = geo.top() + max(0, geo.height() - h)
         return (
             max(min_x, min(int(x), max_x)),
             max(min_y, min(int(y), max_y)),
         )
+
+    def _fallback_position_screen(self):
+        return QGuiApplication.primaryScreen() or self._screen_for_current_window()
+
+    def _position_from_placement(self, placement: dict, screen, *, allow_partial: bool = True) -> tuple[int, int] | None:
+        if not isinstance(placement, dict) or screen is None:
+            return None
+        geo = screen.availableGeometry()
+        rel_x = _clamp_float(placement.get("relative_x", 0.5), -4.0, 4.0, 0.5)
+        rel_y = _clamp_float(placement.get("relative_y", 0.5), -4.0, 4.0, 0.5)
+        target_x = geo.left() + int(round(rel_x * max(0, geo.width() - self.width())))
+        target_y = geo.top() + int(round(rel_y * max(0, geo.height() - self.height())))
+        return self._constrain_position_to_screen(target_x, target_y, screen, allow_partial=allow_partial)
 
     def _saved_position(self, mode: str, *, offset_x: int = 0) -> tuple[int, int] | None:
         if not self._cfg:
@@ -553,11 +572,10 @@ class PetWindow(QWidget):
         if isinstance(placement, dict) and placement:
             screen = self._screen_for_placement(placement)
             if screen is not None:
-                geo = screen.availableGeometry()
-                rel_x = _clamp_float(placement.get("relative_x", 0.5), -4.0, 4.0, 0.5)
-                rel_y = _clamp_float(placement.get("relative_y", 0.5), -4.0, 4.0, 0.5)
-                target_x = geo.left() + int(round(rel_x * max(0, geo.width() - self.width())))
-                target_y = geo.top() + int(round(rel_y * max(0, geo.height() - self.height())))
+                target = self._position_from_placement(placement, screen)
+                if target is None:
+                    return None
+                target_x, target_y = target
                 if using_global_fallback:
                     target_x += int(offset_x)
                 return self._constrain_position_to_screen(target_x, target_y, screen)
@@ -565,6 +583,18 @@ class PetWindow(QWidget):
                 if using_global_fallback:
                     x += int(offset_x)
                 return int(x), int(y)
+            fallback_screen = self._fallback_position_screen()
+            if fallback_screen is not None:
+                if not (x == -1 and y == -1):
+                    if using_global_fallback:
+                        x += int(offset_x)
+                    return self._constrain_position_to_screen(x, y, fallback_screen, allow_partial=False)
+                target = self._position_from_placement(placement, fallback_screen, allow_partial=False)
+                if target is not None:
+                    target_x, target_y = target
+                    if using_global_fallback:
+                        target_x += int(offset_x)
+                    return self._constrain_position_to_screen(target_x, target_y, fallback_screen, allow_partial=False)
 
         if x == -1 and y == -1:
             return None
@@ -572,6 +602,9 @@ class PetWindow(QWidget):
             x += int(offset_x)
         if self._position_intersects_any_screen(x, y):
             return int(x), int(y)
+        fallback_screen = self._fallback_position_screen()
+        if fallback_screen is not None:
+            return self._constrain_position_to_screen(x, y, fallback_screen, allow_partial=False)
         return None
 
     def restore_saved_position(self, *, offset_x: int = 0) -> bool:
@@ -1247,6 +1280,22 @@ class PetWindow(QWidget):
                 if fallback is None:
                     fallback = item
         return self._with_saved_action_profile(fallback or {})
+
+    def _configured_model_count(self) -> int:
+        if not self._cfg:
+            return 0
+        models = self._cfg.get("models", [])
+        if not isinstance(models, list):
+            return 0
+        seen = set()
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            character = str(item.get("character", "") or "")
+            costume = str(item.get("costume", "") or "")
+            if character and costume:
+                seen.add(character)
+        return len(seen)
 
     def _with_saved_action_profile(self, entry: dict) -> dict:
         if not self._cfg:
@@ -3098,16 +3147,17 @@ class PetWindow(QWidget):
             return
         path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
         placement = self._window_placement()
-        if self._pixel_mode:
-            self._cfg.set("pixel_window_x", self.x())
-            self._cfg.set("pixel_window_y", self.y())
-            self._cfg.set("pixel_window_placement", placement)
-        else:
-            self._cfg.set("window_x", self.x())
-            self._cfg.set("window_y", self.y())
-            self._cfg.set("window_width", self.width())
-            self._cfg.set("window_height", self.height())
-            self._cfg.set("window_placement", placement)
+        if self._configured_model_count() <= 1:
+            if self._pixel_mode:
+                self._cfg.set("pixel_window_x", self.x())
+                self._cfg.set("pixel_window_y", self.y())
+                self._cfg.set("pixel_window_placement", placement)
+            else:
+                self._cfg.set("window_x", self.x())
+                self._cfg.set("window_y", self.y())
+                self._cfg.set("window_width", self.width())
+                self._cfg.set("window_height", self.height())
+                self._cfg.set("window_placement", placement)
         self._sync_current_model_entry(path, save=False)
 
     def _restore_live2d_position(self):
@@ -3206,6 +3256,7 @@ class PetWindow(QWidget):
                 isDarkTheme = lambda: False
             self._cfg.load()
             models = self._cfg.get("models", [])
+            configured_model_count = self._configured_model_count()
             model_exists = (
                 not isinstance(models, list)
                 or not models
@@ -3217,8 +3268,9 @@ class PetWindow(QWidget):
             self._cfg.set("language", current_language())
             path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
             if model_exists:
-                self._cfg.set("character", self._current_char)
-                self._cfg.set("costume", self._current_costume)
+                if configured_model_count <= 1:
+                    self._cfg.set("character", self._current_char)
+                    self._cfg.set("costume", self._current_costume)
                 self._sync_current_model_entry(path, save=False)
             self._cfg.set("fps", self._fps)
             self._cfg.set("opacity", self._opacity)
@@ -3234,17 +3286,18 @@ class PetWindow(QWidget):
             self._cfg.set("live2d_lip_sync_max_open", self._live2d_lip_sync_max_open)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)
             if model_exists:
-                self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")
-                if self._pixel_mode:
-                    self._cfg.set("pixel_window_x", self.x())
-                    self._cfg.set("pixel_window_y", self.y())
-                    self._cfg.set("pixel_window_placement", self._window_placement())
-                else:
-                    self._cfg.set("window_x", self.x())
-                    self._cfg.set("window_y", self.y())
-                    self._cfg.set("window_width", self.width())
-                    self._cfg.set("window_height", self.height())
-                    self._cfg.set("window_placement", self._window_placement())
+                if configured_model_count <= 1:
+                    self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")
+                    if self._pixel_mode:
+                        self._cfg.set("pixel_window_x", self.x())
+                        self._cfg.set("pixel_window_y", self.y())
+                        self._cfg.set("pixel_window_placement", self._window_placement())
+                    else:
+                        self._cfg.set("window_x", self.x())
+                        self._cfg.set("window_y", self.y())
+                        self._cfg.set("window_width", self.width())
+                        self._cfg.set("window_height", self.height())
+                        self._cfg.set("window_placement", self._window_placement())
             self._cfg.save()
 
     def _sync_current_model_entry(self, path: str, save: bool = True):
