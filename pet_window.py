@@ -685,7 +685,7 @@ class PetWindow(QWidget):
 
     def _apply_game_topmost_state(self):
         if os.name == "nt":
-            self._enforce_windows_z_order()
+            self._enforce_windows_z_order(force=self._game_topmost)
             self._sync_windows_topmost_guard()
         elif sys.platform == "darwin" and macos_patch is not None and self.isVisible():
             # macOS: bump to pop-up-menu level (above almost everything) when
@@ -939,7 +939,7 @@ class PetWindow(QWidget):
             return
         if self._is_radial_menu_visible():
             return
-        self._enforce_windows_z_order()
+        self._enforce_windows_z_order(force=self._game_topmost)
 
     def _schedule_windows_topmost_recovery(self):
         if os.name != "nt":
@@ -951,7 +951,7 @@ class PetWindow(QWidget):
             if token != self._topmost_recovery_token or not self.isVisible():
                 return
             self._apply_windows_frameless_fix()
-            self._enforce_windows_z_order()
+            self._enforce_windows_z_order(force=self._game_topmost)
 
         for delay_ms in TOPMOST_RECOVERY_DELAYS_MS:
             QTimer.singleShot(delay_ms, recover)
