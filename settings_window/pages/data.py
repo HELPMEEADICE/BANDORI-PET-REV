@@ -497,7 +497,20 @@ class DataManagementPageMixin:
         self._cfg.save()
         if hasattr(self._cfg, "load"):
             self._cfg.load()
+            self._cfg.save()
         return summary
+
+
+    def _reset_cached_database_managers(self):
+        for attr in ("_memory_db", "_stats_db"):
+            db = getattr(self, attr, None)
+            if db is None:
+                continue
+            try:
+                db.close()
+            except Exception:
+                pass
+            setattr(self, attr, None)
 
 
     def _apply_config_data_section(self, section: str, config_data: dict) -> int:
@@ -558,6 +571,8 @@ class DataManagementPageMixin:
 
     def _refresh_after_data_import(self, sections):
         imported_sections = set(sections)
+        if DATA_CATEGORY_RELATIONSHIP in imported_sections:
+            self._reset_cached_database_managers()
         self._configured_models = self._load_configured_models()
         self._current_char = self._cfg.get("character", self._current_char) if self._cfg else self._current_char
         self._current_costume = self._cfg.get("costume", self._current_costume) if self._cfg else self._current_costume
@@ -741,6 +756,11 @@ class DataManagementPageMixin:
             from database_manager import import_chat_database
 
             summary = import_chat_database(path)
+            self._reset_cached_database_managers()
+            if self._memory_page_ready():
+                self._refresh_memory_page()
+            if getattr(self, "_statistics_page", None) is not None:
+                self._refresh_statistics()
             InfoBar.success(
                 _tr("SettingsWindow.chat_data_import_title"),
                 _tr(

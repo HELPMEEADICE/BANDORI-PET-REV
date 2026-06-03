@@ -281,6 +281,14 @@ def _database_sidecar_paths(path: Path) -> list[Path]:
     return [Path(str(path) + suffix) for suffix in ("-wal", "-shm")]
 
 
+def _checkpoint_database(path: Path, mode: str = "TRUNCATE"):
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(str(path), timeout=10)) as conn:
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchall()
+
+
 def _copy_database_for_import(source: Path, temp_dir: Path) -> Path:
     local_source = temp_dir / source.name
     shutil.copy2(source, local_source)
@@ -298,6 +306,7 @@ def export_chat_database(destination_path: str, source_path=DB_PATH) -> dict:
         raise ValueError("source and destination are the same file")
 
     _ensure_database(str(source))
+    _checkpoint_database(source, "PASSIVE")
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
         prefix=destination.name + ".",
@@ -331,17 +340,21 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
         raise ValueError("source and target are the same file")
 
     target.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_database(str(target))
+    _checkpoint_database(target)
     with tempfile.TemporaryDirectory(prefix="bandori-chat-import-") as temp_dir:
         local_source = _copy_database_for_import(source, Path(temp_dir))
         source_uri = _read_only_database_uri(local_source)
         with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
             _validate_chat_database(src)
             with closing(sqlite3.connect(str(target), timeout=10)) as dst:
+                dst.execute("PRAGMA busy_timeout=10000")
                 src.backup(dst)
                 _sanitize_database_attachments(dst)
                 dst.commit()
+                _validate_chat_database(dst)
 
-    _ensure_database(str(target))
+    _checkpoint_database(target)
     return chat_database_summary(str(target))
 
 

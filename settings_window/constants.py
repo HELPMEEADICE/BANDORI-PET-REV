@@ -198,6 +198,9 @@ SECRET_CONFIG_KEYS = {
     "llm_api_key",
     "llm_aux_api_key",
     "asr_api_key",
+    "ai_status_token",
+    "chat_integration_token",
+    "napcat_access_token",
 }
 
 DATA_CONFIG_KEYS = {
