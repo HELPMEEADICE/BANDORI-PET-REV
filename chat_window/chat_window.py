@@ -1664,19 +1664,22 @@ class ChatWindow(QWidget):
             "focus_border": accent_color(dark),
         }
 
-        self.setStyleSheet("""
-            ChatWindow {
-                background: transparent;
-            }
+        window_bg = bg if self._normal_window_mode else "transparent"
+        self.setStyleSheet(f"""
+            ChatWindow {{
+                background: {window_bg};
+            }}
         """)
 
-        self._shell.set_panel_style(bg, border, 14, 1)
+        shell_radius = 0 if self._normal_window_mode else 14
+        self._shell.set_panel_style(bg, border, shell_radius, 1)
         group_sidebar_visible = (
             self._group_sidebar is not None
             and not self._group_sidebar_collapsed
         )
-        title_radius = (0, 14, 0, 0) if group_sidebar_visible else (14, 14, 0, 0)
-        input_radius = (0, 0, 14, 0) if group_sidebar_visible else (0, 0, 14, 14)
+        outer_radius = 0 if self._normal_window_mode else 14
+        title_radius = (0, outer_radius, 0, 0) if group_sidebar_visible else (outer_radius, outer_radius, 0, 0)
+        input_radius = (0, 0, outer_radius, 0) if group_sidebar_visible else (0, 0, outer_radius, outer_radius)
         self._titlebar.set_panel_style(title_bg, title_border, title_radius, 0)
         self._titlebar.setStyleSheet(f"""
             QLabel#TitleAvatar {{
@@ -1702,7 +1705,7 @@ class ChatWindow(QWidget):
         if self._group_sidebar is not None:
             sidebar_bg = "#151923" if dark else "#f8fafd"
             sidebar_border = "#242a37" if dark else "#e6ebf3"
-            self._group_sidebar.set_panel_style(sidebar_bg, "transparent", (14, 0, 0, 14), 0)
+            self._group_sidebar.set_panel_style(sidebar_bg, "transparent", (outer_radius, 0, 0, outer_radius), 0)
             self._group_sidebar.setStyleSheet(f"""
                 QLabel#GroupSidebarTitle {{
                     color: {text_color};
