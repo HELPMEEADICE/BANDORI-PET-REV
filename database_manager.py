@@ -244,7 +244,16 @@ def _album_message_row_dict(row, grouped: bool = False) -> dict | None:
     if message is None:
         return None
     message["source"] = "group" if grouped else "private"
+    if grouped and message.get("role") == "assistant":
+        message["speaker"] = _group_message_speaker(message.get("content", ""))
     return message
+
+
+def _group_message_speaker(content: str) -> str:
+    first_line = str(content or "").splitlines()[0].strip() if content else ""
+    if first_line.startswith("【") and "】" in first_line:
+        return first_line[1:first_line.index("】")].strip()
+    return ""
 
 
 def _state_row_dict(row) -> dict:
@@ -2053,14 +2062,58 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         members = [part for part in group_key[len(prefix):].split("|") if part]
         return character in members
 
+    @staticmethod
+    def _character_aliases(character: str, aliases: list[str] | tuple[str, ...] | set[str] | None = None) -> set[str]:
+        result = {str(character or "").strip()}
+        for alias in aliases or []:
+            text = str(alias or "").strip()
+            if text:
+                result.add(text)
+        result.discard("")
+        return result
+
+    @staticmethod
+    def _group_message_matches_character(row, character: str, aliases: set[str]) -> bool:
+        role = _db_text(row[3], "user")
+        if role != "assistant":
+            return True
+        speaker = _group_message_speaker(_db_text(row[4]))
+        return not speaker or speaker in aliases
+
+    def _group_conversation_album_preview(
+        self,
+        group_key: str,
+        conversation_id: str,
+        user_key: str,
+        aliases: set[str],
+    ) -> tuple[str, int]:
+        rows = self._conn.execute(
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, "
+            "attachments_json, tool_trace_json, created_at "
+            "FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
+            "AND user_key=? ORDER BY id DESC",
+            (group_key, conversation_id, conversation_id, user_key),
+        ).fetchall()
+        preview = ""
+        count = 0
+        for row in rows:
+            if not self._group_message_matches_character(row, "", aliases):
+                continue
+            count += 1
+            if not preview:
+                preview = _db_text(row[4])
+        return preview, count
+
     def get_character_recent_messages(
         self,
         character: str,
         user_key: str = "",
         limit: int = 24,
+        character_aliases: list[str] | tuple[str, ...] | set[str] | None = None,
     ) -> list[dict]:
         user_key = self._normalize_user_key(user_key)
         limit = _clamp_int(limit, 1, 200, 24)
+        aliases = self._character_aliases(character, character_aliases)
         private_rows = self._conn.execute(
             "SELECT m.id, m.conversation_id, m.role, m.content, m.reasoning_content, "
             "m.attachments_json, m.tool_trace_json, m.created_at "
@@ -2086,6 +2139,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             group_key = _db_text(row[1])
             if not self._group_key_contains_character(group_key, character):
                 continue
+            if not self._group_message_matches_character(row, character, aliases):
+                continue
             message = _album_message_row_dict(row, grouped=True)
             if message is not None:
                 messages.append(message)
@@ -2100,14 +2155,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         character: str,
         user_key: str = "",
         limit: int = 20,
+        character_aliases: list[str] | tuple[str, ...] | set[str] | None = None,
     ) -> list[dict]:
         user_key = self._normalize_user_key(user_key)
         limit = _clamp_int(limit, 1, 100, 20)
+        aliases = self._character_aliases(character, character_aliases)
         rows = self._conn.execute(
             "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
             "MIN(m.created_at) AS first_message_at, MAX(m.created_at) AS last_message_at, "
             "COUNT(m.id) AS message_count, "
-            "(SELECT content FROM messages WHERE conversation_id=c.id AND role='user' AND content!='' ORDER BY id ASC LIMIT 1) AS first_user "
+            "(SELECT content FROM messages WHERE conversation_id=c.id AND role='user' AND content!='' ORDER BY id ASC LIMIT 1) AS first_user, "
+            "(SELECT content FROM messages WHERE conversation_id=c.id AND content!='' ORDER BY id DESC LIMIT 1) AS preview "
             "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
             "WHERE c.character=? AND c.user_key=? "
             "GROUP BY c.id, c.character, c.user_key, c.title, c.created_at "
@@ -2127,13 +2185,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "last_message_at": _db_text(row[6]),
                 "message_count": int(row[7] or 0),
                 "first_user": _db_text(row[8]),
+                "preview": _db_text(row[9]),
             })
 
         group_rows = self._conn.execute(
             "SELECT group_key, conversation_id, MIN(created_at), MAX(created_at), COUNT(id), "
             "(SELECT content FROM group_messages gm2 "
             " WHERE gm2.group_key=gm.group_key AND gm2.conversation_id=gm.conversation_id "
-            " AND gm2.user_key=gm.user_key AND gm2.role='user' AND gm2.content!='' ORDER BY gm2.id ASC LIMIT 1) AS first_user "
+            " AND gm2.user_key=gm.user_key AND gm2.role='user' AND gm2.content!='' ORDER BY gm2.id ASC LIMIT 1) AS first_user, "
+            "(SELECT content FROM group_messages gm2 "
+            " WHERE gm2.group_key=gm.group_key AND gm2.conversation_id=gm.conversation_id "
+            " AND gm2.user_key=gm.user_key AND gm2.content!='' ORDER BY gm2.id DESC LIMIT 1) AS preview "
             "FROM group_messages gm WHERE gm.user_key=? AND gm.group_key LIKE '__group__:%' "
             "GROUP BY group_key, conversation_id, user_key "
             "ORDER BY MAX(id) DESC LIMIT ?",
@@ -2143,17 +2205,20 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             group_key = _db_text(row[0])
             if not self._group_key_contains_character(group_key, character):
                 continue
+            conversation_id = _db_text(row[1], "default") or "default"
+            preview, message_count = self._group_conversation_album_preview(group_key, conversation_id, user_key, aliases)
             result.append({
                 "source": "group",
-                "conversation_id": _db_text(row[1], "default") or "default",
+                "conversation_id": conversation_id,
                 "group_key": group_key,
                 "user_key": user_key,
                 "title": "",
                 "created_at": _db_text(row[2]),
                 "first_message_at": _db_text(row[2]),
                 "last_message_at": _db_text(row[3]),
-                "message_count": int(row[4] or 0),
+                "message_count": message_count or int(row[4] or 0),
                 "first_user": _db_text(row[5]),
+                "preview": preview or _db_text(row[6]),
             })
 
         result.sort(key=lambda item: item.get("last_message_at", ""), reverse=True)
@@ -2164,9 +2229,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         character: str,
         user_key: str = "",
         limit: int = 30,
+        character_aliases: list[str] | tuple[str, ...] | set[str] | None = None,
     ) -> list[dict]:
         limit = _clamp_int(limit, 1, 120, 30)
-        messages = self.get_character_recent_messages(character, user_key, limit=600)
+        messages = self.get_character_recent_messages(character, user_key, limit=600, character_aliases=character_aliases)
         by_day: dict[str, dict] = {}
         for message in messages:
             created_at = str(message.get("created_at") or "")
@@ -2181,6 +2247,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "first_at": created_at,
                 "last_at": created_at,
                 "snippets": [],
+                "snippet_items": [],
             })
             entry["message_count"] += 1
             if message.get("role") == "user":
@@ -2192,6 +2259,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             content = re.sub(r"\s+", " ", _db_text(message.get("content"))).strip()
             if content and len(entry["snippets"]) < 3:
                 entry["snippets"].append(content[:120])
+            if content and len(entry["snippet_items"]) < 3:
+                entry["snippet_items"].append({
+                    "role": message.get("role", ""),
+                    "content": content[:160],
+                    "source": message.get("source", ""),
+                    "speaker": message.get("speaker", ""),
+                })
 
         memories = self.get_character_memories(character, user_key, limit=100)
         for memory in memories:
@@ -2207,6 +2281,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "first_at": created_at,
                 "last_at": created_at,
                 "snippets": [],
+                "snippet_items": [],
             })
             entry["memory_count"] = int(entry.get("memory_count") or 0) + 1
             if memory.get("kind") == "favorite":

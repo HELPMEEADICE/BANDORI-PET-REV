@@ -164,7 +164,45 @@ class MemoryAlbumPageMixin:
         text = re.sub(r"^收藏语句[：:]\s*", "", text)
         return text
 
-    def _album_summary_text(self, character: str, messages: list[dict], favorites: list[dict]) -> str:
+    @staticmethod
+    def _album_trim(text: str, limit: int = 96) -> str:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if len(text) > limit:
+            return text[:limit].rstrip() + "..."
+        return text
+
+    @staticmethod
+    def _album_date_time(value: str) -> tuple[str, str]:
+        text = str(value or "").strip()
+        date = text[:10] if len(text) >= 10 else text
+        time = text[11:16] if len(text) >= 16 else ""
+        return date, time
+
+    def _memory_album_character_aliases(self, character: str) -> list[str]:
+        aliases = [character]
+        display = self._model_manager.get_display_name(character)
+        if display and display not in aliases:
+            aliases.append(display)
+        return aliases
+
+    def _album_message_label(self, role: str, speaker: str = "", user_display: str = "", character_name: str = "") -> str:
+        if role == "user":
+            return user_display or _tr("ChatWindow.you", default="你")
+        if speaker:
+            return speaker
+        return character_name or _tr("ChatWindow.ai", default="AI")
+
+    def _album_message_line(self, message: dict, user_display: str, character_name: str, limit: int = 96) -> str:
+        label = self._album_message_label(
+            str(message.get("role") or ""),
+            str(message.get("speaker") or ""),
+            user_display,
+            character_name,
+        )
+        content = self._album_trim(self._album_clean_content(message.get("content", "")), limit)
+        return f"{label}：{content}" if content else label
+
+    def _album_summary_text(self, character: str, messages: list[dict], favorites: list[dict], user_display: str = "") -> str:
         if not messages and not favorites:
             return _tr("SettingsWindow.memory_album_no_recent", default="还没有足够的聊天记录。")
         name = self._model_manager.get_display_name(character)
@@ -184,14 +222,22 @@ class MemoryAlbumPageMixin:
                 count=len(favorites),
                 name=name,
             )
+        latest_date, latest_time = self._album_date_time(latest)
+        latest_text = " ".join(part for part in (latest_date, latest_time) if part)
+        summary = (
+            f"最近记录里，{user_display or '你'}发言 {len(user_messages)} 条，"
+            f"{name}回应 {len(assistant_messages)} 条。最近话题：{topic_text}。"
+            f"最新时间：{latest_text or _tr('SettingsWindow.memory_never_updated', default='暂无')}。{fav_part}"
+        )
         return _tr(
             "SettingsWindow.memory_album_summary_text",
             default="最近和 {name} 的记录里，用户发言 {user_count} 条，角色回应 {assistant_count} 条。最近话题：{topics}。最新时间：{latest}.{favorites}",
+            summary=summary,
             name=name,
             user_count=len(user_messages),
             assistant_count=len(assistant_messages),
             topics=topic_text,
-            latest=latest or _tr("SettingsWindow.memory_never_updated", default="暂无"),
+            latest=latest_text or _tr("SettingsWindow.memory_never_updated", default="暂无"),
             favorites=fav_part,
         )
 
@@ -206,23 +252,30 @@ class MemoryAlbumPageMixin:
         row = QWidget(parent)
         row.setObjectName("memoryAlbumRow")
         row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setMinimumWidth(0)
+        row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout = QVBoxLayout(row)
         row_layout.setContentsMargins(12, 10, 12, 10)
-        row_layout.setSpacing(5)
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(8)
+        row_layout.setSpacing(6)
         title_label = StrongBodyLabel(title, row)
         title_label.setObjectName("memoryAlbumRowTitle")
-        meta_label = BodyLabel(meta, row)
-        meta_label.setObjectName("memoryAlbumMuted")
-        top.addWidget(title_label, 1)
-        top.addWidget(meta_label)
-        row_layout.addLayout(top)
+        title_label.setWordWrap(True)
+        title_label.setMinimumWidth(0)
+        title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        row_layout.addWidget(title_label)
+        if meta:
+            meta_label = BodyLabel(meta, row)
+            meta_label.setObjectName("memoryAlbumMuted")
+            meta_label.setWordWrap(True)
+            meta_label.setMinimumWidth(0)
+            meta_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            row_layout.addWidget(meta_label)
         if body:
             body_label = BodyLabel(body, row)
             body_label.setObjectName("memoryAlbumText")
             body_label.setWordWrap(True)
+            body_label.setMinimumWidth(0)
+            body_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             row_layout.addWidget(body_label)
         layout.addWidget(row)
 
@@ -236,13 +289,15 @@ class MemoryAlbumPageMixin:
         user_key = user_key_from_config(self._cfg)
         user_display = self._memory_user_display(user_key) if hasattr(self, "_memory_user_display") else display_user_name(user_key)
         self._memory_album_user_label.setText(_tr("SettingsWindow.memory_current_user", default="当前用户：{display}", display=user_display))
+        character_name = self._model_manager.get_display_name(character)
+        aliases = self._memory_album_character_aliases(character)
 
-        messages = db.get_character_recent_messages(character, user_key, limit=28)
+        messages = db.get_character_recent_messages(character, user_key, limit=28, character_aliases=aliases)
         favorites = db.get_character_memories_by_kind(character, user_key, "favorite", limit=80)
-        chain = db.get_character_conversation_chain(character, user_key, limit=18)
-        days = db.get_character_album_days(character, user_key, limit=30)
+        chain = db.get_character_conversation_chain(character, user_key, limit=18, character_aliases=aliases)
+        days = db.get_character_album_days(character, user_key, limit=30, character_aliases=aliases)
 
-        self._memory_album_summary_label.setText(self._album_summary_text(character, messages, favorites))
+        self._memory_album_summary_label.setText(self._album_summary_text(character, messages, favorites, user_display))
 
         self._clear_album_layout(self._memory_album_favorites_layout)
         if not favorites:
@@ -254,9 +309,15 @@ class MemoryAlbumPageMixin:
         for item in favorites[:12]:
             content = self._album_clean_content(item.get("content", ""))
             meta = item.get("updated_at") or item.get("created_at") or ""
+            _date, time = self._album_date_time(meta)
             self._album_add_row(
                 self._memory_album_favorites_layout,
-                _tr("SettingsWindow.memory_album_favorite_row", default="收藏"),
+                _tr(
+                    "SettingsWindow.memory_album_favorite_row",
+                    default="收藏：{preview}",
+                    time=time or meta,
+                    preview=self._album_trim(content, 40),
+                ),
                 meta,
                 content,
                 self._memory_album_favorites_panel,
@@ -270,21 +331,30 @@ class MemoryAlbumPageMixin:
                 self._memory_album_chain_panel,
             )
         for index, item in enumerate(chain, start=1):
-            source = _tr("SettingsWindow.memory_album_group_source", default="群聊") if item.get("source") == "group" else _tr("SettingsWindow.memory_album_private_source", default="私聊")
-            title = item.get("title") or _tr(
+            source = _tr("SettingsWindow.memory_album_group_source", default="群聊", members=character_name) if item.get("source") == "group" else _tr("SettingsWindow.memory_album_private_source", default="私聊")
+            last_at = item.get("last_message_at") or item.get("created_at") or ""
+            date, time = self._album_date_time(last_at)
+            preview = self._album_clean_content(item.get("preview") or item.get("title") or item.get("first_user", ""))
+            if not preview:
+                preview = _tr("SettingsWindow.memory_album_recent_no_topic", default="无话题")
+            title = _tr(
                 "SettingsWindow.memory_album_chain_row",
-                default="第 {index} 段对话",
+                default="{time} · {preview}",
+                time=time or date or str(index),
+                preview=preview,
                 index=index,
             )
             meta = _tr(
                 "SettingsWindow.memory_album_chain_meta",
                 default="{source} · {count} 条 · {time}",
+                date=date,
                 source=source,
                 count=int(item.get("message_count") or 0),
-                time=item.get("last_message_at") or item.get("created_at") or "",
+                time=last_at,
             )
-            body = self._album_clean_content(item.get("first_user", ""))
-            self._album_add_row(self._memory_album_chain_layout, title, meta, body[:160], self._memory_album_chain_panel)
+            first_user = self._album_clean_content(item.get("first_user", ""))
+            body = f"{user_display or _tr('ChatWindow.you', default='你')}：{self._album_trim(first_user, 150)}" if first_user else ""
+            self._album_add_row(self._memory_album_chain_layout, title, meta, body, self._memory_album_chain_panel)
 
         self._clear_album_layout(self._memory_album_timeline_layout)
         if not days:
@@ -299,12 +369,21 @@ class MemoryAlbumPageMixin:
             meta = _tr(
                 "SettingsWindow.memory_album_day_meta",
                 default="{count} 条消息 · {memories} 条记忆 · {favorites} 句收藏",
+                date=item.get("day", ""),
                 count=int(item.get("message_count") or 0),
                 memories=memory_count,
                 favorites=favorite_count,
             )
-            snippets = [self._album_clean_content(text) for text in item.get("snippets", []) if text]
-            body = "\n".join(f"- {text[:96]}" for text in snippets[:3])
+            snippet_items = item.get("snippet_items") or []
+            lines = []
+            for snippet in snippet_items[:3]:
+                if not isinstance(snippet, dict):
+                    continue
+                lines.append(self._album_message_line(snippet, user_display, character_name, 96))
+            if not lines:
+                snippets = [self._album_clean_content(text) for text in item.get("snippets", []) if text]
+                lines = [self._album_trim(text, 96) for text in snippets[:3]]
+            body = "\n".join(lines)
             self._album_add_row(self._memory_album_timeline_layout, item.get("day", ""), meta, body, self._memory_album_timeline_panel)
 
     def _style_memory_album_page(self, page: QWidget):
