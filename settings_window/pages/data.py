@@ -127,14 +127,14 @@ class DataManagementPageMixin:
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
-        export_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.data_export", default="导出配置"), page)
-        export_btn.setFixedHeight(36)
-        export_btn.clicked.connect(self._export_data_package)
-        import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.data_import", default="导入配置"), page)
-        import_btn.setFixedHeight(36)
-        import_btn.clicked.connect(self._import_data_package)
-        action_row.addWidget(export_btn)
-        action_row.addWidget(import_btn)
+        self._data_export_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.data_export", default="导出配置"), page)
+        self._data_export_btn.setFixedHeight(36)
+        self._data_export_btn.clicked.connect(self._on_export_data_package_clicked)
+        self._data_import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.data_import", default="导入配置"), page)
+        self._data_import_btn.setFixedHeight(36)
+        self._data_import_btn.clicked.connect(self._on_import_data_package_clicked)
+        action_row.addWidget(self._data_export_btn)
+        action_row.addWidget(self._data_import_btn)
         action_row.addStretch()
         layout.addLayout(action_row)
 
@@ -145,14 +145,14 @@ class DataManagementPageMixin:
         chat_action_row = QHBoxLayout()
         chat_action_row.setContentsMargins(0, 0, 0, 0)
         chat_action_row.setSpacing(8)
-        chat_export_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.chat_data_export"), page)
-        chat_export_btn.setFixedHeight(36)
-        chat_export_btn.clicked.connect(self._export_chat_database)
-        chat_import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.chat_data_import"), page)
-        chat_import_btn.setFixedHeight(36)
-        chat_import_btn.clicked.connect(self._import_chat_database)
-        chat_action_row.addWidget(chat_export_btn)
-        chat_action_row.addWidget(chat_import_btn)
+        self._chat_export_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.chat_data_export"), page)
+        self._chat_export_btn.setFixedHeight(36)
+        self._chat_export_btn.clicked.connect(self._on_export_chat_database_clicked)
+        self._chat_import_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.chat_data_import"), page)
+        self._chat_import_btn.setFixedHeight(36)
+        self._chat_import_btn.clicked.connect(self._on_import_chat_database_clicked)
+        chat_action_row.addWidget(self._chat_export_btn)
+        chat_action_row.addWidget(self._chat_import_btn)
         chat_action_row.addStretch()
         layout.addLayout(chat_action_row)
 
@@ -162,6 +162,78 @@ class DataManagementPageMixin:
         self._style_data_management_page(page)
         qconfig.themeChanged.connect(lambda: self._style_data_management_page(page))
         return page
+
+
+    def _on_export_data_package_clicked(self):
+        self._run_data_management_action(
+            self._export_data_package,
+            _tr("SettingsWindow.data_export_failed_title", default="导出失败"),
+        )
+
+
+    def _on_import_data_package_clicked(self):
+        self._run_data_management_action(
+            self._import_data_package,
+            _tr("SettingsWindow.data_import_failed_title", default="导入失败"),
+        )
+
+
+    def _on_export_chat_database_clicked(self):
+        self._run_data_management_action(
+            self._export_chat_database,
+            _tr("SettingsWindow.chat_data_failed_title", default="聊天数据操作失败"),
+        )
+
+
+    def _on_import_chat_database_clicked(self):
+        self._run_data_management_action(
+            self._import_chat_database,
+            _tr("SettingsWindow.chat_data_failed_title", default="聊天数据操作失败"),
+        )
+
+
+    def _run_data_management_action(self, action, title: str):
+        try:
+            action()
+        except Exception as exc:
+            InfoBar.error(
+                title,
+                str(exc),
+                duration=4500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+
+    @staticmethod
+    def _data_file_dialog_options():
+        return QFileDialog.Option.DontUseNativeDialog
+
+
+    def _get_data_save_file_name(self, caption: str, directory: str, file_filter: str):
+        try:
+            return QFileDialog.getSaveFileName(
+                self,
+                caption,
+                directory,
+                file_filter,
+                options=self._data_file_dialog_options(),
+            )
+        except TypeError:
+            return QFileDialog.getSaveFileName(self, caption, directory, file_filter)
+
+
+    def _get_data_open_file_name(self, caption: str, directory: str, file_filter: str):
+        try:
+            return QFileDialog.getOpenFileName(
+                self,
+                caption,
+                directory,
+                file_filter,
+                options=self._data_file_dialog_options(),
+            )
+        except TypeError:
+            return QFileDialog.getOpenFileName(self, caption, directory, file_filter)
 
 
     def _style_data_management_page(self, page: QWidget):
@@ -276,8 +348,7 @@ class DataManagementPageMixin:
                 parent=self,
             )
             return
-        path, _selected_filter = QFileDialog.getSaveFileName(
-            self,
+        path, _selected_filter = self._get_data_save_file_name(
             _tr("SettingsWindow.data_export_dialog", default="导出设置配置"),
             self._default_data_package_path(category),
             _tr("SettingsWindow.data_package_filter", default="BandoriPet 设置配置 (*.json)"),
@@ -287,6 +358,9 @@ class DataManagementPageMixin:
         if not os.path.splitext(path)[1]:
             path += ".json"
         try:
+            parent_dir = os.path.dirname(os.path.abspath(path))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, ensure_ascii=False)
         except Exception as exc:
@@ -315,8 +389,7 @@ class DataManagementPageMixin:
         if not self._cfg:
             return
         category = self._selected_data_category()
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
+        path, _selected_filter = self._get_data_open_file_name(
             _tr("SettingsWindow.data_import_dialog", default="导入设置配置"),
             str(app_base_dir()),
             _tr("SettingsWindow.data_package_filter", default="BandoriPet 设置配置 (*.json)"),
@@ -701,8 +774,7 @@ class DataManagementPageMixin:
 
 
     def _export_chat_database(self):
-        path, _selected_filter = QFileDialog.getSaveFileName(
-            self,
+        path, _selected_filter = self._get_data_save_file_name(
             _tr("SettingsWindow.chat_data_export_dialog"),
             self._default_chat_backup_path(),
             _tr("SettingsWindow.chat_data_filter"),
@@ -733,8 +805,7 @@ class DataManagementPageMixin:
 
 
     def _import_chat_database(self):
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
+        path, _selected_filter = self._get_data_open_file_name(
             _tr("SettingsWindow.chat_data_import_dialog"),
             str(app_base_dir()),
             _tr("SettingsWindow.chat_data_filter"),
