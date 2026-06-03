@@ -1035,12 +1035,7 @@ class PetWindow(QWidget):
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
         if not enabled:
-            model = self._live2d_widget.model
-            if model is not None:
-                try:
-                    model.ClearMotions()
-                except Exception:
-                    pass
+            self._restore_default_motion(self._motion_guard_token, force_clear=True)
         else:
             QTimer.singleShot(
                 50,
@@ -3092,13 +3087,6 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return
-        if not self._live2d_idle_actions_enabled or force_clear:
-            try:
-                model.ClearMotions()
-            except Exception:
-                pass
-        if not self._live2d_idle_actions_enabled:
-            return
         if force_clear:
             QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=False))
         else:
@@ -3107,14 +3095,10 @@ class PetWindow(QWidget):
     def _start_idle_motion_if_current(self, token: int, smooth: bool):
         if token != self._motion_guard_token:
             return
-        if not self._live2d_idle_actions_enabled:
-            return
         self._start_idle_motion(smooth=smooth)
 
     def _restore_default_if_finished(self, token: int):
         if token != self._motion_guard_token:
-            return
-        if not self._live2d_idle_actions_enabled:
             return
         model = self._live2d_widget.model
         if model is None:
@@ -3129,23 +3113,19 @@ class PetWindow(QWidget):
         self._restore_default_motion(self._motion_guard_token, force_clear=False)
 
     def _start_idle_motion(self, smooth: bool):
-        if not self._live2d_idle_actions_enabled:
-            return
         model = self._live2d_widget.model
         if model is None:
             return
         motion_names = self._current_motion_names()
         configured_motion = self._current_model_entry().get("default_motion", "")
         if configured_motion in motion_names:
-            priority = self._live2d.MotionPriority.NORMAL if smooth else self._live2d.MotionPriority.FORCE
-            if self._safe_start_motion(model, configured_motion, priority=priority):
+            if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE):
                 self._apply_default_expression(model)
                 return
         idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
         if idle_names:
             idle_name = random.choice(idle_names)
-            priority = self._live2d.MotionPriority.NORMAL if smooth else self._live2d.MotionPriority.FORCE
-            self._safe_start_motion(model, idle_name, priority=priority)
+            self._safe_start_motion(model, idle_name, priority=self._live2d.MotionPriority.FORCE)
         else:
             try:
                 model.ClearMotions()
