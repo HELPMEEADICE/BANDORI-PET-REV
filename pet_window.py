@@ -271,6 +271,8 @@ class PetWindow(QWidget):
         self._radial_menu_server_name = ""
         self._radial_menu_command_queue = []
         self._radial_menu_visible = False
+        self._radial_menu_opening = False
+        self._radial_menu_opening_token = 0
         self._radial_menu_prewarm_timer = QTimer(self)
         self._radial_menu_prewarm_timer.setSingleShot(True)
         self._radial_menu_prewarm_timer.setInterval(1200)
@@ -955,7 +957,7 @@ class PetWindow(QWidget):
         if not self.isVisible():
             self._sync_windows_topmost_guard()
             return
-        if self._is_radial_menu_visible():
+        if self._is_radial_menu_z_order_protected():
             return
         self._enforce_windows_z_order(force=self._game_topmost)
 
@@ -967,6 +969,8 @@ class PetWindow(QWidget):
 
         def recover():
             if token != self._topmost_recovery_token or not self.isVisible():
+                return
+            if self._is_radial_menu_z_order_protected():
                 return
             self._apply_windows_frameless_fix()
             self._enforce_windows_z_order(force=self._game_topmost)
@@ -2132,7 +2136,7 @@ class PetWindow(QWidget):
 
     def _on_right_click(self, gx: int, gy: int):
         self._note_user_interaction()
-        self._refresh_topmost_for_interaction(force=True)
+        self._begin_radial_menu_opening()
         # Always SHOW on right-click. The child dismisses on outside-click
         # already, and toggling here races with the child's hide animation
         # (parent's _radial_menu_visible can lag the actual menu state by
@@ -2216,6 +2220,19 @@ class PetWindow(QWidget):
     def _is_radial_menu_visible(self) -> bool:
         return self._radial_menu_visible
 
+    def _is_radial_menu_z_order_protected(self) -> bool:
+        return self._radial_menu_visible or self._radial_menu_opening
+
+    def _begin_radial_menu_opening(self):
+        self._radial_menu_opening = True
+        self._radial_menu_opening_token += 1
+        token = self._radial_menu_opening_token
+        QTimer.singleShot(3000, lambda t=token: self._clear_stale_radial_menu_opening(t))
+
+    def _clear_stale_radial_menu_opening(self, token: int):
+        if token == self._radial_menu_opening_token and not self._radial_menu_visible:
+            self._radial_menu_opening = False
+
     def _send_radial_menu_command(self, line: str):
         self._radial_menu_command_queue.append(line)
         self._ensure_radial_menu_process()
@@ -2240,6 +2257,7 @@ class PetWindow(QWidget):
 
     def _close_radial_menu_process(self, force: bool = False):
         self._radial_menu_prewarm_timer.stop()
+        self._radial_menu_opening = False
         if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
             self._radial_menu_socket.write(b"EXIT\n")
             self._radial_menu_socket.flush()
@@ -2253,6 +2271,7 @@ class PetWindow(QWidget):
             self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_command_queue.clear()
+            self._radial_menu_opening = False
             self._radial_menu_visible = False
         self._terminate_process_async(process, kill_delay_ms=300 if force else 1000)
 
@@ -2291,9 +2310,11 @@ class PetWindow(QWidget):
             if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
                 self._radial_menu_socket.connectToServer(self._radial_menu_server_name)
         elif line == "STATE\tOPEN":
+            self._radial_menu_opening = False
             self._radial_menu_visible = True
             self._tick_windows_mouse_passthrough()
         elif line == "STATE\tCLOSED":
+            self._radial_menu_opening = False
             self._radial_menu_visible = False
             self._tick_windows_mouse_passthrough()
         elif line.startswith("ACT\t"):
@@ -2316,6 +2337,7 @@ class PetWindow(QWidget):
             self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_command_queue.clear()
+            self._radial_menu_opening = False
             self._radial_menu_visible = False
         if self._radial_menu_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
             self._radial_menu_socket.abort()
