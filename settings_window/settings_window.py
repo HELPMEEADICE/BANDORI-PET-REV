@@ -380,7 +380,7 @@ class SettingsWindow(
         )
         if not profile:
             return
-        for key in ("default_motion", "default_expression", "click_motion_actions"):
+        for key in ("default_motion", "default_expression", "click_motion_profile_name", "click_motion_actions"):
             if prefer_existing and entry.get(key):
                 continue
             if profile.get(key):
@@ -1990,7 +1990,7 @@ class SettingsWindow(
         self._populate_default_expression_combo(item)
         self._populate_click_motion_combos(item)
         self._reload_click_motion_profiles(
-            select_name=self._cfg.get_click_motion_active_profile() if self._cfg else ""
+            select_name=self._matching_click_motion_profile_name(item)
         )
 
         pixmap = QPixmap(self._model_manager.get_character_image_path(character))
@@ -2987,6 +2987,7 @@ class SettingsWindow(
             "pet_mode": "live2d",
             "default_motion": "",
             "default_expression": "",
+            "click_motion_profile_name": "",
             "click_motion_actions": {},
         }
         self._restore_model_action_profile(entry)
@@ -3015,6 +3016,7 @@ class SettingsWindow(
                 preserve_keys += (
                     "default_motion",
                     "default_expression",
+                    "click_motion_profile_name",
                     "click_motion_actions",
                 )
             for key in preserve_keys:
@@ -3041,6 +3043,7 @@ class SettingsWindow(
                         preserve_keys += (
                             "default_motion",
                             "default_expression",
+                            "click_motion_profile_name",
                             "click_motion_actions",
                         )
                     for key in preserve_keys:

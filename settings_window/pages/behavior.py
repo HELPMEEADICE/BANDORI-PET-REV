@@ -227,17 +227,91 @@ class BehaviorPageMixin:
                     break
             expression_combo.blockSignals(False)
 
-    def _reload_click_motion_profiles(self, select_name: str = ""):
+    def _click_motion_actions_for_item(self, item: dict) -> dict:
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        return normalize_click_motion_actions(
+            item.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+
+    def _click_motion_profile_actions(self, name: str, item: dict) -> dict | None:
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+
+        name = str(name or "").strip()
+        if not name:
+            return None
+
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        if name in BUILTIN_PROFILE_NAMES:
+            preset = next((p for p in BUILTIN_CLICK_MOTION_PROFILES if p["name"] == name), None)
+            if not preset:
+                return None
+            return normalize_click_motion_actions(
+                resolve_preset_to_actions(preset, motions, expressions, item["character"]),
+                motions,
+                expressions,
+            )
+
+        profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
+        profile = next((p for p in profiles if p.get("name") == name), None)
+        if not profile:
+            return None
+        return normalize_click_motion_actions(
+            profile.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+
+    def _click_motion_profile_matches_item(self, name: str, item: dict, current_actions: dict | None = None) -> bool:
+        profile_actions = self._click_motion_profile_actions(name, item)
+        if profile_actions is None:
+            return False
+        if current_actions is None:
+            current_actions = self._click_motion_actions_for_item(item)
+        return profile_actions == current_actions
+
+    def _matching_click_motion_profile_name(self, item: dict) -> str:
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
+
+        if not item:
+            return ""
+
+        current_actions = self._click_motion_actions_for_item(item)
+        stored_name = str(item.get("click_motion_profile_name", "") or "").strip()
+        if stored_name:
+            if stored_name in BUILTIN_PROFILE_NAMES:
+                return stored_name
+            if self._click_motion_profile_matches_item(stored_name, item, current_actions):
+                return stored_name
+
+        for preset in BUILTIN_CLICK_MOTION_PROFILES:
+            name = preset.get("name", "")
+            if name and self._click_motion_profile_matches_item(name, item, current_actions):
+                return name
+
+        profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
+        for profile in profiles:
+            name = str(profile.get("name", "") or "").strip()
+            if name and name not in BUILTIN_PROFILE_NAMES and self._click_motion_profile_matches_item(name, item, current_actions):
+                return name
+
+        return ""
+
+    def _reload_click_motion_profiles(self, select_name: str | None = None):
         from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, preset_combo_label
 
         if not hasattr(self, "_click_motion_profile_combo"):
             return
 
         combo = self._click_motion_profile_combo
-        current_name = select_name or combo.itemData(combo.currentIndex()) or ""
+        current_name = str(select_name or "") if select_name is not None else (combo.itemData(combo.currentIndex()) or "")
 
         combo.blockSignals(True)
         combo.clear()
+        combo.addItem(_tr("SettingsWindow.click_motion_profile_current_custom", default="当前自定义"), userData="")
 
         for preset in BUILTIN_CLICK_MOTION_PROFILES:
             label = preset_combo_label(preset, tr_func=_tr)
@@ -257,6 +331,12 @@ class BehaviorPageMixin:
                     break
         combo.setCurrentIndex(selected_index)
         combo.blockSignals(False)
+        selected_name = combo.itemData(selected_index) or ""
+        if hasattr(self, "_click_motion_profile_name"):
+            if selected_name and selected_name not in BUILTIN_PROFILE_NAMES:
+                self._click_motion_profile_name.setText(selected_name)
+            else:
+                self._click_motion_profile_name.clear()
 
     def _on_click_motion_profile_selected(self, index: int):
         from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
@@ -278,6 +358,12 @@ class BehaviorPageMixin:
             except Exception:
                 pass
 
+        if not name:
+            item["click_motion_profile_name"] = ""
+            self._click_motion_profile_name.clear()
+            self._save_configured_models()
+            return
+
         motions = self._model_manager.get_motion_names(item["character"], item["costume"])
         expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
 
@@ -286,6 +372,7 @@ class BehaviorPageMixin:
             if preset:
                 resolved = resolve_preset_to_actions(preset, motions, expressions, item["character"])
                 item["click_motion_actions"] = resolved
+                item["click_motion_profile_name"] = name
                 self._click_motion_profile_name.clear()
             else:
                 self._click_motion_profile_name.clear()
@@ -297,6 +384,7 @@ class BehaviorPageMixin:
             if profile:
                 actions = profile.get("click_motion_actions", {})
                 item["click_motion_actions"] = normalize_click_motion_actions(actions, motions, expressions)
+                item["click_motion_profile_name"] = name
             else:
                 return
         else:
@@ -304,6 +392,7 @@ class BehaviorPageMixin:
             return
 
         self._populate_click_motion_combos(item)
+        self._save_configured_models()
         if hasattr(self, "_click_motion_profile_name"):
             self._click_motion_profile_name.setText(name if name not in BUILTIN_PROFILE_NAMES else "")
 
@@ -352,7 +441,9 @@ class BehaviorPageMixin:
 
         self._cfg.save_click_motion_profile(name, actions)
         self._cfg.set_click_motion_active_profile(name)
+        item["click_motion_profile_name"] = name
         try:
+            self._save_configured_models()
             self._cfg.save()
             self._click_motion_profile_name.setText(name)
             self._reload_click_motion_profiles(select_name=name)
@@ -379,6 +470,10 @@ class BehaviorPageMixin:
 
         self._cfg.delete_click_motion_profile(name)
         try:
+            for item in self._configured_models:
+                if item.get("click_motion_profile_name") == name:
+                    item["click_motion_profile_name"] = ""
+            self._save_configured_models()
             self._cfg.save()
             self._click_motion_profile_name.clear()
             self._reload_click_motion_profiles()
@@ -408,9 +503,19 @@ class BehaviorPageMixin:
             expressions,
         )
 
-        profile_name = self._click_motion_profile_combo.itemData(
+        selected_profile_name = self._click_motion_profile_combo.itemData(
             self._click_motion_profile_combo.currentIndex()
         ) or ""
+        stored_profile_name = str(item.get("click_motion_profile_name", "") or "").strip()
+        profile_name = (
+            selected_profile_name
+            if selected_profile_name
+            and (
+                selected_profile_name == stored_profile_name
+                or self._click_motion_profile_matches_item(selected_profile_name, item, actions)
+            )
+            else ""
+        )
 
         if scope == CLICK_MOTION_SCOPE_ALL:
             for model_item in self._configured_models:
@@ -425,15 +530,19 @@ class BehaviorPageMixin:
                         char_exprs = self._model_manager.get_expression_names(char, cost)
                         resolved = resolve_preset_to_actions(preset, char_motions, char_exprs, char)
                         model_item["click_motion_actions"] = resolved
+                        model_item["click_motion_profile_name"] = profile_name
                 else:
                     model_item["click_motion_actions"] = dict(actions)
+                    model_item["click_motion_profile_name"] = profile_name
         elif scope == CLICK_MOTION_SCOPE_CHARACTER:
             for model_item in self._configured_models:
                 if model_item.get("character") != item["character"]:
                     continue
                 model_item["click_motion_actions"] = dict(actions)
+                model_item["click_motion_profile_name"] = profile_name
         else:
             item["click_motion_actions"] = dict(actions)
+            item["click_motion_profile_name"] = profile_name
 
         self._save_configured_models()
         InfoBar.success(
@@ -506,6 +615,8 @@ class BehaviorPageMixin:
             else:
                 actions.pop(region, None)
         item["click_motion_actions"] = actions
+        item["click_motion_profile_name"] = ""
+        self._reload_click_motion_profiles(select_name="")
         self._save_configured_models()
 
     def _on_click_expression_changed(self, region: str, index: int):
@@ -528,6 +639,8 @@ class BehaviorPageMixin:
             else:
                 actions.pop(region, None)
         item["click_motion_actions"] = actions
+        item["click_motion_profile_name"] = ""
+        self._reload_click_motion_profiles(select_name="")
         self._save_configured_models()
 
     def _reset_click_motions(self):
@@ -535,7 +648,9 @@ class BehaviorPageMixin:
         if not item:
             return
         item["click_motion_actions"] = {}
+        item["click_motion_profile_name"] = "auto"
         self._populate_click_motion_combos(item)
+        self._reload_click_motion_profiles(select_name="auto")
         self._save_configured_models()
 
     def _current_click_motion_scope(self) -> str:

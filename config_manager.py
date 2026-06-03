@@ -286,12 +286,14 @@ MODEL_DEFAULTS = {
     "pet_mode": "live2d",
     "default_motion": "",
     "default_expression": "",
+    "click_motion_profile_name": "",
     "click_motion_actions": {},
 }
 
 MODEL_ACTION_KEYS = (
     "default_motion",
     "default_expression",
+    "click_motion_profile_name",
     "click_motion_actions",
 )
 
@@ -307,6 +309,7 @@ def normalize_model_action_profile(profile) -> dict:
     normalized = {}
     default_motion = str(profile.get("default_motion", "")).strip()
     default_expression = str(profile.get("default_expression", "")).strip()
+    click_motion_profile_name = str(profile.get("click_motion_profile_name", "")).strip()
     click_motion_actions = normalize_click_motion_actions(
         profile.get("click_motion_actions", {})
     )
@@ -314,6 +317,8 @@ def normalize_model_action_profile(profile) -> dict:
         normalized["default_motion"] = default_motion
     if default_expression:
         normalized["default_expression"] = default_expression
+    if click_motion_profile_name:
+        normalized["click_motion_profile_name"] = click_motion_profile_name
     if click_motion_actions:
         normalized["click_motion_actions"] = click_motion_actions
     return normalized
