@@ -623,12 +623,13 @@ class _DatabaseManagerMeta(type):
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
         self._lock = _shared_database_lock(db_path)
-        self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
-        self._conn.execute("PRAGMA busy_timeout=2000")
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._create_tables()
-        self._closed = False
+        with self._lock:
+            self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
+            self._conn.execute("PRAGMA busy_timeout=2000")
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._create_tables()
+            self._closed = False
 
     def __del__(self):
         try:
