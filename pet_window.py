@@ -77,11 +77,15 @@ if os.name == "nt":
     _find_window = _user32.FindWindowW
     _find_window.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
     _find_window.restype = ctypes.wintypes.HWND
+    _is_window_visible = _user32.IsWindowVisible
+    _is_window_visible.argtypes = [ctypes.wintypes.HWND]
+    _is_window_visible.restype = ctypes.wintypes.BOOL
 else:
     _get_window_long = None
     _set_window_long = None
     _set_window_pos = None
     _find_window = None
+    _is_window_visible = None
 
 _x11 = None
 
@@ -739,46 +743,55 @@ class PetWindow(QWidget):
             return
         if len(self._group_characters) <= 1:
             return
-        hwnd = int(self.winId())
-        if not hwnd:
+        ordered_hwnds = self._visible_group_hwnds()
+        if not ordered_hwnds:
             return
-        if self._layer_index == 0:
-            if not force and self._last_layer_insert_after == HWND_TOPMOST:
-                return
+
+        own_hwnd = int(self.winId())
+        expected_insert_after = HWND_TOPMOST
+        for index, (_character, hwnd) in enumerate(ordered_hwnds):
+            if hwnd == own_hwnd:
+                expected_insert_after = HWND_TOPMOST if index == 0 else ordered_hwnds[index - 1][1]
+                break
+
+        if not force and self._last_layer_insert_after == expected_insert_after:
+            return
+
+        # Re-apply the whole Live2D group order from top to bottom.  In game
+        # topmost compatibility mode every pet process runs a recovery timer;
+        # making each process perform the same full ordering keeps those timers
+        # idempotent instead of letting individual windows race for TOPMOST.
+        previous_hwnd = None
+        for _character, hwnd in ordered_hwnds:
+            insert_after = HWND_TOPMOST if previous_hwnd is None else previous_hwnd
             _set_window_pos(
                 hwnd,
-                HWND_TOPMOST,
+                insert_after,
                 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             )
-            self._last_game_topmost_applied = False
-            self._last_layer_insert_after = HWND_TOPMOST
-            return
-        above_char = self._group_characters[self._layer_index - 1]
-        above_title = f"BandoriPet-{above_char}"
-        above_hwnd = _find_window(None, above_title)
-        if not above_hwnd:
-            if not force and self._last_layer_insert_after == HWND_TOPMOST:
-                return
-            _set_window_pos(
-                hwnd,
-                HWND_TOPMOST,
-                0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            )
-            self._last_game_topmost_applied = False
-            self._last_layer_insert_after = HWND_TOPMOST
-            return
-        if not force and self._last_layer_insert_after == above_hwnd:
-            return
-        _set_window_pos(
-            hwnd,
-            above_hwnd,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        )
+            previous_hwnd = hwnd
         self._last_game_topmost_applied = False
-        self._last_layer_insert_after = above_hwnd
+        self._last_layer_insert_after = expected_insert_after
+
+    def _visible_group_hwnds(self) -> list[tuple[str, int]]:
+        if os.name != "nt":
+            return []
+        own_hwnd = int(self.winId()) if self.isVisible() else 0
+        result = []
+        seen_hwnds = set()
+        for character in self._group_characters:
+            hwnd = own_hwnd if character == self._current_char else 0
+            if not hwnd:
+                hwnd = _find_window(None, f"BandoriPet-{character}")
+            hwnd = int(hwnd or 0)
+            if not hwnd or hwnd in seen_hwnds:
+                continue
+            if hwnd != own_hwnd and _is_window_visible is not None and not _is_window_visible(hwnd):
+                continue
+            result.append((character, hwnd))
+            seen_hwnds.add(hwnd)
+        return result
 
     def _broadcast_layer_order(self):
         if not self._ipc_socket or not self._ipc_socket.isOpen():
