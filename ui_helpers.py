@@ -1,8 +1,9 @@
 import os
 
 from PySide6.QtCore import Qt, QRectF, Signal, QTimer, QSize
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QFontMetrics, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QTextEdit,
     QWidget,
     QListWidget,
@@ -74,30 +75,52 @@ class _CommandListItem(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 2, 10, 2)
+        layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(8)
         self._name_label = QLabel()
         self._name_label.setStyleSheet(
             "color: #1f2328; font-size: 10pt; font-weight: 600; padding: 0; border: none; background: transparent;"
         )
+        self._name_label.setMinimumWidth(0)
         self._desc_label = QLabel()
         self._desc_label.setStyleSheet(
             "color: #657089; font-size: 9pt; padding: 0; border: none; background: transparent;"
         )
+        self._desc_label.setMinimumWidth(0)
         self._desc_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(self._name_label)
+        layout.addWidget(self._name_label, 0)
         layout.addWidget(self._desc_label, 1)
+        self._full_name = ""
+        self._full_desc = ""
 
     def set_command(self, name: str, desc: str):
-        self._name_label.setText(name)
-        self._desc_label.setText(desc)
+        self._full_name = name
+        self._full_desc = desc
+        self._update_elided_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elided_text()
+
+    def _update_elided_text(self):
+        width = max(0, self.width() - 28)
+        desc_target_width = 128 if width >= 300 else 72
+        name_width = max(96, min(max(142, width // 2), width - desc_target_width - 8))
+        desc_width = max(0, width - name_width - 8)
+        name_metrics = QFontMetrics(self._name_label.font())
+        desc_metrics = QFontMetrics(self._desc_label.font())
+        self._name_label.setFixedWidth(name_width)
+        self._name_label.setText(name_metrics.elidedText(self._full_name, Qt.TextElideMode.ElideRight, name_width))
+        self._desc_label.setText(desc_metrics.elidedText(self._full_desc, Qt.TextElideMode.ElideRight, desc_width))
 
 
 class CommandCompleter(QWidget):
     command_selected = Signal(str)
 
-    MAX_VISIBLE = 8
-    ITEM_HEIGHT = 32
+    MAX_VISIBLE = 7
+    ITEM_HEIGHT = 34
+    MIN_WIDTH = 420
+    MARGIN = 10
 
     def __init__(self, input_widget: QTextEdit):
         super().__init__(input_widget.window())
@@ -117,8 +140,8 @@ class CommandCompleter(QWidget):
         self.setObjectName("commandCompleterPopup")
         self.setStyleSheet("""
             #commandCompleterPopup {
-                background-color: rgba(248, 250, 253, 204);
-                border: 1px solid #d0d5dd;
+                background-color: #fbfdff;
+                border: 1px solid #d6deea;
                 border-radius: 8px;
             }
         """)
@@ -130,7 +153,7 @@ class CommandCompleter(QWidget):
         self._list = QListWidget()
         self._list.setStyleSheet("""
             QListWidget {
-                background: transparent;
+                background: #fbfdff;
                 border: none;
                 outline: none;
                 color: #1f2328;
@@ -143,10 +166,10 @@ class CommandCompleter(QWidget):
                 padding: 0;
             }
             QListWidget::item:selected {
-                background: rgba(0, 0, 0, 0.06);
+                background: #edf4ff;
             }
             QListWidget::item:hover:!selected {
-                background: rgba(0, 0, 0, 0.03);
+                background: #f3f8ff;
             }
             QScrollBar:vertical {
                 background: transparent;
@@ -155,12 +178,12 @@ class CommandCompleter(QWidget):
                 border-radius: 3px;
             }
             QScrollBar::handle:vertical {
-                background: rgba(0, 0, 0, 0.15);
+                background: #c9d4e3;
                 min-height: 24px;
                 border-radius: 3px;
             }
             QScrollBar::handle:vertical:hover {
-                background: rgba(0, 0, 0, 0.25);
+                background: #aebccc;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0;
@@ -186,17 +209,48 @@ class CommandCompleter(QWidget):
             self._list.addItem(row_item)
 
             command_widget = _CommandListItem()
+            command_widget.setFixedHeight(self.ITEM_HEIGHT)
             command_widget.set_command(display, desc)
             self._list.setItemWidget(row_item, command_widget)
 
     def _position_popup(self):
         if not self._items:
             return
-        input_global = self._input.mapToGlobal(self._input.rect().topLeft())
-        width = self._input.width()
-        visible = min(len(self._items), self.MAX_VISIBLE)
-        height = visible * (self.ITEM_HEIGHT + 2) + 8
-        x, y = input_global.x(), input_global.y() - height
+        input_top_left = self._input.mapToGlobal(self._input.rect().topLeft())
+        input_bottom_left = self._input.mapToGlobal(self._input.rect().bottomLeft())
+        window = self._input.window()
+        screen = window.screen() if window is not None else QApplication.screenAt(input_top_left)
+        primary_screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else primary_screen.availableGeometry()
+        window_rect = window.frameGeometry() if window is not None else available
+
+        horizontal_bounds = available.intersected(window_rect)
+        if horizontal_bounds.isEmpty():
+            horizontal_bounds = available
+        max_width = max(180, horizontal_bounds.width() - self.MARGIN * 2)
+        width = min(max(self._input.width(), self.MIN_WIDTH), max_width)
+        x = input_top_left.x()
+        if x + width > horizontal_bounds.right() - self.MARGIN:
+            x = horizontal_bounds.right() - self.MARGIN - width
+        x = max(horizontal_bounds.left() + self.MARGIN, x)
+
+        top_limit = max(available.top(), window_rect.top()) + self.MARGIN
+        bottom_limit = min(available.bottom(), window_rect.bottom()) - self.MARGIN
+        available_above = max(0, input_top_left.y() - top_limit - 6)
+        available_below = max(0, bottom_limit - input_bottom_left.y() - 6)
+        row_height = self.ITEM_HEIGHT + 2
+        max_rows_above = max(1, available_above // row_height)
+        max_rows_below = max(1, available_below // row_height)
+
+        if available_above >= row_height * min(len(self._items), self.MAX_VISIBLE) or available_above >= available_below:
+            visible = max(1, min(len(self._items), self.MAX_VISIBLE, max_rows_above))
+            height = visible * row_height + 8
+            y = max(top_limit, input_top_left.y() - height - 6)
+        else:
+            visible = max(1, min(len(self._items), self.MAX_VISIBLE, max_rows_below))
+            height = visible * row_height + 8
+            y = min(bottom_limit - height, input_bottom_left.y() + 6)
+
         if hasattr(self, '_last_geo') and self._last_geo == (x, y, width, height):
             return
         self._last_geo = (x, y, width, height)
