@@ -24,13 +24,29 @@ from app_theme import BANDORI_UI_FONT_FAMILY
 from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 WM_NCCALCSIZE = 0x0083
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
 
 if os.name == "nt":
     _user32 = ctypes.windll.user32
+    _set_window_pos = _user32.SetWindowPos
+    _set_window_pos.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    _set_window_pos.restype = ctypes.wintypes.BOOL
     _get_async_key_state = _user32.GetAsyncKeyState
     _get_async_key_state.argtypes = [ctypes.c_int]
     _get_async_key_state.restype = ctypes.c_short
 else:
+    _set_window_pos = None
     _get_async_key_state = None
 
 VK_LBUTTON = 0x01
@@ -258,6 +274,22 @@ class RadialMenu(QWidget):
         apply_windows_11_border_fix(hwnd)
         frame_changed(hwnd)
 
+    def _raise_windows_topmost(self):
+        if os.name != "nt" or _set_window_pos is None or not self.isVisible():
+            return
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+        _set_window_pos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_11_border_fix()
@@ -433,6 +465,10 @@ class RadialMenu(QWidget):
             item.widget.show()
 
         self.show()
+        if os.name == "nt":
+            self._raise_windows_topmost()
+            for delay_ms in (0, 50, 180):
+                QTimer.singleShot(delay_ms, self._raise_windows_topmost)
         if sys.platform.startswith("linux"):
             self.raise_()
             self.activateWindow()
