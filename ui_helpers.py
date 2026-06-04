@@ -1,10 +1,11 @@
 import os
 
-from PySide6.QtCore import Qt, QRectF, Signal, QTimer, QSize
-from PySide6.QtGui import QFontMetrics, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import Qt, QRectF, Signal, QTimer, QSize, QEvent
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPalette, QPixmap, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QTextEdit,
+    QFrame,
     QWidget,
     QListWidget,
     QListWidgetItem,
@@ -12,7 +13,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
 )
-from qfluentwidgets.components.widgets.menu import TextEditMenu
+from qfluentwidgets import Action, FluentIcon, RoundMenu, isDarkTheme
+
+from app_theme import accent_color
 
 
 AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -66,9 +69,171 @@ def filter_commands(text: str):
 
 
 class FluentContextTextEdit(QTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == self.viewport() and event.type() == QEvent.Type.ContextMenu:
+            self._show_context_menu(event.globalPos())
+            event.accept()
+            return True
+        return super().eventFilter(obj, event)
+
     def contextMenuEvent(self, event):
-        menu = TextEditMenu(self)
-        menu.exec(event.globalPos(), ani=True)
+        self._show_context_menu(event.globalPos())
+        event.accept()
+
+    def _show_context_menu(self, pos):
+        menu = RoundMenu(parent=self)
+        self._style_context_menu(menu)
+        cursor = self.textCursor()
+        has_selection = cursor.hasSelection()
+        has_text = bool(self.toPlainText())
+        can_edit = not self.isReadOnly()
+
+        undo_action = self._make_context_action(
+            menu, FluentIcon.RETURN, "Undo", QKeySequence.StandardKey.Undo, self.undo
+        )
+        redo_action = self._make_context_action(
+            menu, FluentIcon.ROTATE, "Redo", QKeySequence.StandardKey.Redo, self.redo
+        )
+        undo_action.setEnabled(can_edit and self.document().isUndoAvailable())
+        redo_action.setEnabled(can_edit and self.document().isRedoAvailable())
+        menu.addActions([undo_action, redo_action])
+        menu.addSeparator()
+
+        cut_action = self._make_context_action(
+            menu, FluentIcon.CUT, "Cut", QKeySequence.StandardKey.Cut, self.cut
+        )
+        copy_action = self._make_context_action(
+            menu, FluentIcon.COPY, "Copy", QKeySequence.StandardKey.Copy, self.copy
+        )
+        paste_action = self._make_context_action(
+            menu, FluentIcon.PASTE, "Paste", QKeySequence.StandardKey.Paste, self.paste
+        )
+        delete_action = self._make_context_action(
+            menu, FluentIcon.DELETE, "Delete", None, self._delete_selection
+        )
+        cut_action.setEnabled(can_edit and has_selection)
+        copy_action.setEnabled(has_selection)
+        paste_action.setEnabled(can_edit and QApplication.clipboard().mimeData().hasText())
+        delete_action.setEnabled(can_edit and has_selection)
+        menu.addActions([cut_action, copy_action, paste_action, delete_action])
+        menu.addSeparator()
+
+        select_all_action = self._make_context_action(
+            menu,
+            FluentIcon.CLEAR_SELECTION,
+            "Select All",
+            QKeySequence.StandardKey.SelectAll,
+            self.selectAll,
+        )
+        select_all_action.setEnabled(has_text)
+        menu.addAction(select_all_action)
+        menu.exec(pos, ani=True)
+
+    def _make_context_action(self, menu, icon, text, shortcut, slot):
+        action = Action(icon, text, menu)
+        if shortcut is not None:
+            action.setShortcut(QKeySequence(shortcut))
+        action.triggered.connect(slot)
+        return action
+
+    def _style_context_menu(self, menu):
+        dark = isDarkTheme()
+        bg = "#1f2430" if dark else "#ffffff"
+        text = "#f4f6fb" if dark else "#20242d"
+        muted = "rgba(255, 255, 255, 138)" if dark else "rgba(32, 36, 45, 150)"
+        border = "rgba(255, 255, 255, 24)" if dark else "rgba(32, 36, 45, 28)"
+        hover = "rgba(255, 255, 255, 20)" if dark else "rgba(160, 32, 96, 18)"
+        pressed = "rgba(255, 255, 255, 30)" if dark else "rgba(160, 32, 96, 30)"
+        accent = accent_color(dark)
+
+        menu.setObjectName("FluentTextEditContextMenu")
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        menu.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        menu.setAutoFillBackground(False)
+        menu.hBoxLayout.setContentsMargins(8, 8, 8, 8)
+        menu.view.setViewportMargins(0, 6, 0, 6)
+        menu.view.setObjectName("FluentTextEditContextMenuView")
+        menu.view.setFrameShape(QFrame.Shape.NoFrame)
+        menu.view.setAutoFillBackground(False)
+        menu.view.viewport().setAutoFillBackground(False)
+        menu.view.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        palette = menu.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(bg))
+        palette.setColor(QPalette.ColorRole.Base, QColor(bg))
+        palette.setColor(QPalette.ColorRole.Text, QColor(text))
+        menu.setPalette(palette)
+        menu.view.setPalette(palette)
+
+        menu_style = f"""
+            RoundMenu#FluentTextEditContextMenu {{
+                background: transparent;
+                border: none;
+            }}
+            QListWidget#FluentTextEditContextMenuView,
+            MenuActionListWidget#FluentTextEditContextMenuView {{
+                background: {bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: 12px;
+                outline: none;
+                padding: 4px;
+                selection-background-color: transparent;
+            }}
+            QListWidget#FluentTextEditContextMenuView::item,
+            MenuActionListWidget#FluentTextEditContextMenuView::item {{
+                height: 32px;
+                border: none;
+                border-radius: 7px;
+                color: {text};
+                padding: 0 12px 0 10px;
+                margin: 1px 4px;
+            }}
+            QListWidget#FluentTextEditContextMenuView::item:selected,
+            QListWidget#FluentTextEditContextMenuView::item:hover,
+            MenuActionListWidget#FluentTextEditContextMenuView::item:selected,
+            MenuActionListWidget#FluentTextEditContextMenuView::item:hover {{
+                background: {hover};
+                color: {text};
+            }}
+            QListWidget#FluentTextEditContextMenuView::item:pressed,
+            MenuActionListWidget#FluentTextEditContextMenuView::item:pressed {{
+                background: {pressed};
+            }}
+            QListWidget#FluentTextEditContextMenuView::item:disabled,
+            MenuActionListWidget#FluentTextEditContextMenuView::item:disabled {{
+                color: {muted};
+            }}
+            QListWidget#FluentTextEditContextMenuView::separator,
+            MenuActionListWidget#FluentTextEditContextMenuView::separator {{
+                height: 1px;
+                background: {border};
+                margin: 5px 8px;
+            }}
+            QListWidget#FluentTextEditContextMenuView QScrollBar:vertical,
+            MenuActionListWidget#FluentTextEditContextMenuView QScrollBar:vertical {{
+                width: 6px;
+                background: transparent;
+            }}
+            QListWidget#FluentTextEditContextMenuView QScrollBar::handle:vertical,
+            MenuActionListWidget#FluentTextEditContextMenuView QScrollBar::handle:vertical {{
+                background: {accent};
+                border-radius: 3px;
+            }}
+        """
+        menu.setStyleSheet(menu_style)
+        menu.view.setStyleSheet(menu_style)
+        menu.view.viewport().setStyleSheet(f"background: transparent; border: none; color: {text};")
+
+    def _delete_selection(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+            self.setTextCursor(cursor)
 
 
 class _CommandListItem(QWidget):

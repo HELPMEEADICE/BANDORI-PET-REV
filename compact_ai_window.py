@@ -70,7 +70,7 @@ from relationship_memory import (
     user_key_from_config,
 )
 from action_bus import publish_emotion_behavior, publish_lip_sync
-from ui_helpers import INTERRUPT_COMMANDS
+from ui_helpers import FluentContextTextEdit, INTERRUPT_COMMANDS
 from win32_dwm import apply_windows_11_border_fix
 
 if sys.platform == "darwin":
@@ -112,7 +112,7 @@ def _font_size_from_config(value) -> int:
     return max(9, min(22, size))
 
 
-class CompactPromptEdit(QTextEdit):
+class CompactPromptEdit(FluentContextTextEdit):
     send_requested = Signal()
 
     def keyPressEvent(self, event: QKeyEvent):
@@ -253,7 +253,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(7)
 
-        self._output = QTextEdit(self)
+        self._output = FluentContextTextEdit(self)
         self._output.setObjectName("compactOutput")
         self._output.setReadOnly(True)
         self._output.setAcceptRichText(False)
