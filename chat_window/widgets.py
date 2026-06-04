@@ -34,7 +34,7 @@ from app_theme import (
 )
 from vision_fallback import analyze_images_with_aux_model
 
-from .constants import _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT
+from .constants import _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT, _prepare_fluent_round_menu
 
 
 class AuxVisionFallbackWorker(QThread):
@@ -78,22 +78,24 @@ class AuxVisionFallbackWorker(QThread):
 
 class FluentContextLabel(QLabel):
     def contextMenuEvent(self, event):
-        if not self.text():
+        full_text = self.text()
+        if not full_text:
             return
 
         menu = RoundMenu(parent=self)
         selected_text = self.selectedText()
-        copy_text = selected_text or self.text()
+        copy_text = selected_text or full_text
 
         copy_action = Action(FluentIcon.COPY, _tr("Common.copy"), self)
         copy_action.triggered.connect(lambda: QApplication.clipboard().setText(copy_text))
         menu.addAction(copy_action)
 
         copy_all_action = Action(FluentIcon.SAVE_COPY, _tr("Common.copy_all"), self)
-        copy_all_action.triggered.connect(lambda: QApplication.clipboard().setText(self.text()))
-        copy_all_action.setEnabled(copy_text != self.text())
+        copy_all_action.triggered.connect(lambda: QApplication.clipboard().setText(full_text))
+        copy_all_action.setEnabled(bool(full_text))
         menu.addAction(copy_all_action)
 
+        _prepare_fluent_round_menu(menu)
         menu.exec(event.globalPos(), ani=True)
 
 

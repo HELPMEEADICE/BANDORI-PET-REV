@@ -3,6 +3,7 @@ from PySide6.QtGui import QPainterPath, QRegion
 from PySide6.QtWidgets import QMenu
 
 from app_theme import BANDORI_PRIMARY, BANDORI_PRIMARY_SOFT, BANDORI_PRIMARY_SOFT_DARK
+from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 
 _BG_LIGHT = "#f5f7fb"
@@ -43,6 +44,14 @@ def _apply_rounded_menu_mask(menu: QMenu, radius: float):
     menu.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
 
+def _apply_windows_menu_border_fix(menu: QMenu):
+    hwnd = int(menu.winId())
+    if not hwnd:
+        return
+    apply_windows_11_border_fix(hwnd)
+    frame_changed(hwnd)
+
+
 def _prepare_rounded_menu(menu: QMenu, radius: float = 12):
     _enable_translucent_menu(menu)
     menu.setProperty("rounded_menu_radius", float(radius))
@@ -52,5 +61,22 @@ def _prepare_rounded_menu(menu: QMenu, radius: float = 12):
 
     def _refresh_mask():
         _apply_rounded_menu_mask(menu, float(menu.property("rounded_menu_radius") or radius))
+        _apply_windows_menu_border_fix(menu)
 
     menu.aboutToShow.connect(lambda: QTimer.singleShot(0, _refresh_mask))
+
+
+def _prepare_fluent_round_menu(menu: QMenu, radius: float = 10):
+    _prepare_rounded_menu(menu, radius)
+    view = getattr(menu, "view", None)
+    if view is not None:
+        view.setGraphicsEffect(None)
+    layout = getattr(menu, "hBoxLayout", None)
+    if layout is not None:
+        layout.setContentsMargins(0, 0, 0, 0)
+    try:
+        menu.adjustSize()
+    except Exception:
+        pass
+    _apply_rounded_menu_mask(menu, float(menu.property("rounded_menu_radius") or radius))
+    _apply_windows_menu_border_fix(menu)
