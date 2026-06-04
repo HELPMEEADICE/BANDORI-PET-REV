@@ -1980,9 +1980,17 @@ class PetWindow(QWidget):
         if self._is_radial_menu_visible():
             self._send_radial_menu_command("CLOSE")
             return
+        if not self._can_handle_live2d_user_poke():
+            return
         self._trigger_user_poke_feedback()
         self._play_emotion_window_feedback("shake", 72)
         publish_user_poke(self._current_char, source="live2d")
+
+    def _can_handle_live2d_user_poke(self) -> bool:
+        if self._compact_ai_window_enabled:
+            return True
+        process = self._chat_process
+        return bool(process is not None and process.state() != QProcess.ProcessState.NotRunning)
 
     def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
         from live2d_click_actions import CLICK_MOTION_NONE, CLICK_MOTION_RANDOM, click_motion_region_for_point
