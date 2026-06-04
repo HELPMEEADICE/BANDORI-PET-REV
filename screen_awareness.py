@@ -1,5 +1,6 @@
 from PySide6.QtCore import QThread, Signal
 
+from i18n_manager import tr as _tr
 from screen_capture import capture_screenshot_data_url
 from vision_fallback import analyze_images_with_aux_model
 
@@ -57,12 +58,15 @@ class ScreenAwarenessVisionWorker(QThread):
             data_url, width, height, desktop_width, desktop_height = capture_screenshot_data_url(max_width)
             api_url, api_key, model_id, thinking = screen_awareness_vision_config(self._config)
             if not api_url or not api_key or not model_id:
-                raise RuntimeError("屏幕感知视觉模型未配置。")
-            prompt = (
-                "请观察这张桌面截图，客观概括用户当前可能正在做什么。"
-                "重点包括应用/网页/代码/错误信息/文档/游戏/聊天等可见线索。"
-                "不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；"
-                "不要角色扮演，不要建议用户做事，只输出 2 到 5 条紧凑中文观察。"
+                raise RuntimeError(_tr("ScreenAwareness.not_configured", default="屏幕感知视觉模型未配置。"))
+            prompt = _tr(
+                "ScreenAwareness.vision_prompt",
+                default=(
+                    "请观察这张桌面截图，客观概括用户当前可能正在做什么。"
+                    "重点包括应用/网页/代码/错误信息/文档/游戏/聊天等可见线索。"
+                    "不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；"
+                    "不要角色扮演，不要建议用户做事，只输出 2 到 5 条紧凑观察，用用户当前界面语言回复。"
+                ),
             )
             summary = analyze_images_with_aux_model(
                 api_url,
