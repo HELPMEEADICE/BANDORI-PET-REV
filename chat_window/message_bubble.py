@@ -2,11 +2,12 @@ import json
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QSize, Signal
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QSize, Signal, QPoint, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QGraphicsOpacityEffect, QFrame, QToolButton,
+    QGraphicsColorizeEffect,
 )
 
 from i18n_manager import tr as _tr
@@ -102,6 +103,9 @@ class MessageBubble(QWidget):
         self._text_fade_anim = None
         self._height_anim = None
         self._attachment_previews: list[ChatImagePreview] = []
+        self._avatar_bg = _TEAMS_ACCENT
+        self._avatar_text = "#ffffff"
+        self._avatar_poke_anim = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._init_ui()
         self.apply_theme()
@@ -119,6 +123,15 @@ class MessageBubble(QWidget):
             self._avatar.setCursor(Qt.CursorShape.PointingHandCursor)
             self._avatar.setToolTip(_tr("ChatWindow.poke_avatar_tooltip", default="双击戳一戳"))
             self._avatar.double_clicked.connect(self._on_avatar_double_clicked)
+        self._poke_badge = QLabel(_tr("ChatWindow.poke_feedback_badge", default="戳!"), self)
+        self._poke_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._poke_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge_font = QFont()
+        badge_font.setPointSize(8)
+        badge_font.setBold(True)
+        self._poke_badge.setFont(badge_font)
+        self._poke_badge.setFixedSize(34, 20)
+        self._poke_badge.hide()
 
         self._meta = QLabel(self._meta_text(), self)
         self._meta.setFixedHeight(18)
@@ -257,16 +270,68 @@ class MessageBubble(QWidget):
                 self._avatar_poke_anim.stop()
             except RuntimeError:
                 pass
+            self._avatar.setGraphicsEffect(None)
+            self._poke_badge.setGraphicsEffect(None)
+            self._poke_badge.hide()
+        self._apply_avatar_style(poked=True)
+        effect = QGraphicsColorizeEffect(self._avatar)
+        effect.setColor(QColor(BANDORI_PRIMARY))
+        effect.setStrength(0.0)
+        self._avatar.setGraphicsEffect(effect)
+
         start = self._avatar.geometry()
-        anim = QPropertyAnimation(self._avatar, b"geometry", self)
-        anim.setDuration(260)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        offsets = (0, -4, 4, -2, 2, 0)
+        avatar_anim = QPropertyAnimation(self._avatar, b"geometry", self)
+        avatar_anim.setDuration(360)
+        avatar_anim.setEasingCurve(QEasingCurve.Type.OutBack)
+        offsets = (0, -5, 5, -3, 3, 0)
         for index, dx in enumerate(offsets):
             step = index / (len(offsets) - 1)
-            anim.setKeyValueAt(step, QRect(start.x() + dx, start.y(), start.width(), start.height()))
-        self._avatar_poke_anim = anim
-        anim.start()
+            grow = 2 if 0 < index < len(offsets) - 1 else 0
+            avatar_anim.setKeyValueAt(
+                step,
+                QRect(start.x() + dx - grow, start.y() - grow, start.width() + grow * 2, start.height() + grow * 2),
+            )
+
+        color_anim = QPropertyAnimation(effect, b"strength", self)
+        color_anim.setDuration(360)
+        color_anim.setStartValue(0.42)
+        color_anim.setKeyValueAt(0.55, 0.22)
+        color_anim.setEndValue(0.0)
+        color_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        badge_start = self._avatar.mapTo(self, QPoint(18, -8))
+        self._poke_badge.move(badge_start)
+        self._poke_badge.raise_()
+        self._poke_badge.show()
+        badge_effect = QGraphicsOpacityEffect(self._poke_badge)
+        badge_effect.setOpacity(1.0)
+        self._poke_badge.setGraphicsEffect(badge_effect)
+        badge_opacity = QPropertyAnimation(badge_effect, b"opacity", self)
+        badge_opacity.setDuration(520)
+        badge_opacity.setStartValue(1.0)
+        badge_opacity.setKeyValueAt(0.45, 1.0)
+        badge_opacity.setEndValue(0.0)
+        badge_opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
+        badge_move = QPropertyAnimation(self._poke_badge, b"pos", self)
+        badge_move.setDuration(520)
+        badge_move.setStartValue(badge_start)
+        badge_move.setEndValue(badge_start + QPoint(0, -12))
+        badge_move.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        group = QParallelAnimationGroup(self)
+        for anim in (avatar_anim, color_anim, badge_opacity, badge_move):
+            group.addAnimation(anim)
+        group.finished.connect(lambda: self._finish_avatar_poke_feedback(effect, badge_effect))
+        self._avatar_poke_anim = group
+        group.start()
+
+    def _finish_avatar_poke_feedback(self, avatar_effect, badge_effect):
+        if self._avatar.graphicsEffect() is avatar_effect:
+            self._avatar.setGraphicsEffect(None)
+        if self._poke_badge.graphicsEffect() is badge_effect:
+            self._poke_badge.setGraphicsEffect(None)
+        self._poke_badge.hide()
+        self._apply_avatar_style(poked=False)
 
     def _make_container(self, user: bool) -> QWidget:
         w = RoundedPanel()
@@ -405,6 +470,8 @@ class MessageBubble(QWidget):
         reasoning_title = "#aeb8d7" if dark else "#5667a7"
         avatar_bg = self._avatar_color if user and self._avatar_color else _TELEGRAM_ACCENT if user else _TEAMS_ACCENT
         avatar_text = "#ffffff"
+        self._avatar_bg = avatar_bg
+        self._avatar_text = avatar_text
         avatar_pixmap = _rounded_avatar_pixmap(
             self._avatar_path,
             self._avatar_data,
@@ -448,16 +515,32 @@ class MessageBubble(QWidget):
         """)
         self._reasoning_bar.setStyleSheet(f"background: {_TEAMS_ACCENT}; border-radius: 1px;")
         self._reasoning_panel.set_panel_style(reasoning_bg, reasoning_border, 9, 1)
-        self._avatar.setStyleSheet(f"""
+        self._apply_avatar_style(poked=False)
+        badge_bg = BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
+        badge_border = "#ff9fd0" if dark else "#ffd1e8"
+        self._poke_badge.setStyleSheet(f"""
             QLabel {{
-                background: {avatar_bg};
-                color: {avatar_text};
-                border-radius: 14px;
+                background: {badge_bg};
+                color: #ffffff;
+                border: 1px solid {badge_border};
+                border-radius: 10px;
                 font-weight: 700;
             }}
         """)
         radii = (18, 6, 18, 18) if user else (6, 18, 18, 18)
         self._container.set_panel_style(bubble_bg, border, radii, 1)
+
+    def _apply_avatar_style(self, poked: bool = False):
+        border = BANDORI_PRIMARY if poked else "transparent"
+        self._avatar.setStyleSheet(f"""
+            QLabel {{
+                background: {self._avatar_bg};
+                color: {self._avatar_text};
+                border: 2px solid {border};
+                border-radius: 14px;
+                font-weight: 700;
+            }}
+        """)
 
     @staticmethod
     def _normalize_search_sources(sources) -> list[dict]:

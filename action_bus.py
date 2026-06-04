@@ -8,12 +8,14 @@ def publish_action(character: str, action: str):
     send_ipc_message(f"ACTION\t{character}\t{action}\n", 200)
 
 
-def publish_user_poke(character: str = "", message: str = ""):
+def publish_user_poke(character: str = "", message: str = "", source: str = ""):
     payload = {}
     if character:
         payload["character"] = character
     if message:
         payload["message"] = message
+    if source:
+        payload["source"] = source
     try:
         send_ipc_message(f"POKE_USER\t{json.dumps(payload, ensure_ascii=False)}\n", 200)
     except Exception:

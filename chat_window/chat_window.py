@@ -111,7 +111,7 @@ from relationship_memory import (
     store_extracted_memories,
     user_key_from_config,
 )
-from action_bus import publish_action, publish_emotion_behavior, publish_lip_sync
+from action_bus import publish_action, publish_emotion_behavior, publish_lip_sync, publish_user_poke
 
 from .constants import (
     _BG_LIGHT, _BG_DARK,
@@ -208,6 +208,7 @@ class ChatWindow(QWidget):
         self._auto_max_rounds = 30
         self._auto_delay_ms = 1500
         self._group_plan_worker = None
+        self._group_plan_priority_character = ""
         self._vision_fallback_worker = None
         self._memory_workers: list[NonStreamWorker] = []
         self._memory_generation = 0
@@ -2937,7 +2938,7 @@ class ChatWindow(QWidget):
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
         try:
-            publish_action(character, "surprised")
+            publish_user_poke(character, source="chat")
         except Exception:
             pass
 
@@ -2966,8 +2967,7 @@ class ChatWindow(QWidget):
             self._last_user_text = text
             self._refresh_group_list()
             self._group_spoken = []
-            self._group_queue = [character]
-            self._start_next_group_response()
+            self._start_group_plan(text, priority_character=character)
             return
 
         if self._conv_id is None:
@@ -4238,8 +4238,10 @@ class ChatWindow(QWidget):
         else:
             self._start_response_for_character(self._character, [])
 
-    def _start_group_plan(self, user_text: str):
+    def _start_group_plan(self, user_text: str, priority_character: str = ""):
         self._show_plan_divider()
+        priority_character = priority_character if priority_character in self._group_characters else ""
+        self._group_plan_priority_character = priority_character
         api_url = str(self._cfg.get("llm_aux_api_url", "") or "").strip() or self._cfg.get("llm_api_url", "")
         api_key = str(self._cfg.get("llm_aux_api_key", "") or "").strip() or self._cfg.get("llm_api_key", "")
         aux_model_id = self._cfg.get("llm_aux_model_id", "").strip() or self._cfg.get("llm_model_id", "")
@@ -4264,11 +4266,16 @@ class ChatWindow(QWidget):
             "你是群聊发言调度器。根据用户最新发言、成员关系和最近上下文，决定接下来哪些角色发言以及发言条数。"
             "输出必须是严格 JSON，格式：{\"speakers\":[\"角色key\",...]}。"
             "speakers 长度 1 到 6。可以让同一角色连续或多次出现。"
+            "如果 latest_interaction.priority_speaker 不为空，则 speakers 第一项必须是该 key，后续再安排其他成员自然接话。"
             "只允许使用给定成员 key，不要输出解释、Markdown 或多余文字。"
         )
         content = json.dumps({
             "members": members,
             "latest_user_message": user_text,
+            "latest_interaction": {
+                "type": "poke" if priority_character else "",
+                "priority_speaker": priority_character,
+            },
             "recent_history": recent,
         }, ensure_ascii=False)
         messages = [
@@ -4298,7 +4305,11 @@ class ChatWindow(QWidget):
         del reasoning_text, actions
         self._group_plan_worker = None
         self._hide_plan_divider()
-        self._group_queue = self._parse_group_plan(full_text)
+        self._group_queue = self._apply_group_plan_priority(
+            self._parse_group_plan(full_text),
+            self._group_plan_priority_character,
+        )
+        self._group_plan_priority_character = ""
         if not self._group_queue:
             self._use_fallback_group_plan()
             return
@@ -4333,8 +4344,21 @@ class ChatWindow(QWidget):
         return result
 
     def _use_fallback_group_plan(self):
-        self._group_queue = list(self._group_characters[:3])
+        self._group_queue = self._apply_group_plan_priority(
+            list(self._group_characters[:3]),
+            self._group_plan_priority_character,
+        )
+        self._group_plan_priority_character = ""
         self._start_next_group_response()
+
+    def _apply_group_plan_priority(self, queue: list[str], priority_character: str = "") -> list[str]:
+        if not priority_character or priority_character not in self._group_characters:
+            return queue[:6]
+        result = [priority_character]
+        result.extend(character for character in queue if character != priority_character)
+        if not any(character != priority_character for character in result):
+            result.extend(character for character in self._group_characters if character != priority_character)
+        return result[:6]
 
     def _start_response_for_character(self, character: str, spoken_names: list[str]):
         self._set_busy(True, planning=False)
@@ -4847,6 +4871,19 @@ class ChatWindow(QWidget):
 
     def emit_action_for_ipc(self, character: str, action: str):
         publish_action(character, action)
+
+    def handle_external_user_poke(self, event: dict):
+        if not isinstance(event, dict):
+            event = {}
+        if str(event.get("source", "") or "").strip().lower() == "chat":
+            return
+        target = str(event.get("character", "") or "").strip() or self._character
+        if self._is_group_chat:
+            if target not in self._group_characters:
+                return
+        elif target != self._character:
+            return
+        self._send_poke_to_character(target)
 
     def _scroll_to_bottom(self):
         sb = self._scroll.verticalScrollBar()

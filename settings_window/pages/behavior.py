@@ -121,6 +121,99 @@ class BehaviorPageMixin:
         self._move_all_roles_together = bool(checked)
         self._save_live2d_behavior_config()
 
+    def _save_poke_feedback_config(self, emit_update: bool = True):
+        if not self._cfg:
+            return
+        self._cfg.set("poke_motion", self._poke_motion)
+        self._cfg.set("poke_expression", self._poke_expression)
+        self._cfg.save()
+        if emit_update:
+            self.settings_changed.emit({
+                "poke_motion": self._poke_motion,
+                "poke_expression": self._poke_expression,
+            })
+
+    def _poke_feedback_model_item(self) -> dict | None:
+        item = self._selected_model_item()
+        if item:
+            return item
+        return self._configured_models[0] if self._configured_models else None
+
+    def _populate_poke_feedback_combos(self):
+        item = self._poke_feedback_model_item()
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"]) if item else []
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"]) if item else []
+
+        motion = self._poke_motion if self._poke_motion in CLICK_MOTION_SPECIAL_VALUES or self._poke_motion in motions else ""
+        expression = self._poke_expression if self._poke_expression in expressions else ""
+        self._poke_motion = motion
+        self._poke_expression = expression
+
+        motion_combo = getattr(self, "_poke_motion_combo", None)
+        expression_combo = getattr(self, "_poke_expression_combo", None)
+        if motion_combo is None or expression_combo is None:
+            return
+
+        motion_combo.blockSignals(True)
+        motion_combo.clear()
+        motion_combo.addItem(_tr("SettingsWindow.poke_motion_follow_head", default="跟随头部点击反馈"), userData="")
+        motion_combo.addItem(_tr("SettingsWindow.click_motion_random", default="随机"), userData=CLICK_MOTION_RANDOM)
+        motion_combo.addItem(_tr("SettingsWindow.click_motion_none", default="不做反应"), userData=CLICK_MOTION_NONE)
+        for item_motion in motions:
+            motion_combo.addItem(item_motion, userData=item_motion)
+        for index in range(motion_combo.count()):
+            if motion_combo.itemData(index) == motion:
+                motion_combo.setCurrentIndex(index)
+                break
+        motion_combo.blockSignals(False)
+
+        expression_combo.blockSignals(True)
+        expression_combo.clear()
+        expression_combo.addItem(_tr("SettingsWindow.poke_expression_follow_head", default="跟随头部点击表情"), userData="")
+        for item_expression in expressions:
+            expression_combo.addItem(item_expression, userData=item_expression)
+        for index in range(expression_combo.count()):
+            if expression_combo.itemData(index) == expression:
+                expression_combo.setCurrentIndex(index)
+                break
+        expression_combo.setEnabled(motion != CLICK_MOTION_NONE)
+        expression_combo.blockSignals(False)
+
+    def _on_poke_motion_changed(self, index: int):
+        combo = getattr(self, "_poke_motion_combo", None)
+        if combo is None:
+            return
+        self._poke_motion = combo.itemData(index) or ""
+        if self._poke_motion == CLICK_MOTION_NONE:
+            self._poke_expression = ""
+        self._populate_poke_feedback_combos()
+        self._save_poke_feedback_config()
+
+    def _on_poke_expression_changed(self, index: int):
+        combo = getattr(self, "_poke_expression_combo", None)
+        if combo is None:
+            return
+        self._poke_expression = combo.itemData(index) or ""
+        self._save_poke_feedback_config()
+
+    def _on_poke_motion_preview(self, index: int):
+        combo = getattr(self, "_poke_motion_combo", None)
+        if combo is None:
+            return
+        motion = combo.itemData(index) or ""
+        if motion in {CLICK_MOTION_NONE, CLICK_MOTION_RANDOM, CLICK_MOTION_AUTO}:
+            return
+        self._send_preview_motion(motion, "")
+
+    def _on_poke_expression_preview(self, index: int):
+        combo = getattr(self, "_poke_expression_combo", None)
+        if combo is None:
+            return
+        expression = combo.itemData(index) or ""
+        if not expression:
+            return
+        self._send_preview_motion("", expression)
+
     def _populate_default_motion_combo(self, item: dict):
         combo = self._default_motion_combo
         combo.blockSignals(True)
@@ -745,6 +838,38 @@ class BehaviorPageMixin:
             self._emotion_behavior_enabled,
             self._on_emotion_behavior_changed,
         ))
+
+        poke_section = StrongBodyLabel(_tr("SettingsWindow.poke_feedback_section", default="戳一戳设置"), page)
+        layout.addWidget(poke_section)
+
+        poke_widget = QWidget(page)
+        poke_layout = QVBoxLayout(poke_widget)
+        poke_layout.setContentsMargins(0, 0, 0, 0)
+        poke_layout.setSpacing(8)
+        poke_hint = BodyLabel(_tr(
+            "SettingsWindow.poke_feedback_hint",
+            default="双击 Live2D 形象或聊天头像戳一戳时使用；留空会跟随当前角色头部点击反馈档案。",
+        ), poke_widget)
+        poke_hint.setWordWrap(True)
+        poke_layout.addWidget(poke_hint)
+
+        poke_row = QHBoxLayout()
+        poke_row.setContentsMargins(0, 0, 0, 0)
+        poke_row.setSpacing(8)
+        self._poke_motion_combo = OpaqueDropDownComboBox(poke_widget)
+        self._poke_motion_combo.setMinimumWidth(220)
+        self._poke_motion_combo.currentIndexChanged.connect(self._on_poke_motion_changed)
+        self._poke_motion_combo.activated.connect(self._on_poke_motion_preview)
+        poke_row.addWidget(self._poke_motion_combo, 1)
+
+        self._poke_expression_combo = OpaqueDropDownComboBox(poke_widget)
+        self._poke_expression_combo.setMinimumWidth(220)
+        self._poke_expression_combo.currentIndexChanged.connect(self._on_poke_expression_changed)
+        self._poke_expression_combo.activated.connect(self._on_poke_expression_preview)
+        poke_row.addWidget(self._poke_expression_combo, 1)
+        poke_layout.addLayout(poke_row)
+        layout.addWidget(poke_widget)
+
         layout.addWidget(self._build_behavior_switch_row(
             page,
             "SettingsWindow.move_all_roles_together",
@@ -776,5 +901,6 @@ class BehaviorPageMixin:
         note.setWordWrap(True)
         layout.addWidget(note)
         layout.addStretch()
+        self._populate_poke_feedback_combos()
         self._sync_live2d_behavior_switches()
         return page

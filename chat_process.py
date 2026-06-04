@@ -211,6 +211,11 @@ def main():
                 break
             if line == "FOCUS_CHAT":
                 focus_window()
+            if line.startswith("POKE_USER\t"):
+                try:
+                    window.handle_external_user_poke(json.loads(line.split("\t", 1)[1]))
+                except Exception:
+                    window.handle_external_user_poke({})
 
     def register_chat_window():
         shutdown_socket.write(f"REGISTER\tCHAT\t{args.character}\n".encode("utf-8"))

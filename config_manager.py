@@ -168,6 +168,8 @@ DEFAULTS = {
     "live2d_head_tracking_enabled": True,
     "live2d_mutual_gaze_enabled": False,
     "emotion_behavior_enabled": True,
+    "poke_motion": "",
+    "poke_expression": "",
     "move_all_roles_together": False,
     "birthday_tray_notifications_enabled": True,
     "auto_start": False,

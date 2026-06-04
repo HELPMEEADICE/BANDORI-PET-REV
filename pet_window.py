@@ -18,6 +18,7 @@ from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
 
 from app_theme import apply_app_theme, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
+from action_bus import publish_user_poke
 from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
@@ -230,6 +231,8 @@ class PetWindow(QWidget):
         self._emotion_behavior_enabled = bool(
             config_manager.get("emotion_behavior_enabled", True)
         )
+        self._poke_motion = str(config_manager.get("poke_motion", "") or "").strip()
+        self._poke_expression = str(config_manager.get("poke_expression", "") or "").strip()
         self._move_all_roles_together = bool(
             config_manager.get("move_all_roles_together", False)
         )
@@ -393,6 +396,7 @@ class PetWindow(QWidget):
         self._live2d_widget.set_live2d_module(self._live2d)
         self._live2d_widget.set_window_drag_callback(self._on_drag)
         self._live2d_widget.set_click_callback(self._on_click)
+        self._live2d_widget.set_double_click_callback(self._on_live2d_double_click)
         self._live2d_widget.set_right_click_callback(self._on_right_click)
         self._live2d_widget.set_fps(self._fps)
         self._live2d_widget.set_render_quality(self._live2d_quality)
@@ -1764,6 +1768,8 @@ class PetWindow(QWidget):
             "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled",
             "emotion_behavior_enabled",
+            "poke_motion",
+            "poke_expression",
             "move_all_roles_together",
         }
 
@@ -1803,6 +1809,10 @@ class PetWindow(QWidget):
                 self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
             if "emotion_behavior_enabled" in data:
                 self._cfg.set("emotion_behavior_enabled", bool(data["emotion_behavior_enabled"]))
+            if "poke_motion" in data:
+                self._cfg.set("poke_motion", str(data["poke_motion"] or ""))
+            if "poke_expression" in data:
+                self._cfg.set("poke_expression", str(data["poke_expression"] or ""))
             if "move_all_roles_together" in data:
                 self._cfg.set("move_all_roles_together", bool(data["move_all_roles_together"]))
             if "user_avatar_color" in data:
@@ -1843,6 +1853,10 @@ class PetWindow(QWidget):
             self.set_live2d_mutual_gaze_enabled(data["live2d_mutual_gaze_enabled"])
         if "emotion_behavior_enabled" in data:
             self._emotion_behavior_enabled = bool(data["emotion_behavior_enabled"])
+        if "poke_motion" in data:
+            self._poke_motion = str(data["poke_motion"] or "").strip()
+        if "poke_expression" in data:
+            self._poke_expression = str(data["poke_expression"] or "").strip()
         if "move_all_roles_together" in data:
             self._move_all_roles_together = bool(data["move_all_roles_together"])
         if "live2d_quality" in data:
@@ -1960,6 +1974,16 @@ class PetWindow(QWidget):
             return
         self._trigger_click_motion(float(x), float(y), area_name)
 
+    def _on_live2d_double_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
+        self._note_user_interaction()
+        self._bring_to_front(force=True)
+        if self._is_radial_menu_visible():
+            self._send_radial_menu_command("CLOSE")
+            return
+        self._trigger_user_poke_feedback()
+        self._play_emotion_window_feedback("shake", 72)
+        publish_user_poke(self._current_char, source="live2d")
+
     def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
         from live2d_click_actions import CLICK_MOTION_NONE, CLICK_MOTION_RANDOM, click_motion_region_for_point
         model = self._live2d_widget.model
@@ -1991,6 +2015,44 @@ class PetWindow(QWidget):
             self._start_click_motion(motion, configured_expression)
         else:
             self._start_click_motion("", configured_expression)
+
+    def _trigger_user_poke_feedback(self):
+        from live2d_click_actions import CLICK_MOTION_NONE, CLICK_MOTION_RANDOM
+        model = self._live2d_widget.model
+        if model is None or self._pixel_mode:
+            return
+        feedback = self._configured_poke_motion_feedback()
+        configured_motion = feedback.get("motion", "")
+        configured_expression = feedback.get("expression", "")
+        if configured_motion == CLICK_MOTION_NONE:
+            return
+        if configured_motion == CLICK_MOTION_RANDOM:
+            self._start_click_motion("", configured_expression)
+            return
+        if configured_motion:
+            self._start_click_motion(configured_motion, configured_expression)
+            return
+
+        motion = self._choose_click_action_motion("head")
+        if motion:
+            self._start_click_motion(motion, configured_expression)
+        else:
+            self._start_click_motion("", configured_expression)
+
+    def _configured_poke_motion_feedback(self) -> dict[str, str]:
+        from live2d_click_actions import normalize_click_motion_actions
+        motion_names = self._current_motion_names()
+        expression_names = self._current_expression_names()
+        configured_motion = str(self._poke_motion or "").strip()
+        configured_expression = str(self._poke_expression or "").strip()
+        if configured_motion or configured_expression:
+            action = normalize_click_motion_actions(
+                {"head": {"motion": configured_motion, "expression": configured_expression}},
+                motion_names,
+                expression_names,
+            ).get("head", {})
+            return action if action else {"motion": "", "expression": ""}
+        return self._configured_click_motion_feedback("head")
 
     def _click_motion_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
@@ -2946,8 +3008,10 @@ class PetWindow(QWidget):
         target = str(event.get("character", "") or "").strip()
         if target and target != self._current_char:
             return
+        if str(event.get("source", "") or "").strip().lower() == "live2d":
+            return
         self._note_user_interaction()
-        self._on_chat_action("smile")
+        self._trigger_user_poke_feedback()
         self._play_emotion_window_feedback("shake", 72)
 
     def _on_chat_action(self, action_name: str):

@@ -94,6 +94,7 @@ class Live2DWidget(QOpenGLWidget):
         self._drag_origin_y = 0
         self._window_drag_callback = None
         self._click_callback = None
+        self._double_click_callback = None
         self._right_click_callback = None
         self._right_press_handled = False
         self._suppress_next_context_menu = False
@@ -265,6 +266,9 @@ class Live2DWidget(QOpenGLWidget):
 
     def set_click_callback(self, cb):
         self._click_callback = cb
+
+    def set_double_click_callback(self, cb):
+        self._double_click_callback = cb
 
     def set_right_click_callback(self, cb):
         self._right_click_callback = cb
@@ -512,6 +516,20 @@ class Live2DWidget(QOpenGLWidget):
         self._dragging = False
         if should_click:
             self._click_callback(x, y, self.hit_area_name_at(x, y))
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mouseDoubleClickEvent(event)
+        pos = event.scenePosition()
+        x, y = pos.x(), pos.y()
+        if self._double_click_callback and self._is_model_hit_at(x, y, sync=True):
+            self._pressed_on_model = False
+            self._dragging = False
+            self._drag_moved = False
+            self._double_click_callback(x, y, self.hit_area_name_at(x, y))
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event):
         if self._suppress_next_context_menu:

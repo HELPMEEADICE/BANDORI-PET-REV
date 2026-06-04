@@ -765,6 +765,8 @@ def main():
             ("live2d_head_tracking_enabled", "live2d_head_tracking_enabled", True),
             ("live2d_mutual_gaze_enabled", "live2d_mutual_gaze_enabled", False),
             ("move_all_roles_together", "move_all_roles_together", False),
+            ("poke_motion", "poke_motion", ""),
+            ("poke_expression", "poke_expression", ""),
             ("birthday_tray_notifications_enabled", "birthday_tray_notifications_enabled", True),
             ("live2d_quality", "live2d_quality", "balanced"),
             ("live2d_scale", "live2d_scale", 100),
