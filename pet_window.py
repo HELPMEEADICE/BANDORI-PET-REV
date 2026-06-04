@@ -2219,6 +2219,7 @@ class PetWindow(QWidget):
         self._radial_menu_buffer = ""
         self._radial_menu_visible = False
         self._radial_menu_process = process
+        process.setWorkingDirectory(base_dir)
         process.start()
 
     def _is_radial_menu_visible(self) -> bool:
@@ -2394,6 +2395,7 @@ class PetWindow(QWidget):
         process.finished.connect(lambda *args, p=process: self._on_chat_process_finished(p))
         process.errorOccurred.connect(lambda _error, p=process: self._on_chat_process_finished(p))
         self._chat_process = process
+        process.setWorkingDirectory(base_dir)
         process.start()
 
     def _connect_ipc_socket(self):
@@ -3331,6 +3333,7 @@ class PetWindow(QWidget):
         process.readyReadStandardError.connect(lambda p=process: self._read_settings_process_error(p))
         process.finished.connect(lambda *args, p=process: self._on_settings_process_finished(p))
         self._settings_process = process
+        process.setWorkingDirectory(base_dir)
         process.start()
 
     def _read_settings_process_error(self, process: QProcess):

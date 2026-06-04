@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import lru_cache
 
+from process_utils import app_base_dir
+
 
 @dataclass
 class SpecialEvent:
@@ -34,7 +36,7 @@ def _load_json_file(filepath: str, mtime_ns: int, size: int) -> dict:
 class EventDbManager:
     def __init__(self, data_dir: str = None):
         if data_dir is None:
-            data_dir = os.path.join(os.path.dirname(__file__), "events")
+            data_dir = str(app_base_dir() / "events")
         self.data_dir = data_dir
         self.birthdays = self._load_json("birthday_db.json")
         self.festivals = self._load_json("festival_db.json")

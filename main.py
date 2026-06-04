@@ -905,6 +905,7 @@ def main():
             process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
             process.finished.connect(lambda *args, p=process: clear_pet_process(p))
             pet_window_ref["processes"].append(process)
+            process.setWorkingDirectory(BASE_DIR)
             process.start()
 
     def _read_process_error(process):
@@ -995,6 +996,7 @@ def main():
         process.finished.connect(lambda *args, p=process: clear_chat_process(p))
         process.errorOccurred.connect(lambda _error, p=process: clear_chat_process(p))
         chat_process_ref["process"] = process
+        process.setWorkingDirectory(BASE_DIR)
         process.start()
 
     def handle_settings_line(line):
@@ -1079,6 +1081,7 @@ def main():
         settings_process_ref["show_launch"] = show_launch
         settings_process_ref["first_run_wizard"] = first_run_wizard
         settings_process_ref["launched"] = False
+        process.setWorkingDirectory(BASE_DIR)
         process.start()
 
     model_valid = bool(

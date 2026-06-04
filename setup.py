@@ -29,6 +29,7 @@ WINDOWS_INSTALLER_CODEPAGE_ENV = "BANDORIPET_MSI_CODEPAGE"
 INNO_RESOURCE_DIRS = (
     "audio_reference",
     "characters",
+    "events",
     "pixels",
     "lang",
     "band_logo",
@@ -516,10 +517,10 @@ build_exe_options = {
     "include_msvcr": sys.platform == "win32",
     
     "zip_include_packages": ["*"], 
-    "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data"],
+    "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data", "qfluentwidgets", "PIL", "lupa"],
 }
 
-base = "Win32GUI" if sys.platform == "win32" else None
+base = "gui" if sys.platform == "win32" else None
 icon = str(BASE_DIR / "logo.ico") if (BASE_DIR / "logo.ico").exists() else None
 
 build_msi_options = {
