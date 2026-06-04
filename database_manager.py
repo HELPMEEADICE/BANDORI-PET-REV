@@ -826,6 +826,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         if "chat_type" not in external_thread_columns:
             self._conn.execute("ALTER TABLE external_chat_threads ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_role_id ON messages(conversation_id, role, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_character_user ON conversations(character, user_key, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_user_conv_id ON group_messages(group_key, user_key, conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
@@ -1199,33 +1200,37 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def get_conversations(self, character: str = "", user_key: str | None = None) -> list[dict]:
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         if character:
-            where = "WHERE conversations.character=?"
+            where = "WHERE c.character=?"
             params: tuple = (character,)
             if user_filter is not None:
-                where += " AND conversations.user_key=?"
+                where += " AND c.user_key=?"
                 params = (character, user_filter)
             rows = self._conn.execute(
-                "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
-                "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
-                "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+                "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
+                "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
+                "FROM conversations c "
+                "JOIN messages latest ON latest.id=("
+                "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
+                ") "
                 f"{where} "
-                "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
-                "ORDER BY last_message_id DESC",
+                "ORDER BY latest.id DESC",
                 params,
             ).fetchall()
         else:
             where = ""
             params = ()
             if user_filter is not None:
-                where = "WHERE conversations.user_key=?"
+                where = "WHERE c.user_key=?"
                 params = (user_filter,)
             rows = self._conn.execute(
-                "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
-                "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
-                "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+                "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
+                "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
+                "FROM conversations c "
+                "JOIN messages latest ON latest.id=("
+                "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
+                ") "
                 f"{where} "
-                "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
-                "ORDER BY last_message_id DESC",
+                "ORDER BY latest.id DESC",
                 params,
             ).fetchall()
         result = []
@@ -1240,23 +1245,26 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "title": _db_text(r[3]),
                 "created_at": _db_text(r[4]),
                 "last_message_at": _db_text(r[5]) if len(r) > 5 else _db_text(r[4]),
+                "last_message_content": _db_text(r[7]) if len(r) > 7 else "",
             })
         return result
 
     def get_last_conversation(self, character: str, user_key: str | None = None) -> dict | None:
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        where = "WHERE conversations.character=?"
+        where = "WHERE c.character=?"
         params: tuple = (character,)
         if user_filter is not None:
-            where += " AND conversations.user_key=?"
+            where += " AND c.user_key=?"
             params = (character, user_filter)
         row = self._conn.execute(
-            "SELECT conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at, "
-            "MAX(messages.created_at) AS last_message_at, MAX(messages.id) AS last_message_id "
-            "FROM conversations JOIN messages ON messages.conversation_id=conversations.id "
+            "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
+            "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
+            "FROM conversations c "
+            "JOIN messages latest ON latest.id=("
+            "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
+            ") "
             f"{where} "
-            "GROUP BY conversations.id, conversations.character, conversations.user_key, conversations.title, conversations.created_at "
-            "ORDER BY last_message_id DESC LIMIT 1",
+            "ORDER BY latest.id DESC LIMIT 1",
             params,
         ).fetchone()
         if row:
@@ -1270,6 +1278,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "title": _db_text(row[3]),
                 "created_at": _db_text(row[4]),
                 "last_message_at": _db_text(row[5]) if len(row) > 5 else _db_text(row[4]),
+                "last_message_content": _db_text(row[7]) if len(row) > 7 else "",
             }
         return None
 
