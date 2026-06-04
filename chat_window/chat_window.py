@@ -3,6 +3,7 @@ import fluent_bootstrap
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
 import logging
+import time
 
 from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextCursor
@@ -209,6 +210,7 @@ class ChatWindow(QWidget):
         self._group_plan_worker = None
         self._vision_fallback_worker = None
         self._memory_workers: list[NonStreamWorker] = []
+        self._memory_generation = 0
         self._pending_vision_send: tuple[str, list[dict]] | None = None
         self._plan_divider = None
         self._active_response_character = character
@@ -1862,6 +1864,7 @@ class ChatWindow(QWidget):
             bubble.update_bubble_width(viewport_width)
 
     def _clear_message_widgets(self):
+        self._reset_tts_stream()
         if self._msg_layout.count() > 0:
             self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for i in range(self._msg_layout.count() - 1, -1, -1):
@@ -2201,6 +2204,7 @@ class ChatWindow(QWidget):
         if next_key == self._conversation_key and next_is_group == self._is_group_chat:
             return
 
+        self._memory_generation += 1
         self._reset_chat_switch_state()
         self._set_available_group_characters(normalized)
         self._is_group_chat = next_is_group
@@ -3271,11 +3275,12 @@ class ChatWindow(QWidget):
             character_name=self._model_manager.get_display_name(character),
         )
         worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
+        generation = self._memory_generation
         self._memory_workers.append(worker)
         worker.finished.connect(
             lambda content, _reasoning, _actions, worker=worker, character=character, user_key=user_key,
             source_message_id=source_message_id, source_group_message_id=source_group_message_id,
-            fallback_analysis=fallback_analysis:
+            fallback_analysis=fallback_analysis, generation=generation:
                 self._on_memory_extraction_finished(
                     worker,
                     character,
@@ -3284,11 +3289,13 @@ class ChatWindow(QWidget):
                     source_message_id,
                     source_group_message_id,
                     fallback_analysis,
+                    generation,
                 )
         )
         worker.error.connect(
-            lambda _error, worker=worker, character=character, user_key=user_key, fallback_analysis=fallback_analysis:
-                self._on_memory_extraction_error(worker, character, user_key, fallback_analysis)
+            lambda _error, worker=worker, character=character, user_key=user_key, fallback_analysis=fallback_analysis,
+            generation=generation:
+                self._on_memory_extraction_error(worker, character, user_key, fallback_analysis, generation)
         )
         worker.start()
         return True
@@ -3302,8 +3309,11 @@ class ChatWindow(QWidget):
         source_message_id: int | None,
         source_group_message_id: int | None,
         fallback_analysis: dict,
+        generation: int,
     ):
         self._forget_memory_worker(worker)
+        if generation != self._memory_generation:
+            return
         relationship_analysis = parse_relationship_analysis_response(content) or fallback_analysis
         self._apply_relationship_analysis(
             character,
@@ -3329,8 +3339,11 @@ class ChatWindow(QWidget):
         character: str,
         user_key: str,
         fallback_analysis: dict,
+        generation: int,
     ):
         self._forget_memory_worker(worker)
+        if generation != self._memory_generation:
+            return
         self._apply_relationship_analysis(character, user_key, fallback_analysis, "chat")
 
     def _group_system_prompt(self, character: str, spoken_names: list[str]) -> str:
@@ -4518,12 +4531,18 @@ class ChatWindow(QWidget):
         self._start_next_tts_request()
 
     def _clear_tts_bubble_highlights(self):
-        for bubble in self._tts_bubbles.values():
-            bubble.set_tts_playing(False)
+        for seq, bubble in list(self._tts_bubbles.items()):
+            try:
+                bubble.set_tts_playing(False)
+            except RuntimeError:
+                self._tts_bubbles.pop(seq, None)
 
     def _set_tts_bubble_playing(self, sequence: int | None):
         for seq, bubble in list(self._tts_bubbles.items()):
-            bubble.set_tts_playing(sequence is not None and seq == sequence)
+            try:
+                bubble.set_tts_playing(sequence is not None and seq == sequence)
+            except RuntimeError:
+                self._tts_bubbles.pop(seq, None)
 
     def _queue_tts_request(self, sequence: int, text: str, character: str):
         text = self._clean_tts_payload(text)
@@ -4716,33 +4735,46 @@ class ChatWindow(QWidget):
             event.ignore()
             self._play_close_animation()
             return
+        workers_to_wait = []
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
-            self._worker.wait(2000)
+            workers_to_wait.append(self._worker)
         if self._group_plan_worker and self._group_plan_worker.isRunning():
             self._group_plan_worker.quit()
-            self._group_plan_worker.wait(2000)
+            workers_to_wait.append(self._group_plan_worker)
         if self._vision_fallback_worker and self._vision_fallback_worker.isRunning():
             self._vision_fallback_worker.requestInterruption()
             self._vision_fallback_worker.quit()
-            self._vision_fallback_worker.wait(2000)
+            workers_to_wait.append(self._vision_fallback_worker)
         for worker in (self._asr_recorder_worker, self._asr_request_worker):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
                 worker.quit()
-                worker.wait(2000)
+                workers_to_wait.append(worker)
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
-                worker.wait(1000)
+                workers_to_wait.append(worker)
         self._cancelled_workers.clear()
         for worker in list(self._tts_active_workers.values()):
             if worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(1000)
+                workers_to_wait.append(worker)
         for worker in list(self._tts_translation_workers.values()):
             if worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(1000)
+                workers_to_wait.append(worker)
+        self._memory_generation += 1
+        for worker in list(self._memory_workers):
+            if worker.isRunning():
+                worker.requestInterruption()
+                workers_to_wait.append(worker)
+        deadline = time.monotonic() + 1.5
+        for worker in workers_to_wait:
+            remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                break
+            worker.wait(min(remaining_ms, 250))
+        self._memory_workers.clear()
         self._stream_flush_timer.stop()
         self._tts_player.stop()
         self._db.close()

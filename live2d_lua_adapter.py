@@ -593,6 +593,9 @@ class LuaLAppModel:
         self.expressions = {}
         self._pending_parameters = {}
         self._profile_enabled = LIVE2D_PROFILE_ENABLED
+        self._draw_opts = self._module._lua.table()
+        self._draw_opts[b"clear"] = False
+        self._draw_opts[b"profile"] = self._profile_enabled
         self.last_lua_update_draw_seconds = 0.0
         self.last_lua_gc_seconds = 0.0
 
@@ -612,9 +615,6 @@ class LuaLAppModel:
         self.modelSetting = _ModelSetting(info)
         self.expressions = self._read_expression_names(info)
         self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
-        self._draw_opts = self._module._lua.table()
-        self._draw_opts[b"clear"] = False
-        self._draw_opts[b"profile"] = self._profile_enabled
 
     def Resize(self, width: int, height: int):
         self._width = max(int(width), 1)

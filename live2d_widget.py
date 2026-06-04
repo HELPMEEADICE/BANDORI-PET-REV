@@ -992,6 +992,7 @@ class Live2DWidget(QOpenGLWidget):
             gl.glReadPixels(sx, sy, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
             fence = gl.glFenceSync(gl.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
             if not fence: raise RuntimeError("PBO fence creation failed")
+            gl.glFlush()
             self._hit_pbo_pending.append({"pbo": pbo, "key": key, "fence": fence})
             self._hit_pbo_pending_keys.add(key)
             self._hit_pbo_pending_ids.add(pbo)

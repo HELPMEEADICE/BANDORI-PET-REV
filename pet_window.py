@@ -1922,13 +1922,16 @@ class PetWindow(QWidget):
                 pass
             self._emotion_window_anim = None
         self._emotion_window_animating = False
+        old_x, old_y = self.x(), self.y()
         self._suppress_compact_ai_sync = True
         try:
-            self._move_unconstrained(self.x() + dx, self.y() + dy)
+            self._move_unconstrained(old_x + dx, old_y + dy)
         finally:
             self._suppress_compact_ai_sync = False
-        self._move_compact_ai_with_pet(dx, dy)
-        self._broadcast_peer_drag(dx, dy)
+        actual_dx = self.x() - old_x
+        actual_dy = self.y() - old_y
+        self._move_compact_ai_with_pet(actual_dx, actual_dy)
+        self._broadcast_peer_drag(actual_dx, actual_dy)
 
     def _move_unconstrained(self, x: int, y: int):
         if not self._should_bypass_x11_window_manager() or _x11 is None:

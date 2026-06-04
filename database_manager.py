@@ -61,19 +61,26 @@ def _escape_like(value: str) -> str:
 
 
 class _DatabaseFileLock:
+    _LOCK_TIMEOUT_SECONDS = 10.0
+
     def __init__(self, db_path: str):
         self._thread_lock = threading.RLock()
         self._local = threading.local()
         lock_path = Path(db_path).resolve().with_suffix(Path(db_path).suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(lock_path, "a+b")
+        self._lock_path = lock_path
+        self._file = None
 
     def __enter__(self):
         self._thread_lock.acquire()
         try:
             depth = getattr(self._local, "depth", 0)
             if depth == 0:
-                self._lock_file()
+                try:
+                    self._lock_file()
+                except Exception:
+                    self.close()
+                    raise
             self._local.depth = depth + 1
             return self
         except Exception:
@@ -91,11 +98,25 @@ class _DatabaseFileLock:
         finally:
             self._thread_lock.release()
 
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def close(self):
+        file = getattr(self, "_file", None)
+        if file is not None and not file.closed:
+            file.close()
+
     def _lock_file(self):
+        if self._file is None or self._file.closed:
+            self._file = open(self._lock_path, "a+b")
         self._file.seek(0)
         if os.name == "nt":
             import msvcrt
 
+            deadline = time.monotonic() + self._LOCK_TIMEOUT_SECONDS
             while True:
                 try:
                     msvcrt.locking(self._file.fileno(), msvcrt.LK_NBLCK, 1)
@@ -103,6 +124,8 @@ class _DatabaseFileLock:
                 except OSError as exc:
                     if getattr(exc, "errno", None) not in {13, 36}:
                         raise
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for database lock: {self._file.name}") from exc
                     time.sleep(0.05)
         else:
             import fcntl
@@ -110,15 +133,20 @@ class _DatabaseFileLock:
             fcntl.flock(self._file.fileno(), fcntl.LOCK_EX)
 
     def _unlock_file(self):
+        if self._file is None or self._file.closed:
+            return
         self._file.seek(0)
-        if os.name == "nt":
-            import msvcrt
+        try:
+            if os.name == "nt":
+                import msvcrt
 
-            msvcrt.locking(self._file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
+                msvcrt.locking(self._file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
 
-            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.close()
 
     def close(self):
         self._file.close()

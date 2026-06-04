@@ -405,8 +405,6 @@ class SettingsWindow(
 
     def closeEvent(self, event):
         should_exit_app = self._first_run_wizard and self._show_launch and not self._launched
-        if should_exit_app:
-            self.exit_requested.emit()
         self._dispose_live2d_preview()
         self._cleanup_workers()
         if self._memory_db is not None:
@@ -424,6 +422,8 @@ class SettingsWindow(
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
+        if should_exit_app:
+            self.exit_requested.emit()
         super().closeEvent(event)
 
     def _ensure_live2d_preview_module(self):
@@ -2632,7 +2632,7 @@ class SettingsWindow(
         self._save_chat_integration_config(show_info=False, emit_update=False)
         self._save_mcp_computer_config(show_info=False)
         self._save_reminder_config(show_info=False, emit_update=False)
-        self._save_configured_models()
+        self._save_configured_models(emit_update=False)
         settings = {
             "language": current_language(),
             "fps": self._current_fps_setting(),
@@ -2863,7 +2863,7 @@ class SettingsWindow(
             }
         """)
 
-    def _save_configured_models(self):
+    def _save_configured_models(self, emit_update: bool = True):
         if not self._cfg:
             return
         for item in self._configured_models:
@@ -2884,10 +2884,11 @@ class SettingsWindow(
         except Exception:
             import traceback
             traceback.print_exc()
-        self.settings_changed.emit({
-            "models": [dict(item) for item in self._configured_models],
-            "model_action_settings": self._cfg.get("model_action_settings", {}),
-        })
+        if emit_update:
+            self.settings_changed.emit({
+                "models": [dict(item) for item in self._configured_models],
+                "model_action_settings": self._cfg.get("model_action_settings", {}),
+            })
 
     def _refresh_model_list(self):
         while self._model_list_layout.count():
