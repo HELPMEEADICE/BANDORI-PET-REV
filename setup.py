@@ -556,8 +556,8 @@ executables = [
     Executable("main.py", base=base, target_name=f"BandoriPet{_exec_suffix}", icon=icon),
     Executable("pet_process.py", base=base, target_name=f"pet_process{_exec_suffix}"),
     Executable("radial_menu_process.py", base=base, target_name=f"radial_menu_process{_exec_suffix}"),
-    Executable("settings_process.py", base=base, target_name=f"settings_process{_exec_suffix}", icon=icon),
-    Executable("chat_process.py", base=base, target_name=f"chat_process{_exec_suffix}", icon=icon),
+    Executable("settings_process.py", base=base, target_name=f"settings_process{_exec_suffix}"),
+    Executable("chat_process.py", base=base, target_name=f"chat_process{_exec_suffix}"),
     Executable("bandori_ai_event.py", base=None, target_name=f"bandori-ai-event{_exec_suffix}"),
     Executable("bandori_codex_runner.py", base=None, target_name=f"bandori-codex-runner{_exec_suffix}"),
 ]
