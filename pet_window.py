@@ -12,12 +12,12 @@ import uuid
 if os.name == "nt":
     import ctypes.wintypes
 
-from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication, QParallelAnimationGroup
 from PySide6.QtNetwork import QLocalSocket
-from PySide6.QtGui import QCursor, QGuiApplication
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon
+from PySide6.QtGui import QCursor, QGuiApplication, QFont
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
 
-from app_theme import apply_app_theme, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
+from app_theme import apply_app_theme, BANDORI_PRIMARY, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
 from action_bus import publish_user_poke
 from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
@@ -297,6 +297,9 @@ class PetWindow(QWidget):
         self._entrance_anim = None
         self._emotion_window_anim = None
         self._emotion_window_animating = False
+        self._poke_user_badge = None
+        self._poke_user_badge_anim = None
+        self._poke_user_badge_token = 0
         self._pixel_mode = self._configured_pet_mode() == "pixel"
         self._pixel_frames = None
         self._pixel_ready = False
@@ -1176,6 +1179,7 @@ class PetWindow(QWidget):
         if os.name == "nt":
             self._windows_mouse_passthrough_timer.stop()
             self._set_windows_mouse_passthrough(False)
+        self._close_poke_user_badge()
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
         self._peer_pos_broadcast_timer.stop()
@@ -1185,6 +1189,7 @@ class PetWindow(QWidget):
 
     def closeEvent(self, event):
         self._set_windows_mouse_passthrough(False)
+        self._close_poke_user_badge()
         self._live2d_widget.dispose()
         self._close_radial_menu_process(force=True)
         self._close_chat_process()
@@ -1990,7 +1995,9 @@ class PetWindow(QWidget):
         if self._compact_ai_window_enabled:
             return True
         process = self._chat_process
-        return bool(process is not None and process.state() != QProcess.ProcessState.NotRunning)
+        if process is not None and process.state() != QProcess.ProcessState.NotRunning:
+            return True
+        return len(self._chat_group_characters()) > 1
 
     def _trigger_click_motion(self, x: float, y: float, area_name: str = ""):
         from live2d_click_actions import CLICK_MOTION_NONE, CLICK_MOTION_RANDOM, click_motion_region_for_point
@@ -3010,11 +3017,190 @@ class PetWindow(QWidget):
     def _finish_emotion_window_feedback(self):
         self._emotion_window_animating = False
 
+    def _close_poke_user_badge(self):
+        self._poke_user_badge_token += 1
+        group = getattr(self, "_poke_user_badge_anim", None)
+        if group is not None:
+            try:
+                group.stop()
+            except RuntimeError:
+                pass
+            self._poke_user_badge_anim = None
+        badge = getattr(self, "_poke_user_badge", None)
+        if badge is None:
+            return
+        try:
+            badge.hide()
+            badge.setWindowOpacity(1.0)
+            badge.deleteLater()
+        except RuntimeError:
+            pass
+        self._poke_user_badge = None
+
+    def _poke_user_feedback_text(self, event: dict) -> str:
+        message = str(event.get("message", "") or "").strip()
+        if message:
+            text = re.sub(r"\s+", " ", message)
+        else:
+            display = self._model_manager.get_display_name(self._current_char) if self._model_manager else self._current_char
+            text = _tr("PetWindow.character_poked_user", default="{name}戳了你一下", name=display)
+        max_len = 32
+        if len(text) > max_len:
+            text = text[: max_len - 3].rstrip() + "..."
+        return text
+
+    def _compact_ai_window_visible_for_feedback(self) -> bool:
+        window = getattr(self, "_compact_ai_window", None)
+        if window is None:
+            return False
+        try:
+            return bool(self._compact_ai_window_enabled and window.isVisible())
+        except RuntimeError:
+            return False
+
+    def _poke_user_badge_position(self, badge) -> QPoint:
+        margin = 8
+        pet_geo = self.geometry()
+        screen = QGuiApplication.screenAt(pet_geo.center()) or self.screen() or QGuiApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else pet_geo
+        model_bounds = None
+        if not self._pixel_mode:
+            try:
+                model_bounds = self._live2d_widget.visible_model_bounds()
+            except Exception:
+                model_bounds = None
+
+        if model_bounds:
+            left, right, top, _bottom = model_bounds
+            center_x = pet_geo.left() + int(round((left + right) * 0.5))
+            model_top = pet_geo.top() + int(round(top))
+        else:
+            center_x = pet_geo.center().x()
+            model_top = pet_geo.top() + max(14, int(round(self.height() * 0.20)))
+
+        x = center_x - badge.width() // 2
+        y = model_top - badge.height() - 8
+
+        if self._compact_ai_window_visible_for_feedback():
+            try:
+                compact_geo = self._compact_ai_window.geometry()
+                y = max(compact_geo.bottom() + 6, model_top - badge.height() - 4)
+            except RuntimeError:
+                pass
+
+        x = max(screen_geo.left() + margin, min(x, screen_geo.right() - badge.width() - margin))
+        y = max(screen_geo.top() + margin, min(y, screen_geo.bottom() - badge.height() - margin))
+        return QPoint(x, y)
+
+    def _show_character_poked_user_feedback(self, event: dict):
+        self._poke_user_badge_token += 1
+        token = self._poke_user_badge_token
+        badge = getattr(self, "_poke_user_badge", None)
+        if badge is None:
+            flags = (
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.Tool
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.WindowDoesNotAcceptFocus
+                | Qt.WindowType.NoDropShadowWindowHint
+            )
+            badge = QLabel("", None, flags)
+            badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            badge.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+            badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = QFont()
+            font.setPointSize(10)
+            font.setBold(True)
+            badge.setFont(font)
+            badge.hide()
+            self._poke_user_badge = badge
+
+        group = getattr(self, "_poke_user_badge_anim", None)
+        if group is not None:
+            try:
+                group.stop()
+            except RuntimeError:
+                pass
+            self._poke_user_badge_anim = None
+
+        badge.setText(self._poke_user_feedback_text(event))
+        badge.setStyleSheet(f"""
+            QLabel {{
+                background: {BANDORI_PRIMARY};
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 180);
+                border-radius: 15px;
+                padding: 6px 13px;
+            }}
+        """)
+        badge.adjustSize()
+        badge.resize(max(96, badge.width()), max(30, badge.height()))
+
+        settle = self._poke_user_badge_position(badge)
+        start = QPoint(settle.x(), settle.y() + 12)
+        end = QPoint(settle.x(), settle.y() - 8)
+
+        badge.setWindowOpacity(0.0)
+        badge.move(start)
+        badge.raise_()
+        badge.show()
+        if os.name == "nt":
+            try:
+                hwnd = int(badge.winId())
+                self._apply_no_activate_to_hwnd(hwnd)
+                _set_window_pos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            except Exception:
+                pass
+
+        move_anim = QPropertyAnimation(badge, b"pos", self)
+        move_anim.setDuration(980)
+        move_anim.setStartValue(start)
+        move_anim.setKeyValueAt(0.22, settle)
+        move_anim.setKeyValueAt(0.72, settle)
+        move_anim.setEndValue(end)
+        move_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        opacity_anim = QPropertyAnimation(badge, b"windowOpacity", self)
+        opacity_anim.setDuration(980)
+        opacity_anim.setStartValue(0.0)
+        opacity_anim.setKeyValueAt(0.14, 1.0)
+        opacity_anim.setKeyValueAt(0.72, 1.0)
+        opacity_anim.setEndValue(0.0)
+        opacity_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        anim_group = QParallelAnimationGroup(self)
+        anim_group.addAnimation(move_anim)
+        anim_group.addAnimation(opacity_anim)
+
+        def finish(t=token, group=anim_group):
+            if t != self._poke_user_badge_token or self._poke_user_badge_anim is not group:
+                return
+            badge.hide()
+            badge.setWindowOpacity(1.0)
+            self._poke_user_badge_anim = None
+
+        anim_group.finished.connect(finish)
+        self._poke_user_badge_anim = anim_group
+        anim_group.start()
+
     def _handle_user_poke(self, event: dict):
         if not isinstance(event, dict):
             event = {}
         target = str(event.get("character", "") or "").strip()
         if target and target != self._current_char:
+            return
+        if str(event.get("direction", "") or "").strip().lower() == "to_user":
+            self._note_user_interaction()
+            self._show_character_poked_user_feedback(event)
             return
         if str(event.get("source", "") or "").strip().lower() == "live2d":
             return

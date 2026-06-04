@@ -2896,6 +2896,50 @@ class ChatWindow(QWidget):
         # transcript labels so the UI does not display a false nested speaker.
         return label_re.sub("", text).strip()
 
+    def _is_poke_user_stage_direction(self, stage_text: str, character: str) -> bool:
+        text = re.sub(r"\s+", "", str(stage_text or ""))
+        if "戳了戳" not in text:
+            return False
+        user_targets = {"你", "用户", "主人", "user"}
+        user_name = (self._user_name or "").strip()
+        if user_name:
+            user_targets.add(user_name)
+        user_targets.add(_tr("ChatWindow.you"))
+
+        target_pattern = "|".join(re.escape(item) for item in sorted(user_targets, key=len, reverse=True) if item)
+        if not target_pattern:
+            return False
+        if re.search(rf"(?:我|咱|人家|本小姐|本大爷|本姑娘)?戳了戳(?:{target_pattern})", text, re.IGNORECASE):
+            return True
+        if re.search(rf"戳了戳(?:{target_pattern})", text, re.IGNORECASE):
+            return True
+
+        active_name = self._model_manager.get_display_name(character) if character else ""
+        if user_name and text.startswith("你戳了戳") and user_name in text and (not active_name or active_name not in text):
+            return True
+        return False
+
+    def _consume_poke_user_stage_directions(self, text: str, character: str) -> tuple[str, bool]:
+        source = str(text or "")
+        triggered = False
+
+        def replace(match):
+            nonlocal triggered
+            inner = match.group("inner").strip()
+            if not self._is_poke_user_stage_direction(inner, character):
+                return match.group(0)
+            triggered = True
+            return ""
+
+        cleaned = re.sub(
+            r"(?P<open>[（(【\[])(?P<inner>[^（）()\[\]【】]{0,64}戳了戳[^（）()\[\]【】]{0,64})(?P<close>[）)】\]])",
+            replace,
+            source,
+        )
+        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned, triggered
+
     def _assistant_content(self, character: str, text: str) -> str:
         if not self._is_group_chat:
             return text
@@ -4558,6 +4602,19 @@ class ChatWindow(QWidget):
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
         clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
+        clean, text_poke_user = self._consume_poke_user_stage_directions(
+            clean,
+            self._active_response_character,
+        )
+        if text_poke_user:
+            try:
+                publish_user_poke(
+                    self._active_response_character,
+                    source="assistant_text",
+                    direction="to_user",
+                )
+            except Exception:
+                pass
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
@@ -4900,6 +4957,8 @@ class ChatWindow(QWidget):
     def handle_external_user_poke(self, event: dict):
         if not isinstance(event, dict):
             event = {}
+        if str(event.get("direction", "") or "").strip().lower() == "to_user":
+            return
         if str(event.get("source", "") or "").strip().lower() == "chat":
             return
         target = str(event.get("character", "") or "").strip() or self._character
