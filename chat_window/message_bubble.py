@@ -87,7 +87,7 @@ class MessageBubble(QWidget):
         self._text_fade_anim = None
         self._height_anim = None
         self._attachment_previews: list[ChatImagePreview] = []
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._init_ui()
         self.apply_theme()
         QTimer.singleShot(0, self._animate_in)
@@ -112,12 +112,13 @@ class MessageBubble(QWidget):
         self._label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._label.setTextFormat(Qt.TextFormat.PlainText)
         self._label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self._label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         font = QFont()
         font.setPointSize(10)
         self._label.setFont(font)
 
         self._reasoning_panel = RoundedPanel(self)
+        self._reasoning_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._reasoning_panel.setVisible(self._should_show_reasoning())
         reasoning_layout = QHBoxLayout(self._reasoning_panel)
         reasoning_layout.setContentsMargins(8, 7, 9, 7)
@@ -163,6 +164,7 @@ class MessageBubble(QWidget):
         self._sync_reasoning_collapsed()
 
         self._stream_label = QLabel("", self)
+        self._stream_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._stream_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         stream_font = QFont()
         stream_font.setPointSize(8)
@@ -170,6 +172,7 @@ class MessageBubble(QWidget):
         self._stream_label.hide()
 
         self._sources_row = QWidget(self)
+        self._sources_row.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._sources_row.setStyleSheet("background: transparent;")
         self._sources_layout = QHBoxLayout(self._sources_row)
         self._sources_layout.setContentsMargins(0, 4, 0, 0)
@@ -178,6 +181,7 @@ class MessageBubble(QWidget):
         self._rebuild_source_badges()
 
         self._attachments_panel = QWidget(self)
+        self._attachments_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._attachments_panel.setStyleSheet("background: transparent;")
         attachments_layout = QVBoxLayout(self._attachments_panel)
         attachments_layout.setContentsMargins(0, 3, 0, 0)
@@ -224,7 +228,7 @@ class MessageBubble(QWidget):
 
     def _make_container(self, user: bool) -> QWidget:
         w = RoundedPanel()
-        w.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        w.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         return w
 
     def _available_bubble_width(self, viewport_width: int = 0) -> int:
