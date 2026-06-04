@@ -29,12 +29,15 @@ class SpecialEventManager(QObject):
         if self.last_checked_date == today:
             return
 
+        try:
+            events = self.event_db.get_today_events()
+            for event in events:
+                self.event_detected.emit(event)
+        except Exception:
+            self.check_timer.start(60 * 1000)
+            return
+
         self.last_checked_date = today
-        events = self.event_db.get_today_events()
-
-        for event in events:
-            self.event_detected.emit(event)
-
         self._schedule_next_check()
 
     def start(self):

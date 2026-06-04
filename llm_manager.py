@@ -443,20 +443,20 @@ def _build_event_context(current_character: str = "") -> str:
                     f"今天是{data['name_zh']}，也就是你自己的生日。"
                     "你心里知道这件事，但只有用户明确问起生日相关话题时才回答。"
                 )
-                event_lines.append(f"【{e.name['zh']}】\n{text}")
+                event_lines.append(f"【{data['name_zh']}】\n{text}")
             elif e.band and e.band == current_band:
                 data = {"name_zh": e.name.get("zh", "")}
                 text = (
                     f"今天是{data['name_zh']}。你知道这件事，"
                     "但只有用户明确问起生日相关话题时才回答。"
                 )
-                event_lines.append(f"【{e.name['zh']}】\n{text}")
+                event_lines.append(f"【{data['name_zh']}】\n{text}")
             elif e.event_type == "festival":
                 text = (
                     f"今天是{e.name.get('zh', '')}（{e.month}月{e.day}日）。"
                     "你知道今天是这个特殊的日子，但只有用户主动提起相关话题时才主动回应。"
                 )
-                event_lines.append(f"【{e.name['zh']}】\n{text}")
+                event_lines.append(f"【{e.name.get('zh', '')}】\n{text}")
         return "\n\n".join(event_lines)
     except Exception:
         return ""

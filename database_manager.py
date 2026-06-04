@@ -148,10 +148,6 @@ class _DatabaseFileLock:
         finally:
             self.close()
 
-    def close(self):
-        self._file.close()
-
-
 def _chat_attachment_dir() -> Path:
     return BASE_DIR / "chat_attachments"
 
@@ -946,7 +942,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         reason: str = "",
     ) -> dict:
         user_key = self._normalize_user_key(user_key)
-        self._conn.execute("BEGIN IMMEDIATE")
         current = self.get_relationship_state(character, user_key)
         if mood_intensity is None:
             if mood:
