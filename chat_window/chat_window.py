@@ -610,28 +610,15 @@ class ChatWindow(QWidget):
         apply_windows_11_border_fix(hwnd)
 
     def _play_entrance(self):
-        target = self.geometry()
-        start = self._scaled_geometry(target, 0.94)
         self.setWindowOpacity(0.0)
-        self.setGeometry(start)
 
-        group = QParallelAnimationGroup(self)
         opacity = QPropertyAnimation(self, b"windowOpacity")
         opacity.setDuration(180)
         opacity.setStartValue(0.0)
         opacity.setEndValue(1.0)
         opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
-        group.addAnimation(opacity)
-
-        geometry = QPropertyAnimation(self, b"geometry")
-        geometry.setDuration(220)
-        geometry.setStartValue(start)
-        geometry.setEndValue(target)
-        geometry.setEasingCurve(QEasingCurve.Type.OutCubic)
-        group.addAnimation(geometry)
-
-        self._window_anim = group
-        group.start()
+        self._window_anim = opacity
+        opacity.start()
 
     def _play_close_animation(self):
         if self._close_animating:

@@ -751,6 +751,8 @@
   "ChatWindow.streaming": "streaming",
   "ChatWindow.streaming_response": "Streaming response...",
   "ChatWindow.reasoning_title": "CoT",
+  "ChatWindow.reasoning_expand_tooltip": "Expand reasoning",
+  "ChatWindow.reasoning_collapse_tooltip": "Collapse reasoning",
   "ChatWindow.group_chat": "Group Chat",
   "ChatWindow.group_chat_named": "Group: {members}",
   "ChatWindow.chat_list": "Chats",

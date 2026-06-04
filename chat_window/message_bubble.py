@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, 
 from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QSizePolicy, QGraphicsOpacityEffect, QFrame,
+    QSizePolicy, QGraphicsOpacityEffect, QFrame, QToolButton,
 )
 
 from i18n_manager import tr as _tr
@@ -26,6 +26,20 @@ from .constants import (
 )
 from .avatar_utils import _rounded_avatar_pixmap
 from .widgets import FluentContextLabel, RoundedPanel, SearchSourceBadge, ChatImagePreview
+
+
+class ReasoningHeader(QWidget):
+    def __init__(self, on_toggle, parent=None):
+        super().__init__(parent)
+        self._on_toggle = on_toggle
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_toggle()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class MessageBubble(QWidget):
@@ -50,6 +64,7 @@ class MessageBubble(QWidget):
         self._role = role
         self._reasoning = reasoning
         self._show_reasoning = show_reasoning
+        self._reasoning_collapsed = True
         self._search_sources = self._normalize_search_sources(search_sources)
         self._attachments = self._normalize_display_attachments(attachments)
         self._author = author or (_tr("ChatWindow.you") if role == "user" else _tr("ChatWindow.you"))
@@ -115,11 +130,25 @@ class MessageBubble(QWidget):
         reasoning_stack = QVBoxLayout()
         reasoning_stack.setContentsMargins(0, 0, 0, 0)
         reasoning_stack.setSpacing(3)
-        self._reasoning_title = QLabel(_tr("ChatWindow.reasoning_title"), self._reasoning_panel)
+        self._reasoning_header = ReasoningHeader(self._toggle_reasoning_collapsed, self._reasoning_panel)
+        reasoning_header_layout = QHBoxLayout(self._reasoning_header)
+        reasoning_header_layout.setContentsMargins(0, 0, 0, 0)
+        reasoning_header_layout.setSpacing(4)
+
+        self._reasoning_toggle = QToolButton(self._reasoning_header)
+        self._reasoning_toggle.setFixedSize(18, 18)
+        self._reasoning_toggle.setAutoRaise(True)
+        self._reasoning_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reasoning_toggle.clicked.connect(self._toggle_reasoning_collapsed)
+
+        self._reasoning_title = QLabel(_tr("ChatWindow.reasoning_title"), self._reasoning_header)
+        self._reasoning_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         title_font = QFont()
         title_font.setPointSize(8)
         title_font.setBold(True)
         self._reasoning_title.setFont(title_font)
+        reasoning_header_layout.addWidget(self._reasoning_toggle)
+        reasoning_header_layout.addWidget(self._reasoning_title, 1)
         self._reasoning_label = FluentContextLabel(self._reasoning, self._reasoning_panel)
         self._reasoning_label.setWordWrap(True)
         self._reasoning_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -128,9 +157,10 @@ class MessageBubble(QWidget):
         reasoning_font = QFont()
         reasoning_font.setPointSize(9)
         self._reasoning_label.setFont(reasoning_font)
-        reasoning_stack.addWidget(self._reasoning_title)
+        reasoning_stack.addWidget(self._reasoning_header)
         reasoning_stack.addWidget(self._reasoning_label)
         reasoning_layout.addLayout(reasoning_stack, 1)
+        self._sync_reasoning_collapsed()
 
         self._stream_label = QLabel("", self)
         self._stream_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -223,11 +253,10 @@ class MessageBubble(QWidget):
         if self._stream_label.isVisible() and self._stream_label.text():
             content_width = max(content_width, self._widest_plain_line(self._stream_label))
         if self._reasoning_panel.isVisible():
-            reasoning_width = max(
-                self._widest_plain_line(self._reasoning_title),
-                self._widest_plain_line(self._reasoning_label),
-            )
-            content_width = max(content_width, reasoning_width + 28)
+            reasoning_width = self._widest_plain_line(self._reasoning_title)
+            if not self._reasoning_collapsed:
+                reasoning_width = max(reasoning_width, self._widest_plain_line(self._reasoning_label))
+            content_width = max(content_width, reasoning_width + 50)
         if self._sources_row.isVisible():
             content_width = max(content_width, len(self._search_sources) * 24)
         return max(36, content_width + 24)
@@ -253,9 +282,12 @@ class MessageBubble(QWidget):
             )
         else:
             self._stream_label.setFixedHeight(0)
-        self._reasoning_label.setFixedHeight(
-            self._plain_text_height(self._reasoning_label, reasoning_text_width, True)
-        )
+        if self._reasoning_label.isVisible():
+            self._reasoning_label.setFixedHeight(
+                self._plain_text_height(self._reasoning_label, reasoning_text_width, True)
+            )
+        else:
+            self._reasoning_label.setFixedHeight(0)
 
     def update_bubble_width(self, viewport_width: int = 0):
         available_width = self._available_bubble_width(viewport_width)
@@ -352,6 +384,22 @@ class MessageBubble(QWidget):
                 widget.apply_theme()
         self._reasoning_title.setStyleSheet(f"color: {reasoning_title}; background: transparent;")
         self._reasoning_label.setStyleSheet(f"color: {reasoning_text}; background: transparent;")
+        self._reasoning_toggle.setStyleSheet(f"""
+            QToolButton {{
+                color: {reasoning_title};
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }}
+            QToolButton:hover {{
+                background: {'#30374b' if dark else '#e3ebfb'};
+                border-radius: 9px;
+            }}
+            QToolButton:pressed {{
+                background: {'#272e40' if dark else '#d7e1f5'};
+                border-radius: 9px;
+            }}
+        """)
         self._reasoning_bar.setStyleSheet(f"background: {_TEAMS_ACCENT}; border-radius: 1px;")
         self._reasoning_panel.set_panel_style(reasoning_bg, reasoning_border, 9, 1)
         self._avatar.setStyleSheet(f"""
@@ -449,6 +497,7 @@ class MessageBubble(QWidget):
             self.setMaximumHeight(old_height)
         self._reasoning_label.setText(self._reasoning)
         self._reasoning_panel.setVisible(self._should_show_reasoning())
+        self._sync_reasoning_collapsed()
         self.update_bubble_width()
         if self._streaming:
             if self._reasoning_panel.isVisible() and not was_visible:
@@ -492,6 +541,25 @@ class MessageBubble(QWidget):
 
     def _should_show_reasoning(self) -> bool:
         return self._show_reasoning and bool(self._reasoning) and self._role != "user"
+
+    def _sync_reasoning_collapsed(self):
+        collapsed = self._reasoning_collapsed
+        self._reasoning_label.setVisible(not collapsed)
+        self._reasoning_toggle.setArrowType(
+            Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+        )
+        tooltip_key = (
+            "ChatWindow.reasoning_expand_tooltip"
+            if collapsed
+            else "ChatWindow.reasoning_collapse_tooltip"
+        )
+        self._reasoning_toggle.setToolTip(_tr(tooltip_key))
+        self._reasoning_header.setToolTip(_tr(tooltip_key))
+
+    def _toggle_reasoning_collapsed(self):
+        self._reasoning_collapsed = not self._reasoning_collapsed
+        self._sync_reasoning_collapsed()
+        self.update_bubble_width()
 
     def set_streaming(self, streaming: bool):
         self._streaming = streaming

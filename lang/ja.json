@@ -751,6 +751,8 @@
   "ChatWindow.streaming": "受信中",
   "ChatWindow.streaming_response": "返信を受信中...",
   "ChatWindow.reasoning_title": "思考チェーン",
+  "ChatWindow.reasoning_expand_tooltip": "思考チェーンを展開",
+  "ChatWindow.reasoning_collapse_tooltip": "思考チェーンを折りたたむ",
   "ChatWindow.group_chat": "グループチャット",
   "ChatWindow.group_chat_named": "グループ：{members}",
   "ChatWindow.chat_list": "チャット一覧",

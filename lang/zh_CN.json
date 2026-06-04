@@ -751,6 +751,8 @@
   "ChatWindow.streaming": "接收中",
   "ChatWindow.streaming_response": "正在接收回复...",
   "ChatWindow.reasoning_title": "思考链",
+  "ChatWindow.reasoning_expand_tooltip": "展开思考链",
+  "ChatWindow.reasoning_collapse_tooltip": "收起思考链",
   "ChatWindow.group_chat": "群聊",
   "ChatWindow.group_chat_named": "群聊：{members}",
   "ChatWindow.chat_list": "聊天列表",
