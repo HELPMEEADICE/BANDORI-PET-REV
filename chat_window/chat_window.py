@@ -248,6 +248,9 @@ class ChatWindow(QWidget):
         self._group_relayout_timer.setSingleShot(True)
         self._group_relayout_timer.setInterval(45)
         self._group_relayout_timer.timeout.connect(self._relayout_message_bubbles)
+        self._last_message_layout_width = -1
+        self._last_message_layout_count = -1
+        self._scroll_to_bottom_generation = 0
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -737,7 +740,8 @@ class ChatWindow(QWidget):
         if not self._group_sidebar_collapsed and not self._group_sidebar_animating:
             self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
-        self._relayout_message_bubbles()
+        if not self._group_sidebar_animating:
+            self._relayout_message_bubbles()
 
     def _position_resize_grip(self):
         if not self._resize_grip:
@@ -1174,7 +1178,16 @@ class ChatWindow(QWidget):
         if not conversations:
             return _tr("ChatWindow.private_empty_preview", default="开始私聊"), ""
         conv = conversations[0]
-        return self._conversation_title(conv), str(conv.get("last_message_at") or conv.get("created_at") or "")
+        preview = str(conv.get("last_message_content") or conv.get("title") or "").strip().replace("\n", " ")
+        if preview.startswith("【") and "】" in preview:
+            preview = preview[preview.index("】") + 1:].strip()
+        if not preview:
+            preview = _tr("ChatWindow.empty_conv")
+        if len(preview) > 28:
+            preview = preview[:28] + "..."
+        created_at = str(conv.get("last_message_at") or conv.get("created_at") or "")
+        time_text = created_at[5:16] if len(created_at) >= 16 else created_at
+        return f"{time_text}  {preview}".strip(), created_at
 
     def _private_chat_entries(self) -> list[dict]:
         entries = []
@@ -1856,13 +1869,26 @@ class ChatWindow(QWidget):
                 bubbles.append(widget)
         return bubbles
 
-    def _relayout_message_bubbles(self):
+    def _relayout_message_bubbles(self, force: bool = False):
+        if self._group_sidebar_animating and not force:
+            return
         viewport_width = self._scroll.viewport().width()
-        for bubble in self._message_bubbles():
+        bubbles = self._message_bubbles()
+        if (
+            not force
+            and viewport_width == self._last_message_layout_width
+            and len(bubbles) == self._last_message_layout_count
+        ):
+            return
+        self._last_message_layout_width = viewport_width
+        self._last_message_layout_count = len(bubbles)
+        for bubble in bubbles:
             bubble.update_bubble_width(viewport_width)
 
     def _clear_message_widgets(self):
         self._reset_tts_stream()
+        self._last_message_layout_width = -1
+        self._last_message_layout_count = -1
         if self._msg_layout.count() > 0:
             self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for i in range(self._msg_layout.count() - 1, -1, -1):
@@ -2810,8 +2836,7 @@ class ChatWindow(QWidget):
         self._msg_layout.addStretch()
         self._relayout_message_bubbles()
         self._schedule_visible_message_relayout()
-        QTimer.singleShot(50, self._scroll_to_bottom)
-        QTimer.singleShot(120, self._scroll_to_bottom)
+        self._schedule_scroll_to_bottom_after_load()
 
     def _message_author(self, content: str) -> str:
         if self._is_group_chat:
@@ -2870,6 +2895,50 @@ class ChatWindow(QWidget):
         # If the model ignored the requested speaker entirely, at least remove
         # transcript labels so the UI does not display a false nested speaker.
         return label_re.sub("", text).strip()
+
+    def _is_poke_user_stage_direction(self, stage_text: str, character: str) -> bool:
+        text = re.sub(r"\s+", "", str(stage_text or ""))
+        if "戳了戳" not in text:
+            return False
+        user_targets = {"你", "用户", "主人", "user"}
+        user_name = (self._user_name or "").strip()
+        if user_name:
+            user_targets.add(user_name)
+        user_targets.add(_tr("ChatWindow.you"))
+
+        target_pattern = "|".join(re.escape(item) for item in sorted(user_targets, key=len, reverse=True) if item)
+        if not target_pattern:
+            return False
+        if re.search(rf"(?:我|咱|人家|本小姐|本大爷|本姑娘)?戳了戳(?:{target_pattern})", text, re.IGNORECASE):
+            return True
+        if re.search(rf"戳了戳(?:{target_pattern})", text, re.IGNORECASE):
+            return True
+
+        active_name = self._model_manager.get_display_name(character) if character else ""
+        if user_name and text.startswith("你戳了戳") and user_name in text and (not active_name or active_name not in text):
+            return True
+        return False
+
+    def _consume_poke_user_stage_directions(self, text: str, character: str) -> tuple[str, bool]:
+        source = str(text or "")
+        triggered = False
+
+        def replace(match):
+            nonlocal triggered
+            inner = match.group("inner").strip()
+            if not self._is_poke_user_stage_direction(inner, character):
+                return match.group(0)
+            triggered = True
+            return ""
+
+        cleaned = re.sub(
+            r"(?P<open>[（(【\[])(?P<inner>[^（）()\[\]【】]{0,64}戳了戳[^（）()\[\]【】]{0,64})(?P<close>[）)】\]])",
+            replace,
+            source,
+        )
+        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned, triggered
 
     def _assistant_content(self, character: str, text: str) -> str:
         if not self._is_group_chat:
@@ -4533,6 +4602,19 @@ class ChatWindow(QWidget):
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
         clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
+        clean, text_poke_user = self._consume_poke_user_stage_directions(
+            clean,
+            self._active_response_character,
+        )
+        if text_poke_user:
+            try:
+                publish_user_poke(
+                    self._active_response_character,
+                    source="assistant_text",
+                    direction="to_user",
+                )
+            except Exception:
+                pass
         reasoning_clean = strip_action_tags(reasoning_text)
         self._flush_tts_text(self._active_response_character)
         if self._current_bubble:
@@ -4875,6 +4957,8 @@ class ChatWindow(QWidget):
     def handle_external_user_poke(self, event: dict):
         if not isinstance(event, dict):
             event = {}
+        if str(event.get("direction", "") or "").strip().lower() == "to_user":
+            return
         if str(event.get("source", "") or "").strip().lower() == "chat":
             return
         target = str(event.get("character", "") or "").strip() or self._character
@@ -4888,6 +4972,28 @@ class ChatWindow(QWidget):
     def _scroll_to_bottom(self):
         sb = self._scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _schedule_scroll_to_bottom_after_load(self):
+        self._scroll_to_bottom_generation += 1
+        generation = self._scroll_to_bottom_generation
+        delays = (0, 30, 80, 160, 300, 500, 800)
+        for delay in delays:
+            QTimer.singleShot(
+                delay,
+                lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
+            )
+
+    def _scroll_to_bottom_for_generation(self, generation: int):
+        if generation != self._scroll_to_bottom_generation:
+            return
+        if self._scroll is None or self._msg_area is None:
+            return
+        if self.layout():
+            self.layout().activate()
+        if self._msg_area.layout():
+            self._msg_area.layout().activate()
+        self._relayout_message_bubbles(force=True)
+        self._scroll_to_bottom()
 
     def position_next_to_pet(self, pet_window: QWidget):
         pet_geo = pet_window if isinstance(pet_window, QRect) else pet_window.geometry()

@@ -475,7 +475,7 @@ def _run_poke_user_tool_call(arguments, tool_config: dict | None = None) -> dict
     message = str(arguments.get("message", "") or "").strip()
     try:
         from action_bus import publish_user_poke
-        publish_user_poke(character, message)
+        publish_user_poke(character, message, source="llm_tool", direction="to_user")
     except Exception as exc:
         return {"content": f"戳一戳失败：{exc}", "extra_messages": []}
     return {
