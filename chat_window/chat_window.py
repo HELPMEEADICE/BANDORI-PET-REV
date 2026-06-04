@@ -215,6 +215,7 @@ class ChatWindow(QWidget):
         self._plan_divider = None
         self._active_response_character = character
         self._last_user_text = ""
+        self._pending_interaction_context = ""
         self._last_user_message_id: int | None = None
         self._last_group_user_message_id: int | None = None
         self._closing = False
@@ -1327,7 +1328,11 @@ class ChatWindow(QWidget):
         avatar.setCursor(Qt.CursorShape.PointingHandCursor)
         avatar.setToolTip(_tr("ChatWindow.avatar_tooltip"))
         avatar.mouseReleaseEvent = self._on_title_avatar_released
+        avatar.mouseDoubleClickEvent = self._on_title_avatar_double_clicked
         layout.addWidget(avatar)
+        self._title_avatar_click_timer = QTimer(self)
+        self._title_avatar_click_timer.setSingleShot(True)
+        self._title_avatar_click_timer.timeout.connect(self._show_conversation_history)
 
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
@@ -1923,7 +1928,22 @@ class ChatWindow(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         event.accept()
-        self._show_conversation_history()
+        if getattr(self, "_suppress_next_title_avatar_release", False):
+            self._suppress_next_title_avatar_release = False
+            return
+        self._title_avatar_click_timer.start(220)
+
+    def _on_title_avatar_double_clicked(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        event.accept()
+        if hasattr(self, "_title_avatar_click_timer"):
+            self._title_avatar_click_timer.stop()
+        self._suppress_next_title_avatar_release = True
+        QTimer.singleShot(350, lambda: setattr(self, "_suppress_next_title_avatar_release", False))
+        target = self._title_avatar_character()
+        if target:
+            self._send_poke_to_character(target)
 
     def _show_conversation_history(self):
         if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
@@ -2761,10 +2781,9 @@ class ChatWindow(QWidget):
             avatar_focus = "center"
             if m["role"] == "user":
                 avatar_path = self._user_avatar_path
+            message_character = self._message_character(m["content"], m["role"])
             if m["role"] == "assistant":
-                avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(
-                    self._message_character(m["content"], m["role"])
-                )
+                avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(message_character)
             bubble = MessageBubble(
                 self._message_content(m["content"], m["role"]),
                 m["role"],
@@ -2778,7 +2797,9 @@ class ChatWindow(QWidget):
                 show_reasoning=self._show_reasoning,
                 search_sources=self._message_search_sources(m.get("tool_trace_json")),
                 attachments=self._normalize_attachments(m.get("attachments_json")) if m["role"] == "user" else None,
+                avatar_character=message_character,
             )
+            self._connect_message_bubble(bubble)
             self._msg_layout.addWidget(bubble)
         self._msg_layout.addStretch()
         self._relayout_message_bubbles()
@@ -2865,10 +2886,90 @@ class ChatWindow(QWidget):
             avatar_data=avatar_data,
             avatar_focus=avatar_focus,
             show_reasoning=self._show_reasoning,
+            avatar_character=avatar_character,
         )
+        self._connect_message_bubble(bubble)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
         self._relayout_message_bubbles()
         self._scroll_to_bottom()
+
+    def _connect_message_bubble(self, bubble: MessageBubble):
+        bubble.avatar_double_clicked.connect(self._on_message_avatar_double_clicked)
+
+    def _on_message_avatar_double_clicked(self, character: str):
+        target = str(character or "").strip() or self._character
+        if self._is_group_chat and target not in self._group_characters:
+            return
+        self._send_poke_to_character(target)
+
+    def _send_poke_to_character(self, character: str):
+        if self._generation_busy():
+            self._composer_hint.setText(_tr("ChatWindow.poke_busy_hint", default="当前回复还在进行中，等她说完再戳一下吧。"))
+            return
+        self._reload_runtime_config()
+        api_url = self._cfg.get("llm_api_url", "")
+        api_key = self._cfg.get("llm_api_key", "")
+        model_id = self._cfg.get("llm_model_id", "")
+        if not api_url or not api_key or not model_id:
+            self._composer_hint.setText(_tr("ChatWindow.not_configured"))
+            return
+
+        display = self._model_manager.get_display_name(character)
+        text = _tr("ChatWindow.poke_message", default="（你戳了戳 {name}）", name=display)
+        self._pending_interaction_context = _tr(
+            "ChatWindow.poke_context",
+            default=(
+                "用户刚刚双击聊天头像戳了戳 {name}。请 {name} 以角色口吻做出短而自然的反应，"
+                "可以惊讶、害羞、吐槽或回戳，不要复读系统事件。"
+            ),
+            name=display,
+        )
+        self._set_busy(True, planning=False)
+        self._reset_tts_stream()
+        self._stream_buffer = ""
+        self._visible_stream_text = ""
+        self._reasoning_stream_text = ""
+        try:
+            publish_action(character, "surprised")
+        except Exception:
+            pass
+
+        user_bubble = MessageBubble(
+            text,
+            "user",
+            self._user_name or _tr("ChatWindow.you"),
+            avatar_color=self._user_avatar_color,
+            avatar_path=self._user_avatar_path,
+            show_reasoning=self._show_reasoning,
+        )
+        self._connect_message_bubble(user_bubble)
+        self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
+        self._relayout_message_bubbles()
+        self._scroll_to_bottom()
+
+        if self._is_group_chat:
+            self._last_group_user_message_id = self._db.add_group_message(
+                self._conversation_key,
+                self._ensure_group_conversation_id(),
+                "user",
+                text,
+                user_key=self._chat_user_key,
+            )
+            self._last_user_message_id = None
+            self._last_user_text = text
+            self._refresh_group_list()
+            self._group_spoken = []
+            self._group_queue = [character]
+            self._start_next_group_response()
+            return
+
+        if self._conv_id is None:
+            self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
+        self._last_user_message_id = self._db.add_message(self._conv_id, "user", text)
+        self._last_group_user_message_id = None
+        self._last_user_text = text
+        self._refresh_group_list()
+        self._start_response_for_character(character, [])
 
     @staticmethod
     def _is_interrupt_command(text: str) -> bool:
@@ -3741,6 +3842,8 @@ class ChatWindow(QWidget):
         desktop_context = desktop_state_context(self._cfg)
         if desktop_context:
             dynamic_context += "\n\n" + desktop_context
+        if self._pending_interaction_context:
+            dynamic_context += "\n\n【当前互动事件】\n" + self._pending_interaction_context
         if self._auto_active:
             other_characters = [c for c in self._group_characters if c != character]
             other_names = [self._model_manager.get_display_name(c) for c in other_characters]
@@ -3963,7 +4066,9 @@ class ChatWindow(QWidget):
                 avatar_path=avatar_path,
                 avatar_data=avatar_data,
                 avatar_focus=avatar_focus,
+                avatar_character=self._character,
             )
+            self._connect_message_bubble(bubble)
             self._msg_layout.insertWidget(self._msg_layout.count() - 1, bubble)
             self._relayout_message_bubbles()
             self._scroll_to_bottom()
@@ -3987,6 +4092,7 @@ class ChatWindow(QWidget):
             show_reasoning=self._show_reasoning,
             attachments=self._normalize_attachments(attachments),
         )
+        self._connect_message_bubble(user_bubble)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
         self._relayout_message_bubbles()
 
@@ -4245,19 +4351,23 @@ class ChatWindow(QWidget):
             avatar_data=avatar_data,
             avatar_focus=avatar_focus,
             show_reasoning=self._show_reasoning,
+            avatar_character=character,
         )
+        self._connect_message_bubble(self._current_bubble)
         self._current_bubble.set_streaming(True)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
         self._relayout_message_bubbles()
         self._scroll_to_bottom()
 
         messages = self._build_messages_for_character(character, spoken_names)
+        self._pending_interaction_context = ""
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
         tool_config = tool_config_snapshot(
             self._cfg,
             include_chat_keys=True,
             latest_user_text=self._last_user_text,
         )
+        tool_config["_active_character"] = character
         if self._is_group_chat:
             tool_config["llm_auto_continue_enabled"] = False
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
@@ -4432,7 +4542,9 @@ class ChatWindow(QWidget):
             avatar_data=avatar_data,
             avatar_focus=avatar_focus,
             show_reasoning=self._show_reasoning,
+            avatar_character=character,
         )
+        self._connect_message_bubble(self._current_bubble)
         self._current_bubble.set_streaming(True)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
         self._relayout_message_bubbles()

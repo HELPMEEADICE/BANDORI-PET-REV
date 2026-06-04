@@ -28,6 +28,7 @@ WEB_SEARCH_TOOL_NAME = "web_search"
 AUTO_CONTINUE_TOOL_NAME = "continue_conversation"
 CREATE_ALARM_TOOL_NAME = "create_alarm"
 START_POMODORO_TOOL_NAME = "start_pomodoro"
+POKE_USER_TOOL_NAME = "poke_user"
 _FORCE_WEB_SEARCH_PATTERN = re.compile(
     r"(联网|上网|搜(?:索|一下)?|查(?:一下|找)?|帮我(?:搜|查|找)|"
     r"最新|实时|现在|当前|今天|今日|昨天|明天|新闻|价格|股价|汇率|"
@@ -163,6 +164,26 @@ CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL = {
     },
 }
 
+CHAT_COMPLETIONS_POKE_USER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": POKE_USER_TOOL_NAME,
+        "description": (
+            "Playfully poke/nudge the user through BandoriPet, similar to QQ's poke interaction. "
+            "Use this when the character wants to poke the user back or initiate a playful poke."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Optional short natural reason or line for the poke.",
+                },
+            },
+        },
+    },
+}
+
 
 def web_search_system_hint(include_sources: bool = True) -> str:
     source_rule = (
@@ -191,6 +212,7 @@ def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = N
         tools.append(CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL)
     if reminder_tools_enabled(config):
         tools.extend(CHAT_COMPLETIONS_REMINDER_TOOLS)
+    tools.append(CHAT_COMPLETIONS_POKE_USER_TOOL)
     tools.extend(mcp_proxy_tools(config))
     tools.extend(computer_tools(config))
     return tools
@@ -221,6 +243,10 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "当用户表达设置闹钟、提醒、番茄钟、专注计时等明确意图时，可以直接调用对应工具创建；"
             "时间不明确时先追问，不要凭空编造具体时间。工具成功后，用角色口吻简短确认。"
         )
+    hints.append(
+        f"当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 {POKE_USER_TOOL_NAME}；"
+        "调用后仍要用角色口吻自然回应，不要解释工具细节。"
+    )
     if config.get("llm_auto_continue_enabled", False):
         max_turns = _normalize_auto_continue_max_turns(config.get("llm_auto_continue_max_turns", 5))
         hints.append(
@@ -281,6 +307,8 @@ def with_web_search_system_hint(messages: list[dict], include_sources: bool = Tr
 def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
     if name == AUTO_CONTINUE_TOOL_NAME:
         return _run_auto_continue_tool_call(arguments, tool_config or {})
+    if name == POKE_USER_TOOL_NAME:
+        return _run_poke_user_tool_call(arguments, tool_config or {})
     if name in {CREATE_ALARM_TOOL_NAME, START_POMODORO_TOOL_NAME}:
         return _run_reminder_tool_call(name, arguments, tool_config or {})
     if name != WEB_SEARCH_TOOL_NAME:
@@ -374,6 +402,27 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
     except Exception as exc:
         return {"content": f"创建提醒失败：{exc}", "extra_messages": []}
     return {"content": "未知提醒工具。", "extra_messages": []}
+
+
+def _run_poke_user_tool_call(arguments, tool_config: dict | None = None) -> dict:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    character = str((tool_config or {}).get("_active_character", "") or "").strip()
+    message = str(arguments.get("message", "") or "").strip()
+    try:
+        from action_bus import publish_user_poke
+        publish_user_poke(character, message)
+    except Exception as exc:
+        return {"content": f"戳一戳失败：{exc}", "extra_messages": []}
+    return {
+        "content": "已戳了戳用户。请用角色口吻自然承接，不要提到工具调用细节。",
+        "extra_messages": [],
+    }
 
 
 def _normalize_auto_continue_max_turns(value) -> int:

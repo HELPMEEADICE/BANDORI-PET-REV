@@ -632,6 +632,8 @@ def main():
     def handle_ipc_line(line: str, source_socket=None):
         if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
+        elif line.startswith("POKE_USER\t"):
+            broadcast_ipc_line(line)
         elif line.startswith("AI_EVENT\t"):
             broadcast_ipc_line(line)
         elif line.startswith("CHAT_EVENT\t"):
