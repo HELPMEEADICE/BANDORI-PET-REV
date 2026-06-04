@@ -8,6 +8,18 @@ def publish_action(character: str, action: str):
     send_ipc_message(f"ACTION\t{character}\t{action}\n", 200)
 
 
+def publish_user_poke(character: str = "", message: str = ""):
+    payload = {}
+    if character:
+        payload["character"] = character
+    if message:
+        payload["message"] = message
+    try:
+        send_ipc_message(f"POKE_USER\t{json.dumps(payload, ensure_ascii=False)}\n", 200)
+    except Exception:
+        pass
+
+
 def publish_emotion_behavior(character: str, behavior: dict):
     if not character or not isinstance(behavior, dict) or not behavior:
         return

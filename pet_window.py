@@ -2430,6 +2430,11 @@ class PetWindow(QWidget):
                 self._on_chat_action(parts[2])
             elif len(parts) == 2:
                 self._on_chat_action(parts[1])
+        elif line.startswith("POKE_USER\t"):
+            try:
+                self._handle_user_poke(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                self._handle_user_poke({})
         elif line.startswith("LIP\t"):
             parts = line.split("\t")
             if len(parts) >= 3 and parts[1] == self._current_char:
@@ -2934,6 +2939,16 @@ class PetWindow(QWidget):
 
     def _finish_emotion_window_feedback(self):
         self._emotion_window_animating = False
+
+    def _handle_user_poke(self, event: dict):
+        if not isinstance(event, dict):
+            event = {}
+        target = str(event.get("character", "") or "").strip()
+        if target and target != self._current_char:
+            return
+        self._note_user_interaction()
+        self._on_chat_action("smile")
+        self._play_emotion_window_feedback("shake", 72)
 
     def _on_chat_action(self, action_name: str):
         self._note_user_interaction()

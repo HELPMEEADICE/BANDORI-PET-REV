@@ -2,7 +2,7 @@ import json
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QSize
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QSize, Signal
 from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -42,7 +42,20 @@ class ReasoningHeader(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class PokeAvatarLabel(QLabel):
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
 class MessageBubble(QWidget):
+    avatar_double_clicked = Signal(str)
+
     def __init__(
         self,
         text: str,
@@ -58,6 +71,7 @@ class MessageBubble(QWidget):
         show_reasoning: bool = True,
         search_sources: list[dict] | None = None,
         attachments: list[dict] | str | None = None,
+        avatar_character: str = "",
     ):
         super().__init__(parent)
         self._text = text
@@ -67,6 +81,7 @@ class MessageBubble(QWidget):
         self._reasoning_collapsed = True
         self._search_sources = self._normalize_search_sources(search_sources)
         self._attachments = self._normalize_display_attachments(attachments)
+        self._avatar_character = avatar_character
         self._author = author or (_tr("ChatWindow.you") if role == "user" else _tr("ChatWindow.you"))
         self._created_at = created_at
         self._avatar_color = avatar_color
@@ -97,9 +112,13 @@ class MessageBubble(QWidget):
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(0)
 
-        self._avatar = QLabel(self._initials(), self)
+        self._avatar = PokeAvatarLabel(self._initials(), self)
         self._avatar.setFixedSize(28, 28)
         self._avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._role == "assistant":
+            self._avatar.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._avatar.setToolTip(_tr("ChatWindow.poke_avatar_tooltip", default="双击戳一戳"))
+            self._avatar.double_clicked.connect(self._on_avatar_double_clicked)
 
         self._meta = QLabel(self._meta_text(), self)
         self._meta.setFixedHeight(18)
@@ -225,6 +244,29 @@ class MessageBubble(QWidget):
             inner.setContentsMargins(0, 0, 48, 0)
 
         layout.addLayout(inner)
+
+    def _on_avatar_double_clicked(self):
+        if self._role != "assistant":
+            return
+        self._play_avatar_poke_feedback()
+        self.avatar_double_clicked.emit(self._avatar_character)
+
+    def _play_avatar_poke_feedback(self):
+        if getattr(self, "_avatar_poke_anim", None) is not None:
+            try:
+                self._avatar_poke_anim.stop()
+            except RuntimeError:
+                pass
+        start = self._avatar.geometry()
+        anim = QPropertyAnimation(self._avatar, b"geometry", self)
+        anim.setDuration(260)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        offsets = (0, -4, 4, -2, 2, 0)
+        for index, dx in enumerate(offsets):
+            step = index / (len(offsets) - 1)
+            anim.setKeyValueAt(step, QRect(start.x() + dx, start.y(), start.width(), start.height()))
+        self._avatar_poke_anim = anim
+        anim.start()
 
     def _make_container(self, user: bool) -> QWidget:
         w = RoundedPanel()
