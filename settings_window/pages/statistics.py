@@ -444,12 +444,13 @@ class StatisticsPageMixin:
     def _refresh_statistics(self, *_args):
         days = self._stats_range_combo.itemData(self._stats_range_combo.currentIndex()) or 0
         char_key = self._stats_char_combo.itemData(self._stats_char_combo.currentIndex()) or ""
+        user_key = user_key_from_config(self._cfg) if hasattr(self, "_cfg") else ""
         db = self._get_stats_db()
         self._refresh_overview_cards(db)
-        self._refresh_affection_chart(db, char_key, days)
-        self._refresh_heatmap(db)
-        self._refresh_char_messages_chart(db, days)
-        self._refresh_daily_msg_chart(db, days)
+        self._refresh_affection_chart(db, char_key, days, user_key)
+        self._refresh_heatmap(db, user_key)
+        self._refresh_char_messages_chart(db, days, user_key)
+        self._refresh_daily_msg_chart(db, days, user_key)
         self._refresh_daily_usage_chart(db, days)
 
     def _refresh_overview_cards(self, db):
@@ -460,7 +461,7 @@ class StatisticsPageMixin:
         self._stat_cards["usage_week"].set_value(_format_duration(db.get_usage_week()))
         self._stat_cards["usage_total"].set_value(_format_duration(db.get_usage_all_time()))
 
-    def _refresh_affection_chart(self, db, character: str, days: int):
+    def _refresh_affection_chart(self, db, character: str, days: int, user_key: str = ""):
         no_char_hint = _tr("SettingsWindow.statistics_select_char_hint", default="请在下方选择角色")
         no_data_hint = _tr("SettingsWindow.statistics_no_affection_data", default="暂无好感度变化记录")
         trend_title = _tr("SettingsWindow.statistics_affection_trend", default="好感度趋势")
@@ -470,7 +471,7 @@ class StatisticsPageMixin:
             self._apply_chart_theme(chart)
             self._affection_chart_view.setChart(chart)
             return
-        events = db.get_mood_events_for_chart(character, days)
+        events = db.get_mood_events_for_chart(character, days, user_key)
         if not events:
             chart = _make_empty_chart(trend_title, no_data_hint)
             self._apply_chart_theme(chart)
@@ -541,15 +542,15 @@ class StatisticsPageMixin:
         self._apply_chart_theme(chart)
         self._affection_chart_view.setChart(chart)
 
-    def _refresh_heatmap(self, db):
-        grid = db.get_hourly_heatmap(7)
+    def _refresh_heatmap(self, db, user_key: str = ""):
+        grid = db.get_hourly_heatmap(7, user_key)
         self._heatmap_widget.set_data(grid)
 
-    def _refresh_char_messages_chart(self, db, days: int):
+    def _refresh_char_messages_chart(self, db, days: int, user_key: str = ""):
         chart_title = _tr("SettingsWindow.statistics_chat_per_character", default="各角色对话量")
         no_data_hint = _tr("SettingsWindow.statistics_no_messages", default="暂无对话记录")
 
-        per_char = db.get_messages_per_character_range(days)
+        per_char = db.get_messages_per_character_range(days, user_key)
         if not per_char:
             chart = _make_empty_chart(chart_title, no_data_hint)
             self._apply_chart_theme(chart)
@@ -597,12 +598,12 @@ class StatisticsPageMixin:
         self._apply_chart_theme(chart)
         self._char_messages_chart_view.setChart(chart)
 
-    def _refresh_daily_msg_chart(self, db, days: int):
+    def _refresh_daily_msg_chart(self, db, days: int, user_key: str = ""):
         chart_title = _tr("SettingsWindow.statistics_daily_messages", default="每日消息趋势")
         no_data_hint = _tr("SettingsWindow.statistics_no_messages", default="暂无对话记录")
 
         actual_days = days if days > 0 else 30
-        daily = db.get_daily_message_counts(actual_days)
+        daily = db.get_daily_message_counts(actual_days, user_key)
         if not daily:
             chart = _make_empty_chart(chart_title, no_data_hint)
             self._apply_chart_theme(chart)

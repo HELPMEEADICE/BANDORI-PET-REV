@@ -6,7 +6,7 @@ import json
 import re
 import threading
 import time
-from functools import wraps
+from functools import wraps, lru_cache
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1980,19 +1980,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         user_key = self._normalize_user_key(user_key)
         if days <= 0:
             rows = self._conn.execute(
-                "SELECT date(created_at) AS day, "
-                "SUM(affection_delta), SUM(trust_delta), SUM(familiarity_delta) "
+                "SELECT created_at, affection_delta, trust_delta, familiarity_delta "
                 "FROM mood_events WHERE character=? AND user_key=? "
-                "GROUP BY date(created_at) ORDER BY day ASC",
+                "ORDER BY created_at ASC, id ASC",
                 (character, user_key),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT date(created_at) AS day, "
-                "SUM(affection_delta), SUM(trust_delta), SUM(familiarity_delta) "
+                "SELECT created_at, affection_delta, trust_delta, familiarity_delta "
                 "FROM mood_events WHERE character=? AND user_key=? "
                 "AND created_at>=datetime('now','localtime',?) "
-                "GROUP BY date(created_at) ORDER BY day ASC",
+                "ORDER BY created_at ASC, id ASC",
                 (character, user_key, f"-{days} days"),
             ).fetchall()
         if not rows:
@@ -2037,15 +2035,44 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "total_group_messages": int(gmsg_row[0]) if gmsg_row else 0,
         }
 
-    def get_daily_message_counts(self, days: int = 30) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT date(created_at) AS day, COUNT(*) AS cnt "
-            "FROM messages "
-            "WHERE created_at>=datetime('now','localtime',?) "
-            "GROUP BY date(created_at) ORDER BY day ASC",
-            (f"-{days} days",),
+    def get_daily_message_counts(self, days: int = 30, user_key: str | None = None) -> list[dict]:
+        params: list = [f"-{days} days"]
+        private_user_filter = ""
+        group_user_filter = ""
+        if user_key is not None:
+            normalized_user = self._normalize_user_key(user_key)
+            private_user_filter = "AND c.user_key=? "
+            group_user_filter = "AND user_key=? "
+            params.append(normalized_user)
+
+        private_rows = self._conn.execute(
+            "SELECT date(m.created_at) AS day, COUNT(*) AS cnt "
+            "FROM messages m JOIN conversations c ON c.id=m.conversation_id "
+            "WHERE m.created_at>=datetime('now','localtime',?) "
+            f"{private_user_filter}"
+            "GROUP BY date(m.created_at)",
+            tuple(params),
         ).fetchall()
-        return [{"day": r[0], "count": int(r[1])} for r in rows]
+
+        group_params: list = [f"-{days} days"]
+        if user_key is not None:
+            group_params.append(self._normalize_user_key(user_key))
+        group_rows = self._conn.execute(
+            "SELECT date(created_at) AS day, COUNT(*) AS cnt "
+            "FROM group_messages "
+            "WHERE created_at>=datetime('now','localtime',?) "
+            f"{group_user_filter}"
+            "GROUP BY date(created_at)",
+            tuple(group_params),
+        ).fetchall()
+
+        counts: dict[str, int] = {}
+        for day, count in list(private_rows) + list(group_rows):
+            day_text = _db_text(day)
+            if not day_text:
+                continue
+            counts[day_text] = counts.get(day_text, 0) + int(count or 0)
+        return [{"day": day, "count": counts[day]} for day in sorted(counts)]
 
     def get_messages_per_character_range(self, days: int = 0, user_key: str = "") -> list[dict]:
         user_key = self._normalize_user_key(user_key)
@@ -2053,7 +2080,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             rows = self._conn.execute(
                 "SELECT c.character, COUNT(m.id) AS msg_count "
                 "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
-                "WHERE c.user_key=? "
+                "WHERE c.user_key=? AND c.character!='' AND c.character!='__group__' "
                 "GROUP BY c.character ORDER BY msg_count DESC",
                 (user_key,),
             ).fetchall()
@@ -2061,30 +2088,115 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             rows = self._conn.execute(
                 "SELECT c.character, COUNT(m.id) AS msg_count "
                 "FROM conversations c JOIN messages m ON m.conversation_id=c.id "
-                "WHERE c.user_key=? AND m.created_at>=datetime('now','localtime',?) "
+                "WHERE c.user_key=? AND c.character!='' AND c.character!='__group__' "
+                "AND m.created_at>=datetime('now','localtime',?) "
                 "GROUP BY c.character ORDER BY msg_count DESC",
                 (user_key, f"-{days} days"),
             ).fetchall()
-        return [{"character": r[0], "count": int(r[1])} for r in rows]
+        counts = {_db_text(r[0]): int(r[1]) for r in rows if _db_text(r[0])}
 
-    def get_hourly_heatmap(self, days: int = 7) -> list[list[int]]:
+        if days <= 0:
+            group_rows = self._conn.execute(
+                "SELECT group_key, role, content "
+                "FROM group_messages WHERE user_key=? AND group_key LIKE '__group__:%'",
+                (user_key,),
+            ).fetchall()
+        else:
+            group_rows = self._conn.execute(
+                "SELECT group_key, role, content "
+                "FROM group_messages WHERE user_key=? AND group_key LIKE '__group__:%' "
+                "AND created_at>=datetime('now','localtime',?)",
+                (user_key, f"-{days} days"),
+            ).fetchall()
+
+        for row in group_rows:
+            for character in self._group_message_count_characters(row):
+                counts[character] = counts.get(character, 0) + 1
+
+        return [
+            {"character": character, "count": count}
+            for character, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+    def get_hourly_heatmap(self, days: int = 7, user_key: str | None = None) -> list[list[int]]:
         grid = [[0] * 24 for _ in range(7)]
+        params: list = [f"-{days} days"]
+        private_user_filter = ""
+        if user_key is not None:
+            private_user_filter = "AND c.user_key=? "
+            params.append(self._normalize_user_key(user_key))
         rows = self._conn.execute(
+            "SELECT CAST(strftime('%w', m.created_at) AS INTEGER) AS wday, "
+            "CAST(strftime('%H', m.created_at) AS INTEGER) AS hour, COUNT(*) AS cnt "
+            "FROM messages m JOIN conversations c ON c.id=m.conversation_id "
+            "WHERE m.created_at>=datetime('now','localtime',?) "
+            f"{private_user_filter}"
+            "GROUP BY wday, hour",
+            tuple(params),
+        ).fetchall()
+        group_params: list = [f"-{days} days"]
+        group_user_filter = ""
+        if user_key is not None:
+            group_user_filter = "AND user_key=? "
+            group_params.append(self._normalize_user_key(user_key))
+        group_rows = self._conn.execute(
             "SELECT CAST(strftime('%w', created_at) AS INTEGER) AS wday, "
             "CAST(strftime('%H', created_at) AS INTEGER) AS hour, COUNT(*) AS cnt "
-            "FROM messages "
+            "FROM group_messages "
             "WHERE created_at>=datetime('now','localtime',?) "
+            f"{group_user_filter}"
             "GROUP BY wday, hour",
-            (f"-{days} days",),
+            tuple(group_params),
         ).fetchall()
-        for r in rows:
+        for r in list(rows) + list(group_rows):
             wday = int(r[0])
             hour = int(r[1])
             count = int(r[2])
             iso_day = (wday - 1) % 7
             if 0 <= iso_day < 7 and 0 <= hour < 24:
-                grid[iso_day][hour] = count
+                grid[iso_day][hour] += count
         return grid
+
+    @staticmethod
+    def _group_key_characters(group_key: str) -> list[str]:
+        prefix = "__group__:"
+        if not group_key.startswith(prefix):
+            return []
+        return [part for part in group_key[len(prefix):].split("|") if part]
+
+    @staticmethod
+    @lru_cache(maxsize=256)
+    def _character_display_aliases(character: str) -> set[str]:
+        aliases = {str(character or "").strip()}
+        try:
+            data = json.loads((BASE_DIR / "outfit.json").read_text(encoding="utf-8"))
+            info = data.get("characters", {}).get(character, {})
+            display = str(info.get("display", "") or "").strip()
+            if display:
+                aliases.add(display)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+        aliases.discard("")
+        return aliases
+
+    def _group_message_count_characters(self, row) -> list[str]:
+        group_key = _db_text(row[0])
+        role = _db_text(row[1], "user")
+        content = _db_text(row[2])
+        members = self._group_key_characters(group_key)
+        if not members:
+            return []
+        if role != "assistant":
+            return members
+        speaker = _group_message_speaker(content)
+        if not speaker:
+            return members
+        matched = [
+            character
+            for character in members
+            if speaker in self._character_display_aliases(character)
+        ]
+        return matched or members
 
     @staticmethod
     def _group_key_contains_character(group_key: str, character: str) -> bool:
