@@ -25,6 +25,7 @@ from reminder_core import (
 
 
 WEB_SEARCH_TOOL_NAME = "web_search"
+WEB_FETCH_TOOL_NAME = "web_fetch"
 AUTO_CONTINUE_TOOL_NAME = "continue_conversation"
 CREATE_ALARM_TOOL_NAME = "create_alarm"
 START_POMODORO_TOOL_NAME = "start_pomodoro"
@@ -144,6 +145,26 @@ CHAT_COMPLETIONS_REMINDER_TOOLS = [
     },
 ]
 
+CHAT_COMPLETIONS_POKE_USER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": POKE_USER_TOOL_NAME,
+        "description": (
+            "Playfully poke/nudge the user through BandoriPet, similar to QQ's poke interaction. "
+            "Use this when the character wants to poke the user back or initiate a playful poke."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Optional short natural reason or line for the poke.",
+                },
+            },
+        },
+    },
+}
+
 CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL = {
     "type": "function",
     "function": {
@@ -164,22 +185,28 @@ CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL = {
     },
 }
 
-CHAT_COMPLETIONS_POKE_USER_TOOL = {
+CHAT_COMPLETIONS_WEB_FETCH_TOOL = {
     "type": "function",
     "function": {
-        "name": POKE_USER_TOOL_NAME,
+        "name": WEB_FETCH_TOOL_NAME,
         "description": (
-            "Playfully poke/nudge the user through BandoriPet, similar to QQ's poke interaction. "
-            "Use this when the character wants to poke the user back or initiate a playful poke."
+            "Fetch and extract readable text from a public http/https URL. "
+            "Use this when the user provides a link and asks about its content. "
+            "If web_search is enabled, you may also fetch URLs returned by web_search."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "message": {
+                "url": {
                     "type": "string",
-                    "description": "Optional short natural reason or line for the poke.",
+                    "description": "The full http or https URL to fetch.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Maximum characters of extracted page text to return, from 500 to 12000.",
                 },
             },
+            "required": ["url"],
         },
     },
 }
@@ -208,6 +235,8 @@ def web_search_system_hint(include_sources: bool = True) -> str:
 def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
     tools = [CHAT_COMPLETIONS_WEB_SEARCH_TOOL] if web_search_enabled else []
     config = tool_config or {}
+    if config.get("llm_web_fetch_enabled", False):
+        tools.append(CHAT_COMPLETIONS_WEB_FETCH_TOOL)
     if config.get("llm_auto_continue_enabled", False):
         tools.append(CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL)
     if reminder_tools_enabled(config):
@@ -255,6 +284,17 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "调用前必须先输出当前这句自然回复，不要空内容只调用工具。"
             f"本轮最多连续输出 {max_turns} 条，达到上限后继续工具调用会被忽略。"
         )
+    if config.get("llm_web_fetch_enabled", False):
+        if config.get("llm_web_search_enabled", False):
+            hints.append(
+                f"当用户提供网页链接并询问内容，或你已经通过 {WEB_SEARCH_TOOL_NAME} 拿到候选网页且需要阅读全文时，可以调用 {WEB_FETCH_TOOL_NAME}。"
+                "只抓取 http/https 公网链接；不要声称访问了未实际调用工具的网页。"
+            )
+        else:
+            hints.append(
+                f"当用户明确提供网页链接并询问内容时，可以调用 {WEB_FETCH_TOOL_NAME} 读取页面；"
+                "没有用户提供的链接时不要自行编造 URL，也不要把它当作搜索工具使用。"
+            )
     if config.get("computer_use_enabled", False):
         if config.get("computer_use_auto_detect", True):
             hints.append(
@@ -311,6 +351,8 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
         return _run_poke_user_tool_call(arguments, tool_config or {})
     if name in {CREATE_ALARM_TOOL_NAME, START_POMODORO_TOOL_NAME}:
         return _run_reminder_tool_call(name, arguments, tool_config or {})
+    if name == WEB_FETCH_TOOL_NAME:
+        return _run_web_fetch_tool_call(arguments, tool_config or {})
     if name != WEB_SEARCH_TOOL_NAME:
         if is_mcp_tool_name(name):
             return {"content": call_mcp_tool(name, arguments), "extra_messages": []}
@@ -335,6 +377,23 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     max_results = max(1, min(8, max_results))
     engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
     return {"content": web_search(query, max_results=max_results, engine=engine), "extra_messages": []}
+
+
+def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {"url": arguments}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    url = str(arguments.get("url", "") or "").strip()
+    try:
+        max_chars = int(arguments.get("max_chars", 6000) or 6000)
+    except (TypeError, ValueError):
+        max_chars = 6000
+    max_chars = max(500, min(12000, max_chars))
+    return {"content": web_fetch(url, max_chars=max_chars), "extra_messages": []}
 
 
 def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
@@ -536,6 +595,28 @@ def web_search(query: str, max_results: int = 5, engine: str = "bing_cn") -> str
     return f"没有找到与 “{query}” 相关的搜索结果。"
 
 
+def web_fetch(url: str, max_chars: int = 6000) -> str:
+    url = _normalize_fetch_url(url)
+    if not url:
+        return "网页读取失败：url 必须是完整的 http/https 链接。"
+    try:
+        text = _fetch_page_text(url, max_chars=max_chars)
+    except Exception as exc:
+        return f"网页读取失败：{exc}"
+    if not text:
+        return "网页读取失败：没有提取到可读正文，或页面不是文本/HTML 内容。"
+    title = _extract_html_title(text) or url
+    body = _extract_readable_text(text, max_chars=max_chars)
+    if not body:
+        return "网页读取失败：没有提取到可读正文，或页面不是文本/HTML 内容。"
+    return "\n".join([
+        f"1. {title}",
+        f"URL: {url}",
+        "读取时间：" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        f"正文：{body}",
+    ])
+
+
 def _normalize_search_engine(engine: str) -> str:
     engine = str(engine or "").strip().lower()
     return engine if engine in WEB_SEARCH_ENGINE_LABELS else "bing_cn"
@@ -655,6 +736,71 @@ def _request_text_direct(url: str, timeout: int = 12) -> str:
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         return resp.read().decode(charset, errors="replace")
+
+
+def _normalize_fetch_url(url: str) -> str:
+    url = str(url or "").strip()
+    if not url:
+        return ""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+        return ""
+    return urllib.parse.urlunsplit(parsed)
+
+
+def _fetch_page_text(url: str, max_chars: int = 6000) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+
+    def fetch():
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.7,*/*;q=0.4",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+                "Accept-Encoding": "identity",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if content_type and not any(token in content_type for token in ("text/", "html", "xml", "json")):
+                return ""
+            charset = resp.headers.get_content_charset() or "utf-8"
+            raw = resp.read(max(250_000, max_chars * 40))
+            if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+                raw = gzip.decompress(raw)
+            return raw.decode(charset, errors="replace")
+
+    return run_off_gui_thread(fetch)
+
+
+def _extract_html_title(text: str) -> str:
+    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", str(text or ""))
+    return _clean_html(match.group(1))[:120] if match else ""
+
+
+def _extract_readable_text(text: str, max_chars: int = 6000) -> str:
+    text = str(text or "")
+    if not text:
+        return ""
+    text = re.sub(r"(?is)<(script|style|noscript|svg|canvas|template)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?is)<!--.*?-->", " ", text)
+    text = re.sub(r"(?is)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>|</tr>", "\n", text)
+    text = _clean_html(text)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n\s*\n+", "\n", text).strip()
+    if len(text) < 40:
+        return ""
+    return text[:max_chars].rstrip()
 
 
 def _enrich_results_with_page_excerpts(results: list[dict], max_pages: int = 2):
