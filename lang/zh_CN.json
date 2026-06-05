@@ -1,7 +1,13 @@
 ﻿{
   "costume_count": "{count}套服装",
   "character_count": "{count}名角色",
+  "Common.undo": "撤销",
+  "Common.redo": "重做",
+  "Common.cut": "剪切",
   "Common.copy": "复制",
+  "Common.paste": "粘贴",
+  "Common.delete": "删除",
+  "Common.select_all": "全选",
   "Common.copy_all": "复制全文",
   "SettingsWindow.title": "Bandori 桌宠 - 设置",
   "SettingsWindow.nav_title": "导航",

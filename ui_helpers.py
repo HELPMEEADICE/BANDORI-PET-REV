@@ -2,6 +2,7 @@ import os
 
 from PySide6.QtCore import Qt, QRectF, Signal, QTimer, QSize, QEvent
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPalette, QPixmap, QKeySequence
+from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QTextEdit,
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import Action, FluentIcon, RoundMenu, isDarkTheme
 
 from app_theme import accent_color
+from i18n_manager import tr as _tr
+from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 
 AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -93,10 +96,10 @@ class FluentContextTextEdit(QTextEdit):
         can_edit = not self.isReadOnly()
 
         undo_action = self._make_context_action(
-            menu, FluentIcon.RETURN, "Undo", QKeySequence.StandardKey.Undo, self.undo
+            menu, FluentIcon.RETURN, _tr("Common.undo", default="Undo"), QKeySequence.StandardKey.Undo, self.undo
         )
         redo_action = self._make_context_action(
-            menu, FluentIcon.ROTATE, "Redo", QKeySequence.StandardKey.Redo, self.redo
+            menu, FluentIcon.ROTATE, _tr("Common.redo", default="Redo"), QKeySequence.StandardKey.Redo, self.redo
         )
         undo_action.setEnabled(can_edit and self.document().isUndoAvailable())
         redo_action.setEnabled(can_edit and self.document().isRedoAvailable())
@@ -104,16 +107,16 @@ class FluentContextTextEdit(QTextEdit):
         menu.addSeparator()
 
         cut_action = self._make_context_action(
-            menu, FluentIcon.CUT, "Cut", QKeySequence.StandardKey.Cut, self.cut
+            menu, FluentIcon.CUT, _tr("Common.cut", default="Cut"), QKeySequence.StandardKey.Cut, self.cut
         )
         copy_action = self._make_context_action(
-            menu, FluentIcon.COPY, "Copy", QKeySequence.StandardKey.Copy, self.copy
+            menu, FluentIcon.COPY, _tr("Common.copy", default="Copy"), QKeySequence.StandardKey.Copy, self.copy
         )
         paste_action = self._make_context_action(
-            menu, FluentIcon.PASTE, "Paste", QKeySequence.StandardKey.Paste, self.paste
+            menu, FluentIcon.PASTE, _tr("Common.paste", default="Paste"), QKeySequence.StandardKey.Paste, self.paste
         )
         delete_action = self._make_context_action(
-            menu, FluentIcon.DELETE, "Delete", None, self._delete_selection
+            menu, FluentIcon.DELETE, _tr("Common.delete", default="Delete"), None, self._delete_selection
         )
         cut_action.setEnabled(can_edit and has_selection)
         copy_action.setEnabled(has_selection)
@@ -125,7 +128,7 @@ class FluentContextTextEdit(QTextEdit):
         select_all_action = self._make_context_action(
             menu,
             FluentIcon.CLEAR_SELECTION,
-            "Select All",
+            _tr("Common.select_all", default="Select All"),
             QKeySequence.StandardKey.SelectAll,
             self.selectAll,
         )
@@ -151,16 +154,17 @@ class FluentContextTextEdit(QTextEdit):
         accent = accent_color(dark)
 
         menu.setObjectName("FluentTextEditContextMenu")
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        menu.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        menu.setAutoFillBackground(False)
-        menu.hBoxLayout.setContentsMargins(8, 8, 8, 8)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        menu.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        menu.setAutoFillBackground(True)
+        menu.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         menu.view.setViewportMargins(0, 6, 0, 6)
         menu.view.setObjectName("FluentTextEditContextMenuView")
         menu.view.setFrameShape(QFrame.Shape.NoFrame)
-        menu.view.setAutoFillBackground(False)
-        menu.view.viewport().setAutoFillBackground(False)
-        menu.view.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        menu.view.setGraphicsEffect(None)
+        menu.view.setAutoFillBackground(True)
+        menu.view.viewport().setAutoFillBackground(True)
+        menu.view.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
         palette = menu.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(bg))
@@ -170,9 +174,11 @@ class FluentContextTextEdit(QTextEdit):
         menu.view.setPalette(palette)
 
         menu_style = f"""
+            QMenu#FluentTextEditContextMenu,
             RoundMenu#FluentTextEditContextMenu {{
-                background: transparent;
+                background: {bg};
                 border: none;
+                border-radius: 12px;
             }}
             QListWidget#FluentTextEditContextMenuView,
             MenuActionListWidget#FluentTextEditContextMenuView {{
@@ -227,7 +233,21 @@ class FluentContextTextEdit(QTextEdit):
         """
         menu.setStyleSheet(menu_style)
         menu.view.setStyleSheet(menu_style)
-        menu.view.viewport().setStyleSheet(f"background: transparent; border: none; color: {text};")
+        menu.view.viewport().setStyleSheet(f"background: {bg}; border: none; color: {text};")
+        menu.aboutToShow.connect(lambda: QTimer.singleShot(0, lambda: self._refresh_context_menu_window(menu)))
+
+    def _refresh_context_menu_window(self, menu):
+        width = menu.width()
+        height = menu.height()
+        if width > 0 and height > 0:
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(0, 0, width, height), 12, 12)
+            menu.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+        hwnd = int(menu.winId())
+        if hwnd:
+            apply_windows_11_border_fix(hwnd)
+            frame_changed(hwnd)
 
     def _delete_selection(self):
         cursor = self.textCursor()

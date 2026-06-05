@@ -1,7 +1,13 @@
 ﻿{
   "costume_count": "{count}套服裝",
   "character_count": "{count}名角色",
+  "Common.undo": "復原",
+  "Common.redo": "重做",
+  "Common.cut": "剪下",
   "Common.copy": "複製",
+  "Common.paste": "貼上",
+  "Common.delete": "刪除",
+  "Common.select_all": "全選",
   "Common.copy_all": "複製全文",
   "SettingsWindow.title": "Bandori 桌寵 - 設定",
   "SettingsWindow.nav_title": "導航",

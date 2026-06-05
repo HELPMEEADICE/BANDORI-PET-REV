@@ -1,7 +1,13 @@
 ﻿{
   "costume_count": "{count}着の衣装",
   "character_count": "{count}人のキャラクター",
+  "Common.undo": "元に戻す",
+  "Common.redo": "やり直し",
+  "Common.cut": "切り取り",
   "Common.copy": "コピー",
+  "Common.paste": "貼り付け",
+  "Common.delete": "削除",
+  "Common.select_all": "すべて選択",
   "Common.copy_all": "全文コピー",
   "SettingsWindow.title": "Bandori デスクトップペット - 設定",
   "SettingsWindow.nav_title": "ナビゲーション",

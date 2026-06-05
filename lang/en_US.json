@@ -1,7 +1,13 @@
 ﻿{
   "costume_count": "{count} costumes",
   "character_count": "{count} characters",
+  "Common.undo": "Undo",
+  "Common.redo": "Redo",
+  "Common.cut": "Cut",
   "Common.copy": "Copy",
+  "Common.paste": "Paste",
+  "Common.delete": "Delete",
+  "Common.select_all": "Select All",
   "Common.copy_all": "Copy all",
   "SettingsWindow.title": "Bandori Desktop Pet - Settings",
   "SettingsWindow.nav_title": "Navigation",
