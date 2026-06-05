@@ -120,7 +120,7 @@ class FluentContextTextEdit(QTextEdit):
         )
         cut_action.setEnabled(can_edit and has_selection)
         copy_action.setEnabled(has_selection)
-        paste_action.setEnabled(can_edit and QApplication.clipboard().mimeData().hasText())
+        paste_action.setEnabled(can_edit and self.canInsertFromMimeData(QApplication.clipboard().mimeData()))
         delete_action.setEnabled(can_edit and has_selection)
         menu.addActions([cut_action, copy_action, paste_action, delete_action])
         menu.addSeparator()
