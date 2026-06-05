@@ -1,10 +1,11 @@
 from PySide6.QtCharts import (
     QChart, QChartView, QLineSeries, QBarSeries, QBarSet,
-    QValueAxis, QBarCategoryAxis,
+    QValueAxis, QBarCategoryAxis, QDateTimeAxis,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, QTimer
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, QDateTime
 from PySide6.QtGui import QColor, QPainter, QPen, QCursor, QFont, QBrush
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QToolTip
+from datetime import datetime
 
 from settings_window.constants import *
 from settings_window.widgets import *
@@ -43,6 +44,45 @@ def _truncate_name(name: str, max_len: int = 6) -> str:
     return name[:max_len] + "…" if len(name) > max_len else name
 
 
+def _parse_chart_datetime(value: str) -> datetime:
+    text = str(value or "").strip()
+    for fmt, length in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d", 10)):
+        try:
+            return datetime.strptime(text[:length], fmt)
+        except ValueError:
+            continue
+    return datetime.now()
+
+
+def _chart_x(value: str) -> int:
+    return int(_parse_chart_datetime(value).timestamp() * 1000)
+
+
+def _chart_time_label(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 16:
+        return text[5:16]
+    if len(text) >= 10:
+        return text[5:10]
+    return text
+
+
+def _make_datetime_axis(values: list[str]) -> QDateTimeAxis:
+    axis_x = QDateTimeAxis()
+    points = [_chart_x(value) for value in values]
+    if points:
+        min_x = min(points)
+        max_x = max(points)
+        if min_x == max_x:
+            max_x = min_x + 86_400_000
+        axis_x.setRange(QDateTime.fromMSecsSinceEpoch(min_x), QDateTime.fromMSecsSinceEpoch(max_x))
+        span_days = max(1, int((max_x - min_x) / 86_400_000))
+        axis_x.setFormat("MM-dd" if span_days > 2 else "MM-dd HH:mm")
+    axis_x.setTickCount(min(6, max(2, len({value[:10] for value in values if value}))))
+    axis_x.setLabelsAngle(-35)
+    return axis_x
+
+
 def _make_empty_chart(title: str, hint: str) -> QChart:
     chart = QChart()
     chart.setTitle(title)
@@ -66,11 +106,11 @@ def _connect_line_tooltip(series: QLineSeries, labels: list[str], suffix: str = 
         if not state:
             QToolTip.hideText()
             return
-        idx = int(point.x())
-        if 0 <= idx < len(labels):
-            label = labels[idx]
+        if isinstance(labels, dict):
+            label = labels.get(int(round(point.x())), "")
         else:
-            label = ""
+            idx = int(point.x())
+            label = labels[idx] if 0 <= idx < len(labels) else ""
         val = int(point.y())
         text = f"{label}\n{name}: {val}{suffix}" if label else f"{name}: {val}{suffix}"
         QToolTip.showText(QCursor.pos(), text)
@@ -94,7 +134,9 @@ def _connect_bar_tooltip(bar_set: QBarSet, labels: list[str], suffix: str = ""):
 
 
 def _heatmap_level(value: int, thresholds: list[int]) -> int:
-    for i, t in enumerate(thresholds):
+    if value <= 0:
+        return 0
+    for i, t in enumerate(thresholds, start=1):
         if value <= t:
             return i
     return len(thresholds)
@@ -182,7 +224,8 @@ class _HeatmapWidget(QWidget):
             val = self._data[row][col]
             day = _HEATMAP_DAY_LABELS[row] if row < len(_HEATMAP_DAY_LABELS) else ""
             hour_str = f"{col:02d}:00-{col:02d}:59"
-            text = f"{day} {hour_str}\n{_tr('SettingsWindow.statistics_heatmap_msgs', default='消息数')}: {val}"
+            msg_text = _tr("SettingsWindow.statistics_heatmap_msgs", default="{count} 条消息", count=val)
+            text = f"{day} {hour_str}\n{msg_text}"
             QToolTip.showText(QCursor.pos(), text, self)
         else:
             QToolTip.hideText()
@@ -486,10 +529,13 @@ class StatisticsPageMixin:
         familiarity_series.setName(_tr("SettingsWindow.statistics_familiarity", default="熟悉度"))
 
         min_val, max_val = 100, 0
+        point_labels = {}
         for i, ev in enumerate(events):
-            affection_series.append(i, ev["affection"])
-            trust_series.append(i, ev["trust"])
-            familiarity_series.append(i, ev["familiarity"])
+            x = _chart_x(ev["day"])
+            point_labels[x] = _chart_time_label(ev["day"])
+            affection_series.append(x, ev["affection"])
+            trust_series.append(x, ev["trust"])
+            familiarity_series.append(x, ev["familiarity"])
             min_val = min(min_val, ev["affection"], ev["trust"], ev["familiarity"])
             max_val = max(max_val, ev["affection"], ev["trust"], ev["familiarity"])
 
@@ -500,18 +546,7 @@ class StatisticsPageMixin:
         chart.addSeries(familiarity_series)
         chart.setAnimationOptions(QChart.AnimationOptions.SeriesAnimations)
 
-        axis_x = QBarCategoryAxis()
-        date_labels = []
-        labels = []
-        visible = max(1, len(events) // 10)
-        for i, ev in enumerate(events):
-            day_str = ev["day"][5:] if len(ev["day"]) > 5 else ev["day"]
-            date_labels.append(day_str)
-            if i % visible == 0 or i == len(events) - 1:
-                labels.append(day_str)
-            else:
-                labels.append("")
-        axis_x.append(labels)
+        axis_x = _make_datetime_axis([ev["day"] for ev in events])
         chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
         affection_series.attachAxis(axis_x)
         trust_series.attachAxis(axis_x)
@@ -533,9 +568,9 @@ class StatisticsPageMixin:
         trust_series.setPen(QPen(_TRUST_COLOR, 2))
         familiarity_series.setPen(QPen(_FAMILIARITY_COLOR, 2))
 
-        _connect_line_tooltip(affection_series, date_labels)
-        _connect_line_tooltip(trust_series, date_labels)
-        _connect_line_tooltip(familiarity_series, date_labels)
+        _connect_line_tooltip(affection_series, point_labels)
+        _connect_line_tooltip(trust_series, point_labels)
+        _connect_line_tooltip(familiarity_series, point_labels)
 
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
@@ -613,26 +648,19 @@ class StatisticsPageMixin:
         series = QLineSeries()
         series.setName(_tr("SettingsWindow.statistics_messages", default="消息数"))
         max_val = 0
-        date_labels = []
-        for i, d in enumerate(daily):
-            series.append(i, d["count"])
+        point_labels = {}
+        for d in daily:
+            x = _chart_x(d["day"])
+            point_labels[x] = _chart_time_label(d["day"])
+            series.append(x, d["count"])
             max_val = max(max_val, d["count"])
-            date_labels.append(d["day"][5:] if len(d["day"]) > 5 else d["day"])
 
         chart = QChart()
         chart.setTitle(chart_title)
         chart.addSeries(series)
         chart.setAnimationOptions(QChart.AnimationOptions.SeriesAnimations)
 
-        axis_x = QBarCategoryAxis()
-        axis_labels = []
-        visible = max(1, len(daily) // 10)
-        for i, d in enumerate(daily):
-            if i % visible == 0 or i == len(daily) - 1:
-                axis_labels.append(d["day"][5:] if len(d["day"]) > 5 else d["day"])
-            else:
-                axis_labels.append("")
-        axis_x.append(axis_labels)
+        axis_x = _make_datetime_axis([d["day"] for d in daily])
         chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
         series.attachAxis(axis_x)
 
@@ -643,7 +671,7 @@ class StatisticsPageMixin:
         series.attachAxis(axis_y)
 
         series.setPen(QPen(_MSG_TREND_COLOR, 2))
-        _connect_line_tooltip(series, date_labels)
+        _connect_line_tooltip(series, point_labels)
 
         chart.legend().setVisible(False)
         self._apply_chart_theme(chart)

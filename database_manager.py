@@ -754,6 +754,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 affection_delta INTEGER NOT NULL DEFAULT 0,
                 trust_delta INTEGER NOT NULL DEFAULT 0,
                 familiarity_delta INTEGER NOT NULL DEFAULT 0,
+                affection INTEGER,
+                trust INTEGER,
+                familiarity INTEGER,
                 mood TEXT NOT NULL DEFAULT '',
                 mood_intensity INTEGER NOT NULL DEFAULT 0,
                 reason TEXT NOT NULL DEFAULT '',
@@ -825,6 +828,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         external_thread_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(external_chat_threads)").fetchall()]
         if "chat_type" not in external_thread_columns:
             self._conn.execute("ALTER TABLE external_chat_threads ADD COLUMN chat_type TEXT NOT NULL DEFAULT ''")
+        mood_event_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(mood_events)").fetchall()]
+        if "affection" not in mood_event_columns:
+            self._conn.execute("ALTER TABLE mood_events ADD COLUMN affection INTEGER")
+        if "trust" not in mood_event_columns:
+            self._conn.execute("ALTER TABLE mood_events ADD COLUMN trust INTEGER")
+        if "familiarity" not in mood_event_columns:
+            self._conn.execute("ALTER TABLE mood_events ADD COLUMN familiarity INTEGER")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_role_id ON messages(conversation_id, role, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_character_user ON conversations(character, user_key, id)")
@@ -906,6 +916,15 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "summary": current["summary"] if summary is None else str(summary or ""),
         }
         now = _now_text()
+        numeric_changed = (
+            (affection is not None and next_state["affection"] != current["affection"])
+            or (trust is not None and next_state["trust"] != current["trust"])
+            or (familiarity is not None and next_state["familiarity"] != current["familiarity"])
+        )
+        mood_changed = (
+            (mood is not None and next_state["mood"] != current["mood"])
+            or (mood_intensity is not None and next_state["mood_intensity"] != current["mood_intensity"])
+        )
         self._conn.execute(
             "INSERT INTO relationship_states "
             "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
@@ -926,6 +945,28 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 now,
             ),
         )
+        if numeric_changed or mood_changed:
+            self._conn.execute(
+                "INSERT INTO mood_events "
+                "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, "
+                "affection, trust, familiarity, mood, mood_intensity, reason, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    character,
+                    user_key,
+                    "manual_set",
+                    next_state["affection"] - current["affection"],
+                    next_state["trust"] - current["trust"],
+                    next_state["familiarity"] - current["familiarity"],
+                    next_state["affection"],
+                    next_state["trust"],
+                    next_state["familiarity"],
+                    next_state["mood"] if mood_changed else "",
+                    next_state["mood_intensity"] if mood_changed else 0,
+                    "manual relationship state update",
+                    now,
+                ),
+            )
         self._conn.commit()
         return self.get_relationship_state(character, user_key)
 
@@ -981,8 +1022,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         )
         self._conn.execute(
             "INSERT INTO mood_events "
-            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, mood, mood_intensity, reason, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, "
+            "affection, trust, familiarity, mood, mood_intensity, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 character,
                 user_key,
@@ -990,6 +1032,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 _clamp_int(affection_delta, -100, 100, 0),
                 _clamp_int(trust_delta, -100, 100, 0),
                 _clamp_int(familiarity_delta, -100, 100, 0),
+                next_values["affection"],
+                next_values["trust"],
+                next_values["familiarity"],
                 mood or "",
                 _clamp_int(mood_intensity, 0, 100, 0),
                 str(reason or "")[:500],
@@ -1980,21 +2025,21 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         user_key = self._normalize_user_key(user_key)
         if days <= 0:
             rows = self._conn.execute(
-                "SELECT created_at, affection_delta, trust_delta, familiarity_delta "
+                "SELECT created_at, affection_delta, trust_delta, familiarity_delta, affection, trust, familiarity "
                 "FROM mood_events WHERE character=? AND user_key=? "
                 "ORDER BY created_at ASC, id ASC",
                 (character, user_key),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT created_at, affection_delta, trust_delta, familiarity_delta "
+                "SELECT created_at, affection_delta, trust_delta, familiarity_delta, affection, trust, familiarity "
                 "FROM mood_events WHERE character=? AND user_key=? "
                 "AND created_at>=datetime('now','localtime',?) "
                 "ORDER BY created_at ASC, id ASC",
                 (character, user_key, f"-{days} days"),
             ).fetchall()
+        state = self.get_relationship_state(character, user_key)
         if not rows:
-            state = self.get_relationship_state(character, user_key)
             today = datetime.now().strftime("%Y-%m-%d")
             return [{
                 "day": today,
@@ -2002,27 +2047,57 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "trust": state["trust"],
                 "familiarity": state["familiarity"],
             }]
-        state = self.get_relationship_state(character, user_key)
-        total_aff_delta = sum(int(r[1] or 0) for r in rows)
-        total_trust_delta = sum(int(r[2] or 0) for r in rows)
-        total_fam_delta = sum(int(r[3] or 0) for r in rows)
-        base_affection = max(0, min(100, state["affection"] - total_aff_delta))
-        base_trust = max(0, min(100, state["trust"] - total_trust_delta))
-        base_familiarity = max(0, min(100, state["familiarity"] - total_fam_delta))
-        result = []
-        affection = base_affection
-        trust = base_trust
-        familiarity = base_familiarity
-        for r in rows:
-            affection = max(0, min(100, affection + int(r[1] or 0)))
-            trust = max(0, min(100, trust + int(r[2] or 0)))
-            familiarity = max(0, min(100, familiarity + int(r[3] or 0)))
+
+        first_snapshot_index = -1
+        for i, r in enumerate(rows):
+            if _db_int(r[4]) is not None and _db_int(r[5]) is not None and _db_int(r[6]) is not None:
+                first_snapshot_index = i
+                break
+
+        if first_snapshot_index < 0:
+            day = _db_text(state.get("updated_at")) or datetime.now().strftime("%Y-%m-%d")
+            return [{
+                "day": day,
+                "affection": state["affection"],
+                "trust": state["trust"],
+                "familiarity": state["familiarity"],
+            }]
+
+        result: list[dict] = []
+        affection = trust = familiarity = 0
+        for r in rows[first_snapshot_index:]:
+            snapshot_affection = _db_int(r[4])
+            snapshot_trust = _db_int(r[5])
+            snapshot_familiarity = _db_int(r[6])
+            if snapshot_affection is None or snapshot_trust is None or snapshot_familiarity is None:
+                affection = max(0, min(100, affection + int(r[1] or 0)))
+                trust = max(0, min(100, trust + int(r[2] or 0)))
+                familiarity = max(0, min(100, familiarity + int(r[3] or 0)))
+            else:
+                affection = max(0, min(100, snapshot_affection))
+                trust = max(0, min(100, snapshot_trust))
+                familiarity = max(0, min(100, snapshot_familiarity))
             result.append({
                 "day": r[0],
                 "affection": affection,
                 "trust": trust,
                 "familiarity": familiarity,
             })
+
+        updated_at = _db_text(state.get("updated_at"))
+        if updated_at and result and updated_at >= _db_text(result[-1].get("day")):
+            if (
+                updated_at != _db_text(result[-1].get("day"))
+                or int(result[-1]["affection"]) != int(state["affection"])
+                or int(result[-1]["trust"]) != int(state["trust"])
+                or int(result[-1]["familiarity"]) != int(state["familiarity"])
+            ):
+                result.append({
+                    "day": updated_at,
+                    "affection": state["affection"],
+                    "trust": state["trust"],
+                    "familiarity": state["familiarity"],
+                })
         return result
 
     def get_chat_summary(self) -> dict:
