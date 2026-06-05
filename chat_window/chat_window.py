@@ -276,6 +276,8 @@ class ChatWindow(QWidget):
         self._group_splitter = None
         self._group_toggle_btn = None
         self._group_sidebar_toggle_btn = None
+        self._group_list_indicator = None
+        self._group_list_indicator_anim = None
         self._group_splitter_adjusting = False
         self._group_sidebar_anim = None
         self._group_sidebar_animating = False
@@ -1164,6 +1166,12 @@ class ChatWindow(QWidget):
         self._group_list_scroll = scroll
         self._group_list_widget = list_widget
         self._group_list_layout = list_layout
+        self._group_list_indicator = QFrame(list_widget)
+        self._group_list_indicator.setObjectName("GroupListCurrentIndicator")
+        self._group_list_indicator.setFixedWidth(3)
+        self._group_list_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._group_list_indicator.hide()
+        self._apply_group_list_indicator_theme()
         self._refresh_group_list()
         return sidebar
 
@@ -1324,9 +1332,64 @@ class ChatWindow(QWidget):
             self._group_list_layout.addWidget(row)
         self._group_list_layout.addStretch()
 
+    def _apply_group_list_indicator_theme(self):
+        if self._group_list_indicator is None:
+            return
+        self._group_list_indicator.setStyleSheet(f"""
+            QFrame#GroupListCurrentIndicator {{
+                background: {accent_color(isDarkTheme())};
+                border-radius: 1px;
+            }}
+        """)
+
+    def _current_group_list_row(self):
+        if not hasattr(self, "_group_list_layout"):
+            return None
+        current_key = self._conversation_key
+        for i in range(self._group_list_layout.count()):
+            item = self._group_list_layout.itemAt(i)
+            widget = item.widget() if item else None
+            if not isinstance(widget, GroupChatListRow):
+                continue
+            if self._conversation_key_for(widget.characters()) == current_key:
+                return widget
+        return None
+
+    def _group_list_indicator_rect_for_row(self, row: GroupChatListRow) -> QRect:
+        return QRect(row.x() + 1, row.y() + 14, 3, max(1, row.height() - 28))
+
+    def _move_group_list_indicator_to_current(self, animated: bool = True):
+        indicator = self._group_list_indicator
+        if indicator is None:
+            return
+        row = self._current_group_list_row()
+        if row is None:
+            indicator.hide()
+            return
+        target = self._group_list_indicator_rect_for_row(row)
+        if self._group_list_indicator_anim is not None:
+            self._group_list_indicator_anim.stop()
+            self._group_list_indicator_anim = None
+        indicator.raise_()
+        if not animated or not indicator.isVisible():
+            indicator.setGeometry(target)
+            indicator.show()
+            return
+        anim = QPropertyAnimation(indicator, b"geometry", self)
+        anim.setDuration(180)
+        anim.setStartValue(indicator.geometry())
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: setattr(self, "_group_list_indicator_anim", None))
+        self._group_list_indicator_anim = anim
+        anim.start()
+
     def _refresh_group_list(self):
         if not hasattr(self, "_group_list_layout"):
             return
+        if self._group_list_indicator_anim is not None:
+            self._group_list_indicator_anim.stop()
+            self._group_list_indicator_anim = None
         while self._group_list_layout.count():
             item = self._group_list_layout.takeAt(0)
             widget = item.widget() if item else None
@@ -1334,6 +1397,7 @@ class ChatWindow(QWidget):
                 widget.deleteLater()
 
         self._refresh_modern_chat_list()
+        QTimer.singleShot(0, lambda: self._move_group_list_indicator_to_current(animated=False))
 
     def _sync_group_list_current_state(self) -> bool:
         if not hasattr(self, "_group_list_layout"):
@@ -1349,6 +1413,8 @@ class ChatWindow(QWidget):
             is_current = row_key == current_key
             widget.set_current(is_current)
             found_current = found_current or is_current
+        if found_current:
+            QTimer.singleShot(0, self._move_group_list_indicator_to_current)
         return found_current
 
     def _show_new_chat_picker(self):
@@ -1890,6 +1956,7 @@ class ChatWindow(QWidget):
                 widget = item.widget() if item else None
                 if isinstance(widget, GroupChatListRow):
                     widget.apply_theme()
+            self._apply_group_list_indicator_theme()
 
         self._input.setStyleSheet(f"""
             QTextEdit {{

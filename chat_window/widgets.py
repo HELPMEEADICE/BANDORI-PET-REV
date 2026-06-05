@@ -684,7 +684,6 @@ class GroupChatListRow(QWidget):
         self._pressed = False
         self._avatar_has_pixmap = avatar_pixmap is not None and not avatar_pixmap.isNull()
         self._bg_color = QColor("transparent")
-        self._indicator_color = QColor("transparent")
         self._border_color = QColor("transparent")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(64)
@@ -807,7 +806,6 @@ class GroupChatListRow(QWidget):
         avatar_bg = accent_color(dark) if self._current else ("#2d3444" if dark else "#edf2f9")
         avatar_fg = "#ffffff" if self._current else ("#dce4f7" if dark else "#4f5d74")
         self._bg_color = QColor(bg)
-        self._indicator_color = QColor(accent_color(dark) if self._current else "transparent")
         self._border_color = QColor(selected_border if self._current else "transparent")
         self.setStyleSheet(f"""
             GroupChatListRow {{
@@ -858,10 +856,6 @@ class GroupChatListRow(QWidget):
             painter.setPen(QPen(self._border_color, 1))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
-        if self._current:
-            indicator = QRectF(1, 14, 3, self.height() - 28)
-            painter.setBrush(self._indicator_color)
-            painter.drawRoundedRect(indicator, 1.5, 1.5)
         super().paintEvent(event)
 
     def enterEvent(self, event):
