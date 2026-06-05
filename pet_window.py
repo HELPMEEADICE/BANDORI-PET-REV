@@ -124,6 +124,7 @@ WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 LIVE2D_PREWARM_MAX_MOTIONS = 64
 LIVE2D_PREWARM_MAX_EXPRESSIONS = 32
 LIVE2D_PREWARM_STEP_MS = 90
+STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS = (0, 100, 300, 800, 1600, 3000)
 
 
 _PIXEL_PET_WIDGET_CLASS = None
@@ -304,6 +305,12 @@ class PetWindow(QWidget):
         self._pixel_frames = None
         self._pixel_ready = False
         self._show_pos_set = False
+        self._restoring_saved_position = False
+        self._startup_position_restore_pending = False
+        self._startup_position_restore_attempt = 0
+        self._startup_position_restore_mode = "pixel" if self._pixel_mode else "live2d"
+        self._startup_position_restore_offset_x = 0
+        self._startup_transient_position_set = False
         self._motion_guard_token = 0
         self._expression_guard_token = 0
         self._live2d_prewarm_token = 0
@@ -559,6 +566,31 @@ class PetWindow(QWidget):
         target_y = geo.top() + int(round(rel_y * max(0, geo.height() - self.height())))
         return self._constrain_position_to_screen(target_x, target_y, screen, allow_partial=allow_partial)
 
+    def _has_saved_position(self, mode: str) -> bool:
+        if not self._cfg:
+            return False
+        entry = self._current_model_entry()
+        if mode == "pixel":
+            placement_key = "pixel_window_placement"
+            x_key, y_key = "pixel_window_x", "pixel_window_y"
+        else:
+            placement_key = "window_placement"
+            x_key, y_key = "window_x", "window_y"
+
+        placement = entry.get(placement_key)
+        if isinstance(placement, dict) and placement:
+            return True
+        placement = self._cfg.get(placement_key, {})
+        if isinstance(placement, dict) and placement:
+            return True
+
+        legacy_x = entry.get(x_key, None)
+        legacy_y = entry.get(y_key, None)
+        if legacy_x is None or legacy_y is None or (legacy_x == -1 and legacy_y == -1):
+            legacy_x = self._cfg.get(x_key, -1)
+            legacy_y = self._cfg.get(y_key, -1)
+        return not (_as_int(legacy_x) == -1 and _as_int(legacy_y) == -1)
+
     def _saved_position(self, mode: str, *, offset_x: int = 0) -> tuple[int, int] | None:
         if not self._cfg:
             return None
@@ -624,12 +656,51 @@ class PetWindow(QWidget):
         return None
 
     def restore_saved_position(self, *, offset_x: int = 0) -> bool:
-        pos = self._saved_position("pixel" if self._pixel_mode else "live2d", offset_x=offset_x)
+        mode = "pixel" if self._pixel_mode else "live2d"
+        self._startup_position_restore_mode = mode
+        self._startup_position_restore_offset_x = int(offset_x)
+        self._startup_position_restore_attempt = 0
+        self._startup_position_restore_pending = self._has_saved_position(mode)
+        if not self._startup_position_restore_pending:
+            return False
+        if self._try_restore_startup_position():
+            return True
+        self._schedule_startup_position_restore_retry()
+        return False
+
+    def _try_restore_startup_position(self) -> bool:
+        pos = self._saved_position(
+            self._startup_position_restore_mode,
+            offset_x=self._startup_position_restore_offset_x,
+        )
         if pos is None:
             return False
-        self.move(pos[0], pos[1])
+        self._restoring_saved_position = True
+        try:
+            self.move(pos[0], pos[1])
+        finally:
+            self._restoring_saved_position = False
         self._show_pos_set = True
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
         return True
+
+    def _schedule_startup_position_restore_retry(self):
+        if not self._startup_position_restore_pending:
+            return
+        if self._startup_position_restore_attempt >= len(STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS):
+            return
+        delay = STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS[self._startup_position_restore_attempt]
+        self._startup_position_restore_attempt += 1
+        QTimer.singleShot(delay, self._retry_startup_position_restore)
+
+    def _retry_startup_position_restore(self):
+        if not self._startup_position_restore_pending:
+            return
+        if self._try_restore_startup_position():
+            self._sync_compact_ai_window(allow_create=True)
+            return
+        self._schedule_startup_position_restore_retry()
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -1122,6 +1193,8 @@ class PetWindow(QWidget):
             return
         if dx == 0 and dy == 0:
             return
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
         screen = self._screen_for_current_window() or self._fallback_position_screen()
         target_x, target_y = self._constrain_position_to_screen(self.x() + dx, self.y() + dy, screen)
         actual_dx = target_x - self.x()
@@ -1164,7 +1237,7 @@ class PetWindow(QWidget):
         self._live2d_widget.refresh_screen_scale()
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
             self._sync_compact_ai_window()
-        if not self._emotion_window_animating:
+        if not self._emotion_window_animating and not self._restoring_saved_position:
             self._schedule_position_save()
         # 窗口移动时更新对视目标（最近优先）
         if self._live2d_mutual_gaze_enabled:
@@ -1173,7 +1246,8 @@ class PetWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._sync_compact_ai_window()
-        self._schedule_position_save()
+        if not self._restoring_saved_position:
+            self._schedule_position_save()
 
     def hideEvent(self, event):
         if os.name == "nt":
@@ -1202,7 +1276,12 @@ class PetWindow(QWidget):
         super().closeEvent(event)
 
     def _schedule_position_save(self):
-        if not self._cfg or not getattr(self, "_show_pos_set", False):
+        if (
+            not self._cfg
+            or not getattr(self, "_show_pos_set", False)
+            or self._startup_position_restore_pending
+            or self._restoring_saved_position
+        ):
             return
         self._position_save_timer.start()
 
@@ -1934,6 +2013,8 @@ class PetWindow(QWidget):
     def _on_drag(self, dx: int, dy: int):
         self._note_user_interaction()
         self._refresh_topmost_for_interaction()
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
         if self._emotion_window_anim is not None:
             try:
                 self._emotion_window_anim.stop()
@@ -3518,6 +3599,8 @@ class PetWindow(QWidget):
     def _remember_current_position(self):
         if not self._cfg:
             return
+        if self._startup_position_restore_pending:
+            return
         path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
         placement = self._window_placement()
         if self._configured_model_count() <= 1:
@@ -3631,6 +3714,11 @@ class PetWindow(QWidget):
             except ImportError:
                 isDarkTheme = lambda: False
             self._cfg.load()
+            save_position = bool(
+                getattr(self, "_show_pos_set", False)
+                and not self._startup_position_restore_pending
+                and not self._restoring_saved_position
+            )
             models = self._cfg.get("models", [])
             configured_model_count = self._configured_model_count()
             model_exists = (
@@ -3647,7 +3735,7 @@ class PetWindow(QWidget):
                 if configured_model_count <= 1:
                     self._cfg.set("character", self._current_char)
                     self._cfg.set("costume", self._current_costume)
-                self._sync_current_model_entry(path, save=False)
+                self._sync_current_model_entry(path, save=False, include_position=save_position)
             self._cfg.set("fps", self._fps)
             self._cfg.set("opacity", self._opacity)
             current_theme = self._cfg.get("dark_theme", _THEME_FOLLOW_SYSTEM)
@@ -3664,11 +3752,11 @@ class PetWindow(QWidget):
             if model_exists:
                 if configured_model_count <= 1:
                     self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")
-                    if self._pixel_mode:
+                    if self._pixel_mode and save_position:
                         self._cfg.set("pixel_window_x", self.x())
                         self._cfg.set("pixel_window_y", self.y())
                         self._cfg.set("pixel_window_placement", self._window_placement())
-                    else:
+                    elif save_position:
                         self._cfg.set("window_x", self.x())
                         self._cfg.set("window_y", self.y())
                         self._cfg.set("window_width", self.width())
@@ -3676,7 +3764,7 @@ class PetWindow(QWidget):
                         self._cfg.set("window_placement", self._window_placement())
             self._cfg.save()
 
-    def _sync_current_model_entry(self, path: str, save: bool = True):
+    def _sync_current_model_entry(self, path: str, save: bool = True, include_position: bool = True):
         if not self._cfg or not path:
             return
         if save:
@@ -3696,13 +3784,13 @@ class PetWindow(QWidget):
             entry["click_motion_actions"] = click_motion_actions
         self._cfg.set_model_action_profile(self._current_char, self._current_costume, entry)
         entry["pet_mode"] = "pixel" if self._pixel_mode else "live2d"
-        if self._pixel_mode:
+        if self._pixel_mode and include_position:
             entry.update({
                 "pixel_window_x": self.x(),
                 "pixel_window_y": self.y(),
                 "pixel_window_placement": self._window_placement(),
             })
-        else:
+        elif include_position:
             entry.update({
                 "window_x": self.x(),
                 "window_y": self.y(),
@@ -3766,6 +3854,25 @@ class PetWindow(QWidget):
         if self._live2d_mutual_gaze_enabled:
             self._peer_pos_broadcast_timer.start()
         if self._show_pos_set and self._is_position_on_screen():
+            self._sync_compact_ai_window(allow_create=True)
+            return
+        if self._startup_position_restore_pending:
+            if self._try_restore_startup_position():
+                self._sync_compact_ai_window(allow_create=True)
+                return
+            screen = self._screen_for_current_window() or QGuiApplication.primaryScreen()
+            if screen and not self._startup_transient_position_set:
+                geo = screen.availableGeometry()
+                self._restoring_saved_position = True
+                try:
+                    self.move(
+                        geo.left() + (geo.width() - self.width()) // 2,
+                        geo.top() + (geo.height() - self.height()) // 2,
+                    )
+                finally:
+                    self._restoring_saved_position = False
+                self._startup_transient_position_set = True
+            self._schedule_startup_position_restore_retry()
             self._sync_compact_ai_window(allow_create=True)
             return
         screen = self._screen_for_current_window() or QGuiApplication.primaryScreen()
