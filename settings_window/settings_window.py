@@ -15,6 +15,7 @@ from settings_window.pages.pov import POVPageMixin
 from settings_window.pages.memory import MemoryPageMixin
 from settings_window.pages.memory_album import MemoryAlbumPageMixin
 from settings_window.pages.reminder import ReminderPageMixin
+from settings_window.pages.screen_awareness import ScreenAwarenessPageMixin
 from settings_window.pages.compact import CompactPageMixin
 from settings_window.pages.chat_integration import ChatIntegrationPageMixin
 from settings_window.pages.mcp import MCPPageMixin
@@ -33,6 +34,7 @@ class SettingsWindow(
     MemoryPageMixin,
     MemoryAlbumPageMixin,
     ReminderPageMixin,
+    ScreenAwarenessPageMixin,
     CompactPageMixin,
     ChatIntegrationPageMixin,
     MCPPageMixin,
@@ -110,6 +112,7 @@ class SettingsWindow(
         self._memory_album_page = None
         self._relationship_guide_page = None
         self._reminder_page = None
+        self._screen_awareness_page = None
         self._memory_db = None
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
@@ -1246,6 +1249,9 @@ class SettingsWindow(
         if key == "reminders":
             self._reminder_page = self._add_lazy_page("reminders", self._build_reminder_page())
             return self._reminder_page
+        if key == "screen_awareness":
+            self._screen_awareness_page = self._add_lazy_page("screen_awareness", self._build_screen_awareness_page())
+            return self._screen_awareness_page
         if key == "behavior":
             self._behavior_page = self._add_lazy_page("behavior", self._build_behavior_page())
             return self._behavior_page
@@ -1380,13 +1386,24 @@ class SettingsWindow(
         btn_reminders = NavButton(
             "reminders",
             FluentIcon.DATE_TIME,
-            _tr("SettingsWindow.nav_reminders", default="屏幕感知 / 定时行为"),
+            _tr("SettingsWindow.nav_reminders", default="闹钟 / 番茄钟"),
             nav_content,
             "#ef4444",
         )
         btn_reminders.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["reminders"] = btn_reminders
         nav_layout.addWidget(btn_reminders)
+
+        btn_screen_awareness = NavButton(
+            "screen_awareness",
+            FluentIcon.VIEW,
+            _tr("SettingsWindow.nav_screen_awareness", default="屏幕感知"),
+            nav_content,
+            "#0ea5e9",
+        )
+        btn_screen_awareness.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["screen_awareness"] = btn_screen_awareness
+        nav_layout.addWidget(btn_screen_awareness)
 
         btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), nav_content, "#8b5cf6")
         btn_llm.nav_activated.connect(self._on_nav_selected)
@@ -2634,6 +2651,7 @@ class SettingsWindow(
         self._save_chat_integration_config(show_info=False, emit_update=False)
         self._save_mcp_computer_config(show_info=False)
         self._save_reminder_config(show_info=False, emit_update=False)
+        self._save_screen_awareness_config(show_info=False, emit_update=False)
         self._save_configured_models(emit_update=False)
         settings = {
             "language": current_language(),
@@ -2680,7 +2698,9 @@ class SettingsWindow(
             "napcat_reply_character": self._cfg.get("napcat_reply_character", "") if self._cfg else "",
             "alarms": normalize_alarms(self._cfg.get("alarms", [])) if self._cfg else [],
             "pomodoros": normalize_pomodoros(self._cfg.get("pomodoros", [])) if self._cfg else [],
+            "proactive_companion": normalize_proactive_companion(self._cfg.get("proactive_companion", {})) if self._cfg else normalize_proactive_companion({}),
             "reminder_display_mode": normalize_display_mode(self._cfg.get("reminder_display_mode", DISPLAY_MODE_FLOATING)) if self._cfg else DISPLAY_MODE_FLOATING,
+            "reminder_temporary_overlay_enabled": bool(self._cfg.get("reminder_temporary_overlay_enabled", True)) if self._cfg else True,
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
             "user_avatar_path": self._cfg.get("user_avatar_path", "") if self._cfg else "",
             "user_profiles": self._cfg.get("user_profiles", []) if self._cfg else [],
@@ -2688,6 +2708,7 @@ class SettingsWindow(
             "models": [dict(item) for item in self._configured_models],
             "model_action_settings": self._cfg.get("model_action_settings", {}) if self._cfg else {},
         }
+        settings.update(self._screen_awareness_settings_data())
         if self._compact_window_reset_position_pending:
             settings["compact_ai_window_reset_position"] = True
         if self._cfg:
@@ -2729,6 +2750,10 @@ class SettingsWindow(
         self.settings_changed.connect(lambda data: send_line(f"SETTINGS\t{json.dumps(data, ensure_ascii=False)}"))
         self.launch_requested.connect(lambda: send_line("LAUNCH"))
         self.exit_requested.connect(lambda: send_line("EXIT"))
+
+    def apply_remote_settings(self, data: dict):
+        self._apply_reminder_remote_settings(data)
+        self._apply_screen_awareness_remote_settings(data)
 
     def _build_side_panel(self):
         panel = self._make_theme_widget(QWidget())

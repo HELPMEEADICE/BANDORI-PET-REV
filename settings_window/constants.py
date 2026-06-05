@@ -183,6 +183,7 @@ DATA_CATEGORY_ASR = "asr"
 DATA_CATEGORY_POV = "pov"
 DATA_CATEGORY_RELATIONSHIP = "relationship"
 DATA_CATEGORY_REMINDERS = "reminders"
+DATA_CATEGORY_SCREEN_AWARENESS = "screen_awareness"
 DATA_CATEGORY_COMPACT = "compact_window"
 DATA_CATEGORY_CHAT = "chat_integration"
 DATA_CATEGORY_MCP = "mcp_computer"
@@ -276,6 +277,9 @@ DATA_CONFIG_KEYS = {
         "pomodoros",
         "proactive_companion",
         "reminder_temporary_overlay_enabled",
+        "reminder_display_mode",
+    ),
+    DATA_CATEGORY_SCREEN_AWARENESS: (
         "screen_awareness_enabled",
         "screen_awareness_interval_minutes",
         "screen_awareness_character_mode",
@@ -284,7 +288,6 @@ DATA_CONFIG_KEYS = {
         "screen_awareness_vision_api_url",
         "screen_awareness_vision_model_id",
         "screen_awareness_vision_enable_thinking",
-        "reminder_display_mode",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",
@@ -376,6 +379,7 @@ DATA_EXPORT_ORDER = (
     DATA_CATEGORY_POV,
     DATA_CATEGORY_RELATIONSHIP,
     DATA_CATEGORY_REMINDERS,
+    DATA_CATEGORY_SCREEN_AWARENESS,
     DATA_CATEGORY_COMPACT,
     DATA_CATEGORY_CHAT,
     DATA_CATEGORY_MCP,
