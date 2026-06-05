@@ -98,6 +98,8 @@
   "SettingsWindow.birthday_tray_notifications_hint": "When disabled, character birthdays no longer show system tray notifications. Festival, alarm, and chat birthday behavior is unchanged.",
   "SettingsWindow.live2d_idle_actions": "Idle Motions",
   "SettingsWindow.live2d_idle_actions_hint": "Global setting: when multiple Live2D models are on the desktop, all of them are affected together.",
+  "SettingsWindow.live2d_random_actions": "Enable Random Motions",
+  "SettingsWindow.live2d_random_actions_hint": "When enabled, idle and mouse-approach scenes can trigger random motions. When disabled, only the default idle motion is kept.",
   "SettingsWindow.live2d_head_tracking": "Look at Mouse",
   "SettingsWindow.live2d_head_tracking_hint": "Global setting: when disabled, the character will not follow the mouse cursor.",
   "SettingsWindow.live2d_mutual_gaze": "Mutual Gaze",

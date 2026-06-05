@@ -666,6 +666,7 @@ class DataManagementPageMixin:
         )
         self._hide_live2d_model = bool(self._cfg.get("hide_live2d_model", self._hide_live2d_model))
         self._live2d_idle_actions_enabled = bool(self._cfg.get("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled))
+        self._live2d_random_actions_enabled = bool(self._cfg.get("live2d_random_actions_enabled", self._live2d_random_actions_enabled))
         self._live2d_head_tracking_enabled = bool(self._cfg.get("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled))
         self._live2d_mutual_gaze_enabled = bool(self._cfg.get("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled))
         self._emotion_behavior_enabled = bool(self._cfg.get("emotion_behavior_enabled", self._emotion_behavior_enabled))

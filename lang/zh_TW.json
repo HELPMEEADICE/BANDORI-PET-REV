@@ -98,6 +98,8 @@
   "SettingsWindow.birthday_tray_notifications_hint": "關閉後，角色生日當天不再彈出系統托盤通知；不會影響節日、鬧鐘和聊天中的生日設定。",
   "SettingsWindow.live2d_idle_actions": "角色待機動作",
   "SettingsWindow.live2d_idle_actions_hint": "這是全域選項：如果桌面上同時有多個 Live2D 形象，所有形象會一起開啟或關閉待機動作。",
+  "SettingsWindow.live2d_random_actions": "啟用隨機動作",
+  "SettingsWindow.live2d_random_actions_hint": "開啟後，角色會在閒置、靠近滑鼠等場景隨機觸發動作；關閉後只保留預設待機動作。",
   "SettingsWindow.live2d_head_tracking": "看向滑鼠",
   "SettingsWindow.live2d_head_tracking_hint": "這是全域選項：關閉後角色將不再跟隨滑鼠移動視線。",
   "SettingsWindow.live2d_mutual_gaze": "角色對視",

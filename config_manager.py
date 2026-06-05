@@ -192,6 +192,7 @@ DEFAULTS = {
     "game_topmost": False,
     "hide_live2d_model": False,
     "live2d_idle_actions_enabled": True,
+    "live2d_random_actions_enabled": True,
     "live2d_quality": "balanced",
     "live2d_scale": 0,
     "live2d_hit_alpha_threshold": 8,

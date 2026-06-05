@@ -64,6 +64,15 @@ class BehaviorPageMixin:
     def _sync_live2d_behavior_switches(self):
         for attr in ("_live2d_idle_actions_switch", "_behavior_idle_actions_switch"):
             self._set_switch_state(getattr(self, attr, None), self._live2d_idle_actions_enabled)
+        for attr in ("_behavior_random_actions_switch",):
+            self._set_switch_state(
+                getattr(self, attr, None),
+                self._live2d_random_actions_enabled,
+                self._live2d_idle_actions_enabled,
+            )
+        random_row = getattr(self, "_behavior_random_actions_row", None)
+        if random_row is not None:
+            random_row.setEnabled(self._live2d_idle_actions_enabled)
         for attr in ("_live2d_head_tracking_switch", "_behavior_head_tracking_switch"):
             self._set_switch_state(
                 getattr(self, attr, None),
@@ -79,6 +88,7 @@ class BehaviorPageMixin:
         if not self._cfg:
             return
         self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
+        self._cfg.set("live2d_random_actions_enabled", self._live2d_random_actions_enabled)
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
         self._cfg.set("live2d_mutual_gaze_enabled", self._live2d_mutual_gaze_enabled)
         self._cfg.set("emotion_behavior_enabled", self._emotion_behavior_enabled)
@@ -96,6 +106,11 @@ class BehaviorPageMixin:
 
     def _on_live2d_idle_actions_changed(self, checked: bool):
         self._live2d_idle_actions_enabled = bool(checked)
+        self._sync_live2d_behavior_switches()
+        self._save_live2d_behavior_config()
+
+    def _on_live2d_random_actions_changed(self, checked: bool):
+        self._live2d_random_actions_enabled = bool(checked)
         self._sync_live2d_behavior_switches()
         self._save_live2d_behavior_config()
 
@@ -813,6 +828,18 @@ class BehaviorPageMixin:
             self._live2d_idle_actions_enabled,
             self._on_live2d_idle_actions_changed,
         ))
+        random_row = self._build_behavior_switch_row(
+            page,
+            "SettingsWindow.live2d_random_actions",
+            "SettingsWindow.live2d_random_actions_hint",
+            "_behavior_random_actions_switch",
+            self._live2d_random_actions_enabled,
+            self._on_live2d_random_actions_changed,
+            enabled=self._live2d_idle_actions_enabled,
+        )
+        self._behavior_random_actions_row = random_row
+        random_row.setEnabled(self._live2d_idle_actions_enabled)
+        layout.addWidget(random_row)
         layout.addWidget(self._build_behavior_switch_row(
             page,
             "SettingsWindow.live2d_head_tracking",

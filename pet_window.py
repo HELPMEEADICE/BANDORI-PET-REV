@@ -224,6 +224,9 @@ class PetWindow(QWidget):
         self._live2d_idle_actions_enabled = (
             bool(config_manager.get("live2d_idle_actions_enabled", True))
         )
+        self._live2d_random_actions_enabled = (
+            bool(config_manager.get("live2d_random_actions_enabled", True))
+        )
         self._live2d_head_tracking_enabled = (
             bool(config_manager.get("live2d_head_tracking_enabled", True))
         )
@@ -1122,6 +1125,16 @@ class PetWindow(QWidget):
                 lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False),
             )
 
+    def set_live2d_random_actions_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if self._live2d_random_actions_enabled == enabled:
+            return
+        self._live2d_random_actions_enabled = enabled
+        self._last_context_idle_action_at = time.monotonic()
+        self._cursor_was_near_live2d = False
+        self._cursor_near_live2d_since = 0.0
+        self._cursor_near_live2d_reacted = False
+
     def set_live2d_head_tracking_enabled(self, enabled: bool):
         enabled = bool(enabled)
         if self._live2d_head_tracking_enabled == enabled:
@@ -1587,7 +1600,12 @@ class PetWindow(QWidget):
         self._last_context_idle_action_at = self._last_user_interaction_at
 
     def _tick_context_idle_behavior(self):
-        if not self._live2d_idle_actions_enabled or self._pixel_mode or not self.isVisible():
+        if (
+            not self._live2d_idle_actions_enabled
+            or not self._live2d_random_actions_enabled
+            or self._pixel_mode
+            or not self.isVisible()
+        ):
             return
         model = self._live2d_widget.model
         if model is None or self._is_pet_dragging():
@@ -1622,7 +1640,7 @@ class PetWindow(QWidget):
         return ""
 
     def _maybe_trigger_mouse_approach_behavior(self, now: float | None = None):
-        if not self._live2d_idle_actions_enabled:
+        if not self._live2d_idle_actions_enabled or not self._live2d_random_actions_enabled:
             return
         if self._is_radial_menu_visible():
             return
@@ -1697,7 +1715,7 @@ class PetWindow(QWidget):
                 return False
 
     def _start_context_idle_behavior(self, kind: str) -> bool:
-        if not self._live2d_idle_actions_enabled:
+        if not self._live2d_idle_actions_enabled or not self._live2d_random_actions_enabled:
             return False
         model = self._live2d_widget.model
         if model is None:
@@ -1850,6 +1868,7 @@ class PetWindow(QWidget):
             "chat_window_normal_window",
             "hide_live2d_model",
             "live2d_idle_actions_enabled",
+            "live2d_random_actions_enabled",
             "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled",
             "emotion_behavior_enabled",
@@ -1888,6 +1907,8 @@ class PetWindow(QWidget):
                 self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
             if "live2d_idle_actions_enabled" in data:
                 self._cfg.set("live2d_idle_actions_enabled", bool(data["live2d_idle_actions_enabled"]))
+            if "live2d_random_actions_enabled" in data:
+                self._cfg.set("live2d_random_actions_enabled", bool(data["live2d_random_actions_enabled"]))
             if "live2d_head_tracking_enabled" in data:
                 self._cfg.set("live2d_head_tracking_enabled", bool(data["live2d_head_tracking_enabled"]))
             if "live2d_mutual_gaze_enabled" in data:
@@ -1932,6 +1953,8 @@ class PetWindow(QWidget):
             self.set_hide_live2d_model(data["hide_live2d_model"])
         if "live2d_idle_actions_enabled" in data:
             self.set_live2d_idle_actions_enabled(data["live2d_idle_actions_enabled"])
+        if "live2d_random_actions_enabled" in data:
+            self.set_live2d_random_actions_enabled(data["live2d_random_actions_enabled"])
         if "live2d_head_tracking_enabled" in data:
             self.set_live2d_head_tracking_enabled(data["live2d_head_tracking_enabled"])
         if "live2d_mutual_gaze_enabled" in data:
@@ -3537,6 +3560,13 @@ class PetWindow(QWidget):
             if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE):
                 self._apply_default_expression(model)
                 return
+        if not self._live2d_random_actions_enabled:
+            try:
+                model.ClearMotions()
+            except Exception:
+                pass
+            self._apply_default_expression(model)
+            return
         idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
         if idle_names:
             idle_name = random.choice(idle_names)

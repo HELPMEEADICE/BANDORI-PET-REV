@@ -214,6 +214,7 @@ DATA_CONFIG_KEYS = {
         "models",
         "model_action_settings",
         "live2d_idle_actions_enabled",
+        "live2d_random_actions_enabled",
         "live2d_head_tracking_enabled",
         "live2d_mutual_gaze_enabled",
         "birthday_tray_notifications_enabled",

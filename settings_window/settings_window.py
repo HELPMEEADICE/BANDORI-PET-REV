@@ -141,6 +141,9 @@ class SettingsWindow(
         self._live2d_idle_actions_enabled = (
             bool(self._cfg.get("live2d_idle_actions_enabled", True)) if self._cfg else True
         )
+        self._live2d_random_actions_enabled = (
+            bool(self._cfg.get("live2d_random_actions_enabled", True)) if self._cfg else True
+        )
         self._live2d_head_tracking_enabled = (
             bool(self._cfg.get("live2d_head_tracking_enabled", True)) if self._cfg else True
         )
@@ -2683,6 +2686,7 @@ class SettingsWindow(
             "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
             "live2d_idle_actions_enabled": self._live2d_idle_actions_enabled,
+            "live2d_random_actions_enabled": self._live2d_random_actions_enabled,
             "live2d_head_tracking_enabled": self._live2d_head_tracking_enabled,
             "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_enabled,
             "emotion_behavior_enabled": self._emotion_behavior_enabled,
@@ -2740,6 +2744,7 @@ class SettingsWindow(
             self._cfg.set("chat_window_normal_window", settings["chat_window_normal_window"])
             self._cfg.set("hide_live2d_model", settings["hide_live2d_model"])
             self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
+            self._cfg.set("live2d_random_actions_enabled", settings["live2d_random_actions_enabled"])
             self._cfg.set("live2d_head_tracking_enabled", settings["live2d_head_tracking_enabled"])
             self._cfg.set("live2d_mutual_gaze_enabled", settings["live2d_mutual_gaze_enabled"])
             self._cfg.set("emotion_behavior_enabled", settings["emotion_behavior_enabled"])

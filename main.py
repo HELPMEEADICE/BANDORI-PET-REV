@@ -793,6 +793,7 @@ def main():
             ("chat_window_normal_window", "chat_window_normal_window", False),
             ("hide_live2d_model", "hide_live2d_model", False),
             ("live2d_idle_actions_enabled", "live2d_idle_actions_enabled", True),
+            ("live2d_random_actions_enabled", "live2d_random_actions_enabled", True),
             ("live2d_head_tracking_enabled", "live2d_head_tracking_enabled", True),
             ("live2d_mutual_gaze_enabled", "live2d_mutual_gaze_enabled", False),
             ("move_all_roles_together", "move_all_roles_together", False),
@@ -900,7 +901,7 @@ def main():
             cfg.set("dark_theme", dark)
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
-            "live2d_idle_actions_enabled", "live2d_head_tracking_enabled",
+            "live2d_idle_actions_enabled", "live2d_random_actions_enabled", "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled", "move_all_roles_together",
             "birthday_tray_notifications_enabled",
             "live2d_quality", "live2d_scale",

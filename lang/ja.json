@@ -98,6 +98,8 @@
   "SettingsWindow.birthday_tray_notifications_hint": "オフにすると、キャラクターの誕生日にシステムトレイ通知を表示しません。祝日、アラーム、チャット内の誕生日設定には影響しません。",
   "SettingsWindow.live2d_idle_actions": "アイドルモーション",
   "SettingsWindow.live2d_idle_actions_hint": "グローバル設定：デスクトップに複数の Live2D が表示されている場合、すべて同時にオン/オフされます。",
+  "SettingsWindow.live2d_random_actions": "ランダムモーションを有効化",
+  "SettingsWindow.live2d_random_actions_hint": "オンにすると、待機中やマウス接近時にランダムモーションを再生します。オフにすると、デフォルトの待機モーションのみ維持します。",
   "SettingsWindow.live2d_head_tracking": "マウス注視",
   "SettingsWindow.live2d_head_tracking_hint": "グローバル設定：オフにすると、キャラクターはマウスカーソルを追いかけるのをやめます。",
   "SettingsWindow.live2d_mutual_gaze": "相互注視",
