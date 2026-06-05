@@ -709,25 +709,56 @@ def main():
             except RuntimeError:
                 pass
         if process.state() != QProcess.ProcessState.NotRunning:
-            process.terminate()
-            if not wait:
-                def kill_if_still_running(p=process):
-                    if isValid(p) and p.state() != QProcess.ProcessState.NotRunning:
-                        p.kill()
-
-                QTimer.singleShot(1500, kill_if_still_running)
-                return
-            if not process.waitForFinished(1000):
+            if force:
                 process.kill()
-                process.waitForFinished(1000)
+                if not wait:
+                    try:
+                        process.finished.connect(process.deleteLater)
+                    except (RuntimeError, TypeError):
+                        pass
+                    return
+                process.waitForFinished(250)
+            else:
+                process.terminate()
+                if not wait:
+                    def kill_if_still_running(p=process):
+                        if isValid(p) and p.state() != QProcess.ProcessState.NotRunning:
+                            p.kill()
+
+                    QTimer.singleShot(1500, kill_if_still_running)
+                    return
+                if not process.waitForFinished(1000):
+                    process.kill()
+                    process.waitForFinished(1000)
         process.deleteLater()
 
     def close_pet_processes(force=False, wait=True):
-        for process in list(pet_window_ref.get("processes", [])):
-            if not wait and isValid(process) and process.state() != QProcess.ProcessState.NotRunning:
-                closing = pet_window_ref.setdefault("closing_processes", [])
-                if process not in closing:
-                    closing.append(process)
+        processes = [
+            process
+            for process in list(pet_window_ref.get("processes", []))
+            if process and isValid(process)
+        ]
+        if force and wait:
+            for process in processes:
+                if process.state() != QProcess.ProcessState.NotRunning:
+                    try:
+                        process.finished.disconnect()
+                    except RuntimeError:
+                        pass
+                    process.kill()
+            for process in processes:
+                if process.state() != QProcess.ProcessState.NotRunning:
+                    process.waitForFinished(250)
+                process.deleteLater()
+            pet_window_ref["processes"] = []
+            return
+        for process in processes:
+            if not wait:
+                process_state = process.state()
+                if process_state != QProcess.ProcessState.NotRunning:
+                    closing = pet_window_ref.setdefault("closing_processes", [])
+                    if process not in closing:
+                        closing.append(process)
             _close_qprocess(process, force, wait=wait)
         pet_window_ref["processes"] = []
 
