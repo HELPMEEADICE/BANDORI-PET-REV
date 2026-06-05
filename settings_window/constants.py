@@ -276,7 +276,6 @@ DATA_CONFIG_KEYS = {
         "alarms",
         "pomodoros",
         "proactive_companion",
-        "reminder_temporary_overlay_enabled",
         "reminder_display_mode",
     ),
     DATA_CATEGORY_SCREEN_AWARENESS: (

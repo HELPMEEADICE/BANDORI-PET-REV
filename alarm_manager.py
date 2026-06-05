@@ -663,7 +663,6 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "action": action or "surprised",
             "ttl_ms": 18_000,
             "anchor_to_pet": True,
-            "temporary_overlay": bool(self._cfg.get("reminder_temporary_overlay_enabled", True)),
             "character": character,
         })
         self._speak_tts_text(text, character)

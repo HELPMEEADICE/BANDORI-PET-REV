@@ -809,7 +809,6 @@ def main():
             ("screen_awareness_vision_api_key", "screen_awareness_vision_api_key", ""),
             ("screen_awareness_vision_model_id", "screen_awareness_vision_model_id", ""),
             ("screen_awareness_vision_enable_thinking", "screen_awareness_vision_enable_thinking", None),
-            ("reminder_temporary_overlay_enabled", "reminder_temporary_overlay_enabled", True),
         )
         language = data.get("language")
         if language:

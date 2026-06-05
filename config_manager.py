@@ -285,7 +285,6 @@ DEFAULTS = {
     "screen_awareness_vision_api_key": "",
     "screen_awareness_vision_model_id": "",
     "screen_awareness_vision_enable_thinking": None,
-    "reminder_temporary_overlay_enabled": True,
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -708,9 +707,6 @@ class ConfigManager:
         self._data["screen_awareness_character_mode"] = mode if mode in {"random_visible", "default", "fixed"} else "random_visible"
         self._data["screen_awareness_interval_minutes"] = clamp_screen_awareness_interval(
             self._data.get("screen_awareness_interval_minutes", 30)
-        )
-        self._data["reminder_temporary_overlay_enabled"] = bool(
-            self._data.get("reminder_temporary_overlay_enabled", True)
         )
         self._data["screen_awareness_character"] = str(self._data.get("screen_awareness_character", "") or "").strip()
         self._data["screen_awareness_max_screenshot_width"] = clamp_screen_awareness_screenshot_width(

@@ -2700,7 +2700,6 @@ class SettingsWindow(
             "pomodoros": normalize_pomodoros(self._cfg.get("pomodoros", [])) if self._cfg else [],
             "proactive_companion": normalize_proactive_companion(self._cfg.get("proactive_companion", {})) if self._cfg else normalize_proactive_companion({}),
             "reminder_display_mode": normalize_display_mode(self._cfg.get("reminder_display_mode", DISPLAY_MODE_FLOATING)) if self._cfg else DISPLAY_MODE_FLOATING,
-            "reminder_temporary_overlay_enabled": bool(self._cfg.get("reminder_temporary_overlay_enabled", True)) if self._cfg else True,
             "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY) if self._cfg else BANDORI_PRIMARY,
             "user_avatar_path": self._cfg.get("user_avatar_path", "") if self._cfg else "",
             "user_profiles": self._cfg.get("user_profiles", []) if self._cfg else [],

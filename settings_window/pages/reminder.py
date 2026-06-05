@@ -30,9 +30,6 @@ class ReminderPageMixin:
         self._reminder_display_mode.addItem(_tr("SettingsWindow.reminder_display_floating", default="悬浮窗显示"), userData=DISPLAY_MODE_FLOATING)
         self._reminder_display_mode.addItem(_tr("SettingsWindow.reminder_display_system", default="系统通知提醒"), userData=DISPLAY_MODE_SYSTEM)
         mode_row.addWidget(self._reminder_display_mode, 1)
-        mode_row.addWidget(BodyLabel(_tr("SettingsWindow.reminder_temporary_overlay", default="临时提示气泡"), page))
-        self._reminder_temporary_overlay = SwitchButton(page)
-        mode_row.addWidget(self._reminder_temporary_overlay)
         save_mode_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
         save_mode_btn.setFixedHeight(36)
         save_mode_btn.clicked.connect(lambda: self._save_reminder_config(show_info=True, emit_update=True))
@@ -287,8 +284,6 @@ class ReminderPageMixin:
             if self._reminder_display_mode.itemData(index) == mode:
                 self._reminder_display_mode.setCurrentIndex(index)
                 break
-        if hasattr(self, "_reminder_temporary_overlay"):
-            self._reminder_temporary_overlay.setChecked(bool(self._cfg.get("reminder_temporary_overlay_enabled", True)))
         self._fill_reminder_character_combo(self._alarm_character_combo)
         self._fill_reminder_character_combo(self._pomodoro_character_combo)
         proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}))
@@ -308,7 +303,6 @@ class ReminderPageMixin:
             POMODORO_CONFIG_KEY,
             PROACTIVE_COMPANION_CONFIG_KEY,
             REMINDER_DISPLAY_MODE_KEY,
-            "reminder_temporary_overlay_enabled",
         )
         if not any(key in data for key in reminder_keys):
             return
@@ -338,10 +332,6 @@ class ReminderPageMixin:
                     if self._reminder_display_mode.itemData(index) == mode:
                         self._reminder_display_mode.setCurrentIndex(index)
                         break
-        if "reminder_temporary_overlay_enabled" in data:
-            self._cfg.set("reminder_temporary_overlay_enabled", bool(data.get("reminder_temporary_overlay_enabled", True)))
-            if hasattr(self, "_reminder_temporary_overlay"):
-                self._reminder_temporary_overlay.setChecked(bool(data.get("reminder_temporary_overlay_enabled", True)))
         if hasattr(self, "_alarm_list_layout"):
             self._refresh_reminder_lists()
 
@@ -352,14 +342,12 @@ class ReminderPageMixin:
                 POMODORO_CONFIG_KEY: [],
                 PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion({}),
                 REMINDER_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
-                "reminder_temporary_overlay_enabled": True,
             }
         return {
             ALARM_CONFIG_KEY: normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, [])),
             POMODORO_CONFIG_KEY: normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, [])),
             PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})),
             REMINDER_DISPLAY_MODE_KEY: normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)),
-            "reminder_temporary_overlay_enabled": bool(self._cfg.get("reminder_temporary_overlay_enabled", True)),
         }
 
     def _save_reminder_config(self, show_info: bool = True, emit_update: bool = True):
@@ -371,8 +359,6 @@ class ReminderPageMixin:
         self._sync_proactive_config_from_ui()
         mode = self._reminder_display_mode.itemData(self._reminder_display_mode.currentIndex()) or DISPLAY_MODE_FLOATING
         self._cfg.set(REMINDER_DISPLAY_MODE_KEY, normalize_display_mode(mode))
-        if hasattr(self, "_reminder_temporary_overlay"):
-            self._cfg.set("reminder_temporary_overlay_enabled", bool(self._reminder_temporary_overlay.isChecked()))
         self._cfg.set(ALARM_CONFIG_KEY, normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, [])))
         self._cfg.set(POMODORO_CONFIG_KEY, normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, [])))
         self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})))
