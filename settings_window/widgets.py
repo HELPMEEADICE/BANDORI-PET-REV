@@ -351,17 +351,20 @@ class OpaqueDropDownComboBox(ComboBox):
 
         x = -menu.width() // 2 + menu.layout().contentsMargins().left() + self.width() // 2
         pd = self.mapToGlobal(QPoint(x, self.height()))
-        hd = menu.view.heightForAnimation(pd, MenuAnimationType.DROP_DOWN)
+        hd = menu.view.heightForAnimation(pd, MenuAnimationType.FADE_IN_DROP_DOWN)
 
-        pu = self.mapToGlobal(QPoint(x, 0))
-        hu = menu.view.heightForAnimation(pu, MenuAnimationType.PULL_UP)
+        # The fade-in pull-up animation anchors the menu 15 px below `pos`.
+        # Move the anchor above the combo so the popup does not overlap the
+        # closed combo and cover the last visible option when it flips upward.
+        pu = self.mapToGlobal(QPoint(x, -15))
+        hu = menu.view.heightForAnimation(pu, MenuAnimationType.FADE_IN_PULL_UP)
 
         if hd >= hu:
-            menu.view.adjustSize(pd, MenuAnimationType.DROP_DOWN)
-            menu.exec(pd, aniType=MenuAnimationType.DROP_DOWN)
+            menu.view.adjustSize(pd, MenuAnimationType.FADE_IN_DROP_DOWN)
+            menu.exec(pd, aniType=MenuAnimationType.FADE_IN_DROP_DOWN)
         else:
-            menu.view.adjustSize(pu, MenuAnimationType.PULL_UP)
-            menu.exec(pu, aniType=MenuAnimationType.PULL_UP)
+            menu.view.adjustSize(pu, MenuAnimationType.FADE_IN_PULL_UP)
+            menu.exec(pu, aniType=MenuAnimationType.FADE_IN_PULL_UP)
 
 
 class OpaqueDropDownComboBoxMenu(ComboBoxMenu):
