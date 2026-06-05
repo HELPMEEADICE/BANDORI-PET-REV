@@ -572,7 +572,10 @@ class MessageBubble(QWidget):
             return []
         result = []
         for item in attachments:
-            if not isinstance(item, dict) or item.get("type") != "image":
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type not in {"image", "file"}:
                 continue
             path = str(item.get("path", "") or "")
             if not path:
@@ -581,9 +584,11 @@ class MessageBubble(QWidget):
                 resolved = Path(path)
             except (OSError, RuntimeError, ValueError):
                 continue
-            if resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS or not resolved.exists():
+            if not resolved.exists() or not resolved.is_file():
                 continue
-            result.append(dict(item, path=str(resolved)))
+            if item_type == "image" and resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
+                continue
+            result.append(dict(item, type=item_type, path=str(resolved)))
         return result
 
     def _rebuild_source_badges(self):

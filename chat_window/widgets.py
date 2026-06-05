@@ -1295,27 +1295,35 @@ class SearchSourceBadge(QLabel):
 class ChatImagePreview(QWidget):
     _MAX_HEIGHT = 190
     _DEFAULT_WIDTH = 260
+    _FILE_HEIGHT = 54
 
     def __init__(self, attachment: dict, parent=None):
         super().__init__(parent)
         self._attachment = dict(attachment or {})
+        self._type = str(self._attachment.get("type", "") or "").strip().lower()
         self._path = str(self._attachment.get("path", "") or "")
-        self._name = self._attachment.get("name") or Path(self._path).name or "image"
-        self._pixmap = QPixmap(self._path) if self._path else QPixmap()
+        self._name = self._attachment.get("name") or Path(self._path).name or ("image" if self._type == "image" else "file")
+        self._pixmap = QPixmap(self._path) if self._type == "image" and self._path else QPixmap()
         self._bg = QColor("transparent")
         self._border = QColor("transparent")
         self._empty_text = QColor("#657089")
+        self._file_text = QColor("#1f2328")
+        self._file_meta = QColor("#657089")
         self.setToolTip(self._name)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.set_preview_width(self._DEFAULT_WIDTH)
 
     def preferred_width(self) -> int:
+        if self._type != "image":
+            return self._DEFAULT_WIDTH
         if self._pixmap.isNull():
             return 180
         return self._scaled_outer_size(self._DEFAULT_WIDTH).width()
 
     def _scaled_outer_size(self, max_width: int) -> QSize:
         max_width = max(96, int(max_width))
+        if self._type != "image":
+            return QSize(min(max_width, self._DEFAULT_WIDTH), self._FILE_HEIGHT)
         if self._pixmap.isNull():
             return QSize(min(max_width, 220), 52)
 
@@ -1343,7 +1351,21 @@ class ChatImagePreview(QWidget):
         self._bg = QColor("#202634" if dark else "#ffffff")
         self._border = QColor("#39415a" if dark else "#dde4f0")
         self._empty_text = QColor("#a9b0c3" if dark else "#657089")
+        self._file_text = QColor("#f7f7fb" if dark else "#1f2328")
+        self._file_meta = QColor("#a9b0c3" if dark else "#657089")
         self.update()
+
+    @staticmethod
+    def _format_size(size) -> str:
+        try:
+            value = int(size)
+        except (TypeError, ValueError):
+            return ""
+        if value < 1024:
+            return f"{value} B"
+        if value < 1024 * 1024:
+            return f"{value / 1024:.1f} KB"
+        return f"{value / (1024 * 1024):.1f} MB"
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1353,7 +1375,27 @@ class ChatImagePreview(QWidget):
         path.addRoundedRect(rect, 10, 10)
         painter.fillPath(path, self._bg)
 
-        if self._pixmap.isNull():
+        if self._type != "image":
+            icon_rect = rect.adjusted(10, 12, -rect.width() + 34, -12)
+            icon_path = QPainterPath()
+            icon_path.addRoundedRect(icon_rect, 4, 4)
+            painter.setPen(QPen(self._border, 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(icon_path)
+            painter.drawLine(int(icon_rect.right() - 7), int(icon_rect.top()), int(icon_rect.right()), int(icon_rect.top() + 7))
+
+            name_rect = rect.adjusted(42, 8, -10, -26)
+            meta_rect = rect.adjusted(42, 28, -10, -6)
+            painter.setPen(self._file_text)
+            name = self.fontMetrics().elidedText(self._name, Qt.TextElideMode.ElideRight, max(24, int(name_rect.width())))
+            painter.drawText(name_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, name)
+            mime = str(self._attachment.get("mime", "") or "file")
+            size = self._format_size(self._attachment.get("size", ""))
+            meta = " · ".join(part for part in (mime, size) if part)
+            painter.setPen(self._file_meta)
+            meta = self.fontMetrics().elidedText(meta, Qt.TextElideMode.ElideRight, max(24, int(meta_rect.width())))
+            painter.drawText(meta_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, meta)
+        elif self._pixmap.isNull():
             painter.setPen(self._empty_text)
             text = self.fontMetrics().elidedText(self._name, Qt.TextElideMode.ElideRight, max(24, self.width() - 18))
             painter.drawText(rect.adjusted(9, 0, -9, 0), Qt.AlignmentFlag.AlignCenter, text)

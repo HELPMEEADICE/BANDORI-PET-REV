@@ -26,7 +26,6 @@ _REQUIRED_COLUMNS = {
 }
 
 _VALID_MESSAGE_ROLES = {"user", "assistant", "system"}
-_SAFE_CHAT_ATTACHMENT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _EXTERNAL_GROUP_CHAT_MESSAGE_LIMIT = 50
 
 
@@ -161,7 +160,7 @@ def _is_safe_chat_attachment_path(path: str) -> bool:
         resolved.relative_to(_chat_attachment_dir().resolve())
     except (OSError, RuntimeError, ValueError):
         return False
-    return resolved.suffix.lower() in _SAFE_CHAT_ATTACHMENT_EXTENSIONS
+    return resolved.exists() and resolved.is_file()
 
 
 def _sanitize_attachments_payload(value):
@@ -177,22 +176,27 @@ def _sanitize_attachments_payload(value):
     for item in value:
         if not isinstance(item, dict):
             continue
-        if str(item.get("type", "") or "") != "image":
+        item_type = str(item.get("type", "") or "").strip().lower()
+        if item_type not in {"image", "file"}:
             continue
         path = str(item.get("path", "") or "").strip()
         if not _is_safe_chat_attachment_path(path):
             continue
         cleaned_item = {
-            "type": "image",
+            "type": item_type,
             "path": path,
-            "name": str(item.get("name", "") or Path(path).name),
-            "mime": str(item.get("mime", "") or "image/png"),
+            "name": str(item.get("name", "") or Path(path).name)[:240],
+            "mime": str(item.get("mime", "") or ("image/png" if item_type == "image" else "application/octet-stream"))[:160],
         }
+        try:
+            cleaned_item["size"] = int(item.get("size", "") or Path(path).stat().st_size)
+        except (OSError, TypeError, ValueError):
+            pass
         vision_summary = str(item.get("vision_summary", "") or "").strip()
-        if vision_summary:
+        if item_type == "image" and vision_summary:
             cleaned_item["vision_summary"] = vision_summary[:6000]
         vision_error = str(item.get("vision_error", "") or "").strip()
-        if vision_error:
+        if item_type == "image" and vision_error:
             cleaned_item["vision_error"] = vision_error[:600]
         cleaned.append(cleaned_item)
     return cleaned
