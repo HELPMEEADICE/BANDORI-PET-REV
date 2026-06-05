@@ -253,9 +253,22 @@ class Live2DWidget(QOpenGLWidget):
         if self._initialized_gl:
             self._safe_make_current()
             self._delete_hit_pbos()
+            self._dispose_model_renderer()
         if self._custom_hit_areas is not None:
             self._custom_hit_areas.dispose()
             self._custom_hit_areas = None
+
+    def _dispose_model_renderer(self):
+        model = self._model
+        self._model = None
+        if model is None:
+            return
+        dispose = getattr(model, "_dispose_renderer", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                pass
 
     def closeEvent(self, event):
         self.dispose()
@@ -326,6 +339,7 @@ class Live2DWidget(QOpenGLWidget):
             set_live2d_texture_quality(self._quality_profile)
             disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             
+            self._dispose_model_renderer()
             self._model = self._live2d.LAppModel()
             if is_virtual_path(model_json_path):
                 try:
@@ -343,7 +357,7 @@ class Live2DWidget(QOpenGLWidget):
             self.model_loaded.emit()
         except Exception as e:
             print(f"Failed to load model: {e}", file=sys.stderr)
-            self._model = None
+            self._dispose_model_renderer()
             self._model_path = ""
             if self._custom_hit_areas is not None:
                 self._custom_hit_areas.clear()

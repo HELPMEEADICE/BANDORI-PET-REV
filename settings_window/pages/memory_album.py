@@ -117,7 +117,7 @@ class MemoryAlbumPageMixin:
         layout.addWidget(scroll, 1)
 
         self._style_memory_album_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_memory_album_page(page))
+        self._connect_theme_changed(lambda: self._style_memory_album_page(page))
         self._refresh_memory_album_page()
         return page
 

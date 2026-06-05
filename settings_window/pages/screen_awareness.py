@@ -125,7 +125,7 @@ class ScreenAwarenessPageMixin:
         layout.addStretch()
         self._load_screen_awareness_controls()
         self._style_screen_awareness_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_screen_awareness_page(page))
+        self._connect_theme_changed(lambda: self._style_screen_awareness_page(page))
         return page
 
     def _apply_screen_awareness_remote_settings(self, data: dict):

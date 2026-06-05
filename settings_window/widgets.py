@@ -1,10 +1,38 @@
 import sys
+import weakref
 
 from PySide6.QtGui import QAction, QOpenGLContext
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from qt_gl import gl
 from settings_window.constants import *
+
+
+def connect_theme_changed_weak(widget, method_name: str):
+    widget_ref = weakref.ref(widget)
+    connection = None
+
+    def disconnect():
+        try:
+            qconfig.themeChanged.disconnect(connection)
+        except (RuntimeError, TypeError):
+            try:
+                qconfig.themeChanged.disconnect(invoke)
+            except (RuntimeError, TypeError):
+                pass
+
+    def invoke():
+        obj = widget_ref()
+        if obj is None or not isValid(obj):
+            disconnect()
+            return
+        method = getattr(obj, method_name, None)
+        if callable(method):
+            method()
+
+    connection = qconfig.themeChanged.connect(invoke)
+    widget.destroyed.connect(lambda *_: disconnect())
+    return connection
 
 
 def configure_live2d_preview_surface_format():
@@ -487,7 +515,7 @@ class ModelListItem(QWidget):
         layout.addWidget(self._remove_btn, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setFixedHeight(50)
         self._apply_theme()
-        qconfig.themeChanged.connect(self._apply_theme)
+        connect_theme_changed_weak(self, "_apply_theme")
         if self._current:
             QTimer.singleShot(0, self._play_selected_animation)
 
@@ -560,7 +588,7 @@ class AddModelListItem(QPushButton):
         self.setFixedHeight(38)
         self.clicked.connect(self.add_requested.emit)
         self._apply_theme()
-        qconfig.themeChanged.connect(self._apply_theme)
+        connect_theme_changed_weak(self, "_apply_theme")
 
     def _apply_theme(self):
         dark = isDarkTheme()
@@ -668,8 +696,8 @@ class CharacterCard(CardWidget):
 
         layout.addStretch()
         self.clicked.connect(self._on_card_clicked)
-        qconfig.themeChanged.connect(self._update_count_label_style)
-        qconfig.themeChanged.connect(self._update_favorite_style)
+        connect_theme_changed_weak(self, "_update_count_label_style")
+        connect_theme_changed_weak(self, "_update_favorite_style")
         self._update_favorite_style()
 
     def animate_in(self, delay_ms: int = 0):
@@ -812,7 +840,7 @@ class BandCard(CardWidget):
 
         layout.addStretch()
         self.clicked.connect(self._on_card_clicked)
-        qconfig.themeChanged.connect(self._update_count_label_style)
+        connect_theme_changed_weak(self, "_update_count_label_style")
 
     def animate_in(self, delay_ms: int = 0):
         effect = QGraphicsOpacityEffect(self)
@@ -878,7 +906,7 @@ class CostumeItem(QPushButton):
         self._preview_btn.raise_()
         self._favorite_btn.raise_()
         self._update_stylesheet()
-        qconfig.themeChanged.connect(self._update_stylesheet)
+        connect_theme_changed_weak(self, "_update_stylesheet")
 
     def animate_in(self, delay_ms: int = 0):
         effect = QGraphicsOpacityEffect(self)
@@ -1001,7 +1029,7 @@ class Live2DPreviewBubble(QWidget):
         self._live2d_widget.set_static_render(True)
         self._apply_live2d_background()
         layout.addWidget(self._live2d_widget)
-        qconfig.themeChanged.connect(self._on_theme_changed)
+        connect_theme_changed_weak(self, "_on_theme_changed")
 
     def _apply_windows_frame_fix(self):
         if os.name != "nt":
@@ -1111,7 +1139,7 @@ class NavButton(QPushButton):
         self.setCheckable(True)
         self.setIconSize(QSize(18, 18))
         self._update_stylesheet()
-        qconfig.themeChanged.connect(self._update_stylesheet)
+        connect_theme_changed_weak(self, "_update_stylesheet")
         self.clicked.connect(lambda: self.nav_activated.emit(self._nav_key))
 
     def enterEvent(self, event):

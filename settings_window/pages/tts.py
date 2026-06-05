@@ -123,7 +123,7 @@ class TTSPageMixin:
 
         self._load_tts_config()
         self._style_tts_inputs()
-        qconfig.themeChanged.connect(self._style_tts_inputs)
+        self._connect_theme_changed(self._style_tts_inputs)
 
         return page
 

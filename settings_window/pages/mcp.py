@@ -163,7 +163,7 @@ class MCPPageMixin:
 
         self._load_mcp_computer_config()
         self._style_mcp_computer_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_mcp_computer_page(page))
+        self._connect_theme_changed(lambda: self._style_mcp_computer_page(page))
         return page
 
     def _add_switch_row(self, layout: QVBoxLayout, page: QWidget, label: str, switch: SwitchButton):

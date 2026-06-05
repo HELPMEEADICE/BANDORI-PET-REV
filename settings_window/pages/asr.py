@@ -131,7 +131,7 @@ class ASRPageMixin:
 
         self._load_asr_config()
         self._style_asr_inputs()
-        qconfig.themeChanged.connect(self._style_asr_inputs)
+        self._connect_theme_changed(self._style_asr_inputs)
 
         return page
 

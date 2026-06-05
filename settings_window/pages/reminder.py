@@ -222,7 +222,7 @@ class ReminderPageMixin:
         self._proactive_enabled_switch.checkedChanged.connect(self._on_proactive_global_enabled_changed)
         self._proactive_character_combo.currentIndexChanged.connect(lambda _index: self._schedule_proactive_save())
         self._style_reminder_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_reminder_page(page))
+        self._connect_theme_changed(lambda: self._style_reminder_page(page))
         return page
 
     def _on_alarm_repeat_changed(self):

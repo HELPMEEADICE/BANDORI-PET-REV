@@ -156,7 +156,7 @@ class ChatIntegrationPageMixin:
         self._chat_integration_token_input.textChanged.connect(self._update_chat_integration_quick_setup)
         self._load_chat_integration_config()
         self._style_chat_integration_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_chat_integration_page(page))
+        self._connect_theme_changed(lambda: self._style_chat_integration_page(page))
         return page
 
     def _chat_integration_widgets_ready(self) -> bool:

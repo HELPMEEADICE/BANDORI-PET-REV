@@ -160,7 +160,7 @@ class DataManagementPageMixin:
 
         self._update_data_management_hints()
         self._style_data_management_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_data_management_page(page))
+        self._connect_theme_changed(lambda: self._style_data_management_page(page))
         return page
 
 

@@ -44,7 +44,7 @@ class MemoryPageMixin:
 
         layout.addStretch()
         self._style_relationship_guide_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_relationship_guide_page(page))
+        self._connect_theme_changed(lambda: self._style_relationship_guide_page(page))
         return page
 
     def _style_relationship_guide_page(self, page: QWidget):
@@ -290,7 +290,7 @@ class MemoryPageMixin:
 
         layout.addStretch()
         self._style_memory_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_memory_page(page))
+        self._connect_theme_changed(lambda: self._style_memory_page(page))
         self._refresh_memory_page()
         return page
 

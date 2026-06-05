@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import copy
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from app_theme import BANDORI_PRIMARY
@@ -18,6 +20,34 @@ def _try_replace_file(src, dst) -> OSError | None:
         return None
     except OSError as exc:
         return exc
+
+
+@contextmanager
+def _config_file_lock(path: Path):
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 BASE_DIR = app_base_dir()
@@ -466,11 +496,13 @@ class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
         self._data = dict(DEFAULTS)
+        self._loaded_data = copy.deepcopy(self._data)
         self.load()
 
     def load(self):
         loaded = None
         has_action_settings = False
+        next_data = dict(DEFAULTS)
         if self._path.exists():
             try:
                 with open(self._path, "r", encoding="utf-8") as f:
@@ -481,9 +513,12 @@ class ConfigManager:
                     raise ValueError("config root must be a JSON object")
                 for k in DEFAULTS:
                     if k in loaded:
-                        self._data[k] = loaded[k]
+                        next_data[k] = loaded[k]
             except (json.JSONDecodeError, OSError, ValueError):
                 self._backup_corrupt_config()
+                loaded = None
+                has_action_settings = False
+        self._data = next_data
         if loaded is None or not has_action_settings:
             self._data["model_action_settings"] = {}
         self._normalize_model_action_settings()
@@ -524,6 +559,7 @@ class ConfigManager:
         )
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
+        self._loaded_data = copy.deepcopy(self._data)
 
     def _backup_corrupt_config(self):
         if not self._path.exists():
@@ -786,31 +822,51 @@ class ConfigManager:
             self._data["costume"] = first["costume"]
 
     def save(self):
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=self._path.name + ".",
-            suffix=".tmp",
-            dir=str(self._path.parent),
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            last_error = None
-            for attempt in range(25):
-                last_error = _try_replace_file(tmp_path, self._path)
-                if last_error is None:
-                    return
-                time.sleep(min(0.02 * (attempt + 1), 0.2))
-            if last_error is not None:
-                raise last_error
-        except Exception:
+        with _config_file_lock(self._path):
+            data_to_save = self._merged_data_for_save()
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                prefix=self._path.name + ".",
+                suffix=".tmp",
+                dir=str(self._path.parent),
+            )
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                last_error = None
+                for attempt in range(25):
+                    last_error = _try_replace_file(tmp_path, self._path)
+                    if last_error is None:
+                        self._data = copy.deepcopy(data_to_save)
+                        self._loaded_data = copy.deepcopy(data_to_save)
+                        return
+                    time.sleep(min(0.02 * (attempt + 1), 0.2))
+                if last_error is not None:
+                    raise last_error
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+
+    def _merged_data_for_save(self) -> dict:
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                current = json.load(f)
+            if not isinstance(current, dict):
+                current = {}
+        except (json.JSONDecodeError, OSError, ValueError):
+            current = {}
+        merged = dict(DEFAULTS)
+        for key in DEFAULTS:
+            value = self._data.get(key, DEFAULTS[key])
+            loaded_value = self._loaded_data.get(key, DEFAULTS[key])
+            current_value = current.get(key, DEFAULTS[key])
+            merged[key] = current_value if value == loaded_value and current_value != loaded_value else value
+        return merged
 
     def get(self, key, default=None):
         return self._data.get(key, default)

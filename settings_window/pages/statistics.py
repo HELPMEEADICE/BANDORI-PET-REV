@@ -155,8 +155,8 @@ class _HeatmapWidget(QWidget):
         self._empty_hint = ""
         self.setMouseTracking(True)
         self._update_theme()
-        qconfig.themeChanged.connect(self._update_theme)
-        qconfig.themeChanged.connect(self.update)
+        connect_theme_changed_weak(self, "_update_theme")
+        connect_theme_changed_weak(self, "update")
 
     def set_data(self, grid: list[list[int]], empty_hint: str = ""):
         self._data = grid
@@ -316,7 +316,7 @@ class _StatCard(QFrame):
         layout.addWidget(self._value_label)
         layout.addWidget(self._title_label)
         self._apply_theme()
-        qconfig.themeChanged.connect(self._apply_theme)
+        connect_theme_changed_weak(self, "_apply_theme")
 
     def set_value(self, value: str):
         self._value_label.setText(value)
@@ -443,8 +443,8 @@ class StatisticsPageMixin:
 
         self._style_statistics_page(page)
         self._refresh_chart_themes()
-        qconfig.themeChanged.connect(lambda: self._style_statistics_page(page))
-        qconfig.themeChanged.connect(self._refresh_chart_themes)
+        self._connect_theme_changed(lambda: self._style_statistics_page(page))
+        self._connect_theme_changed(self._refresh_chart_themes)
 
         QTimer.singleShot(0, self._populate_character_combo)
         return page

@@ -188,6 +188,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._assign_legacy_chat_history()
         self._worker = None
         self._cancelled_workers = []
+        self._close_waiting_for_workers = False
         self._memory_workers: list[NonStreamWorker] = []
         self._conv_id: int | None = None
         self._chat_user_key = user_key_from_config(self._cfg)
@@ -1259,20 +1260,35 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         bar.setValue(bar.maximum())
 
     def closeEvent(self, event):
+        if self._close_waiting_for_workers:
+            event.ignore()
+            return
         self._clear_timer.stop()
         if self._worker is not None:
             self._worker.cancel()
             self._park_cancelled_worker(self._worker)
             self._worker = None
         self._reset_tts()
+        workers_to_wait = []
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
-                worker.wait(1000)
-        self._cancelled_workers.clear()
+                workers_to_wait.append(worker)
         for worker in list(self._memory_workers):
             if worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(1000)
+                workers_to_wait.append(worker)
+        for worker in workers_to_wait:
+            worker.wait(250)
+        if any(worker is not None and worker.isRunning() for worker in workers_to_wait):
+            event.ignore()
+            self._close_waiting_for_workers = True
+            self.setEnabled(False)
+            def retry_close():
+                self._close_waiting_for_workers = False
+                self.close()
+            QTimer.singleShot(1000, retry_close)
+            return
+        self._cancelled_workers.clear()
         self._memory_workers.clear()
         self._db.close()
         super().closeEvent(event)

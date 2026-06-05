@@ -166,7 +166,7 @@ class POVPageMixin:
         btn_row.addStretch()
         layout.addLayout(btn_row)
         self._style_pov_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_pov_page(page))
+        self._connect_theme_changed(lambda: self._style_pov_page(page))
 
         return page
 

@@ -74,7 +74,7 @@ class AboutPageMixin:
         link_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         link_label.setOpenExternalLinks(True)
         self._style_about_link(link_label)
-        qconfig.themeChanged.connect(lambda: self._style_about_link(link_label))
+        self._connect_theme_changed(lambda: self._style_about_link(link_label))
         info_layout.addWidget(link_label)
 
         btn_row = QHBoxLayout()
@@ -147,7 +147,7 @@ class AboutPageMixin:
         layout.addWidget(tech)
 
         self._style_about_page(page)
-        qconfig.themeChanged.connect(lambda: self._style_about_page(page))
+        self._connect_theme_changed(lambda: self._style_about_page(page))
         layout.addStretch()
         return page
 

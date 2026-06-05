@@ -444,23 +444,24 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
     if _same_path(source, target):
         raise ValueError("source and target are the same file")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _ensure_database(str(target))
-    _checkpoint_database(target)
-    with tempfile.TemporaryDirectory(prefix="bandori-chat-import-") as temp_dir:
-        local_source = _copy_database_for_import(source, Path(temp_dir))
-        source_uri = _read_only_database_uri(local_source)
-        with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
-            _validate_chat_database(src)
-            with closing(sqlite3.connect(str(target), timeout=10)) as dst:
-                dst.execute("PRAGMA busy_timeout=10000")
-                src.backup(dst)
-                _sanitize_database_attachments(dst)
-                dst.commit()
-                _validate_chat_database(dst)
+    with _shared_database_lock(str(target)):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_database(str(target))
+        _checkpoint_database(target)
+        with tempfile.TemporaryDirectory(prefix="bandori-chat-import-") as temp_dir:
+            local_source = _copy_database_for_import(source, Path(temp_dir))
+            source_uri = _read_only_database_uri(local_source)
+            with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
+                _validate_chat_database(src)
+                with closing(sqlite3.connect(str(target), timeout=10)) as dst:
+                    dst.execute("PRAGMA busy_timeout=10000")
+                    src.backup(dst)
+                    _sanitize_database_attachments(dst)
+                    dst.commit()
+                    _validate_chat_database(dst)
 
-    _checkpoint_database(target)
-    return chat_database_summary(str(target))
+        _checkpoint_database(target)
+        return chat_database_summary(str(target))
 
 
 def export_relationship_data(db_path=DB_PATH) -> dict:

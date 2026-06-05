@@ -374,7 +374,7 @@ class LLMPageMixin:
 
         self._load_llm_config()
         self._style_llm_inputs()
-        qconfig.themeChanged.connect(self._style_llm_inputs)
+        self._connect_theme_changed(self._style_llm_inputs)
 
         return page
 

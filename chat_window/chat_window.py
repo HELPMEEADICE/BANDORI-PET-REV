@@ -208,6 +208,7 @@ class ChatWindow(QWidget):
         self._group_conv_id = ""
         self._worker = None
         self._cancelled_workers = []
+        self._close_waiting_for_workers = False
         self._current_bubble: MessageBubble | None = None
         self._pending_actions: list[str] = []
         self._pending_action_character = character
@@ -2750,8 +2751,6 @@ class ChatWindow(QWidget):
         self._asr_recording = False
         self._asr_transcribing = False
         self._asr_last_error = msg or _tr("ChatWindow.asr_failed", default="语音识别失败。")
-        self._asr_recorder_worker = None
-        self._asr_request_worker = None
         if self._asr_btn is not None:
             self._asr_btn.apply_theme()
         self._composer_hint.setText(self._asr_last_error)
@@ -5075,9 +5074,11 @@ class ChatWindow(QWidget):
         for worker in list(self._tts_active_workers.values()):
             if worker.isRunning():
                 worker.requestInterruption()
+                self._park_cancelled_worker(worker)
         for worker in list(self._tts_translation_workers.values()):
             if worker.isRunning():
                 worker.requestInterruption()
+                self._park_cancelled_worker(worker)
         self._tts_active_workers.clear()
         self._tts_translation_workers.clear()
         self._tts_audio_buffers.clear()
@@ -5356,6 +5357,9 @@ class ChatWindow(QWidget):
             event.ignore()
             self._play_close_animation()
             return
+        if self._close_waiting_for_workers:
+            event.ignore()
+            return
         workers_to_wait = []
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
@@ -5395,6 +5399,18 @@ class ChatWindow(QWidget):
             if remaining_ms <= 0:
                 break
             worker.wait(min(remaining_ms, 250))
+        still_running = [worker for worker in workers_to_wait if worker is not None and worker.isRunning()]
+        if still_running:
+            event.ignore()
+            self._close_waiting_for_workers = True
+            self.setEnabled(False)
+            def retry_close():
+                self._close_waiting_for_workers = False
+                if self._closing:
+                    self.close()
+            QTimer.singleShot(1000, retry_close)
+            return
+        self._cancelled_workers.clear()
         self._memory_workers.clear()
         self._stream_flush_timer.stop()
         self._tts_player.stop()

@@ -100,6 +100,7 @@ class SettingsWindow(
         self._model_download_running = False
         self._wizard_pages: dict[str, QWidget] = {}
         self._theme_widgets: list[QWidget] = []
+        self._theme_connections = []
         self._pages: dict[str, QWidget] = {}
         self._nav_buttons: dict[str, NavButton] = {}
         self._char_page = None
@@ -410,6 +411,7 @@ class SettingsWindow(
 
     def closeEvent(self, event):
         should_exit_app = self._first_run_wizard and self._show_launch and not self._launched
+        self._disconnect_theme_connections()
         self._dispose_live2d_preview()
         self._cleanup_workers()
         if self._memory_db is not None:
@@ -430,6 +432,22 @@ class SettingsWindow(
         if should_exit_app:
             self.exit_requested.emit()
         super().closeEvent(event)
+
+    def _connect_theme_changed(self, slot):
+        connection = qconfig.themeChanged.connect(slot)
+        self._theme_connections.append((connection, slot))
+        return connection
+
+    def _disconnect_theme_connections(self):
+        for connection, slot in self._theme_connections:
+            try:
+                qconfig.themeChanged.disconnect(connection)
+            except (RuntimeError, TypeError):
+                try:
+                    qconfig.themeChanged.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+        self._theme_connections.clear()
 
     def _ensure_live2d_preview_module(self):
         if self._live2d:
@@ -569,7 +587,7 @@ class SettingsWindow(
             return
 
         self._make_theme_widget(self)
-        qconfig.themeChanged.connect(self._update_all_theme_bgs)
+        self._connect_theme_changed(self._update_all_theme_bgs)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -616,7 +634,7 @@ class SettingsWindow(
 
     def _init_first_run_wizard_ui(self):
         self._make_theme_widget(self)
-        qconfig.themeChanged.connect(self._update_all_theme_bgs)
+        self._connect_theme_changed(self._update_all_theme_bgs)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 18, 20, 18)
@@ -713,7 +731,7 @@ class SettingsWindow(
         self._pages["pov"] = self._pov_page
 
         self._update_wizard_style()
-        qconfig.themeChanged.connect(self._update_wizard_style)
+        self._connect_theme_changed(self._update_wizard_style)
 
     def _build_wizard_model_page(self):
         page = self._make_theme_widget(QWidget())
@@ -1527,7 +1545,7 @@ class SettingsWindow(
 
         self._update_sidebar_style()
         self._theme_widgets.append(sidebar)
-        qconfig.themeChanged.connect(self._update_sidebar_style)
+        self._connect_theme_changed(self._update_sidebar_style)
 
         self._nav_indicator = QWidget(sidebar)
         self._nav_indicator.setFixedSize(4, 28)
@@ -1925,7 +1943,7 @@ class SettingsWindow(
         self._detail_click_motion_scope_label = click_scope_label
         self._detail_action_scroll = action_scroll
         self._update_switch_button_style()
-        qconfig.themeChanged.connect(self._update_switch_button_style)
+        self._connect_theme_changed(self._update_switch_button_style)
 
         layout.addWidget(self._model_detail_widget, 1)
         self._model_detail_widget.hide()
@@ -2644,6 +2662,7 @@ class SettingsWindow(
         if not self._apply_auto_start_setting():
             self._launched = False
             return
+        compact_reset_pending = bool(getattr(self, "_compact_window_reset_position_pending", False))
         self._save_llm_config(show_info=False)
         self._save_tts_config(show_info=False)
         self._save_asr_config(show_info=False)
@@ -2708,7 +2727,7 @@ class SettingsWindow(
             "model_action_settings": self._cfg.get("model_action_settings", {}) if self._cfg else {},
         }
         settings.update(self._screen_awareness_settings_data())
-        if self._compact_window_reset_position_pending:
+        if compact_reset_pending:
             settings["compact_ai_window_reset_position"] = True
         if self._cfg:
             self._cfg.set("language", settings["language"])
@@ -2863,9 +2882,9 @@ class SettingsWindow(
         self._model_list_scroll.setMinimumHeight(140)
         layout.addWidget(self._model_list_scroll, 1)
         self._update_model_list_style()
-        qconfig.themeChanged.connect(self._update_model_list_style)
+        self._connect_theme_changed(self._update_model_list_style)
         self._update_side_panel_style()
-        qconfig.themeChanged.connect(self._update_side_panel_style)
+        self._connect_theme_changed(self._update_side_panel_style)
 
         return panel
 

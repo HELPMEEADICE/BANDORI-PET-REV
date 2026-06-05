@@ -166,7 +166,7 @@ class CompactPageMixin:
 
         self._load_compact_window_config()
         self._style_compact_controls()
-        qconfig.themeChanged.connect(self._style_compact_controls)
+        self._connect_theme_changed(self._style_compact_controls)
         return page
 
     def _build_compact_color_row(self, page: QWidget, colors: list[tuple[str, str]], prop_name: str) -> list[QPushButton]:
