@@ -1003,6 +1003,8 @@ class LLMPageMixin:
                 self._refresh_memory_page()
                 self._reload_llm_api_profiles(active_profile)
                 self._update_current_llm_api_profile_label()
+                if show_info and hasattr(self, "_user_profile_settings_data"):
+                    self.settings_changed.emit(self._user_profile_settings_data())
                 if show_info:
                     title_key = "SettingsWindow.pov_saved_title" if source == "pov" else "SettingsWindow.llm_saved_title"
                     content_key = "SettingsWindow.pov_saved_content" if source == "pov" else "SettingsWindow.llm_saved_content"

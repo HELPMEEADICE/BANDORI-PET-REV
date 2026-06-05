@@ -3123,6 +3123,17 @@ class SettingsWindow(
             return str(self._cfg.get("active_user_profile", "") or "")
         return ""
 
+    def _user_profile_settings_data(self) -> dict:
+        if not self._cfg:
+            return {}
+        return {
+            "user_name": self._cfg.get("user_name", ""),
+            "user_avatar_color": self._cfg.get("user_avatar_color", BANDORI_PRIMARY),
+            "user_avatar_path": self._cfg.get("user_avatar_path", ""),
+            "user_profiles": self._cfg.get("user_profiles", []),
+            "active_user_profile": self._cfg.get("active_user_profile", ""),
+        }
+
     def _reload_user_profile_combo(self, selected_key: str = ""):
         if not hasattr(self, "_user_profile_combo"):
             return
@@ -3187,6 +3198,7 @@ class SettingsWindow(
                 self._cfg.save()
             except Exception:
                 return
+            self.settings_changed.emit(self._user_profile_settings_data())
         self._refresh_memory_page()
         if show_info:
             InfoBar.success(
@@ -3213,6 +3225,8 @@ class SettingsWindow(
             self._cfg.save()
         except Exception:
             pass
+        else:
+            self.settings_changed.emit(self._user_profile_settings_data())
         self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
         self._refresh_memory_page()
 
@@ -3236,6 +3250,8 @@ class SettingsWindow(
             self._cfg.save()
         except Exception:
             pass
+        else:
+            self.settings_changed.emit(self._user_profile_settings_data())
         self._user_name.setFocus()
         self._user_name.selectAll()
 
@@ -3254,6 +3270,8 @@ class SettingsWindow(
             self._cfg.save()
         except Exception:
             pass
+        else:
+            self.settings_changed.emit(self._user_profile_settings_data())
         self._refresh_memory_page()
 
     def _style_avatar_buttons(self):
@@ -3299,7 +3317,7 @@ class SettingsWindow(
         try:
             target_dir = self._avatar_storage_dir()
             target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"user_avatar_{self._profile_avatar_file_key()}{ext}"
+            target = target_dir / f"user_avatar_{self._profile_avatar_file_key()}_{time.time_ns()}{ext}"
             if os.path.abspath(path) != os.path.abspath(str(target)):
                 shutil.copyfile(path, target)
             self._user_avatar_path_pending = str(target)
