@@ -3628,6 +3628,8 @@ class ChatWindow(QWidget):
             self._composer_hint.setText(self._idle_status_text())
 
     def _message_search_sources(self, tool_trace) -> list[dict]:
+        if not self._show_search_sources():
+            return []
         if not tool_trace:
             return []
         if isinstance(tool_trace, str):
@@ -3640,13 +3642,16 @@ class ChatWindow(QWidget):
         sources = tool_trace.get("web_search_sources", [])
         return MessageBubble._normalize_search_sources(sources)
 
+    def _show_search_sources(self) -> bool:
+        return bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
+
     def _merge_search_sources(self, sources: list[dict]):
         current = list(self._stream_search_sources)
         for source in MessageBubble._normalize_search_sources(sources):
             if all(item["url"] != source["url"] for item in current):
                 current.append(source)
         self._stream_search_sources = current[:9]
-        if self._current_bubble:
+        if self._current_bubble and self._show_search_sources():
             self._current_bubble.set_search_sources(self._stream_search_sources)
 
     def _extract_stream_search_sources(self, text: str) -> str:
@@ -4472,7 +4477,7 @@ class ChatWindow(QWidget):
             tool_config["llm_auto_continue_enabled"] = False
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
         web_fetch = bool(self._cfg.get("llm_web_fetch_enabled", False))
-        show_search_sources = bool(self._cfg.get("llm_web_search_show_sources", True))
+        show_search_sources = True
         use_reminder_tools = reminder_tools_enabled(tool_config)
         if self._use_responses_api(api_url) and not web_search and not web_fetch and not use_reminder_tools:
             self._worker = ResponsesStreamWorker(
@@ -4624,7 +4629,7 @@ class ChatWindow(QWidget):
             self._reasoning_stream_text = reasoning_clean
             self._current_bubble.set_streaming(False)
             self._current_bubble.set_reasoning(reasoning_clean)
-            self._current_bubble.set_search_sources(self._stream_search_sources)
+            self._current_bubble.set_search_sources(self._stream_search_sources if self._show_search_sources() else [])
             self._current_bubble.set_text(clean)
 
         stored = self._assistant_content(self._active_response_character, clean)

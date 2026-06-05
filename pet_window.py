@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVaria
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication, QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
+from shiboken6 import isValid
 
 from app_theme import apply_app_theme, BANDORI_PRIMARY, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
 from action_bus import publish_user_poke
@@ -2456,6 +2457,8 @@ class PetWindow(QWidget):
         self._terminate_process_async(process, kill_delay_ms=300 if force else 1000)
 
     def _terminate_process_async(self, process: QProcess, *, kill_delay_ms: int = 1000):
+        if process is None or not isValid(process):
+            return
         if process.state() == QProcess.ProcessState.NotRunning:
             process.deleteLater()
             return
@@ -2464,9 +2467,16 @@ class PetWindow(QWidget):
         except (RuntimeError, TypeError):
             pass
         process.terminate()
+
+        def kill_if_still_running(p=process):
+            if not isValid(p):
+                return
+            if p.state() != QProcess.ProcessState.NotRunning:
+                p.kill()
+
         QTimer.singleShot(
             max(0, int(kill_delay_ms)),
-            lambda p=process: p.kill() if p.state() != QProcess.ProcessState.NotRunning else None,
+            kill_if_still_running,
         )
 
     def _read_radial_menu_process_output(self, process: QProcess):
