@@ -499,6 +499,7 @@ build_exe_options = {
     "packages": [
         "OpenGL",
         "PIL",
+        "lupa",
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtOpenGL",
@@ -513,7 +514,17 @@ build_exe_options = {
         "sqlite3",
         "zstandard",
     ],
-    "excludes": ["PyQt5", "PyQt6", "PySide2", "tkinter"],
+    "excludes": [
+        "PyQt5",
+        "PyQt6",
+        "PySide2",
+        "tkinter",
+        "lupa.lua51",
+        "lupa.lua52",
+        "lupa.lua53",
+        "lupa.lua54",
+        "lupa.lua55",
+    ],
     "include_msvcr": sys.platform == "win32",
     
     "zip_include_packages": ["*"], 
