@@ -1,0 +1,317 @@
+from settings_window.constants import *
+from settings_window.widgets import *
+from settings_window.workers import *
+
+
+SCREEN_AWARENESS_CONFIG_KEYS = (
+    "screen_awareness_enabled",
+    "screen_awareness_interval_minutes",
+    "screen_awareness_character_mode",
+    "screen_awareness_character",
+    "screen_awareness_max_screenshot_width",
+    "screen_awareness_vision_api_url",
+    "screen_awareness_vision_api_key",
+    "screen_awareness_vision_model_id",
+    "screen_awareness_vision_enable_thinking",
+)
+
+
+class ScreenAwarenessPageMixin:
+    def _build_screen_awareness_page(self):
+        page = self._make_theme_widget(QWidget())
+        page.setObjectName("screenAwarenessPage")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        title = TitleLabel(_tr("SettingsWindow.screen_awareness_page_title", default="屏幕感知"), page)
+        layout.addWidget(title)
+        subtitle = SubtitleLabel(_tr(
+            "SettingsWindow.screen_awareness_page_subtitle",
+            default="配置定期屏幕观察和主动搭话。截图仅用于本次视觉模型请求，不会保存到本地。",
+        ), page)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        screen_panel = QWidget(page)
+        screen_panel.setObjectName("screenAwarenessPanel")
+        screen_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        screen_layout = QVBoxLayout(screen_panel)
+        screen_layout.setContentsMargins(16, 14, 16, 14)
+        screen_layout.setSpacing(10)
+
+        screen_header = QHBoxLayout()
+        screen_header.setContentsMargins(0, 0, 0, 0)
+        screen_title_col = QVBoxLayout()
+        screen_title_col.setContentsMargins(0, 0, 0, 0)
+        screen_title_col.setSpacing(2)
+        screen_title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.screen_awareness_title", default="屏幕感知主动搭话"), screen_panel))
+        screen_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.screen_awareness_hint",
+            default="定期截取当前屏幕发送给视觉模型观察，再由角色判断是否自然主动搭话。",
+        ), screen_panel))
+        screen_hint.setObjectName("screenAwarenessHint")
+        screen_title_col.addWidget(screen_hint)
+        screen_header.addLayout(screen_title_col, 1)
+        self._screen_awareness_enabled = SwitchButton(screen_panel)
+        screen_header.addWidget(self._screen_awareness_enabled)
+        screen_layout.addLayout(screen_header)
+
+        screen_form = QGridLayout()
+        screen_form.setHorizontalSpacing(10)
+        screen_form.setVerticalSpacing(8)
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_interval", default="触发频率"), screen_panel), 0, 0)
+        self._screen_awareness_interval = SpinBox(screen_panel)
+        self._screen_awareness_interval.setRange(1, 120)
+        self._screen_awareness_interval.setValue(30)
+        self._screen_awareness_interval.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
+        self._screen_awareness_interval.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_interval, 0, 1)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_speaker", default="说话角色"), screen_panel), 0, 2)
+        self._screen_awareness_character = OpaqueDropDownComboBox(screen_panel)
+        self._screen_awareness_character.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_character, 0, 3)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_max_width", default="截图最长边"), screen_panel), 1, 0)
+        self._screen_awareness_max_width = SpinBox(screen_panel)
+        self._screen_awareness_max_width.setRange(640, 1920)
+        self._screen_awareness_max_width.setSingleStep(160)
+        self._screen_awareness_max_width.setValue(1920)
+        self._screen_awareness_max_width.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_max_width, 1, 1)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_model", default="视觉模型 ID"), screen_panel), 1, 2)
+        self._screen_awareness_vision_model_id = LineEdit(screen_panel)
+        self._screen_awareness_vision_model_id.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_model_placeholder", default="留空则复用辅助模型，再回退主模型"))
+        self._screen_awareness_vision_model_id.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_vision_model_id, 1, 3)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_url", default="视觉 API 地址"), screen_panel), 2, 0)
+        self._screen_awareness_vision_api_url = LineEdit(screen_panel)
+        self._screen_awareness_vision_api_url.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_url_placeholder", default="留空则复用辅助/主模型 API 地址"))
+        self._screen_awareness_vision_api_url.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_vision_api_url, 2, 1, 1, 3)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_key", default="视觉 API 密钥"), screen_panel), 3, 0)
+        self._screen_awareness_vision_api_key = LineEdit(screen_panel)
+        self._screen_awareness_vision_api_key.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_key_placeholder", default="留空则复用辅助/主模型 API 密钥"))
+        self._screen_awareness_vision_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._screen_awareness_vision_api_key.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_vision_api_key, 3, 1, 1, 3)
+
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_thinking", default="视觉模型思考模式"), screen_panel), 4, 0)
+        self._screen_awareness_vision_thinking = OpaqueDropDownComboBox(screen_panel)
+        self._screen_awareness_vision_thinking.addItems([
+            _tr("SettingsWindow.llm_enable_thinking_default"),
+            _tr("SettingsWindow.llm_enable_thinking_on"),
+            _tr("SettingsWindow.llm_enable_thinking_off"),
+        ])
+        self._screen_awareness_vision_thinking.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_vision_thinking, 4, 1)
+
+        test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
+        test_screen_btn.setFixedHeight(34)
+        test_screen_btn.clicked.connect(self._test_screen_awareness_now)
+        save_screen_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), screen_panel)
+        save_screen_btn.setFixedHeight(34)
+        save_screen_btn.clicked.connect(lambda: self._save_screen_awareness_config(show_info=True, emit_update=True))
+        screen_form.addWidget(test_screen_btn, 4, 2)
+        screen_form.addWidget(save_screen_btn, 4, 3)
+        screen_layout.addLayout(screen_form)
+        layout.addWidget(screen_panel)
+
+        layout.addStretch()
+        self._load_screen_awareness_controls()
+        self._style_screen_awareness_page(page)
+        qconfig.themeChanged.connect(lambda: self._style_screen_awareness_page(page))
+        return page
+
+    def _apply_screen_awareness_remote_settings(self, data: dict):
+        if not isinstance(data, dict) or not self._cfg:
+            return
+        if not any(key in data for key in SCREEN_AWARENESS_CONFIG_KEYS):
+            return
+        for key in SCREEN_AWARENESS_CONFIG_KEYS:
+            if key in data:
+                self._cfg.set(key, data.get(key))
+        self._load_screen_awareness_controls()
+
+    def _fill_screen_awareness_character_combo(self, mode: str = "random_visible", selected: str = ""):
+        combo = self._screen_awareness_character
+        combo.clear()
+        combo.addItem(_tr("SettingsWindow.screen_awareness_speaker_random", default="随机当前显示角色"), userData="__random_visible__")
+        combo.addItem(_tr("SettingsWindow.screen_awareness_speaker_default", default="默认提醒角色"), userData="__default__")
+        for character in self._reminder_characters():
+            combo.addItem(self._model_manager.get_display_name(character), userData=character)
+        target = "__random_visible__" if mode == "random_visible" else "__default__" if mode == "default" else selected
+        for index in range(combo.count()):
+            if combo.itemData(index) == target:
+                combo.setCurrentIndex(index)
+                return
+        combo.setCurrentIndex(0)
+
+    def _selected_screen_awareness_character(self) -> tuple[str, str]:
+        if not hasattr(self, "_screen_awareness_character") or self._screen_awareness_character.count() <= 0:
+            return "random_visible", ""
+        value = str(self._screen_awareness_character.itemData(self._screen_awareness_character.currentIndex()) or "").strip()
+        if value == "__random_visible__":
+            return "random_visible", ""
+        if value == "__default__":
+            return "default", ""
+        return "fixed", value
+
+    def _screen_awareness_thinking_value(self):
+        if not hasattr(self, "_screen_awareness_vision_thinking"):
+            return None
+        index = self._screen_awareness_vision_thinking.currentIndex()
+        return True if index == 1 else False if index == 2 else None
+
+    def _set_screen_awareness_thinking_value(self, value):
+        if not hasattr(self, "_screen_awareness_vision_thinking"):
+            return
+        self._screen_awareness_vision_thinking.setCurrentIndex(1 if value is True else 2 if value is False else 0)
+
+    def _load_screen_awareness_controls(self):
+        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+            return
+        self._screen_awareness_enabled.setChecked(bool(self._cfg.get("screen_awareness_enabled", False)))
+        self._screen_awareness_interval.setValue(max(1, min(120, int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30))))
+        self._fill_screen_awareness_character_combo(
+            str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
+            self._cfg.get("screen_awareness_character", ""),
+        )
+        self._screen_awareness_max_width.setValue(max(640, min(1920, int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920))))
+        self._screen_awareness_vision_api_url.setText(str(self._cfg.get("screen_awareness_vision_api_url", "") or ""))
+        self._screen_awareness_vision_api_key.setText(str(self._cfg.get("screen_awareness_vision_api_key", "") or ""))
+        self._screen_awareness_vision_model_id.setText(str(self._cfg.get("screen_awareness_vision_model_id", "") or ""))
+        self._set_screen_awareness_thinking_value(self._cfg.get("screen_awareness_vision_enable_thinking", None))
+
+    def _sync_screen_awareness_config_from_ui(self):
+        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+            return
+        self._cfg.set("screen_awareness_enabled", bool(self._screen_awareness_enabled.isChecked()))
+        self._cfg.set("screen_awareness_interval_minutes", int(self._screen_awareness_interval.value()))
+        mode, character = self._selected_screen_awareness_character()
+        self._cfg.set("screen_awareness_character_mode", mode)
+        self._cfg.set("screen_awareness_character", character)
+        self._cfg.set("screen_awareness_max_screenshot_width", int(self._screen_awareness_max_width.value()))
+        self._cfg.set("screen_awareness_vision_api_url", self._screen_awareness_vision_api_url.text().strip())
+        self._cfg.set("screen_awareness_vision_api_key", self._screen_awareness_vision_api_key.text().strip())
+        self._cfg.set("screen_awareness_vision_model_id", self._screen_awareness_vision_model_id.text().strip())
+        self._cfg.set("screen_awareness_vision_enable_thinking", self._screen_awareness_thinking_value())
+
+    def _screen_awareness_settings_data(self) -> dict:
+        if self._cfg:
+            return {
+                "screen_awareness_enabled": bool(self._cfg.get("screen_awareness_enabled", False)),
+                "screen_awareness_interval_minutes": int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30),
+                "screen_awareness_character_mode": str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
+                "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
+                "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
+                "screen_awareness_vision_api_url": str(self._cfg.get("screen_awareness_vision_api_url", "") or ""),
+                "screen_awareness_vision_api_key": str(self._cfg.get("screen_awareness_vision_api_key", "") or ""),
+                "screen_awareness_vision_model_id": str(self._cfg.get("screen_awareness_vision_model_id", "") or ""),
+                "screen_awareness_vision_enable_thinking": self._cfg.get("screen_awareness_vision_enable_thinking", None),
+            }
+        return {
+            "screen_awareness_enabled": False,
+            "screen_awareness_interval_minutes": 30,
+            "screen_awareness_character_mode": "random_visible",
+            "screen_awareness_character": "",
+            "screen_awareness_max_screenshot_width": 1920,
+            "screen_awareness_vision_api_url": "",
+            "screen_awareness_vision_api_key": "",
+            "screen_awareness_vision_model_id": "",
+            "screen_awareness_vision_enable_thinking": None,
+        }
+
+    def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):
+        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+            return
+        self._sync_screen_awareness_config_from_ui()
+        try:
+            self._cfg.save()
+            if emit_update:
+                self.settings_changed.emit(self._screen_awareness_settings_data())
+            if show_info:
+                InfoBar.success(
+                    _tr("SettingsWindow.screen_awareness_saved_title", default="屏幕感知设置已保存"),
+                    _tr("SettingsWindow.screen_awareness_saved_content", default="屏幕观察和主动搭话设置已更新。"),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.screen_awareness_failed_title", default="屏幕感知设置保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+    def _test_screen_awareness_now(self):
+        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+            return
+        if not self._screen_awareness_enabled.isChecked():
+            InfoBar.warning(
+                _tr("SettingsWindow.screen_awareness_test_disabled_title", default="请先开启屏幕感知"),
+                _tr("SettingsWindow.screen_awareness_test_disabled_content", default="开启后才能立即执行一次截图分析测试。"),
+                duration=2500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        self._sync_screen_awareness_config_from_ui()
+        try:
+            self._cfg.save()
+            data = self._screen_awareness_settings_data()
+            data["screen_awareness_test_requested"] = True
+            self.settings_changed.emit(data)
+            InfoBar.success(
+                _tr("SettingsWindow.screen_awareness_test_sent_title", default="已发送测试请求"),
+                _tr("SettingsWindow.screen_awareness_test_sent_content", default="主程序会立即截屏并调用视觉模型；如果模型判断不必打扰，可能不会弹出消息。"),
+                duration=3500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.screen_awareness_failed_title", default="屏幕感知设置保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+
+    def _style_screen_awareness_page(self, page: QWidget):
+        dark = isDarkTheme()
+        page_bg = _BG_DARK if dark else _BG_LIGHT
+        panel_bg = "#252525" if dark else "#ffffff"
+        border = "#3b3b3b" if dark else "#d8e3ef"
+        muted = "#a7b0bf" if dark else "#687385"
+        text = "#f3f3f6" if dark else "#202126"
+        page.setStyleSheet(f"""
+            QWidget#screenAwarenessPage {{
+                background: {page_bg};
+            }}
+            QWidget#screenAwarenessPanel {{
+                background: {panel_bg};
+                border: 1px solid {border};
+                border-radius: 12px;
+            }}
+            QWidget#screenAwarenessPanel BodyLabel,
+            QWidget#screenAwarenessPanel StrongBodyLabel {{
+                color: {text};
+            }}
+            BodyLabel#screenAwarenessHint {{
+                color: {muted};
+                font-size: 13px;
+            }}
+            QSpinBox {{
+                color: {text};
+                font-size: 13px;
+            }}
+        """)

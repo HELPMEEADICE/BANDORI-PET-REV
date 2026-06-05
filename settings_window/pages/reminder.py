@@ -12,11 +12,11 @@ class ReminderPageMixin:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.reminder_title", default="屏幕感知 / 定时行为"), page)
+        title = TitleLabel(_tr("SettingsWindow.reminder_title", default="闹钟 / 番茄钟"), page)
         layout.addWidget(title)
         subtitle = SubtitleLabel(_tr(
             "SettingsWindow.reminder_subtitle",
-            default="配置屏幕感知主动搭话、定时提醒、番茄钟和日常主动陪伴。角色会结合当前上下文、好感度与长期记忆生成自然回应。",
+            default="配置定时提醒、番茄钟和日常主动陪伴。角色会结合当前上下文、好感度与长期记忆生成自然回应。",
         ), page)
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -220,96 +220,6 @@ class ReminderPageMixin:
         self._proactive_save_timer.setSingleShot(True)
         self._proactive_save_timer.timeout.connect(self._save_proactive_controls_now)
 
-        screen_panel = QWidget(page)
-        screen_panel.setObjectName("reminderPanel")
-        screen_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        screen_layout = QVBoxLayout(screen_panel)
-        screen_layout.setContentsMargins(16, 14, 16, 14)
-        screen_layout.setSpacing(10)
-
-        screen_header = QHBoxLayout()
-        screen_header.setContentsMargins(0, 0, 0, 0)
-        screen_title_col = QVBoxLayout()
-        screen_title_col.setContentsMargins(0, 0, 0, 0)
-        screen_title_col.setSpacing(2)
-        screen_title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.screen_awareness_title", default="屏幕感知主动搭话"), screen_panel))
-        screen_hint = _wrap_label(BodyLabel(_tr(
-            "SettingsWindow.screen_awareness_hint",
-            default="定期截取当前屏幕发送给视觉模型观察，再由角色判断是否自然主动搭话。截图仅用于本次请求，不会保存到本地。",
-        ), screen_panel))
-        screen_hint.setObjectName("reminderHint")
-        screen_title_col.addWidget(screen_hint)
-        screen_header.addLayout(screen_title_col, 1)
-        self._screen_awareness_enabled = SwitchButton(screen_panel)
-        screen_header.addWidget(self._screen_awareness_enabled)
-        screen_layout.addLayout(screen_header)
-
-        screen_form = QGridLayout()
-        screen_form.setHorizontalSpacing(10)
-        screen_form.setVerticalSpacing(8)
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_interval", default="触发频率"), screen_panel), 0, 0)
-        self._screen_awareness_interval = SpinBox(screen_panel)
-        self._screen_awareness_interval.setRange(1, 120)
-        self._screen_awareness_interval.setValue(30)
-        self._screen_awareness_interval.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
-        self._screen_awareness_interval.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_interval, 0, 1)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_speaker", default="说话角色"), screen_panel), 0, 2)
-        self._screen_awareness_character = OpaqueDropDownComboBox(screen_panel)
-        self._screen_awareness_character.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_character, 0, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_max_width", default="截图最长边"), screen_panel), 1, 0)
-        self._screen_awareness_max_width = SpinBox(screen_panel)
-        self._screen_awareness_max_width.setRange(640, 1920)
-        self._screen_awareness_max_width.setSingleStep(160)
-        self._screen_awareness_max_width.setValue(1920)
-        self._screen_awareness_max_width.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_max_width, 1, 1)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_model", default="视觉模型 ID"), screen_panel), 1, 2)
-        self._screen_awareness_vision_model_id = LineEdit(screen_panel)
-        self._screen_awareness_vision_model_id.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_model_placeholder", default="留空则复用辅助模型，再回退主模型"))
-        self._screen_awareness_vision_model_id.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_model_id, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_url", default="视觉 API 地址"), screen_panel), 2, 0)
-        self._screen_awareness_vision_api_url = LineEdit(screen_panel)
-        self._screen_awareness_vision_api_url.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_url_placeholder", default="留空则复用辅助/主模型 API 地址"))
-        self._screen_awareness_vision_api_url.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_api_url, 2, 1, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_key", default="视觉 API 密钥"), screen_panel), 3, 0)
-        self._screen_awareness_vision_api_key = LineEdit(screen_panel)
-        self._screen_awareness_vision_api_key.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_key_placeholder", default="留空则复用辅助/主模型 API 密钥"))
-        self._screen_awareness_vision_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._screen_awareness_vision_api_key.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_api_key, 3, 1, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_thinking", default="视觉模型思考模式"), screen_panel), 4, 0)
-        self._screen_awareness_vision_thinking = OpaqueDropDownComboBox(screen_panel)
-        self._screen_awareness_vision_thinking.addItems([
-            _tr("SettingsWindow.llm_enable_thinking_default"),
-            _tr("SettingsWindow.llm_enable_thinking_on"),
-            _tr("SettingsWindow.llm_enable_thinking_off"),
-        ])
-        self._screen_awareness_vision_thinking.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_thinking, 4, 1)
-
-        save_screen_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), screen_panel)
-        save_screen_btn.setFixedHeight(34)
-        save_screen_btn.clicked.connect(lambda: self._save_reminder_config(show_info=True, emit_update=True))
-        test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
-        test_screen_btn.setFixedHeight(34)
-        test_screen_btn.clicked.connect(self._test_screen_awareness_now)
-        screen_form.addWidget(test_screen_btn, 4, 2)
-        screen_form.addWidget(save_screen_btn, 4, 3)
-        screen_layout.addLayout(screen_form)
-        layout.addWidget(screen_panel)
-        layout.removeWidget(screen_panel)
-        layout.insertWidget(3, screen_panel)
-
         layout.addStretch()
         self._load_reminder_config()
         self._proactive_enabled_switch.checkedChanged.connect(self._on_proactive_global_enabled_changed)
@@ -363,30 +273,6 @@ class ReminderPageMixin:
             return default_reminder_character(self._cfg) if self._cfg else ""
         return str(combo.itemData(combo.currentIndex()) or "").strip()
 
-    def _fill_screen_awareness_character_combo(self, mode: str = "random_visible", selected: str = ""):
-        combo = self._screen_awareness_character
-        combo.clear()
-        combo.addItem(_tr("SettingsWindow.screen_awareness_speaker_random", default="随机当前显示角色"), userData="__random_visible__")
-        combo.addItem(_tr("SettingsWindow.screen_awareness_speaker_default", default="默认提醒角色"), userData="__default__")
-        for character in self._reminder_characters():
-            combo.addItem(self._model_manager.get_display_name(character), userData=character)
-        target = "__random_visible__" if mode == "random_visible" else "__default__" if mode == "default" else selected
-        for index in range(combo.count()):
-            if combo.itemData(index) == target:
-                combo.setCurrentIndex(index)
-                return
-        combo.setCurrentIndex(0)
-
-    def _selected_screen_awareness_character(self) -> tuple[str, str]:
-        if not hasattr(self, "_screen_awareness_character") or self._screen_awareness_character.count() <= 0:
-            return "random_visible", ""
-        value = str(self._screen_awareness_character.itemData(self._screen_awareness_character.currentIndex()) or "").strip()
-        if value == "__random_visible__":
-            return "random_visible", ""
-        if value == "__default__":
-            return "default", ""
-        return "fixed", value
-
     def _alarm_repeat_days_from_form(self) -> list[int]:
         value = self._alarm_repeat_combo.itemData(self._alarm_repeat_combo.currentIndex())
         if value == "custom":
@@ -410,11 +296,10 @@ class ReminderPageMixin:
         self._proactive_enabled_switch.setChecked(bool(proactive.get("enabled", False)))
         self._fill_reminder_character_combo(self._proactive_character_combo, proactive.get("character", ""))
         self._loading_proactive_controls = False
-        self._load_screen_awareness_controls()
         self._on_alarm_repeat_changed()
         self._refresh_reminder_lists()
 
-    def apply_remote_settings(self, data: dict):
+    def _apply_reminder_remote_settings(self, data: dict):
         """Reflect reminder changes pushed from other processes (e.g. chat @clock / @pomodoro)."""
         if not isinstance(data, dict) or not self._cfg:
             return
@@ -424,15 +309,6 @@ class ReminderPageMixin:
             PROACTIVE_COMPANION_CONFIG_KEY,
             REMINDER_DISPLAY_MODE_KEY,
             "reminder_temporary_overlay_enabled",
-            "screen_awareness_enabled",
-            "screen_awareness_interval_minutes",
-            "screen_awareness_character_mode",
-            "screen_awareness_character",
-            "screen_awareness_max_screenshot_width",
-            "screen_awareness_vision_api_url",
-            "screen_awareness_vision_api_key",
-            "screen_awareness_vision_model_id",
-            "screen_awareness_vision_enable_thinking",
         )
         if not any(key in data for key in reminder_keys):
             return
@@ -466,11 +342,6 @@ class ReminderPageMixin:
             self._cfg.set("reminder_temporary_overlay_enabled", bool(data.get("reminder_temporary_overlay_enabled", True)))
             if hasattr(self, "_reminder_temporary_overlay"):
                 self._reminder_temporary_overlay.setChecked(bool(data.get("reminder_temporary_overlay_enabled", True)))
-        for key in reminder_keys:
-            if key.startswith("screen_awareness_") and key in data:
-                self._cfg.set(key, data.get(key))
-        if any(str(key).startswith("screen_awareness_") for key in data):
-            self._load_screen_awareness_controls()
         if hasattr(self, "_alarm_list_layout"):
             self._refresh_reminder_lists()
 
@@ -482,7 +353,6 @@ class ReminderPageMixin:
                 PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion({}),
                 REMINDER_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
                 "reminder_temporary_overlay_enabled": True,
-                **self._screen_awareness_settings_data(),
             }
         return {
             ALARM_CONFIG_KEY: normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, [])),
@@ -490,7 +360,6 @@ class ReminderPageMixin:
             PROACTIVE_COMPANION_CONFIG_KEY: normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})),
             REMINDER_DISPLAY_MODE_KEY: normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)),
             "reminder_temporary_overlay_enabled": bool(self._cfg.get("reminder_temporary_overlay_enabled", True)),
-            **self._screen_awareness_settings_data(),
         }
 
     def _save_reminder_config(self, show_info: bool = True, emit_update: bool = True):
@@ -500,7 +369,6 @@ class ReminderPageMixin:
         if save_timer is not None and save_timer.isActive():
             save_timer.stop()
         self._sync_proactive_config_from_ui()
-        self._sync_screen_awareness_config_from_ui()
         mode = self._reminder_display_mode.itemData(self._reminder_display_mode.currentIndex()) or DISPLAY_MODE_FLOATING
         self._cfg.set(REMINDER_DISPLAY_MODE_KEY, normalize_display_mode(mode))
         if hasattr(self, "_reminder_temporary_overlay"):
@@ -520,110 +388,6 @@ class ReminderPageMixin:
                     position=InfoBarPosition.TOP,
                     parent=self,
                 )
-        except Exception as exc:
-            InfoBar.error(
-                _tr("SettingsWindow.reminder_failed_title", default="提醒设置保存失败"),
-                str(exc),
-                duration=4000,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-
-    def _screen_awareness_thinking_value(self):
-        if not hasattr(self, "_screen_awareness_vision_thinking"):
-            return None
-        index = self._screen_awareness_vision_thinking.currentIndex()
-        return True if index == 1 else False if index == 2 else None
-
-    def _set_screen_awareness_thinking_value(self, value):
-        if not hasattr(self, "_screen_awareness_vision_thinking"):
-            return
-        self._screen_awareness_vision_thinking.setCurrentIndex(1 if value is True else 2 if value is False else 0)
-
-    def _load_screen_awareness_controls(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
-            return
-        self._screen_awareness_enabled.setChecked(bool(self._cfg.get("screen_awareness_enabled", False)))
-        self._screen_awareness_interval.setValue(max(1, min(120, int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30))))
-        self._fill_screen_awareness_character_combo(
-            str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
-            self._cfg.get("screen_awareness_character", ""),
-        )
-        self._screen_awareness_max_width.setValue(max(640, min(1920, int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920))))
-        self._screen_awareness_vision_api_url.setText(str(self._cfg.get("screen_awareness_vision_api_url", "") or ""))
-        self._screen_awareness_vision_api_key.setText(str(self._cfg.get("screen_awareness_vision_api_key", "") or ""))
-        self._screen_awareness_vision_model_id.setText(str(self._cfg.get("screen_awareness_vision_model_id", "") or ""))
-        self._set_screen_awareness_thinking_value(self._cfg.get("screen_awareness_vision_enable_thinking", None))
-
-    def _sync_screen_awareness_config_from_ui(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
-            return
-        self._cfg.set("screen_awareness_enabled", bool(self._screen_awareness_enabled.isChecked()))
-        self._cfg.set("screen_awareness_interval_minutes", int(self._screen_awareness_interval.value()))
-        mode, character = self._selected_screen_awareness_character()
-        self._cfg.set("screen_awareness_character_mode", mode)
-        self._cfg.set("screen_awareness_character", character)
-        self._cfg.set("screen_awareness_max_screenshot_width", int(self._screen_awareness_max_width.value()))
-        self._cfg.set("screen_awareness_vision_api_url", self._screen_awareness_vision_api_url.text().strip())
-        self._cfg.set("screen_awareness_vision_api_key", self._screen_awareness_vision_api_key.text().strip())
-        self._cfg.set("screen_awareness_vision_model_id", self._screen_awareness_vision_model_id.text().strip())
-        self._cfg.set("screen_awareness_vision_enable_thinking", self._screen_awareness_thinking_value())
-
-    def _screen_awareness_settings_data(self) -> dict:
-        if self._cfg:
-            return {
-                "screen_awareness_enabled": bool(self._cfg.get("screen_awareness_enabled", False)),
-                "screen_awareness_interval_minutes": int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30),
-                "screen_awareness_character_mode": str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
-                "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
-                "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
-                "screen_awareness_vision_api_url": str(self._cfg.get("screen_awareness_vision_api_url", "") or ""),
-                "screen_awareness_vision_api_key": str(self._cfg.get("screen_awareness_vision_api_key", "") or ""),
-                "screen_awareness_vision_model_id": str(self._cfg.get("screen_awareness_vision_model_id", "") or ""),
-                "screen_awareness_vision_enable_thinking": self._cfg.get("screen_awareness_vision_enable_thinking", None),
-            }
-        return {
-            "screen_awareness_enabled": False,
-            "screen_awareness_interval_minutes": 30,
-            "screen_awareness_character_mode": "random_visible",
-            "screen_awareness_character": "",
-            "screen_awareness_max_screenshot_width": 1920,
-            "screen_awareness_vision_api_url": "",
-            "screen_awareness_vision_api_key": "",
-            "screen_awareness_vision_model_id": "",
-            "screen_awareness_vision_enable_thinking": None,
-        }
-
-    def _test_screen_awareness_now(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
-            return
-        if not self._screen_awareness_enabled.isChecked():
-            InfoBar.warning(
-                _tr("SettingsWindow.screen_awareness_test_disabled_title", default="请先开启屏幕感知"),
-                _tr("SettingsWindow.screen_awareness_test_disabled_content", default="开启后才能立即执行一次截图分析测试。"),
-                duration=2500,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
-            return
-        self._sync_proactive_config_from_ui()
-        self._sync_screen_awareness_config_from_ui()
-        mode = self._reminder_display_mode.itemData(self._reminder_display_mode.currentIndex()) or DISPLAY_MODE_FLOATING
-        self._cfg.set(REMINDER_DISPLAY_MODE_KEY, normalize_display_mode(mode))
-        if hasattr(self, "_reminder_temporary_overlay"):
-            self._cfg.set("reminder_temporary_overlay_enabled", bool(self._reminder_temporary_overlay.isChecked()))
-        try:
-            self._cfg.save()
-            data = self._reminder_settings_data()
-            data["screen_awareness_test_requested"] = True
-            self.settings_changed.emit(data)
-            InfoBar.success(
-                _tr("SettingsWindow.screen_awareness_test_sent_title", default="已发送测试请求"),
-                _tr("SettingsWindow.screen_awareness_test_sent_content", default="主程序会立即截屏并调用视觉模型；如果模型判断不必打扰，可能不会弹出消息。"),
-                duration=3500,
-                position=InfoBarPosition.TOP,
-                parent=self,
-            )
         except Exception as exc:
             InfoBar.error(
                 _tr("SettingsWindow.reminder_failed_title", default="提醒设置保存失败"),
