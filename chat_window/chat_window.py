@@ -43,6 +43,8 @@ import shutil
 import sys
 import uuid
 import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime
 import json
 import re
@@ -135,6 +137,23 @@ from .widgets import (
     PlanDivider, SearchSourcePopup, SearchSourceBadge, ChatImagePreview,
 )
 from .message_bubble import MessageBubble
+
+_CHAT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
+_REMOTE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+_FILE_ATTACHMENT_INLINE_BYTES = 256 * 1024
+_FILE_ATTACHMENT_INLINE_CHARS = 120_000
+_CHAT_TEXT_ATTACHMENT_EXTENSIONS = {
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml",
+    ".xml", ".html", ".htm", ".css", ".js", ".jsx", ".ts", ".tsx", ".py", ".java",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".go", ".rs", ".rb", ".php", ".swift",
+    ".kt", ".kts", ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd", ".sql", ".ini",
+    ".cfg", ".conf", ".toml", ".log", ".po", ".pot", ".properties",
+}
+_CHAT_TEXT_ATTACHMENT_MIME_PREFIXES = ("text/",)
+_CHAT_TEXT_ATTACHMENT_MIME_TYPES = {
+    "application/json", "application/xml", "application/yaml", "application/x-yaml",
+    "application/javascript", "application/x-javascript", "application/sql",
+}
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
     closed = Signal()
@@ -1520,6 +1539,40 @@ class ChatWindow(QWidget):
             self._clear_message_widgets()
             self._load_messages()
 
+    @staticmethod
+    def _paperclip_icon(color: str) -> QIcon:
+        pixmap = QPixmap(48, 48)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(color), 3.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        path = QPainterPath()
+        path.moveTo(29, 15)
+        path.lineTo(29, 31)
+        path.cubicTo(29, 37, 25, 41, 19, 41)
+        path.cubicTo(13, 41, 9, 37, 9, 31)
+        path.lineTo(9, 18)
+        path.cubicTo(9, 10, 15, 5, 22, 5)
+        path.cubicTo(30, 5, 35, 11, 35, 18)
+        path.lineTo(35, 31)
+        path.cubicTo(35, 41, 28, 46, 19, 46)
+        path.cubicTo(10, 46, 3, 40, 3, 31)
+        path.lineTo(3, 19)
+        painter.drawPath(path)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _refresh_attach_button_icon(self):
+        attach_btn = getattr(self, "_attach_btn", None)
+        if attach_btn is None:
+            return
+        color = "#eef2ff" if isDarkTheme() else "#34405a"
+        attach_btn.setIcon(self._paperclip_icon(color))
+
     def _build_input_area(self):
         area = RoundedPanel()
         area.setObjectName("InputArea")
@@ -1551,11 +1604,11 @@ class ChatWindow(QWidget):
         layout.setContentsMargins(14, 10, 12, 10)
         layout.setSpacing(10)
 
-        self._attach_btn = IconButton(FluentIcon.PHOTO, self._composer)
+        self._attach_btn = IconButton(self._paperclip_icon("#34405a"), self._composer)
         self._attach_btn.setFixedSize(46, 46)
         self._attach_btn.setIconSize(QSize(22, 22))
-        self._attach_btn.setToolTip(_tr("ChatWindow.attach_image_tooltip", default="添加图片"))
-        self._attach_btn.clicked.connect(self._choose_chat_images)
+        self._attach_btn.setToolTip(_tr("ChatWindow.attach_file_tooltip", default="添加附件"))
+        self._attach_btn.clicked.connect(self._choose_chat_attachments)
         self._attach_btn.setAcceptDrops(True)
         self._attach_btn.installEventFilter(self)
         layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -1824,6 +1877,7 @@ class ChatWindow(QWidget):
         self._sync_group_sidebar_toggle_buttons()
         self._send_btn.apply_theme()
         self._attach_btn.apply_theme()
+        self._refresh_attach_button_icon()
         self._asr_btn.apply_theme()
         self._update_asr_button_state()
         if self._resize_grip:
@@ -3529,18 +3583,18 @@ class ChatWindow(QWidget):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _choose_chat_images(self):
+    def _choose_chat_attachments(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            _tr("ChatWindow.attach_image_title", default="选择图片"),
+            _tr("ChatWindow.attach_file_title", default="选择附件"),
             "",
-            _tr("ChatWindow.attach_image_filter", default="Images (*.png *.jpg *.jpeg *.webp *.gif)"),
+            _tr("ChatWindow.attach_file_filter", default="All files (*)"),
         )
         if not paths:
             return
-        self._add_chat_images(paths)
+        self._add_chat_files(paths)
 
-    def _chat_image_paths_from_mime(self, mime_data) -> list[str]:
+    def _chat_file_paths_from_mime(self, mime_data) -> list[str]:
         if not mime_data or not mime_data.hasUrls():
             return []
         paths = []
@@ -3549,12 +3603,52 @@ class ChatWindow(QWidget):
             if not path:
                 continue
             source = Path(path)
-            if source.suffix.lower() in _CHAT_IMAGE_EXTENSIONS and source.exists():
+            if source.exists() and source.is_file():
                 paths.append(path)
         return paths
 
-    def _mime_has_chat_images(self, mime_data) -> bool:
-        return bool(self._chat_image_paths_from_mime(mime_data))
+    def _remote_image_urls_from_mime(self, mime_data) -> list[str]:
+        if not mime_data:
+            return []
+        urls = []
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                if url.isLocalFile():
+                    continue
+                text = url.toString().strip()
+                if self._looks_like_remote_image_url(text):
+                    urls.append(text)
+        html = mime_data.html() if mime_data.hasHtml() else ""
+        if html:
+            for match in re.finditer(r"""<img[^>]+src=["']([^"']+)["']""", html, flags=re.IGNORECASE):
+                text = match.group(1).strip()
+                if self._is_http_url(text):
+                    urls.append(text)
+        unique = []
+        for url in urls:
+            if url not in unique:
+                unique.append(url)
+        return unique
+
+    @staticmethod
+    def _is_http_url(url: str) -> bool:
+        return str(url or "").strip().lower().startswith(("http://", "https://"))
+
+    @staticmethod
+    def _looks_like_remote_image_url(url: str) -> bool:
+        text = str(url or "").strip()
+        if not ChatWindow._is_http_url(text):
+            return False
+        parsed = urllib.parse.urlparse(text)
+        suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
+        return suffix in _CHAT_IMAGE_EXTENSIONS
+
+    def _mime_has_chat_attachments(self, mime_data) -> bool:
+        if not mime_data:
+            return False
+        if mime_data.hasImage():
+            return True
+        return bool(self._chat_file_paths_from_mime(mime_data) or self._remote_image_urls_from_mime(mime_data))
 
     def _set_composer_drag_active(self, active: bool):
         if self._composer_drag_active == active:
@@ -3565,7 +3659,7 @@ class ChatWindow(QWidget):
     def _handle_composer_drag_event(self, event) -> bool:
         event_type = event.type()
         if event_type in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
-            if self._mime_has_chat_images(event.mimeData()):
+            if self._mime_has_chat_attachments(event.mimeData()):
                 self._set_composer_drag_active(True)
                 event.acceptProposedAction()
                 return True
@@ -3577,23 +3671,103 @@ class ChatWindow(QWidget):
             event.accept()
             return True
         if event_type == QEvent.Type.Drop:
-            paths = self._chat_image_paths_from_mime(event.mimeData())
+            mime_data = event.mimeData()
             self._set_composer_drag_active(False)
+            added = 0
+            if mime_data and mime_data.hasImage():
+                added += self._add_mime_image_attachment(mime_data)
+            paths = self._chat_file_paths_from_mime(mime_data)
             if paths:
-                self._add_chat_images(paths, dropped=True)
+                added += self._add_chat_files(paths, dropped=True)
+            remote_urls = self._remote_image_urls_from_mime(mime_data)
+            if remote_urls:
+                added += self._add_remote_chat_images(remote_urls)
+            if added:
                 event.acceptProposedAction()
             else:
-                event.ignore()
+                self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="不支持拖放此类型的文件"))
+                event.accept()
             return True
         return False
 
-    def _add_chat_images(self, paths: list[str], dropped: bool = False) -> int:
+    def _add_mime_image_attachment(self, mime_data) -> int:
+        if not mime_data or not mime_data.hasImage():
+            return 0
+        image = mime_data.imageData()
+        if isinstance(image, QPixmap):
+            image = image.toImage()
+        if not isinstance(image, QImage) or image.isNull():
+            return 0
+        target_dir = self._chat_attachment_dir()
+        target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}.png"
+        if not image.save(str(target), "PNG"):
+            return 0
+        self._pending_attachments.append({
+            "type": "image",
+            "path": str(target),
+            "name": _tr("ChatWindow.dropped_image_name", default="拖放图片.png"),
+            "mime": "image/png",
+            "size": target.stat().st_size if target.exists() else 0,
+        })
+        self._update_attachment_hint()
+        self._input.setFocus()
+        return 1
+
+    def _add_remote_chat_images(self, urls: list[str]) -> int:
+        added = 0
+        target_dir = self._chat_attachment_dir()
+        for url in urls:
+            parsed = urllib.parse.urlparse(url)
+            suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
+            if suffix not in _CHAT_IMAGE_EXTENSIONS:
+                suffix = ".png"
+            name = Path(urllib.parse.unquote(parsed.path)).name or f"web-image{suffix}"
+            target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                    if content_type and not content_type.startswith("image/"):
+                        continue
+                    data = response.read(_REMOTE_IMAGE_MAX_BYTES + 1)
+                if len(data) > _REMOTE_IMAGE_MAX_BYTES:
+                    raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
+                target.write_bytes(data)
+            except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+                self._composer_hint.setText(
+                    _tr("ChatWindow.attach_remote_image_failed", default="无法添加网页图片：{error}", error=str(exc))
+                )
+                continue
+            mime = mimetypes.guess_type(str(target))[0] or "image/png"
+            self._pending_attachments.append({
+                "type": "image",
+                "path": str(target),
+                "name": name,
+                "mime": mime,
+                "size": target.stat().st_size if target.exists() else len(data),
+            })
+            added += 1
+        if added:
+            self._update_attachment_hint()
+            self._input.setFocus()
+        return added
+
+    def _add_chat_files(self, paths: list[str], dropped: bool = False) -> int:
         added = 0
         target_dir = self._chat_attachment_dir()
         for path in paths:
             source = Path(path)
             suffix = source.suffix.lower()
-            if suffix not in _CHAT_IMAGE_EXTENSIONS or not source.exists() or not source.is_file():
+            if not source.exists() or not source.is_file():
+                continue
+            try:
+                size = source.stat().st_size
+            except OSError:
+                continue
+            if size > _CHAT_ATTACHMENT_MAX_BYTES:
+                self._composer_hint.setText(
+                    _tr("ChatWindow.attach_too_large", default="附件过大，无法添加：{name}", name=source.name)
+                )
                 continue
             target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
             try:
@@ -3601,29 +3775,31 @@ class ChatWindow(QWidget):
             except OSError as exc:
                 QMessageBox.warning(
                     self,
-                    _tr("ChatWindow.attach_failed_title", default="图片添加失败"),
-                    _tr("ChatWindow.attach_failed_content", default="无法添加图片：{error}", error=str(exc)),
+                    _tr("ChatWindow.attach_failed_title", default="附件添加失败"),
+                    _tr("ChatWindow.attach_failed_content", default="无法添加附件：{error}", error=str(exc)),
                 )
                 continue
-            mime = mimetypes.guess_type(str(target))[0] or "image/png"
+            is_image = suffix in _CHAT_IMAGE_EXTENSIONS
+            mime = mimetypes.guess_type(str(target))[0] or ("image/png" if is_image else "application/octet-stream")
             self._pending_attachments.append({
-                "type": "image",
+                "type": "image" if is_image else "file",
                 "path": str(target),
                 "name": source.name,
                 "mime": mime,
+                "size": target.stat().st_size if target.exists() else size,
             })
             added += 1
         if added:
             self._update_attachment_hint()
             self._input.setFocus()
         elif dropped:
-            self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="目前只能拖入 png、jpg、jpeg、webp 或 gif 图片。"))
+            self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="不支持拖放此类型的文件"))
         return added
 
     def _update_attachment_hint(self):
         if self._pending_attachments:
             count = len(self._pending_attachments)
-            self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 张图片，发送时会一起交给模型。", count=count))
+            self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 个附件，发送时会一起交给模型。", count=count))
         else:
             self._composer_hint.setText(self._idle_status_text())
 
@@ -3686,7 +3862,10 @@ class ChatWindow(QWidget):
         result = []
         safe_root = self._chat_attachment_dir().resolve()
         for item in attachments:
-            if not isinstance(item, dict) or item.get("type") != "image":
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "") or "").strip().lower()
+            if item_type not in {"image", "file"}:
                 continue
             path = str(item.get("path", ""))
             if not path:
@@ -3696,9 +3875,17 @@ class ChatWindow(QWidget):
                 resolved.relative_to(safe_root)
             except (OSError, RuntimeError, ValueError):
                 continue
-            if resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS or not resolved.exists():
+            if not resolved.exists() or not resolved.is_file():
                 continue
-            result.append(dict(item, path=str(resolved)))
+            if item_type == "image" and resolved.suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
+                continue
+            normalized = dict(item, type=item_type, path=str(resolved))
+            if "size" not in normalized:
+                try:
+                    normalized["size"] = resolved.stat().st_size
+                except OSError:
+                    pass
+            result.append(normalized)
         return result
 
     def _image_data_url(self, attachment: dict) -> str:
@@ -3713,6 +3900,70 @@ class ChatWindow(QWidget):
             return ""
         return f"data:{mime};base64,{encoded}"
 
+    @staticmethod
+    def _format_attachment_size(size) -> str:
+        try:
+            value = int(size)
+        except (TypeError, ValueError):
+            return ""
+        if value < 1024:
+            return f"{value} B"
+        if value < 1024 * 1024:
+            return f"{value / 1024:.1f} KB"
+        return f"{value / (1024 * 1024):.1f} MB"
+
+    @staticmethod
+    def _is_text_attachment(path: str, mime: str) -> bool:
+        suffix = Path(path).suffix.lower()
+        mime = str(mime or "").split(";")[0].strip().lower()
+        return (
+            suffix in _CHAT_TEXT_ATTACHMENT_EXTENSIONS
+            or any(mime.startswith(prefix) for prefix in _CHAT_TEXT_ATTACHMENT_MIME_PREFIXES)
+            or mime in _CHAT_TEXT_ATTACHMENT_MIME_TYPES
+        )
+
+    def _file_attachment_note(self, attachment: dict) -> str:
+        path = str(attachment.get("path", "") or "")
+        name = str(attachment.get("name", "") or Path(path).name or "file")
+        mime = str(attachment.get("mime", "") or mimetypes.guess_type(path)[0] or "application/octet-stream")
+        size = attachment.get("size", "")
+        size_text = self._format_attachment_size(size)
+        header = [
+            "【文件附件】",
+            f"文件名：{name}",
+            f"MIME：{mime}",
+        ]
+        if size_text:
+            header.append(f"大小：{size_text}")
+        if not path or not os.path.exists(path):
+            return "\n".join(header + ["内容：文件已不可用。"])
+        if not self._is_text_attachment(path, mime):
+            return "\n".join(header + ["内容：该文件不是可直接内联的文本文件，已作为附件元信息提供。"])
+        try:
+            with open(path, "rb") as f:
+                raw = f.read(_FILE_ATTACHMENT_INLINE_BYTES + 1)
+        except OSError as exc:
+            return "\n".join(header + [f"内容：读取失败：{exc}"])
+        truncated = len(raw) > _FILE_ATTACHMENT_INLINE_BYTES
+        raw = raw[:_FILE_ATTACHMENT_INLINE_BYTES]
+        text = None
+        for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = raw.decode("utf-8", errors="replace")
+        if len(text) > _FILE_ATTACHMENT_INLINE_CHARS:
+            text = text[:_FILE_ATTACHMENT_INLINE_CHARS]
+            truncated = True
+        suffix = Path(path).suffix.lower().lstrip(".") or "text"
+        note = "\n".join(header + [f"内容：\n```{suffix}\n{text}\n```"])
+        if truncated:
+            note += "\n（内容已截断）"
+        return note
+
     def _chat_message_content(self, text: str, attachments=None):
         items = self._normalize_attachments(attachments)
         if not items:
@@ -3720,6 +3971,8 @@ class ChatWindow(QWidget):
         text = text or ""
         vision_notes = []
         for item in items:
+            if item.get("type") != "image":
+                continue
             summary = str(item.get("vision_summary", "") or "").strip()
             if summary:
                 name = item.get("name") or Path(item.get("path", "")).name or "image"
@@ -3731,8 +3984,17 @@ class ChatWindow(QWidget):
                     vision_notes.append(f"{name}：{error_note}")
         if vision_notes:
             text += "\n\n【快速视觉模型观察】\n" + "\n".join(vision_notes)
+        file_notes = [
+            self._file_attachment_note(item)
+            for item in items
+            if item.get("type") == "file"
+        ]
+        if file_notes:
+            text += "\n\n" + "\n\n".join(file_notes)
         parts = [{"type": "text", "text": text}]
         for item in items:
+            if item.get("type") != "image":
+                continue
             if str(item.get("vision_summary", "") or "").strip() or str(item.get("vision_error", "") or "").strip():
                 continue
             data_url = self._image_data_url(item)
@@ -3750,7 +4012,10 @@ class ChatWindow(QWidget):
         if not self._aux_vision_fallback_enabled():
             return False
         items = self._normalize_attachments(attachments)
-        return any(not str(item.get("vision_summary", "") or "").strip() for item in items)
+        return any(
+            item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
+            for item in items
+        )
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
         return supports_openai_responses_api(api_url)
@@ -3799,9 +4064,15 @@ class ChatWindow(QWidget):
             except (TypeError, ValueError):
                 attachments = []
         if isinstance(attachments, list) and attachments:
-            count = sum(1 for item in attachments if isinstance(item, dict) and item.get("type") == "image")
-            if count:
-                text = (text + "\n" if text else "") + f"[图片 {count} 张]"
+            image_count = sum(1 for item in attachments if isinstance(item, dict) and item.get("type") == "image")
+            file_count = sum(1 for item in attachments if isinstance(item, dict) and item.get("type") == "file")
+            labels = []
+            if image_count:
+                labels.append(f"图片 {image_count} 张")
+            if file_count:
+                labels.append(f"文件 {file_count} 个")
+            if labels:
+                text = (text + "\n" if text else "") + "[" + "，".join(labels) + "]"
         text = re.sub(r"\s+", " ", text).strip()
         if len(text) > 420:
             text = text[:420].rstrip() + "..."
@@ -4103,7 +4374,12 @@ class ChatWindow(QWidget):
         text = self._input.toPlainText().strip()
         attachments = list(self._pending_attachments)
         if not text and attachments:
-            text = _tr("ChatWindow.image_only_prompt", default="请看这张图片。")
+            has_file = any(isinstance(item, dict) and item.get("type") == "file" for item in attachments)
+            text = (
+                _tr("ChatWindow.attachment_only_prompt", default="请查看这些附件。")
+                if has_file
+                else _tr("ChatWindow.image_only_prompt", default="请看这张图片。")
+            )
         if not text:
             return
 
