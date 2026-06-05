@@ -154,6 +154,34 @@ _CHAT_TEXT_ATTACHMENT_MIME_TYPES = {
     "application/json", "application/xml", "application/yaml", "application/x-yaml",
     "application/javascript", "application/x-javascript", "application/sql",
 }
+
+
+class ChatComposerTextEdit(FluentContextTextEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._chat_mime_can_handle = None
+        self._chat_mime_insert_handler = None
+
+    def set_chat_mime_handlers(self, can_handle, insert_handler):
+        self._chat_mime_can_handle = can_handle
+        self._chat_mime_insert_handler = insert_handler
+
+    def _can_handle_chat_mime(self, source) -> bool:
+        return bool(callable(self._chat_mime_can_handle) and self._chat_mime_can_handle(source))
+
+    def canInsertFromMimeData(self, source):
+        if self._can_handle_chat_mime(source):
+            return True
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        if self._can_handle_chat_mime(source):
+            if callable(self._chat_mime_insert_handler):
+                self._chat_mime_insert_handler(source)
+                return
+        super().insertFromMimeData(source)
+
+
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
     closed = Signal()
@@ -1621,7 +1649,8 @@ class ChatWindow(QWidget):
         self._asr_btn.setEnabled(self._asr_enabled())
         layout.addWidget(self._asr_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self._input = FluentContextTextEdit()
+        self._input = ChatComposerTextEdit()
+        self._input.set_chat_mime_handlers(self._mime_has_chat_attachments, self._add_chat_attachments_from_mime)
         self._input.setPlaceholderText(_tr("ChatWindow.input_placeholder"))
         self._input.setAcceptRichText(False)
         self._input.setFixedHeight(46)
@@ -3616,13 +3645,18 @@ class ChatWindow(QWidget):
                 if url.isLocalFile():
                     continue
                 text = url.toString().strip()
-                if self._looks_like_remote_image_url(text):
+                if self._is_http_url(text):
                     urls.append(text)
         html = mime_data.html() if mime_data.hasHtml() else ""
         if html:
             for match in re.finditer(r"""<img[^>]+src=["']([^"']+)["']""", html, flags=re.IGNORECASE):
                 text = match.group(1).strip()
                 if self._is_http_url(text):
+                    urls.append(text)
+        if mime_data.hasText():
+            for line in mime_data.text().splitlines():
+                text = line.strip()
+                if self._looks_like_remote_image_url(text):
                     urls.append(text)
         unique = []
         for url in urls:
@@ -3642,6 +3676,17 @@ class ChatWindow(QWidget):
         parsed = urllib.parse.urlparse(text)
         suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
         return suffix in _CHAT_IMAGE_EXTENSIONS
+
+    @staticmethod
+    def _suffix_for_image_content_type(content_type: str) -> str:
+        normalized = str(content_type or "").split(";", 1)[0].strip().lower()
+        return {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }.get(normalized, ".png")
 
     def _mime_has_chat_attachments(self, mime_data) -> bool:
         if not mime_data:
@@ -3673,15 +3718,7 @@ class ChatWindow(QWidget):
         if event_type == QEvent.Type.Drop:
             mime_data = event.mimeData()
             self._set_composer_drag_active(False)
-            added = 0
-            if mime_data and mime_data.hasImage():
-                added += self._add_mime_image_attachment(mime_data)
-            paths = self._chat_file_paths_from_mime(mime_data)
-            if paths:
-                added += self._add_chat_files(paths, dropped=True)
-            remote_urls = self._remote_image_urls_from_mime(mime_data)
-            if remote_urls:
-                added += self._add_remote_chat_images(remote_urls)
+            added = self._add_chat_attachments_from_mime(mime_data, dropped=True)
             if added:
                 event.acceptProposedAction()
             else:
@@ -3689,6 +3726,18 @@ class ChatWindow(QWidget):
                 event.accept()
             return True
         return False
+
+    def _add_chat_attachments_from_mime(self, mime_data, dropped: bool = False) -> int:
+        added = 0
+        if mime_data and mime_data.hasImage():
+            added += self._add_mime_image_attachment(mime_data)
+        paths = self._chat_file_paths_from_mime(mime_data)
+        if paths:
+            added += self._add_chat_files(paths, dropped=dropped)
+        remote_urls = self._remote_image_urls_from_mime(mime_data)
+        if remote_urls:
+            added += self._add_remote_chat_images(remote_urls)
+        return added
 
     def _add_mime_image_attachment(self, mime_data) -> int:
         if not mime_data or not mime_data.hasImage():
@@ -3719,10 +3768,8 @@ class ChatWindow(QWidget):
         for url in urls:
             parsed = urllib.parse.urlparse(url)
             suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
-            if suffix not in _CHAT_IMAGE_EXTENSIONS:
-                suffix = ".png"
-            name = Path(urllib.parse.unquote(parsed.path)).name or f"web-image{suffix}"
-            target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
+            suffix_is_known = suffix in _CHAT_IMAGE_EXTENSIONS
+            name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
             try:
                 request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
                 with urllib.request.urlopen(request, timeout=12) as response:
@@ -3732,13 +3779,18 @@ class ChatWindow(QWidget):
                     data = response.read(_REMOTE_IMAGE_MAX_BYTES + 1)
                 if len(data) > _REMOTE_IMAGE_MAX_BYTES:
                     raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
+                if not suffix_is_known:
+                    suffix = self._suffix_for_image_content_type(content_type)
+                    if Path(name).suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
+                        name = f"{Path(name).stem or 'web-image'}{suffix}"
+                target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
                 target.write_bytes(data)
             except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
                 self._composer_hint.setText(
                     _tr("ChatWindow.attach_remote_image_failed", default="无法添加网页图片：{error}", error=str(exc))
                 )
                 continue
-            mime = mimetypes.guess_type(str(target))[0] or "image/png"
+            mime = content_type if content_type.startswith("image/") else (mimetypes.guess_type(str(target))[0] or "image/png")
             self._pending_attachments.append({
                 "type": "image",
                 "path": str(target),
