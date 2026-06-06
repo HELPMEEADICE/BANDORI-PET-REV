@@ -818,7 +818,10 @@ class Live2DWidget(QOpenGLWidget):
         alpha = self._alpha_near(x, y, sync=True)
         self._last_hit_test_ms = self._hit_clock.elapsed()
         self._last_hit_test_key = self._hit_key_for(x, y)
-        self._last_hit_state = alpha > self._hit_alpha_threshold or self._is_model_geometry_hit_at(x, y)
+        self._last_hit_state = (
+            (alpha is not None and alpha > self._hit_alpha_threshold)
+            or self._is_model_geometry_hit_at(x, y)
+        )
         return self._last_hit_state
 
     def _hit_state_at(self, x: float, y: float):
@@ -1056,7 +1059,7 @@ class Live2DWidget(QOpenGLWidget):
             if alpha > self._hit_alpha_threshold:
                 break
                 
-        result = alpha if (known or sync) else None
+        result = alpha if known else None
         self._perf_probe.add("alpha_sync" if sync else "alpha_fast", self._perf_probe.now() - t0)
         return result
 
@@ -1101,9 +1104,9 @@ class Live2DWidget(QOpenGLWidget):
         scale = self._system_scale or 1.0
         return int(x * scale), int((self._cache_h - 1 - y) * scale)
 
-    def _get_alpha_sync(self, x: float, y: float) -> int:
+    def _get_alpha_sync(self, x: float, y: float):
         ctx = self._get_alpha_read_context(x, y)
-        if not ctx: return 0
+        if not ctx: return None
         sx, sy, key, now, cached_alpha = ctx
         if cached_alpha is not None: return cached_alpha
 

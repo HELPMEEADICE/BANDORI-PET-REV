@@ -3804,7 +3804,6 @@ class PetWindow(QWidget):
             if isinstance(current_theme, bool) or current_theme in (_THEME_ON, _THEME_OFF):
                 self._cfg.set("dark_theme", _THEME_ON if isDarkTheme() else _THEME_OFF)
             self._cfg.set("vsync", self._vsync)
-            self._cfg.set("game_topmost", self._game_topmost)
 
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
