@@ -24,6 +24,7 @@ from settings_window.pages.quality import QualityPageMixin
 from settings_window.pages.about import AboutPageMixin
 from settings_window.pages.behavior import BehaviorPageMixin
 from settings_window.pages.statistics import StatisticsPageMixin
+from settings_window.pages.chat_history import ChatHistoryPageMixin
 
 
 class SettingsWindow(
@@ -43,6 +44,7 @@ class SettingsWindow(
     AboutPageMixin,
     BehaviorPageMixin,
     StatisticsPageMixin,
+    ChatHistoryPageMixin,
     QWidget,
 ):
 
@@ -125,6 +127,7 @@ class SettingsWindow(
         self._quality_page = None
         self._about_page = None
         self._statistics_page = None
+        self._chat_history_page = None
         self._current_page = "characters"
         self._selecting_model = False
         self._vsync = vsync
@@ -429,6 +432,12 @@ class SettingsWindow(
             except Exception:
                 pass
             self._stats_db = None
+        if getattr(self, "_history_db", None) is not None:
+            try:
+                self._history_db.close()
+            except Exception:
+                pass
+            self._history_db = None
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -1291,6 +1300,9 @@ class SettingsWindow(
         if key == "statistics":
             self._statistics_page = self._add_lazy_page("statistics", self._build_statistics_page())
             return self._statistics_page
+        if key == "chat_history":
+            self._chat_history_page = self._add_lazy_page("chat_history", self._build_chat_history_page())
+            return self._chat_history_page
         if key == "quality":
             self._quality_page = self._add_lazy_page("quality", self._build_quality_page())
             return self._quality_page
@@ -1511,6 +1523,17 @@ class SettingsWindow(
         self._nav_buttons["data_management"] = btn_data_management
         nav_layout.addWidget(btn_data_management)
 
+        btn_chat_history = NavButton(
+            "chat_history",
+            FluentIcon.HISTORY,
+            _tr("SettingsWindow.nav_chat_history", default="聊天记录"),
+            nav_content,
+            "#0ea5e9",
+        )
+        btn_chat_history.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["chat_history"] = btn_chat_history
+        nav_layout.addWidget(btn_chat_history)
+
         btn_statistics = NavButton(
             "statistics",
             FluentIcon.DATE_TIME,
@@ -1586,6 +1609,9 @@ class SettingsWindow(
                 self._refresh_memory_page()
             elif nav_key == "memory_album":
                 self._refresh_memory_album_page()
+            elif nav_key == "chat_history":
+                self._populate_chat_history_filters()
+                self._refresh_chat_history()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 

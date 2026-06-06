@@ -765,7 +765,7 @@ class DataManagementPageMixin:
 
 
     def _reset_cached_database_managers(self):
-        for attr in ("_memory_db", "_stats_db"):
+        for attr in ("_memory_db", "_stats_db", "_history_db"):
             db = getattr(self, attr, None)
             if db is None:
                 continue

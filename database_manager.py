@@ -1388,6 +1388,150 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 result.append(message)
         return result
 
+    def get_chat_history_filter_options(self) -> dict:
+        characters = {
+            _db_text(row[0]).strip()
+            for row in self._conn.execute(
+                "SELECT DISTINCT character FROM conversations WHERE character != ''"
+            ).fetchall()
+            if _db_text(row[0]).strip() and _db_text(row[0]).strip() != "__group__"
+        }
+        group_keys = self._conn.execute(
+            "SELECT DISTINCT group_key FROM group_messages WHERE group_key != ''"
+        ).fetchall()
+        for row in group_keys:
+            characters.update(self._group_key_characters(_db_text(row[0])))
+
+        user_rows = self._conn.execute(
+            "SELECT user_key FROM conversations WHERE user_key != '' "
+            "UNION SELECT user_key FROM group_messages WHERE user_key != ''"
+        ).fetchall()
+        user_keys = sorted({
+            _db_text(row[0]).strip()
+            for row in user_rows
+            if _db_text(row[0]).strip()
+        }, key=str.casefold)
+        return {
+            "characters": sorted(characters, key=str.casefold),
+            "user_keys": user_keys,
+        }
+
+    def search_chat_history(
+        self,
+        *,
+        keyword: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        character: str = "",
+        user_key: str = "",
+        role: str = "",
+        source: str = "",
+        limit: int = 300,
+        offset: int = 0,
+    ) -> dict:
+        keyword = str(keyword or "").strip()[:500]
+        date_from = str(date_from or "").strip()[:10]
+        date_to = str(date_to or "").strip()[:10]
+        character = str(character or "").strip()
+        user_key = str(user_key or "").strip()
+        role = str(role or "").strip()
+        source = str(source or "").strip()
+        limit = _clamp_int(limit, 1, 1000, 300)
+        offset = _clamp_int(offset, 0, 1_000_000, 0)
+
+        history_sql = """
+            SELECT
+                'private' AS source,
+                m.id AS source_id,
+                CAST(c.id AS TEXT) AS conversation_id,
+                c.character AS character,
+                '' AS group_key,
+                c.title AS chat_title,
+                c.user_key AS user_key,
+                m.role AS role,
+                m.content AS content,
+                m.created_at AS created_at,
+                '|' || c.character || '|' AS member_keys
+            FROM messages m
+            JOIN conversations c ON c.id=m.conversation_id
+            UNION ALL
+            SELECT
+                'group' AS source,
+                gm.id AS source_id,
+                CAST(gm.conversation_id AS TEXT) AS conversation_id,
+                '' AS character,
+                gm.group_key AS group_key,
+                COALESCE(meta.display_name, '') AS chat_title,
+                gm.user_key AS user_key,
+                gm.role AS role,
+                gm.content AS content,
+                gm.created_at AS created_at,
+                CASE
+                    WHEN gm.group_key LIKE '__group__:%'
+                    THEN '|' || substr(gm.group_key, 11) || '|'
+                    ELSE '|' || gm.group_key || '|'
+                END AS member_keys
+            FROM group_messages gm
+            LEFT JOIN group_chat_meta meta ON meta.group_key=gm.group_key
+        """
+
+        where = []
+        params: list = []
+        if keyword:
+            where.append("content LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            params.append(f"%{_escape_like(keyword)}%")
+        if date_from:
+            where.append("created_at >= ?")
+            params.append(f"{date_from} 00:00:00")
+        if date_to:
+            where.append("created_at <= ?")
+            params.append(f"{date_to} 23:59:59")
+        if character:
+            where.append("instr(member_keys, ?) > 0")
+            params.append(f"|{character}|")
+        if user_key:
+            where.append("user_key = ?")
+            params.append(user_key)
+        if role in _VALID_MESSAGE_ROLES:
+            where.append("role = ?")
+            params.append(role)
+        if source in {"private", "group"}:
+            where.append("source = ?")
+            params.append(source)
+
+        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+        total = self._conn.execute(
+            f"SELECT COUNT(*) FROM ({history_sql}) history{where_sql}",
+            tuple(params),
+        ).fetchone()[0]
+        rows = self._conn.execute(
+            "SELECT source, source_id, conversation_id, character, group_key, "
+            "chat_title, user_key, role, content, created_at "
+            f"FROM ({history_sql}) history{where_sql} "
+            "ORDER BY created_at DESC, source_id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        records = []
+        for row in rows:
+            records.append({
+                "source": _db_text(row[0]),
+                "id": _db_int(row[1]) or 0,
+                "conversation_id": _db_text(row[2]),
+                "character": _db_text(row[3]),
+                "group_key": _db_text(row[4]),
+                "chat_title": _db_text(row[5]),
+                "user_key": _db_text(row[6]),
+                "role": _db_text(row[7]),
+                "content": _db_text(row[8]),
+                "created_at": _db_text(row[9]),
+            })
+        return {
+            "total": int(total or 0),
+            "records": records,
+            "limit": limit,
+            "offset": offset,
+        }
+
     def get_first_user_message_content(self, conversation_id: int) -> str:
         row = self._conn.execute(
             "SELECT content FROM messages WHERE conversation_id=? AND role='user' AND content != '' "
