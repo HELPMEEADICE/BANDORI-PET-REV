@@ -13,6 +13,7 @@ config.json
 config.json.*.tmp
 config.json.*
 .runtime/
+.superpowers/
 # Anchor to repo root so source files like settings_window/pages/data.py are
 # not accidentally ignored (this is meant for the root data.db / data.* files).
 /data.*
