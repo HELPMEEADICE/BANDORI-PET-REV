@@ -251,6 +251,7 @@ class Live2DWidget(QOpenGLWidget):
 
     def dispose(self):
         if self._initialized_gl:
+            self._initialized_gl = False
             self._safe_make_current()
             self._delete_hit_pbos()
             self._dispose_model_renderer()
@@ -716,6 +717,7 @@ class Live2DWidget(QOpenGLWidget):
             gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glEnable(gl.GL_BLEND)
+            gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
             return
         if self._perf_probe.enabled:
             draw_elapsed = self._perf_probe.now() - draw_start
