@@ -133,6 +133,28 @@ PET_COLLECTION_BEHAVIOR = (
 )
 
 
+def set_ignores_mouse_events(widget, ignores: bool) -> bool:
+    # macOS has no per-pixel hit region for borderless windows, so the only way
+    # to let clicks fall through the pet's transparent margins to the app behind
+    # is to toggle NSWindow.ignoresMouseEvents as the cursor moves on/off the
+    # opaque character. This is the macOS counterpart of WS_EX_TRANSPARENT.
+    if not _init_objc() or widget is None:
+        return False
+    try:
+        win_id = int(widget.winId())
+    except (TypeError, ValueError):
+        return False
+    if not win_id:
+        return False
+    window = _get_ns_window(win_id)
+    if not window:
+        return False
+    f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    sender(window, _sel("setIgnoresMouseEvents:"), ctypes.c_bool(ignores))
+    return True
+
+
 def set_collection_behavior(widget, mask: int) -> bool:
     if not _init_objc() or widget is None:
         return False

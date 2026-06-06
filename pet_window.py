@@ -120,8 +120,8 @@ LIVE2D_MOUSE_APPROACH_EXIT_RADIUS = 270
 TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
-WINDOWS_MOUSE_PASSTHROUGH_INTERVAL_MS = 16
-WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
+MOUSE_PASSTHROUGH_INTERVAL_MS = 16
+MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 LIVE2D_PREWARM_MAX_MOTIONS = 64
 LIVE2D_PREWARM_MAX_EXPRESSIONS = 32
 LIVE2D_PREWARM_STEP_MS = 90
@@ -360,10 +360,10 @@ class PetWindow(QWidget):
         self._windows_topmost_guard_timer = QTimer(self)
         self._windows_topmost_guard_timer.setInterval(TOPMOST_GUARD_INTERVAL_MS)
         self._windows_topmost_guard_timer.timeout.connect(self._tick_windows_topmost_guard)
-        self._windows_mouse_passthrough_enabled = False
-        self._windows_mouse_passthrough_timer = QTimer(self)
-        self._windows_mouse_passthrough_timer.setInterval(WINDOWS_MOUSE_PASSTHROUGH_INTERVAL_MS)
-        self._windows_mouse_passthrough_timer.timeout.connect(self._tick_windows_mouse_passthrough)
+        self._mouse_passthrough_enabled = False
+        self._mouse_passthrough_timer = QTimer(self)
+        self._mouse_passthrough_timer.setInterval(MOUSE_PASSTHROUGH_INTERVAL_MS)
+        self._mouse_passthrough_timer.timeout.connect(self._tick_mouse_passthrough)
 
         self._init_ui()
         if self._enable_tray:
@@ -715,7 +715,7 @@ class PetWindow(QWidget):
                     return True, 0
                 if msg.message == WM_NCHITTEST:
                     pos = self._global_pos_from_lparam(int(msg.lParam))
-                    if self._windows_should_passthrough_at(pos):
+                    if self._should_passthrough_at(pos):
                         return True, HTTRANSPARENT
                 if (
                     msg.message == WM_POWERBROADCAST
@@ -958,32 +958,40 @@ class PetWindow(QWidget):
         elif not should_run and self._windows_topmost_guard_timer.isActive():
             self._windows_topmost_guard_timer.stop()
 
-    def _sync_windows_mouse_passthrough_timer(self):
-        if os.name != "nt":
+    @staticmethod
+    def _mouse_passthrough_supported() -> bool:
+        # Windows toggles WS_EX_TRANSPARENT; macOS toggles
+        # NSWindow.ignoresMouseEvents. Both rely on the same polling timer that
+        # samples the cursor against the model's alpha so clicks fall through the
+        # transparent margins to whatever is behind the pet.
+        return os.name == "nt" or (sys.platform == "darwin" and macos_patch is not None)
+
+    def _sync_mouse_passthrough_timer(self):
+        if not self._mouse_passthrough_supported():
             return
         should_run = self.isVisible()
-        if should_run and not self._windows_mouse_passthrough_timer.isActive():
-            self._windows_mouse_passthrough_timer.start()
-        elif not should_run and self._windows_mouse_passthrough_timer.isActive():
-            self._windows_mouse_passthrough_timer.stop()
+        if should_run and not self._mouse_passthrough_timer.isActive():
+            self._mouse_passthrough_timer.start()
+        elif not should_run and self._mouse_passthrough_timer.isActive():
+            self._mouse_passthrough_timer.stop()
         if not should_run:
-            self._set_windows_mouse_passthrough(False)
+            self._set_mouse_passthrough(False)
 
-    def _tick_windows_mouse_passthrough(self):
-        if os.name != "nt" or not self.isVisible():
-            self._set_windows_mouse_passthrough(False)
+    def _tick_mouse_passthrough(self):
+        if not self._mouse_passthrough_supported() or not self.isVisible():
+            self._set_mouse_passthrough(False)
             return
-        self._set_windows_mouse_passthrough(self._windows_should_passthrough_at(QCursor.pos()))
+        self._set_mouse_passthrough(self._should_passthrough_at(QCursor.pos()))
 
-    def _windows_passthrough_sample_pos(self, global_pos: QPoint):
+    def _passthrough_sample_pos(self, global_pos: QPoint):
         geometry = self.geometry()
         if geometry.contains(global_pos):
             return global_pos
         expanded = geometry.adjusted(
-            -WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN,
-            -WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN,
-            WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN,
-            WINDOWS_MOUSE_PASSTHROUGH_EDGE_MARGIN,
+            -MOUSE_PASSTHROUGH_EDGE_MARGIN,
+            -MOUSE_PASSTHROUGH_EDGE_MARGIN,
+            MOUSE_PASSTHROUGH_EDGE_MARGIN,
+            MOUSE_PASSTHROUGH_EDGE_MARGIN,
         )
         if not expanded.contains(global_pos):
             return None
@@ -1002,10 +1010,10 @@ class PetWindow(QWidget):
             return self._pixel_widget.is_sprite_opaque_at_global(global_pos)
         return self._live2d_widget.is_model_opaque_at_global(global_pos, sync=True)
 
-    def _windows_should_passthrough_at(self, global_pos: QPoint) -> bool:
-        if os.name != "nt" or not self.isVisible():
+    def _should_passthrough_at(self, global_pos: QPoint) -> bool:
+        if not self._mouse_passthrough_supported() or not self.isVisible():
             return False
-        sample_pos = self._windows_passthrough_sample_pos(global_pos)
+        sample_pos = self._passthrough_sample_pos(global_pos)
         if sample_pos is None:
             return False
         try:
@@ -1013,8 +1021,13 @@ class PetWindow(QWidget):
         except Exception:
             return False
 
-    def _set_windows_mouse_passthrough(self, enabled: bool):
-        if os.name != "nt" or self._windows_mouse_passthrough_enabled == bool(enabled):
+    def _set_mouse_passthrough(self, enabled: bool):
+        if not self._mouse_passthrough_supported() or self._mouse_passthrough_enabled == bool(enabled):
+            return
+        if sys.platform == "darwin":
+            if not macos_patch.set_ignores_mouse_events(self, bool(enabled)):
+                return
+            self._mouse_passthrough_enabled = bool(enabled)
             return
         hwnd = int(self.winId())
         if not hwnd:
@@ -1022,7 +1035,7 @@ class PetWindow(QWidget):
         style = _get_window_long(hwnd, GWL_EXSTYLE)
         next_style = style | WS_EX_TRANSPARENT if enabled else style & ~WS_EX_TRANSPARENT
         if next_style == style:
-            self._windows_mouse_passthrough_enabled = bool(enabled)
+            self._mouse_passthrough_enabled = bool(enabled)
             return
         _set_window_long(hwnd, GWL_EXSTYLE, next_style)
         _set_window_pos(
@@ -1034,7 +1047,7 @@ class PetWindow(QWidget):
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
-        self._windows_mouse_passthrough_enabled = bool(enabled)
+        self._mouse_passthrough_enabled = bool(enabled)
 
     def _tick_windows_topmost_guard(self):
         if os.name != "nt":
@@ -1265,9 +1278,9 @@ class PetWindow(QWidget):
             self._schedule_position_save()
 
     def hideEvent(self, event):
-        if os.name == "nt":
-            self._windows_mouse_passthrough_timer.stop()
-            self._set_windows_mouse_passthrough(False)
+        if self._mouse_passthrough_supported():
+            self._mouse_passthrough_timer.stop()
+            self._set_mouse_passthrough(False)
         self._close_poke_user_badge()
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
@@ -1277,7 +1290,7 @@ class PetWindow(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        self._set_windows_mouse_passthrough(False)
+        self._set_mouse_passthrough(False)
         self._close_poke_user_badge()
         self._live2d_widget.dispose()
         self._close_radial_menu_process(force=True)
@@ -2449,7 +2462,7 @@ class PetWindow(QWidget):
     def _on_radial_menu_socket_disconnected(self):
         was_visible = self._radial_menu_visible
         self._radial_menu_visible = False
-        self._tick_windows_mouse_passthrough()
+        self._tick_mouse_passthrough()
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
 
@@ -2462,7 +2475,7 @@ class PetWindow(QWidget):
         ):
             return
         self._radial_menu_visible = False
-        self._tick_windows_mouse_passthrough()
+        self._tick_mouse_passthrough()
         self._broadcast_radial_menu_state(open=False)
         print(f"Radial menu socket error: {error}", file=sys.stderr)
 
@@ -2539,12 +2552,12 @@ class PetWindow(QWidget):
         elif line == "STATE\tOPEN":
             self._radial_menu_opening = False
             self._radial_menu_visible = True
-            self._tick_windows_mouse_passthrough()
+            self._tick_mouse_passthrough()
             self._broadcast_radial_menu_state(open=True)
         elif line == "STATE\tCLOSED":
             self._radial_menu_opening = False
             self._radial_menu_visible = False
-            self._tick_windows_mouse_passthrough()
+            self._tick_mouse_passthrough()
             self._broadcast_radial_menu_state(open=False)
         elif line.startswith("ACT\t"):
             action = line.split("\t", 1)[1].strip()
@@ -3905,7 +3918,7 @@ class PetWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
-        self._sync_windows_mouse_passthrough_timer()
+        self._sync_mouse_passthrough_timer()
         if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_pet_window_polish(self, game_topmost=self._game_topmost))
         # _apply_game_topmost_state reads isVisible(), so call it after show
