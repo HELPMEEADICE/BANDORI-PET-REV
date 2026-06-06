@@ -9,7 +9,7 @@ warnings.filterwarnings(
     category=RuntimeWarning,
 )
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
 
 from settings_window.settings_window import SettingsWindow
 
@@ -78,9 +78,35 @@ class SettingsNavigationOrderTest(unittest.TestCase):
         self.assertEqual(EXPECTED_NAV_ORDER, layout_order)
 
         button_order = list(harness._nav_buttons)
-        self.assertEqual(EXPECTED_NAV_ORDER, button_order[:18])
-        self.assertEqual("about", button_order[-1])
-        self.assertIs(sidebar, harness._nav_buttons["about"].parent())
+        self.assertEqual([*EXPECTED_NAV_ORDER, "about"], button_order)
+
+        about_button = harness._nav_buttons["about"]
+        about_ancestors = []
+        ancestor = about_button.parentWidget()
+        while ancestor is not None:
+            about_ancestors.append(ancestor)
+            ancestor = ancestor.parentWidget()
+        self.assertNotIn(nav_content, about_ancestors)
+
+        nav_scroll = nav_content.parentWidget()
+        while nav_scroll is not None and nav_scroll.parentWidget() is not sidebar:
+            nav_scroll = nav_scroll.parentWidget()
+        self.assertIsNotNone(nav_scroll)
+        self.assertIs(nav_content, nav_scroll.findChild(QWidget, "sidebarNavContent"))
+
+        sidebar_layout = sidebar.layout()
+        scroll_index = sidebar_layout.indexOf(nav_scroll)
+        about_rows = [
+            (index, sidebar_layout.itemAt(index).layout())
+            for index in range(sidebar_layout.count())
+            if sidebar_layout.itemAt(index).layout() is not None
+            and sidebar_layout.itemAt(index).layout().indexOf(about_button) >= 0
+        ]
+        self.assertEqual(1, len(about_rows))
+        about_row_index, about_row = about_rows[0]
+        self.assertIsInstance(about_row, QHBoxLayout)
+        self.assertGreaterEqual(scroll_index, 0)
+        self.assertLess(scroll_index, about_row_index)
 
 
 if __name__ == "__main__":
