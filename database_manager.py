@@ -192,6 +192,9 @@ def _sanitize_attachments_payload(value):
             cleaned_item["size"] = int(item.get("size", "") or Path(path).stat().st_size)
         except (OSError, TypeError, ValueError):
             pass
+        uploaded_at = str(item.get("uploaded_at", "") or "").strip()
+        if uploaded_at:
+            cleaned_item["uploaded_at"] = uploaded_at[:40]
         vision_summary = str(item.get("vision_summary", "") or "").strip()
         if item_type == "image" and vision_summary:
             cleaned_item["vision_summary"] = vision_summary[:6000]
@@ -203,16 +206,24 @@ def _sanitize_attachments_payload(value):
 
 
 def _sanitize_database_attachments(conn: sqlite3.Connection):
+    removed = 0
     for table in ("messages", "group_messages"):
         rows = conn.execute(
             f"SELECT id, attachments_json FROM {table} WHERE attachments_json != ''"
         ).fetchall()
         for row_id, attachments_json in rows:
             cleaned = _sanitize_attachments_payload(attachments_json)
+            try:
+                original = json.loads(attachments_json)
+            except (TypeError, ValueError):
+                original = []
+            if isinstance(original, list):
+                removed += max(0, len(original) - len(cleaned))
             conn.execute(
                 f"UPDATE {table} SET attachments_json=? WHERE id=?",
                 (_json_text(cleaned), row_id),
             )
+    return removed
 
 
 def _message_row_dict(row, grouped: bool = False) -> dict | None:
@@ -373,6 +384,16 @@ def chat_database_summary(db_path=DB_PATH) -> dict:
         messages = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         group_messages = conn.execute("SELECT COUNT(*) FROM group_messages").fetchone()[0]
     return {"conversations": conversations, "messages": messages, "group_messages": group_messages}
+
+
+def sanitize_chat_attachment_references(db_path=DB_PATH) -> int:
+    _ensure_database(db_path)
+    with _shared_database_lock(str(db_path)):
+        with closing(sqlite3.connect(str(db_path), timeout=10)) as conn:
+            conn.execute("PRAGMA busy_timeout=10000")
+            removed = _sanitize_database_attachments(conn)
+            conn.commit()
+            return removed
 
 
 def _read_only_database_uri(path: Path, immutable: bool = False) -> str:

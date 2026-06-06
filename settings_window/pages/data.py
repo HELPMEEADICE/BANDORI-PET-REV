@@ -156,12 +156,202 @@ class DataManagementPageMixin:
         chat_action_row.addStretch()
         layout.addLayout(chat_action_row)
 
+        attachment_title = SubtitleLabel(
+            _tr("SettingsWindow.attachment_files_title", default="聊天文件管理"),
+            page,
+        )
+        layout.addWidget(attachment_title)
+        attachment_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.attachment_files_hint",
+            default="管理聊天中上传的图片和文件。清理后，历史消息中的对应附件将无法再次查看。",
+        ), page))
+        layout.addWidget(attachment_hint)
+
+        attachment_stats_row = QHBoxLayout()
+        attachment_stats_row.setContentsMargins(0, 0, 0, 0)
+        attachment_stats_row.setSpacing(8)
+        self._attachment_files_stats = BodyLabel("", page)
+        attachment_stats_row.addWidget(self._attachment_files_stats, 1)
+        self._attachment_files_refresh_btn = PushButton(
+            FluentIcon.SYNC,
+            _tr("SettingsWindow.attachment_files_refresh", default="刷新"),
+            page,
+        )
+        self._attachment_files_refresh_btn.setFixedHeight(36)
+        self._attachment_files_refresh_btn.clicked.connect(self._refresh_attachment_file_stats)
+        attachment_stats_row.addWidget(self._attachment_files_refresh_btn)
+        self._attachment_files_clear_btn = PushButton(
+            FluentIcon.DELETE,
+            _tr("SettingsWindow.attachment_files_clear", default="清除全部文件"),
+            page,
+        )
+        self._attachment_files_clear_btn.setFixedHeight(36)
+        self._attachment_files_clear_btn.clicked.connect(self._clear_chat_attachment_files)
+        attachment_stats_row.addWidget(self._attachment_files_clear_btn)
+        layout.addLayout(attachment_stats_row)
+
+        attachment_retention_row = QHBoxLayout()
+        attachment_retention_row.setContentsMargins(0, 0, 0, 0)
+        attachment_retention_row.setSpacing(8)
+        attachment_retention_row.addWidget(BodyLabel(
+            _tr("SettingsWindow.attachment_files_cleanup_mode", default="文件清理方式"),
+            page,
+        ))
+        self._attachment_cleanup_mode = OpaqueDropDownComboBox(page)
+        self._attachment_cleanup_mode.addItem(
+            _tr("SettingsWindow.attachment_files_cleanup_manual", default="仅手动清理"),
+            userData="manual",
+        )
+        self._attachment_cleanup_mode.addItem(
+            _tr("SettingsWindow.attachment_files_cleanup_auto", default="自动清理"),
+            userData="auto",
+        )
+        self._attachment_cleanup_mode.setMinimumWidth(140)
+        attachment_retention_row.addWidget(self._attachment_cleanup_mode)
+        self._attachment_retention_days = SpinBox(page)
+        self._attachment_retention_days.setRange(1, 3650)
+        self._attachment_retention_days.setFixedWidth(120)
+        attachment_retention_row.addWidget(self._attachment_retention_days)
+        attachment_retention_row.addWidget(BodyLabel(
+            _tr("SettingsWindow.attachment_files_days", default="天"),
+            page,
+        ))
+        attachment_retention_row.addStretch()
+        layout.addLayout(attachment_retention_row)
+
+        self._attachment_cleanup_mode.currentIndexChanged.connect(
+            self._on_attachment_retention_changed
+        )
+        self._attachment_retention_days.editingFinished.connect(
+            self._on_attachment_retention_changed
+        )
+        self._load_attachment_file_settings()
+        self._refresh_attachment_file_stats()
+
         layout.addStretch()
 
         self._update_data_management_hints()
         self._style_data_management_page(page)
         self._connect_theme_changed(lambda: self._style_data_management_page(page))
         return page
+
+
+    @staticmethod
+    def _format_attachment_file_size(size: int) -> str:
+        value = max(0, int(size or 0))
+        units = ("B", "KB", "MB", "GB", "TB")
+        amount = float(value)
+        for unit in units:
+            if amount < 1024 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(amount)} {unit}"
+                return f"{amount:.1f} {unit}"
+            amount /= 1024
+        return f"{value} B"
+
+
+    def _load_attachment_file_settings(self):
+        if not self._cfg or not hasattr(self, "_attachment_cleanup_mode"):
+            return
+        from chat_attachment_manager import clamp_attachment_retention_days
+
+        mode = "auto" if bool(
+            self._cfg.get("chat_attachment_auto_cleanup_enabled", False)
+        ) else "manual"
+        self._attachment_cleanup_mode.blockSignals(True)
+        for index in range(self._attachment_cleanup_mode.count()):
+            if self._attachment_cleanup_mode.itemData(index) == mode:
+                self._attachment_cleanup_mode.setCurrentIndex(index)
+                break
+        self._attachment_cleanup_mode.blockSignals(False)
+        self._attachment_retention_days.blockSignals(True)
+        self._attachment_retention_days.setValue(clamp_attachment_retention_days(
+            self._cfg.get("chat_attachment_retention_days", 30)
+        ))
+        self._attachment_retention_days.blockSignals(False)
+        self._attachment_retention_days.setEnabled(mode == "auto")
+
+
+    def _on_attachment_retention_changed(self, *_args):
+        if not self._cfg or not hasattr(self, "_attachment_cleanup_mode"):
+            return
+        from chat_attachment_manager import (
+            clamp_attachment_retention_days,
+            cleanup_chat_attachments,
+        )
+
+        mode = self._attachment_cleanup_mode.itemData(
+            self._attachment_cleanup_mode.currentIndex()
+        ) or "manual"
+        days = clamp_attachment_retention_days(self._attachment_retention_days.value())
+        enabled = mode == "auto"
+        self._attachment_retention_days.setEnabled(enabled)
+        self._cfg.set("chat_attachment_auto_cleanup_enabled", enabled)
+        self._cfg.set("chat_attachment_retention_days", days)
+        self._cfg.save()
+        self.settings_changed.emit({
+            "chat_attachment_auto_cleanup_enabled": enabled,
+            "chat_attachment_retention_days": days,
+        })
+        if enabled:
+            cleanup_chat_attachments(days)
+            self._refresh_attachment_file_stats()
+
+
+    def _refresh_attachment_file_stats(self):
+        if not hasattr(self, "_attachment_files_stats"):
+            return
+        from chat_attachment_manager import get_chat_attachment_stats
+
+        stats = get_chat_attachment_stats()
+        self._attachment_files_stats.setText(_tr(
+            "SettingsWindow.attachment_files_stats",
+            default="已保存 {count} 个文件，共 {size}",
+            count=stats["file_count"],
+            size=self._format_attachment_file_size(stats["total_bytes"]),
+        ))
+        self._attachment_files_clear_btn.setEnabled(stats["file_count"] > 0)
+
+
+    def _clear_chat_attachment_files(self):
+        reply = QMessageBox.warning(
+            self,
+            _tr("SettingsWindow.attachment_files_clear_confirm_title", default="清除聊天文件"),
+            _tr(
+                "SettingsWindow.attachment_files_clear_confirm_content",
+                default="确定要删除聊天中上传的全部图片和文件吗？历史消息中的附件将无法恢复。",
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            from chat_attachment_manager import cleanup_chat_attachments
+
+            result = cleanup_chat_attachments()
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.attachment_files_clear_failed_title", default="清理失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
+        self._refresh_attachment_file_stats()
+        InfoBar.success(
+            _tr("SettingsWindow.attachment_files_clear_success_title", default="清理完成"),
+            _tr(
+                "SettingsWindow.attachment_files_clear_success_content",
+                default="已删除 {count} 个文件，释放 {size}。",
+                count=result["deleted_files"],
+                size=self._format_attachment_file_size(result["deleted_bytes"]),
+            ),
+            duration=3000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
 
 
     def _on_export_data_package_clicked(self):
