@@ -228,6 +228,7 @@ class ChatWindow(QWidget):
         self._tts_characters: dict[int, str] = {}
         self._tts_completed_sequences: set[int] = set()
         self._tts_generation = 0
+        self._tts_request_allowed = False
         self._current_response_actions: list[str] = []
         self._action_tag_stream_buffer = ""
         self._current_tts_rate = 1.0
@@ -5170,6 +5171,7 @@ class ChatWindow(QWidget):
         self._tts_characters.clear()
         self._tts_completed_sequences.clear()
         self._tts_generation += 1
+        self._tts_request_allowed = False
         self._tts_next_sequence = 0
         self._tts_next_play_sequence = 0
         self._tts_playing_sequence = None
@@ -5182,10 +5184,11 @@ class ChatWindow(QWidget):
         text = self._clean_tts_payload(text)
         if not text:
             return
+        self._tts_request_allowed = True
         self._tts_text_buffer += text
 
     def _flush_tts_text(self, character: str):
-        if not self._tts_enabled():
+        if not self._tts_enabled() or not self._tts_request_allowed:
             return
         self._tts_tag_buffer = ""
         text = self._clean_tts_payload(flush_tts_sentence(self._tts_text_buffer))
@@ -5214,6 +5217,8 @@ class ChatWindow(QWidget):
                 self._tts_bubbles.pop(seq, None)
 
     def _queue_tts_request(self, sequence: int, text: str, character: str):
+        if not self._tts_request_allowed:
+            return
         text = self._clean_tts_payload(text)
         if not text:
             return
@@ -5267,6 +5272,8 @@ class ChatWindow(QWidget):
         return "".join(output)
 
     def _start_next_tts_request(self):
+        if not self._tts_request_allowed:
+            return
         if self._tts_active_workers or self._tts_playing_sequence is not None or not self._tts_player.is_idle():
             return
         next_index = next((i for i, item in enumerate(self._tts_queue) if item[0] == self._tts_next_play_sequence), None)
