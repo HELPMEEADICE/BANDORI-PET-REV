@@ -24,6 +24,13 @@ def _current_qt_context():
     return QOpenGLContext.currentContext()
 
 
+def _require_qt_context(call_name: str):
+    ctx = _current_qt_context()
+    if ctx is None:
+        raise RuntimeError(f"OpenGL call requires a current Qt OpenGL context: {call_name}")
+    return ctx
+
+
 def qt_gl_proc_address(name: str | bytes) -> int:
     if isinstance(name, bytes):
         raw_name = name
@@ -49,17 +56,21 @@ def qt_gl_proc_address(name: str | bytes) -> int:
 
 
 def _qt_func(name: str, restype, argtypes):
-    key = (name, restype, tuple(argtypes))
-    fn = _FUNC_CACHE.get(key)
-    if fn is not None:
-        return fn
+    ctx = _require_qt_context(name)
+    key = (id(ctx), name, restype, tuple(argtypes))
+    cached = _FUNC_CACHE.get(key)
+    if cached is not None:
+        cached_ctx, fn = cached
+        if cached_ctx is ctx:
+            return fn
+        _FUNC_CACHE.pop(key, None)
 
     ptr = qt_gl_proc_address(name)
     if not ptr:
         raise RuntimeError(f"OpenGL function is unavailable in the current Qt context: {name}")
 
     fn = ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
-    _FUNC_CACHE[key] = fn
+    _FUNC_CACHE[key] = (ctx, fn)
     return fn
 
 
@@ -70,6 +81,7 @@ def _should_fallback(exc: Exception) -> bool:
 
 
 def _call(name: str, restype, argtypes, *args):
+    _require_qt_context(name)
     if not uses_qt_software_opengl():
         try:
             return getattr(_gl, name)(*args)
@@ -79,11 +91,33 @@ def _call(name: str, restype, argtypes, *args):
     return _qt_func(name, restype, argtypes)(*args)
 
 
+def _buffer_data_ptr(data):
+    if data is None:
+        return None, None
+    if isinstance(data, ctypes.c_void_p):
+        return data, None
+    if isinstance(data, int):
+        return ctypes.c_void_p(data), None
+
+    try:
+        return ctypes.cast(data, ctypes.c_void_p), data
+    except (ctypes.ArgumentError, TypeError):
+        pass
+
+    view = memoryview(data)
+    if view.readonly:
+        owner = ctypes.create_string_buffer(view.tobytes())
+    else:
+        owner = ctypes.c_char.from_buffer(view)
+    return ctypes.c_void_p(ctypes.addressof(owner)), owner
+
+
 class _QtGLProxy:
     def __getattr__(self, name):
         return getattr(_gl, name)
 
     def glGetString(self, name):
+        _require_qt_context("glGetString")
         if not uses_qt_software_opengl():
             try:
                 return _gl.glGetString(name)
@@ -133,7 +167,7 @@ class _QtGLProxy:
         return _call("glBindBuffer", None, [ctypes.c_uint, ctypes.c_uint], target, int(buffer))
 
     def glBufferData(self, target, size, data, usage):
-        ptr = None if data is None else ctypes.cast(data, ctypes.c_void_p)
+        ptr, _owner = _buffer_data_ptr(data)
         return _call(
             "glBufferData",
             None,
@@ -145,6 +179,7 @@ class _QtGLProxy:
         )
 
     def glReadPixels(self, x, y, width, height, format_, type_, pixels=None):
+        _require_qt_context("glReadPixels")
         if not uses_qt_software_opengl():
             if pixels is None:
                 return _gl.glReadPixels(x, y, width, height, format_, type_)
