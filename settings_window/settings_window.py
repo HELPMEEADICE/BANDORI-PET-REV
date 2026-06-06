@@ -1416,6 +1416,22 @@ class SettingsWindow(
         self._nav_buttons["behavior"] = btn_behavior
         nav_layout.addWidget(btn_behavior)
 
+        btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), nav_content, "#10b981")
+        btn_memory.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["memory"] = btn_memory
+        nav_layout.addWidget(btn_memory)
+
+        btn_relationship_guide = NavButton(
+            "relationship_guide",
+            FluentIcon.QUICK_NOTE,
+            _tr("SettingsWindow.nav_relationship_guide"),
+            nav_content,
+            "#06b6d4",
+        )
+        btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["relationship_guide"] = btn_relationship_guide
+        nav_layout.addWidget(btn_relationship_guide)
+
         btn_reminders = NavButton(
             "reminders",
             FluentIcon.DATE_TIME,
@@ -1427,6 +1443,54 @@ class SettingsWindow(
         self._nav_buttons["reminders"] = btn_reminders
         nav_layout.addWidget(btn_reminders)
 
+        btn_chat_history = NavButton(
+            "chat_history",
+            FluentIcon.HISTORY,
+            _tr("SettingsWindow.nav_chat_history", default="聊天记录"),
+            nav_content,
+            "#0ea5e9",
+        )
+        btn_chat_history.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["chat_history"] = btn_chat_history
+        nav_layout.addWidget(btn_chat_history)
+
+        btn_memory_album = NavButton(
+            "memory_album",
+            FluentIcon.HISTORY,
+            _tr("SettingsWindow.nav_memory_album", default="回忆相册"),
+            nav_content,
+            "#0ea5e9",
+        )
+        btn_memory_album.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["memory_album"] = btn_memory_album
+        nav_layout.addWidget(btn_memory_album)
+
+        btn_statistics = NavButton(
+            "statistics",
+            FluentIcon.DATE_TIME,
+            _tr("SettingsWindow.nav_statistics", default="数据统计"),
+            nav_content,
+            "#8b5cf6",
+        )
+        btn_statistics.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["statistics"] = btn_statistics
+        nav_layout.addWidget(btn_statistics)
+
+        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), nav_content, "#8b5cf6")
+        btn_llm.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["llm"] = btn_llm
+        nav_layout.addWidget(btn_llm)
+
+        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), nav_content, "#3b82f6")
+        btn_compact.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["compact_window"] = btn_compact
+        nav_layout.addWidget(btn_compact)
+
+        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_display"), nav_content, "#22c55e")
+        btn_quality.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["quality"] = btn_quality
+        nav_layout.addWidget(btn_quality)
+
         btn_screen_awareness = NavButton(
             "screen_awareness",
             FluentIcon.VIEW,
@@ -1437,11 +1501,6 @@ class SettingsWindow(
         btn_screen_awareness.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["screen_awareness"] = btn_screen_awareness
         nav_layout.addWidget(btn_screen_awareness)
-
-        btn_llm = NavButton("llm", FluentIcon.ROBOT, _tr("SettingsWindow.nav_llm"), nav_content, "#8b5cf6")
-        btn_llm.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["llm"] = btn_llm
-        nav_layout.addWidget(btn_llm)
 
         btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), nav_content, "#f59e0b")
         btn_tts.nav_activated.connect(self._on_nav_selected)
@@ -1457,38 +1516,6 @@ class SettingsWindow(
         btn_pov.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["pov"] = btn_pov
         nav_layout.addWidget(btn_pov)
-
-        btn_memory = NavButton("memory", FluentIcon.LIBRARY, _tr("SettingsWindow.nav_memory"), nav_content, "#10b981")
-        btn_memory.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["memory"] = btn_memory
-        nav_layout.addWidget(btn_memory)
-
-        btn_memory_album = NavButton(
-            "memory_album",
-            FluentIcon.HISTORY,
-            _tr("SettingsWindow.nav_memory_album", default="回忆相册"),
-            nav_content,
-            "#0ea5e9",
-        )
-        btn_memory_album.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["memory_album"] = btn_memory_album
-        nav_layout.addWidget(btn_memory_album)
-
-        btn_relationship_guide = NavButton(
-            "relationship_guide",
-            FluentIcon.QUICK_NOTE,
-            _tr("SettingsWindow.nav_relationship_guide"),
-            nav_content,
-            "#06b6d4",
-        )
-        btn_relationship_guide.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["relationship_guide"] = btn_relationship_guide
-        nav_layout.addWidget(btn_relationship_guide)
-
-        btn_compact = NavButton("compact_window", FluentIcon.CHAT, _tr("SettingsWindow.nav_compact_window"), nav_content, "#3b82f6")
-        btn_compact.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["compact_window"] = btn_compact
-        nav_layout.addWidget(btn_compact)
 
         btn_chat_integration = NavButton(
             "chat_integration",
@@ -1522,33 +1549,6 @@ class SettingsWindow(
         btn_data_management.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["data_management"] = btn_data_management
         nav_layout.addWidget(btn_data_management)
-
-        btn_chat_history = NavButton(
-            "chat_history",
-            FluentIcon.HISTORY,
-            _tr("SettingsWindow.nav_chat_history", default="聊天记录"),
-            nav_content,
-            "#0ea5e9",
-        )
-        btn_chat_history.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["chat_history"] = btn_chat_history
-        nav_layout.addWidget(btn_chat_history)
-
-        btn_statistics = NavButton(
-            "statistics",
-            FluentIcon.DATE_TIME,
-            _tr("SettingsWindow.nav_statistics", default="数据统计"),
-            nav_content,
-            "#8b5cf6",
-        )
-        btn_statistics.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["statistics"] = btn_statistics
-        nav_layout.addWidget(btn_statistics)
-
-        btn_quality = NavButton("quality", FluentIcon.PALETTE, _tr("SettingsWindow.nav_display"), nav_content, "#22c55e")
-        btn_quality.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["quality"] = btn_quality
-        nav_layout.addWidget(btn_quality)
 
         nav_layout.addStretch()
         nav_scroll.setWidget(nav_content)
