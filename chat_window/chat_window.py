@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, TransparentToolButton, isDarkTheme
+from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
 from app_theme import (
@@ -182,6 +182,137 @@ class ChatComposerTextEdit(FluentContextTextEdit):
         super().insertFromMimeData(source)
 
 
+class AttachmentImportWorker(QThread):
+    progress = Signal(int, int, int, str)
+    item_ready = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, jobs: list[dict], target_dir: Path, parent=None):
+        super().__init__(parent)
+        self._jobs = [dict(job) for job in jobs]
+        self._target_dir = Path(target_dir)
+
+    def run(self):
+        job_count = len(self._jobs)
+        for index, job in enumerate(self._jobs):
+            if self.isInterruptionRequested():
+                return
+            try:
+                if job.get("kind") == "remote":
+                    item = self._import_remote(job, index, job_count)
+                else:
+                    item = self._import_local(job, index, job_count)
+                if item and not self.isInterruptionRequested():
+                    self.item_ready.emit(item)
+                    self.progress.emit(
+                        int((index + 1) * 100 / max(1, job_count)),
+                        int(item.get("size", 0) or 0),
+                        int(item.get("size", 0) or 0),
+                        str(item.get("name", "") or ""),
+                    )
+            except Exception as exc:
+                self.failed.emit(str(exc))
+
+    def _emit_progress(self, index: int, job_count: int, copied: int, total: int, name: str):
+        if total > 0:
+            item_fraction = min(1.0, copied / total)
+            percent = int(((index + item_fraction) / max(1, job_count)) * 100)
+        else:
+            percent = -1
+        self.progress.emit(percent, copied, total, name)
+
+    def _import_local(self, job: dict, index: int, job_count: int) -> dict | None:
+        source = Path(str(job.get("path", "") or ""))
+        size = int(job.get("size", 0) or 0)
+        suffix = source.suffix.lower()
+        target = self._target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
+        copied = 0
+        success = False
+        try:
+            with source.open("rb") as src, target.open("wb") as dst:
+                while True:
+                    if self.isInterruptionRequested():
+                        return None
+                    chunk = src.read(256 * 1024)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    copied += len(chunk)
+                    self._emit_progress(index, job_count, copied, size, source.name)
+            try:
+                shutil.copystat(source, target)
+            except OSError:
+                pass
+            success = True
+        finally:
+            if not success and target.exists():
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+        is_image = suffix in _CHAT_IMAGE_EXTENSIONS
+        mime = mimetypes.guess_type(str(target))[0] or ("image/png" if is_image else "application/octet-stream")
+        return {
+            "type": "image" if is_image else "file",
+            "path": str(target),
+            "name": source.name,
+            "mime": mime,
+            "size": target.stat().st_size if target.exists() else size,
+        }
+
+    def _import_remote(self, job: dict, index: int, job_count: int) -> dict | None:
+        url = str(job.get("url", "") or "")
+        parsed = urllib.parse.urlparse(url)
+        suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
+        suffix_is_known = suffix in _CHAT_IMAGE_EXTENSIONS
+        name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
+        request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
+        target = None
+        copied = 0
+        content_type = ""
+        success = False
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                if content_type and not content_type.startswith("image/"):
+                    raise OSError("URL does not point to an image")
+                total = int(response.headers.get("content-length", 0) or 0)
+                if total > _REMOTE_IMAGE_MAX_BYTES:
+                    raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
+                if not suffix_is_known:
+                    suffix = ChatWindow._suffix_for_image_content_type(content_type)
+                    if Path(name).suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
+                        name = f"{Path(name).stem or 'web-image'}{suffix}"
+                target = self._target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
+                with target.open("wb") as dst:
+                    while True:
+                        if self.isInterruptionRequested():
+                            return None
+                        chunk = response.read(256 * 1024)
+                        if not chunk:
+                            break
+                        copied += len(chunk)
+                        if copied > _REMOTE_IMAGE_MAX_BYTES:
+                            raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
+                        dst.write(chunk)
+                        self._emit_progress(index, job_count, copied, total, name)
+            success = True
+        finally:
+            if not success and target and target.exists():
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+        mime = content_type if content_type.startswith("image/") else (mimetypes.guess_type(str(target))[0] or "image/png")
+        return {
+            "type": "image",
+            "path": str(target),
+            "name": name,
+            "mime": mime,
+            "size": target.stat().st_size if target and target.exists() else copied,
+        }
+
+
 class ChatWindow(QWidget):
     action_triggered = Signal(str, str)
     closed = Signal()
@@ -275,6 +406,9 @@ class ChatWindow(QWidget):
         self._window_anim = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
+        self._attachment_import_worker: AttachmentImportWorker | None = None
+        self._attachment_import_queue: list[list[dict]] = []
+        self._attachment_import_last_error = ""
         self._composer_drag_active = False
         self._group_splitter = None
         self._group_toggle_btn = None
@@ -1707,6 +1841,17 @@ class ChatWindow(QWidget):
         hint_row.addWidget(self._status_dot)
         hint_row.addWidget(self._composer_hint)
         hint_row.addStretch()
+        self._attachment_progress = ProgressBar(area)
+        self._attachment_progress.setRange(0, 100)
+        self._attachment_progress.setValue(0)
+        self._attachment_progress.setFixedWidth(128)
+        self._attachment_progress.hide()
+        hint_row.addWidget(self._attachment_progress)
+        self._attachment_progress_label = QLabel("", area)
+        self._attachment_progress_label.setFont(hint_font)
+        self._attachment_progress_label.setMinimumWidth(34)
+        self._attachment_progress_label.hide()
+        hint_row.addWidget(self._attachment_progress_label)
         outer.addLayout(hint_row)
 
         self._composer = RoundedPanel(area)
@@ -2704,7 +2849,7 @@ class ChatWindow(QWidget):
 
     def _set_busy(self, busy: bool, planning: bool = False):
         self._input.setEnabled(True)
-        self._send_btn.setEnabled(True)
+        self._send_btn.setEnabled(not self._attachment_import_active())
         if hasattr(self._send_btn, "set_busy"):
             self._send_btn.set_busy(busy)
         self._update_asr_button_state()
@@ -3715,12 +3860,14 @@ class ChatWindow(QWidget):
             return []
         paths = []
         for url in mime_data.urls():
-            path = url.toLocalFile() if url.isLocalFile() else ""
+            path = url.toLocalFile() if url.isLocalFile() or url.scheme().lower() == "file" else ""
             if not path:
                 continue
-            source = Path(path)
+            source = Path(urllib.parse.unquote(path))
             if source.exists() and source.is_file():
-                paths.append(path)
+                resolved = str(source)
+                if resolved not in paths:
+                    paths.append(resolved)
         return paths
 
     def _remote_image_urls_from_mime(self, mime_data) -> list[str]:
@@ -3805,22 +3952,27 @@ class ChatWindow(QWidget):
         if event_type == QEvent.Type.Drop:
             mime_data = event.mimeData()
             self._set_composer_drag_active(False)
-            added = self._add_chat_attachments_from_mime(mime_data, dropped=True)
+            supported = self._mime_has_chat_attachments(mime_data)
+            added = self._add_chat_attachments_from_mime(mime_data)
             if added:
                 event.acceptProposedAction()
-            else:
+            elif not supported:
                 self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="不支持拖放此类型的文件"))
                 event.accept()
+            else:
+                event.acceptProposedAction()
             return True
         return False
 
-    def _add_chat_attachments_from_mime(self, mime_data, dropped: bool = False) -> int:
+    def _add_chat_attachments_from_mime(self, mime_data) -> int:
         added = 0
-        if mime_data and mime_data.hasImage():
-            added += self._add_mime_image_attachment(mime_data)
         paths = self._chat_file_paths_from_mime(mime_data)
         if paths:
-            added += self._add_chat_files(paths, dropped=dropped)
+            added += self._add_chat_files(paths)
+        elif mime_data and mime_data.hasImage():
+            # Explorer and Finder can expose both a file URL and decoded image data.
+            # Prefer the original file so PNG metadata/name is preserved and it is not added twice.
+            added += self._add_mime_image_attachment(mime_data)
         remote_urls = self._remote_image_urls_from_mime(mime_data)
         if remote_urls:
             added += self._add_remote_chat_images(remote_urls)
@@ -3850,53 +4002,13 @@ class ChatWindow(QWidget):
         return 1
 
     def _add_remote_chat_images(self, urls: list[str]) -> int:
-        added = 0
-        target_dir = self._chat_attachment_dir()
-        for url in urls:
-            parsed = urllib.parse.urlparse(url)
-            suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
-            suffix_is_known = suffix in _CHAT_IMAGE_EXTENSIONS
-            name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
-            try:
-                request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
-                with urllib.request.urlopen(request, timeout=12) as response:
-                    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if content_type and not content_type.startswith("image/"):
-                        continue
-                    data = response.read(_REMOTE_IMAGE_MAX_BYTES + 1)
-                if len(data) > _REMOTE_IMAGE_MAX_BYTES:
-                    raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
-                if not suffix_is_known:
-                    suffix = self._suffix_for_image_content_type(content_type)
-                    if Path(name).suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
-                        name = f"{Path(name).stem or 'web-image'}{suffix}"
-                target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
-                target.write_bytes(data)
-            except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
-                self._composer_hint.setText(
-                    _tr("ChatWindow.attach_remote_image_failed", default="无法添加网页图片：{error}", error=str(exc))
-                )
-                continue
-            mime = content_type if content_type.startswith("image/") else (mimetypes.guess_type(str(target))[0] or "image/png")
-            self._pending_attachments.append({
-                "type": "image",
-                "path": str(target),
-                "name": name,
-                "mime": mime,
-                "size": target.stat().st_size if target.exists() else len(data),
-            })
-            added += 1
-        if added:
-            self._update_attachment_hint()
-            self._input.setFocus()
-        return added
+        jobs = [{"kind": "remote", "url": url} for url in urls if self._is_http_url(url)]
+        return self._enqueue_attachment_import(jobs)
 
-    def _add_chat_files(self, paths: list[str], dropped: bool = False) -> int:
-        added = 0
-        target_dir = self._chat_attachment_dir()
+    def _add_chat_files(self, paths: list[str]) -> int:
+        jobs = []
         for path in paths:
             source = Path(path)
-            suffix = source.suffix.lower()
             if not source.exists() or not source.is_file():
                 continue
             try:
@@ -3908,34 +4020,116 @@ class ChatWindow(QWidget):
                     _tr("ChatWindow.attach_too_large", default="附件过大，无法添加：{name}", name=source.name)
                 )
                 continue
-            target = target_dir / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:10]}{suffix}"
-            try:
-                shutil.copy2(source, target)
-            except OSError as exc:
-                QMessageBox.warning(
-                    self,
-                    _tr("ChatWindow.attach_failed_title", default="附件添加失败"),
-                    _tr("ChatWindow.attach_failed_content", default="无法添加附件：{error}", error=str(exc)),
+            jobs.append({"kind": "local", "path": str(source), "size": size})
+        return self._enqueue_attachment_import(jobs)
+
+    def _attachment_import_active(self) -> bool:
+        return bool(
+            (self._attachment_import_worker is not None and self._attachment_import_worker.isRunning())
+            or self._attachment_import_queue
+        )
+
+    def _enqueue_attachment_import(self, jobs: list[dict]) -> int:
+        jobs = [dict(job) for job in jobs if isinstance(job, dict)]
+        if not jobs:
+            return 0
+        self._attachment_import_queue.append(jobs)
+        self._attachment_import_last_error = ""
+        self._start_next_attachment_import()
+        return len(jobs)
+
+    def _start_next_attachment_import(self):
+        if self._attachment_import_worker is not None and self._attachment_import_worker.isRunning():
+            return
+        if not self._attachment_import_queue:
+            self._finish_attachment_import_ui()
+            return
+        jobs = self._attachment_import_queue.pop(0)
+        worker = AttachmentImportWorker(jobs, self._chat_attachment_dir(), self)
+        self._attachment_import_worker = worker
+        worker.progress.connect(self._on_attachment_import_progress)
+        worker.item_ready.connect(self._on_attachment_import_item_ready)
+        worker.failed.connect(self._on_attachment_import_failed)
+        worker.finished.connect(self._on_attachment_import_finished)
+        self._attachment_progress.setRange(0, 100)
+        self._attachment_progress.setValue(0)
+        self._attachment_progress.show()
+        self._attachment_progress_label.setText("0%")
+        self._attachment_progress_label.show()
+        self._send_btn.setEnabled(False)
+        self._composer_hint.setText(
+            _tr("ChatWindow.attachment_uploading", default="正在上传附件...")
+        )
+        worker.start()
+
+    def _on_attachment_import_progress(self, percent: int, copied: int, total: int, name: str):
+        if self.sender() is not self._attachment_import_worker:
+            return
+        if percent < 0:
+            self._attachment_progress.setRange(0, 0)
+            self._attachment_progress_label.setText(self._format_attachment_size(copied))
+        else:
+            if self._attachment_progress.maximum() == 0:
+                self._attachment_progress.setRange(0, 100)
+            percent = max(0, min(100, percent))
+            self._attachment_progress.setValue(percent)
+            self._attachment_progress_label.setText(f"{percent}%")
+        self._composer_hint.setText(
+            _tr(
+                "ChatWindow.attachment_uploading_named",
+                default="正在上传：{name}",
+                name=name or _tr("ChatWindow.attach_file_tooltip", default="附件"),
+            )
+        )
+
+    def _on_attachment_import_item_ready(self, item: dict):
+        if self.sender() is not self._attachment_import_worker:
+            return
+        self._pending_attachments.append(dict(item))
+
+    def _on_attachment_import_failed(self, error: str):
+        if self.sender() is not self._attachment_import_worker:
+            return
+        self._attachment_import_last_error = str(error or "")
+
+    def _on_attachment_import_finished(self):
+        worker = self.sender()
+        if worker is not self._attachment_import_worker:
+            return
+        worker.deleteLater()
+        self._attachment_import_worker = None
+        if self._attachment_import_queue:
+            self._start_next_attachment_import()
+            return
+        self._finish_attachment_import_ui()
+
+    def _finish_attachment_import_ui(self):
+        self._attachment_progress.setRange(0, 100)
+        self._attachment_progress.setValue(100)
+        self._attachment_progress_label.setText("100%")
+        self._send_btn.setEnabled(True)
+        if self._attachment_import_last_error:
+            self._composer_hint.setText(
+                _tr(
+                    "ChatWindow.attach_failed_content",
+                    default="无法添加附件：{error}",
+                    error=self._attachment_import_last_error,
                 )
-                continue
-            is_image = suffix in _CHAT_IMAGE_EXTENSIONS
-            mime = mimetypes.guess_type(str(target))[0] or ("image/png" if is_image else "application/octet-stream")
-            self._pending_attachments.append({
-                "type": "image" if is_image else "file",
-                "path": str(target),
-                "name": source.name,
-                "mime": mime,
-                "size": target.stat().st_size if target.exists() else size,
-            })
-            added += 1
-        if added:
+            )
+        else:
             self._update_attachment_hint()
             self._input.setFocus()
-        elif dropped:
-            self._composer_hint.setText(_tr("ChatWindow.attach_drop_unsupported", default="不支持拖放此类型的文件"))
-        return added
+        QTimer.singleShot(500, self._hide_attachment_progress)
+
+    def _hide_attachment_progress(self):
+        if self._attachment_import_active():
+            return
+        self._attachment_progress.hide()
+        self._attachment_progress_label.hide()
 
     def _update_attachment_hint(self):
+        if self._attachment_import_active():
+            return
         if self._pending_attachments:
             count = len(self._pending_attachments)
             self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 个附件，发送时会一起交给模型。", count=count))
@@ -4532,6 +4726,11 @@ class ChatWindow(QWidget):
         QTimer.singleShot(500, self._start_next_group_response)
 
     def _send_message(self):
+        if self._attachment_import_active():
+            self._composer_hint.setText(
+                _tr("ChatWindow.attachment_upload_wait", default="请等待附件上传完成后再发送。")
+            )
+            return
         text = self._input.toPlainText().strip()
         attachments = list(self._pending_attachments)
         if not text and attachments:
@@ -5500,6 +5699,10 @@ class ChatWindow(QWidget):
             self._vision_fallback_worker.requestInterruption()
             self._vision_fallback_worker.quit()
             workers_to_wait.append(self._vision_fallback_worker)
+        self._attachment_import_queue.clear()
+        if self._attachment_import_worker and self._attachment_import_worker.isRunning():
+            self._attachment_import_worker.requestInterruption()
+            workers_to_wait.append(self._attachment_import_worker)
         for worker in (self._asr_recorder_worker, self._asr_request_worker):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
