@@ -279,6 +279,7 @@ class PetWindow(QWidget):
         self._radial_menu_socket = QLocalSocket(self)
         self._radial_menu_server_name = ""
         self._radial_menu_command_queue = []
+        self._radial_menu_process_ready = False
         self._radial_menu_visible = False
         self._radial_menu_opening = False
         self._radial_menu_opening_token = 0
@@ -2377,7 +2378,10 @@ class PetWindow(QWidget):
     def _ensure_radial_menu_process(self):
         process = self._radial_menu_process
         if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
+            if (
+                self._radial_menu_process_ready
+                and self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState
+            ):
                 self._radial_menu_socket.connectToServer(self._radial_menu_server_name)
             return
 
@@ -2399,6 +2403,7 @@ class PetWindow(QWidget):
         process.finished.connect(lambda *_args, p=process: self._on_radial_menu_process_finished(p))
         process.errorOccurred.connect(lambda _error, p=process: self._on_radial_menu_process_finished(p))
         self._radial_menu_buffer = ""
+        self._radial_menu_process_ready = False
         self._radial_menu_visible = False
         self._radial_menu_process = process
         process.setWorkingDirectory(base_dir)
@@ -2449,6 +2454,13 @@ class PetWindow(QWidget):
             self._broadcast_radial_menu_state(open=False)
 
     def _on_radial_menu_socket_error(self, error):
+        if (
+            error == QLocalSocket.LocalSocketError.ServerNotFoundError
+            and self._radial_menu_process is not None
+            and self._radial_menu_process.state() != QProcess.ProcessState.NotRunning
+            and not self._radial_menu_process_ready
+        ):
+            return
         self._radial_menu_visible = False
         self._tick_windows_mouse_passthrough()
         self._broadcast_radial_menu_state(open=False)
@@ -2475,6 +2487,7 @@ class PetWindow(QWidget):
             self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_command_queue.clear()
+            self._radial_menu_process_ready = False
             self._radial_menu_opening = False
             self._radial_menu_visible = False
         self._terminate_process_async(process, kill_delay_ms=300 if force else 1000)
@@ -2520,6 +2533,7 @@ class PetWindow(QWidget):
 
     def _handle_radial_menu_process_line(self, line: str):
         if line == "READY":
+            self._radial_menu_process_ready = True
             if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
                 self._radial_menu_socket.connectToServer(self._radial_menu_server_name)
         elif line == "STATE\tOPEN":
@@ -2553,6 +2567,7 @@ class PetWindow(QWidget):
             self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_command_queue.clear()
+            self._radial_menu_process_ready = False
             self._radial_menu_opening = False
             self._radial_menu_visible = False
         if was_visible:
