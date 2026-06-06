@@ -755,6 +755,7 @@
   "ChatWindow.attachment_uploading": "正在上传附件...",
   "ChatWindow.attachment_uploading_named": "正在上传：{name}",
   "ChatWindow.attachment_upload_wait": "请等待附件上传完成后再发送。",
+  "ChatWindow.attachment_remove": "移除附件",
   "ChatWindow.attachment_summary": "附件：{names}",
   "ChatWindow.attachment_only_prompt": "请查看这些附件。",
   "ChatWindow.dropped_image_name": "拖放图片.png",

@@ -135,6 +135,7 @@ from .widgets import (
     ConversationHistoryRow, GroupChatListRow,
     _PickerRow, ChatCharacterPickerPanel,
     PlanDivider, SearchSourcePopup, SearchSourceBadge, ChatImagePreview,
+    ComposerAttachmentCard,
 )
 from .message_bubble import MessageBubble
 
@@ -406,6 +407,7 @@ class ChatWindow(QWidget):
         self._window_anim = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
+        self._attachment_cards: list[ComposerAttachmentCard] = []
         self._attachment_import_worker: AttachmentImportWorker | None = None
         self._attachment_import_queue: list[list[dict]] = []
         self._attachment_import_last_error = ""
@@ -1859,11 +1861,41 @@ class ChatWindow(QWidget):
         self._composer.setFixedHeight(66)
         self._composer.setAcceptDrops(True)
         self._composer.installEventFilter(self)
-        layout = QHBoxLayout(self._composer)
-        layout.setContentsMargins(14, 10, 12, 10)
+        composer_layout = QVBoxLayout(self._composer)
+        composer_layout.setContentsMargins(12, 8, 12, 8)
+        composer_layout.setSpacing(6)
+
+        self._attachment_scroll = QScrollArea(self._composer)
+        self._attachment_scroll.setObjectName("ComposerAttachmentScroll")
+        self._attachment_scroll.setWidgetResizable(True)
+        self._attachment_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._attachment_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._attachment_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._attachment_scroll.setFixedHeight(64)
+        self._attachment_scroll.setVisible(False)
+        self._attachment_scroll.setAcceptDrops(True)
+        self._attachment_scroll.installEventFilter(self)
+
+        self._attachment_strip = QWidget(self._attachment_scroll)
+        self._attachment_strip.setObjectName("ComposerAttachmentStrip")
+        self._attachment_strip.setAcceptDrops(True)
+        self._attachment_strip.installEventFilter(self)
+        self._attachment_strip_layout = QHBoxLayout(self._attachment_strip)
+        self._attachment_strip_layout.setContentsMargins(0, 0, 0, 0)
+        self._attachment_strip_layout.setSpacing(6)
+        self._attachment_strip_layout.addStretch()
+        self._attachment_scroll.setWidget(self._attachment_strip)
+        composer_layout.addWidget(self._attachment_scroll)
+
+        self._composer_controls = QWidget(self._composer)
+        self._composer_controls.setObjectName("ComposerControls")
+        self._composer_controls.setAcceptDrops(True)
+        self._composer_controls.installEventFilter(self)
+        layout = QHBoxLayout(self._composer_controls)
+        layout.setContentsMargins(2, 0, 0, 0)
         layout.setSpacing(10)
 
-        self._attach_btn = IconButton(self._paperclip_icon("#34405a"), self._composer)
+        self._attach_btn = IconButton(self._paperclip_icon("#34405a"), self._composer_controls)
         self._attach_btn.setFixedSize(46, 46)
         self._attach_btn.setIconSize(QSize(22, 22))
         self._attach_btn.setToolTip(_tr("ChatWindow.attach_file_tooltip", default="添加附件"))
@@ -1872,7 +1904,7 @@ class ChatWindow(QWidget):
         self._attach_btn.installEventFilter(self)
         layout.addWidget(self._attach_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self._asr_btn = IconButton(FluentIcon.MICROPHONE, self._composer)
+        self._asr_btn = IconButton(FluentIcon.MICROPHONE, self._composer_controls)
         self._asr_btn.setFixedSize(46, 46)
         self._asr_btn.setIconSize(QSize(22, 22))
         self._asr_btn.setToolTip(_tr("ChatWindow.asr_start_tooltip", default="开始语音输入"))
@@ -1901,7 +1933,7 @@ class ChatWindow(QWidget):
         self._completer_suppress = False
         layout.addWidget(self._input)
 
-        self._send_btn = ChatSendButton(self._composer)
+        self._send_btn = ChatSendButton(self._composer_controls)
         self._send_btn.setFixedSize(46, 46)
         self._send_btn.setIconSize(QSize(22, 22))
         self._send_btn.setToolTip(_tr("ChatWindow.send_tooltip"))
@@ -1909,6 +1941,7 @@ class ChatWindow(QWidget):
         self._send_btn.setAcceptDrops(True)
         self._send_btn.installEventFilter(self)
         layout.addWidget(self._send_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        composer_layout.addWidget(self._composer_controls)
 
         outer.addWidget(self._composer)
 
@@ -1926,6 +1959,9 @@ class ChatWindow(QWidget):
                 input_widget,
                 input_viewport,
                 getattr(self, "_composer", None),
+                getattr(self, "_attachment_scroll", None),
+                getattr(self, "_attachment_strip", None),
+                getattr(self, "_composer_controls", None),
                 getattr(self, "_input_area", None),
                 getattr(self, "_attach_btn", None),
                 getattr(self, "_asr_btn", None),
@@ -1941,6 +1977,14 @@ class ChatWindow(QWidget):
                 QEvent.Type.Drop,
             ):
                 return self._handle_composer_drag_event(event)
+        attachment_scroll = getattr(self, "_attachment_scroll", None)
+        if obj == attachment_scroll and event.type() == QEvent.Type.Wheel:
+            bar = attachment_scroll.horizontalScrollBar()
+            if bar.maximum() > bar.minimum():
+                delta = event.angleDelta().y() or event.angleDelta().x()
+                bar.setValue(bar.value() - delta)
+                event.accept()
+                return True
         if input_widget is not None and obj == input_widget and event.type() == QKeyEvent.Type.KeyPress:
             comp = getattr(self, "_command_completer", None)
             if comp is not None and comp.is_shown():
@@ -2119,6 +2163,13 @@ class ChatWindow(QWidget):
                 color: {muted};
             }}
         """)
+        self._attachment_scroll.setStyleSheet("""
+            QScrollArea#ComposerAttachmentScroll,
+            QWidget#ComposerAttachmentStrip {
+                background: transparent;
+                border: none;
+            }
+        """)
 
         self._input_area.set_panel_style(composer_bg, title_border, input_radius, 0)
         self._update_composer_focus_style()
@@ -2140,6 +2191,8 @@ class ChatWindow(QWidget):
         self._attach_btn.apply_theme()
         self._refresh_attach_button_icon()
         self._asr_btn.apply_theme()
+        for card in self._attachment_cards:
+            card.apply_theme()
         self._update_asr_button_state()
         if self._resize_grip:
             self._resize_grip.update()
@@ -3065,7 +3118,8 @@ class ChatWindow(QWidget):
     def _sync_input_height(self):
         doc_height = int(self._input.document().size().height()) + 10
         input_height = max(42, min(86, doc_height))
-        composer_height = max(66, input_height + 20)
+        attachment_height = 70 if self._pending_attachments else 0
+        composer_height = max(66, input_height + 20 + attachment_height)
         area_height = composer_height + 44
         self._input.setFixedHeight(input_height)
         self._composer.setFixedHeight(composer_height)
@@ -3997,6 +4051,7 @@ class ChatWindow(QWidget):
             "mime": "image/png",
             "size": target.stat().st_size if target.exists() else 0,
         })
+        self._refresh_attachment_previews()
         self._update_attachment_hint()
         self._input.setFocus()
         return 1
@@ -4086,6 +4141,7 @@ class ChatWindow(QWidget):
         if self.sender() is not self._attachment_import_worker:
             return
         self._pending_attachments.append(dict(item))
+        self._refresh_attachment_previews()
 
     def _on_attachment_import_failed(self, error: str):
         if self.sender() is not self._attachment_import_worker:
@@ -4135,6 +4191,58 @@ class ChatWindow(QWidget):
             self._composer_hint.setText(_tr("ChatWindow.attach_pending", default="已添加 {count} 个附件，发送时会一起交给模型。", count=count))
         else:
             self._composer_hint.setText(self._idle_status_text())
+
+    def _refresh_attachment_previews(self):
+        layout = getattr(self, "_attachment_strip_layout", None)
+        scroll = getattr(self, "_attachment_scroll", None)
+        if layout is None or scroll is None:
+            return
+
+        while layout.count() > 1:
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self._attachment_cards = []
+        for attachment in reversed(self._pending_attachments):
+            card = ComposerAttachmentCard(attachment, self._attachment_strip)
+            card.remove_requested.connect(self._remove_pending_attachment)
+            self._attachment_cards.append(card)
+            layout.insertWidget(layout.count() - 1, card, 0, Qt.AlignmentFlag.AlignLeft)
+
+        scroll.setVisible(bool(self._attachment_cards))
+        self._sync_input_height()
+        QTimer.singleShot(0, lambda: scroll.horizontalScrollBar().setValue(
+            scroll.horizontalScrollBar().minimum()
+        ))
+
+    def _remove_pending_attachment(self, path: str):
+        removed = None
+        for index, attachment in enumerate(self._pending_attachments):
+            if str(attachment.get("path", "") or "") == str(path or ""):
+                removed = self._pending_attachments.pop(index)
+                break
+        if removed is None:
+            return
+
+        self._delete_pending_attachment_copy(removed)
+        self._refresh_attachment_previews()
+        self._update_attachment_hint()
+        self._input.setFocus()
+
+    def _delete_pending_attachment_copy(self, attachment: dict):
+        path_text = str(attachment.get("path", "") or "").strip()
+        if not path_text:
+            return
+        path = Path(path_text)
+        try:
+            resolved = path.resolve()
+            attachment_root = self._chat_attachment_dir().resolve()
+            if resolved.parent == attachment_root and resolved.exists() and resolved.is_file():
+                resolved.unlink()
+        except (OSError, RuntimeError):
+            pass
 
     def _message_search_sources(self, tool_trace) -> list[dict]:
         if not self._show_search_sources():
@@ -4793,6 +4901,7 @@ class ChatWindow(QWidget):
 
         self._input.clear()
         self._pending_attachments = []
+        self._refresh_attachment_previews()
         self._update_attachment_hint()
         self._set_busy(True, planning=self._is_group_chat)
         self._reset_tts_stream()

@@ -1422,3 +1422,187 @@ class ChatImagePreview(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
         super().paintEvent(event)
+
+
+class AttachmentRemoveButton(QToolButton):
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        dark = isDarkTheme()
+        if self.isDown():
+            bg = QColor("#252a33" if dark else "#111214")
+        elif self.underMouse():
+            bg = QColor("#4a5261" if dark else "#34373b")
+        else:
+            bg = QColor("#343a46" if dark else "#202124")
+        border = QColor("#4b5363" if dark else "#ffffff")
+
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QPen(border, 1))
+        painter.setBrush(bg)
+        painter.drawEllipse(rect)
+
+        inset = 6.5
+        painter.setPen(QPen(QColor("#ffffff"), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(
+            int(rect.left() + inset),
+            int(rect.top() + inset),
+            int(rect.right() - inset),
+            int(rect.bottom() - inset),
+        )
+        painter.drawLine(
+            int(rect.right() - inset),
+            int(rect.top() + inset),
+            int(rect.left() + inset),
+            int(rect.bottom() - inset),
+        )
+
+
+class ComposerAttachmentCard(QWidget):
+    remove_requested = Signal(str)
+
+    _IMAGE_SIZE = QSize(64, 64)
+    _FILE_SIZE = QSize(190, 64)
+
+    def __init__(self, attachment: dict, parent=None):
+        super().__init__(parent)
+        self._attachment = dict(attachment or {})
+        self._type = str(self._attachment.get("type", "") or "").strip().lower()
+        self._path = str(self._attachment.get("path", "") or "")
+        self._name = str(
+            self._attachment.get("name")
+            or Path(self._path).name
+            or ("image" if self._type == "image" else "file")
+        )
+        self._pixmap = QPixmap(self._path) if self._type == "image" and self._path else QPixmap()
+        self._bg = QColor("#ffffff")
+        self._border = QColor("#dde4f0")
+        self._icon_bg = QColor("#f3f5f9")
+        self._text = QColor("#1f2328")
+        self._muted = QColor("#657089")
+
+        self.setFixedSize(self._IMAGE_SIZE if self._type == "image" else self._FILE_SIZE)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setToolTip(self._name)
+
+        self._name_label = None
+        self._meta_label = None
+        if self._type != "image":
+            self._name_label = QLabel(self._name, self)
+            self._name_label.setObjectName("AttachmentName")
+            self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._meta_label = QLabel(
+                self._file_kind(self._name, self._attachment.get("mime", "")),
+                self,
+            )
+            self._meta_label.setObjectName("AttachmentMeta")
+            self._meta_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self._remove_btn = AttachmentRemoveButton(self)
+        self._remove_btn.setObjectName("AttachmentRemoveButton")
+        self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._remove_btn.setToolTip(_tr("ChatWindow.attachment_remove", default="移除附件"))
+        self._remove_btn.setFixedSize(20, 20)
+        self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._path))
+        self.apply_theme()
+
+    def resizeEvent(self, event):
+        self._remove_btn.move(self.width() - self._remove_btn.width() - 3, 3)
+        self._remove_btn.raise_()
+        if self._name_label is not None and self._meta_label is not None:
+            self._name_label.setGeometry(60, 9, self.width() - 88, 24)
+            self._meta_label.setGeometry(60, 32, self.width() - 72, 20)
+            self._name_label.setText(
+                self._name_label.fontMetrics().elidedText(
+                    self._name,
+                    Qt.TextElideMode.ElideRight,
+                    max(24, self._name_label.width()),
+                )
+            )
+        super().resizeEvent(event)
+
+    def apply_theme(self):
+        dark = isDarkTheme()
+        self._bg = QColor("#20242d" if dark else "#ffffff")
+        self._border = QColor("#3a4150" if dark else "#dfe3ea")
+        self._icon_bg = QColor("#292e39" if dark else "#f4f5f7")
+        self._text = QColor("#f7f7fb" if dark else "#202124")
+        self._muted = QColor("#a9b0c3" if dark else "#70757d")
+        self._remove_btn.setStyleSheet("background: transparent; border: none;")
+        if self._name_label is not None and self._meta_label is not None:
+            self._name_label.setStyleSheet(f"""
+                QLabel#AttachmentName {{
+                    color: {self._text.name()};
+                    background: transparent;
+                    border: none;
+                    font-size: 12px;
+                    font-weight: 600;
+                }}
+            """)
+            self._meta_label.setStyleSheet(f"""
+                QLabel#AttachmentMeta {{
+                    color: {self._muted.name()};
+                    background: transparent;
+                    border: none;
+                    font-size: 11px;
+                }}
+            """)
+        self._remove_btn.update()
+        self.update()
+
+    @staticmethod
+    def _file_kind(name: str, mime: str) -> str:
+        suffix = Path(name).suffix.lstrip(".").upper()
+        if suffix:
+            return suffix[:12]
+        major = str(mime or "").split("/", 1)[0].strip().upper()
+        return major or "FILE"
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        card_path = QPainterPath()
+        card_path.addRoundedRect(rect, 11, 11)
+        painter.fillPath(card_path, self._bg)
+
+        if self._type == "image" and not self._pixmap.isNull():
+            painter.save()
+            image_path = QPainterPath()
+            image_path.addRoundedRect(rect.adjusted(1, 1, -1, -1), 10, 10)
+            painter.setClipPath(image_path)
+            scaled = self._pixmap.scaled(
+                max(1, int(rect.width())),
+                max(1, int(rect.height())),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = int(rect.center().x() - scaled.width() / 2)
+            y = int(rect.center().y() - scaled.height() / 2)
+            painter.drawPixmap(x, y, scaled)
+            painter.restore()
+        elif self._type == "image":
+            painter.setPen(self._muted)
+            text = self.fontMetrics().elidedText(
+                self._name,
+                Qt.TextElideMode.ElideRight,
+                max(24, self.width() - 16),
+            )
+            painter.drawText(rect.adjusted(8, 8, -8, -8), Qt.AlignmentFlag.AlignCenter, text)
+        else:
+            icon_rect = QRectF(8, 8, 42, 48)
+            icon_path = QPainterPath()
+            icon_path.addRoundedRect(icon_rect, 9, 9)
+            painter.fillPath(icon_path, self._icon_bg)
+
+            glyph_rect = QRectF(19, 18, 18, 23)
+            painter.setPen(QPen(self._muted, 1.7))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(glyph_rect, 3, 3)
+            painter.drawLine(int(glyph_rect.left() + 5), int(glyph_rect.top() + 8), int(glyph_rect.right() - 4), int(glyph_rect.top() + 8))
+            painter.drawLine(int(glyph_rect.left() + 5), int(glyph_rect.top() + 14), int(glyph_rect.right() - 6), int(glyph_rect.top() + 14))
+
+        painter.setPen(QPen(self._border, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(card_path)
+        super().paintEvent(event)

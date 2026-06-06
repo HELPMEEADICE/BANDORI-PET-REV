@@ -755,6 +755,7 @@
   "ChatWindow.attachment_uploading": "添付ファイルをアップロードしています...",
   "ChatWindow.attachment_uploading_named": "アップロード中：{name}",
   "ChatWindow.attachment_upload_wait": "添付ファイルのアップロード完了をお待ちください。",
+  "ChatWindow.attachment_remove": "添付ファイルを削除",
   "ChatWindow.attachment_summary": "添付ファイル：{names}",
   "ChatWindow.attachment_only_prompt": "これらの添付ファイルを確認してください。",
   "ChatWindow.dropped_image_name": "ドロップ画像.png",

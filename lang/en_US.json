@@ -755,6 +755,7 @@
   "ChatWindow.attachment_uploading": "Uploading attachment...",
   "ChatWindow.attachment_uploading_named": "Uploading: {name}",
   "ChatWindow.attachment_upload_wait": "Please wait for attachments to finish uploading.",
+  "ChatWindow.attachment_remove": "Remove attachment",
   "ChatWindow.attachment_summary": "Attachments: {names}",
   "ChatWindow.attachment_only_prompt": "Please review these attachments.",
   "ChatWindow.dropped_image_name": "Dropped image.png",
