@@ -207,6 +207,25 @@ class BuildMacWithResourceLinks(bdist_mac):
         self._link_root_resource_files()
         if self.codesign_identity:
             self._codesign(self.bundle_dir)
+        else:
+            # cx_Freeze 在加入资源符号链接之前就给 bundle 签了名，导致封印
+            # 与磁盘内容不一致（codesign --verify 报 "code has no resources
+            # but signature indicates they must be present"）。本机直接双击能开
+            # （无 quarantine，Gatekeeper 不介入），但经 dmg 分发后即便清掉
+            # quarantine，arm64 也会因签名损坏而静默秒杀（双击/右键无反应、无弹窗）。
+            # 没有 Developer ID 时，在所有文件就位后补一次 ad-hoc 重签，重建一致封印。
+            self._adhoc_resign()
+
+    def _adhoc_resign(self):
+        bundle = str(self.bundle_dir)
+        self.execute(
+            lambda: subprocess.run(
+                ["codesign", "--force", "--deep", "--sign", "-", bundle],
+                check=True,
+            ),
+            (),
+            msg=f"ad-hoc re-signing {bundle}",
+        )
 
     def _link_root_resource_files(self):
         for filename in (

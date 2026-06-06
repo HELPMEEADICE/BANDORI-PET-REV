@@ -1,5 +1,5 @@
-filename = 'build/bandoripet-3.0.9.dmg'
-volume_label = 'bandoripet-3.0.9'
+filename = 'build/bandoripet-3.1.0.dmg'
+volume_label = 'bandoripet-3.1.0'
 format = 'UDZO'
 filesystem = 'HFS+'
 size = None
