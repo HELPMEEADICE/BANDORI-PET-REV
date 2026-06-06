@@ -23,16 +23,61 @@
 
 ---
 
-## 完整打包步骤
+## 架构（Intel / Apple Silicon）
+
+cx_Freeze 只会把**构建机当前架构**的原生 `.so` 打进包里。所以在 Apple Silicon
+（arm64）上直接打的包，到 Intel Mac（x86_64）上会报：
+
+```
+ImportError: ... (mach-o file, but is an incompatible architecture
+              (have 'arm64', need 'x86_64h' or 'x86_64'))
+```
+
+cx_Freeze 没有 universal2 模式，因此 **arm64 和 x86_64 要分别出两个 dmg**。
+x86_64 包必须用一个能以 x86_64 运行的 Python（通过 Rosetta 的 `arch -x86_64`）来构建。
+
+一次性安装一个 x86_64 的 Python 3.12（任选其一）：
+
+- python.org 的 **universal2** 安装包 → `/Library/Frameworks/Python.framework/Versions/3.12/bin/python3`
+  （universal2 二进制可经 `arch -x86_64` 跑成 Intel 模式，最省事）
+- 或 Intel 工具链下的 pyenv：`arch -x86_64 /bin/bash -c 'pyenv install 3.12.7'`
+
+---
+
+## 完整打包步骤（推荐用脚本，一条命令到底）
+
+[`build_dmg.sh`](build_dmg.sh) 把"建独立 venv → 装依赖（含从源码编译的 lupa）→
+`bdist_mac` → 架构自检 → 组 dmg"全包了，并按架构命名产物：
+
+```bash
+# Apple Silicon 包（本机即 arm64 时无需额外 Python）
+installer/macos/build_dmg.sh arm64
+
+# Intel 包（脚本会自动探测 universal2 / x86_64 的 Python；也可手动指定）
+BANDORIPET_PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
+  installer/macos/build_dmg.sh x86_64
+```
+
+产物：`BUILD/BandoriPet-<版本>-macos-arm64.dmg` 和 `…-macos-x86_64.dmg`。
+脚本内置架构校验：包内任一 `.so/.dylib` 缺目标架构就直接报错停手，
+杜绝再发出 issue 里那种"装上打不开"的包。
+
+发布时两个 dmg 都传，发布说明里写明 Intel 用户下 `x86_64`、Apple 芯片下 `arm64`
+（`x86_64` 包在 Apple 芯片上也能经 Rosetta 跑，可作通用兜底）。
+
+---
+
+## 手动打包步骤（脚本不可用时的等价流程）
 
 ### 1. 构建 .app
 
 ```bash
-# 在项目根目录、已激活 Python 环境的前提下
-python setup.py bdist_mac
+# 在项目根目录、已激活对应架构的 Python 环境的前提下
+python setup.py bdist_mac          # arm64
+arch -x86_64 python setup.py bdist_mac   # x86_64（须用 x86_64/universal2 的 Python）
 ```
 
-产物在 `BUILD/` 下，形如 `BUILD/bandoripet-<版本>.app`。
+产物在 `BUILD/` 下，形如 `BUILD/BandoriPet.app`。
 
 ### 2. 自查 LuaJIT 是否打进去了（重要）
 
@@ -61,8 +106,8 @@ codesign --verify --deep --strict --verbose=2 BUILD/dist/BandoriPet.app
 ### 3. 组装并生成 dmg（含辅助文件）
 
 ```bash
-APP=BUILD/bandoripet-3.0.6.app          # ← 改成实际产物路径
-DMG=BUILD/bandoripet-3.0.6.dmg          # ← 输出 dmg 路径
+APP=BUILD/BandoriPet.app                 # ← 改成实际产物路径
+DMG=BUILD/BandoriPet-3.1.0-macos-arm64.dmg   # ← 输出 dmg 路径（带架构后缀）
 
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/BandoriPet.app"
