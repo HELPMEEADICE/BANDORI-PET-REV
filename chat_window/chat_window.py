@@ -259,6 +259,7 @@ class AttachmentImportWorker(QThread):
             "name": source.name,
             "mime": mime,
             "size": target.stat().st_size if target.exists() else size,
+            "uploaded_at": datetime.now().isoformat(timespec="seconds"),
         }
 
     def _import_remote(self, job: dict, index: int, job_count: int) -> dict | None:
@@ -311,6 +312,7 @@ class AttachmentImportWorker(QThread):
             "name": name,
             "mime": mime,
             "size": target.stat().st_size if target and target.exists() else copied,
+            "uploaded_at": datetime.now().isoformat(timespec="seconds"),
         }
 
 
@@ -4050,6 +4052,7 @@ class ChatWindow(QWidget):
             "name": _tr("ChatWindow.dropped_image_name", default="拖放图片.png"),
             "mime": "image/png",
             "size": target.stat().st_size if target.exists() else 0,
+            "uploaded_at": datetime.now().isoformat(timespec="seconds"),
         })
         self._refresh_attachment_previews()
         self._update_attachment_hint()

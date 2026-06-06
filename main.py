@@ -824,6 +824,8 @@ def main():
             ("gpu_acceleration", "gpu_acceleration", True),
             ("game_topmost", "game_topmost", False),
             ("chat_window_normal_window", "chat_window_normal_window", False),
+            ("chat_attachment_auto_cleanup_enabled", "chat_attachment_auto_cleanup_enabled", False),
+            ("chat_attachment_retention_days", "chat_attachment_retention_days", 30),
             ("hide_live2d_model", "hide_live2d_model", False),
             ("live2d_idle_actions_enabled", "live2d_idle_actions_enabled", True),
             ("live2d_random_actions_enabled", "live2d_random_actions_enabled", True),
@@ -913,6 +915,7 @@ def main():
         init_ai_status_server()
         init_chat_integration_server()
         init_napcat_adapter()
+        apply_chat_attachment_retention()
         scheduler = reminder_ref.get("scheduler")
         if scheduler is not None:
             scheduler.reload()
@@ -1198,6 +1201,28 @@ def main():
     signal_pump_timer.setInterval(100)
     signal_pump_timer.timeout.connect(lambda: None)
     signal_pump_timer.start()
+
+    def apply_chat_attachment_retention():
+        cfg.load()
+        if not cfg.get("chat_attachment_auto_cleanup_enabled", False):
+            return
+        try:
+            from chat_attachment_manager import (
+                clamp_attachment_retention_days,
+                cleanup_chat_attachments,
+            )
+
+            cleanup_chat_attachments(clamp_attachment_retention_days(
+                cfg.get("chat_attachment_retention_days", 30)
+            ))
+        except Exception as exc:
+            print(f"Chat attachment cleanup failed: {exc}")
+
+    attachment_cleanup_timer = QTimer(app)
+    attachment_cleanup_timer.setInterval(6 * 60 * 60 * 1000)
+    attachment_cleanup_timer.timeout.connect(apply_chat_attachment_retention)
+    attachment_cleanup_timer.start()
+    QTimer.singleShot(0, apply_chat_attachment_retention)
 
     # ── Usage session tracking ─────────────────────────────────────────
     usage_session_ref = {"db": None, "session_id": None}

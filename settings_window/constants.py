@@ -349,6 +349,8 @@ DATA_CONFIG_KEYS = {
         "gpu_acceleration",
         "game_topmost",
         "chat_window_normal_window",
+        "chat_attachment_auto_cleanup_enabled",
+        "chat_attachment_retention_days",
         "hide_live2d_model",
         "auto_start",
         "drag_locked",

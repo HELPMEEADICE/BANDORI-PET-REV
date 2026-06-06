@@ -268,6 +268,8 @@ DEFAULTS = {
     "chat_window_y": None,
     "chat_window_width": None,
     "chat_window_height": None,
+    "chat_attachment_auto_cleanup_enabled": False,
+    "chat_attachment_retention_days": 30,
     "pov_mode": "off",
     "pov_custom_prompt": "",
     "pov_custom_personas": [],
