@@ -5,39 +5,29 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextCursor
+from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QScrollArea, QSizePolicy, QToolButton, QMenu,
-    QApplication, QGraphicsOpacityEffect, QWidgetAction,
-    QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
-    QSplitter, QSplitterHandle, QCheckBox,
+    QApplication, QWidgetAction,
+    QFrame, QFileDialog, QMessageBox,
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, ProgressBar, TransparentToolButton, isDarkTheme
+from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
 from app_theme import (
-    BANDORI_PRIMARY,
-    BANDORI_PRIMARY_HOVER,
-    BANDORI_PRIMARY_PRESSED,
-    BANDORI_PRIMARY_DARK,
-    BANDORI_PRIMARY_DARK_HOVER,
-    BANDORI_PRIMARY_DARK_PRESSED,
     BANDORI_PRIMARY_SOFT,
-    BANDORI_PRIMARY_SOFT_DARK,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter, circular_pixmap
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter
 from win32_dwm import apply_windows_11_border_fix
 
 import base64
-import math
 import mimetypes
-import numpy as np
 import os
 import shutil
 import sys
@@ -58,12 +48,10 @@ else:
 from llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     consume_stream_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
-    _build_event_context,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
+from llm_api_compat import chat_completions_api_url, use_responses_api
 from llm_error_hints import format_llm_error_message
-from vision_fallback import analyze_images_with_aux_model
 from chat_config_snapshots import (
     asr_config_snapshot,
     memory_extraction_api_config,
@@ -117,11 +105,8 @@ from action_bus import publish_action, publish_emotion_behavior, publish_lip_syn
 
 from .constants import (
     _BG_LIGHT, _BG_DARK,
-    _USER_BUBBLE_LIGHT, _USER_BUBBLE_DARK,
-    _ASSIST_BUBBLE_LIGHT, _ASSIST_BUBBLE_DARK,
     _TEAMS_ACCENT, _TELEGRAM_ACCENT,
     _CHAT_IMAGE_EXTENSIONS,
-    _AVATAR_PIXMAP_CACHE, _AVATAR_PIXMAP_CACHE_LIMIT,
     _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT, _HISTORY_SCROLL_WIDTH,
     _GROUP_SIDEBAR_DEFAULT_RATIO, _GROUP_SIDEBAR_MIN_RATIO,
     _GROUP_SIDEBAR_MAX_RATIO, _GROUP_SIDEBAR_ANIMATION_MS,
@@ -129,12 +114,12 @@ from .constants import (
 )
 from .avatar_utils import _rounded_avatar_pixmap
 from .widgets import (
-    AuxVisionFallbackWorker, FluentContextLabel, GroupRenameDialog,
+    AuxVisionFallbackWorker, GroupRenameDialog,
     RoundedPanel, IconButton, ChatSendButton,
-    FluentSplitterHandle, FluentSplitter, ChatResizeGrip,
+    FluentSplitter, ChatResizeGrip,
     ConversationHistoryRow, GroupChatListRow,
-    _PickerRow, ChatCharacterPickerPanel,
-    PlanDivider, SearchSourcePopup, SearchSourceBadge, ChatImagePreview,
+    ChatCharacterPickerPanel,
+    PlanDivider,
     ComposerAttachmentCard,
 )
 from .message_bubble import MessageBubble
@@ -4474,9 +4459,6 @@ class ChatWindow(QWidget):
             item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
             for item in items
         )
-
-    def _supports_openai_responses_api(self, api_url: str) -> bool:
-        return supports_openai_responses_api(api_url)
 
     def _use_responses_api(self, api_url: str = "") -> bool:
         return use_responses_api(self._cfg, api_url)

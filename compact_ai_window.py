@@ -26,10 +26,9 @@ from llm_manager import (
     current_time_instruction,
     parse_action_tags,
     strip_action_tags,
-    _build_event_context,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
+from llm_api_compat import chat_completions_api_url, use_responses_api
 from llm_error_hints import format_llm_error_message
 from chat_config_snapshots import (
     memory_extraction_api_config,
@@ -869,9 +868,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             if messages[i].get("role") == "user":
                 messages[i]["content"] = str(messages[i].get("content", "")) + suffix
                 break
-
-    def _supports_openai_responses_api(self, api_url: str) -> bool:
-        return supports_openai_responses_api(api_url)
 
     def _use_responses_api(self, api_url: str = "") -> bool:
         return use_responses_api(self._cfg, api_url)
