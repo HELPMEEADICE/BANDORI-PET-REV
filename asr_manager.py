@@ -105,17 +105,117 @@ def _local_asr_python() -> Path:
     return ASR_LOCAL_SERVER_DIR / ".venv" / "bin" / "python"
 
 
-def _venv_create_command() -> list[str]:
+def _is_windows_store_python_alias(executable: str) -> bool:
+    if sys.platform != "win32":
+        return False
+    normalized = os.path.normcase(os.path.normpath(executable))
+    windows_apps = os.path.normcase(os.path.normpath(
+        os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            "Microsoft",
+            "WindowsApps",
+        )
+    ))
+    return bool(windows_apps) and (
+        normalized == windows_apps
+        or normalized.startswith(windows_apps + os.sep)
+    )
+
+
+def _windows_python_install_candidates() -> list[str]:
+    candidates = []
+    roots = []
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        roots.append(Path(local_app_data) / "Programs" / "Python")
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            roots.append(Path(value))
+    patterns = ("Python*/python.exe", "Python/python.exe")
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            candidates.extend(str(path) for path in sorted(root.glob(pattern), reverse=True))
+    return candidates
+
+
+def _venv_python_candidates() -> list[list[str]]:
     if not getattr(sys, "frozen", False):
-        return [sys.executable, "-m", "venv", str(ASR_LOCAL_SERVER_DIR / ".venv")]
-    candidates = ["py", "python"] if sys.platform == "win32" else ["python3", "python"]
-    for name in candidates:
-        executable = shutil.which(name)
-        if executable:
-            if name == "py":
-                return [executable, "-3", "-m", "venv", str(ASR_LOCAL_SERVER_DIR / ".venv")]
-            return [executable, "-m", "venv", str(ASR_LOCAL_SERVER_DIR / ".venv")]
-    return [sys.executable, "-m", "venv", str(ASR_LOCAL_SERVER_DIR / ".venv")]
+        return [[sys.executable]]
+
+    candidates = []
+    configured_python = os.environ.get("BANDORI_ASR_PYTHON", "").strip()
+    if configured_python:
+        candidates.append([configured_python])
+
+    if sys.platform == "win32":
+        launcher = shutil.which("py")
+        if launcher:
+            candidates.append([launcher, "-3"])
+        for name in ("python", "python3"):
+            executable = shutil.which(name)
+            if executable and not _is_windows_store_python_alias(executable):
+                candidates.append([executable])
+        candidates.extend([path] for path in _windows_python_install_candidates())
+    else:
+        for name in ("python3", "python"):
+            executable = shutil.which(name)
+            if executable:
+                candidates.append([executable])
+
+    unique = []
+    seen = set()
+    for command in candidates:
+        key = tuple(os.path.normcase(part) for part in command)
+        if key not in seen:
+            seen.add(key)
+            unique.append(command)
+    return unique
+
+
+def _python_can_create_venv(command: list[str]) -> bool:
+    executable = command[0]
+    if _is_windows_store_python_alias(executable):
+        return False
+    startupinfo = None
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    try:
+        result = subprocess.run(
+            [
+                *command,
+                "-c",
+                "import sys, venv; raise SystemExit(0 if sys.version_info.major == 3 else 1)",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+            startupinfo=startupinfo,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _venv_create_command() -> list[str]:
+    for command in _venv_python_candidates():
+        if _python_can_create_venv(command):
+            return [
+                *command,
+                "-m",
+                "venv",
+                str(ASR_LOCAL_SERVER_DIR / ".venv"),
+            ]
+    raise RuntimeError(
+        "未找到可用于安装本地 ASR 的 Python 3。"
+        "请从 https://www.python.org/downloads/windows/ 安装 Python 3，"
+        "安装时勾选“Add Python to PATH”，然后重新点击一键安装。"
+        "WindowsApps 目录中的 python.exe 只是 Microsoft Store 启动别名，无法创建 ASR 环境。"
+    )
 
 
 def _local_asr_log_path() -> Path:
