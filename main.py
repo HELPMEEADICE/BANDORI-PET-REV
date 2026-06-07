@@ -872,10 +872,7 @@ def main():
             ("screen_awareness_character_mode", "screen_awareness_character_mode", "random_visible"),
             ("screen_awareness_character", "screen_awareness_character", ""),
             ("screen_awareness_max_screenshot_width", "screen_awareness_max_screenshot_width", 1920),
-            ("screen_awareness_vision_api_url", "screen_awareness_vision_api_url", ""),
-            ("screen_awareness_vision_api_key", "screen_awareness_vision_api_key", ""),
-            ("screen_awareness_vision_model_id", "screen_awareness_vision_model_id", ""),
-            ("screen_awareness_vision_enable_thinking", "screen_awareness_vision_enable_thinking", None),
+            ("screen_awareness_model_mode", "screen_awareness_model_mode", "main"),
         )
         language = data.get("language")
         if language:

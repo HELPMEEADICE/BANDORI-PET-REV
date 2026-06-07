@@ -238,8 +238,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         worker = ScreenAwarenessVisionWorker(dict(getattr(self._cfg, "_data", {}) or {}), self)
         self._screen_awareness_worker = worker
         worker.finished.connect(
-            lambda summary, metrics, worker=worker, character=character, trigger_now=trigger_now:
-                self._on_screen_awareness_finished(worker, character, trigger_now, summary, metrics)
+            lambda result, worker=worker, character=character, trigger_now=trigger_now:
+                self._on_screen_awareness_finished(worker, character, trigger_now, result)
         )
         worker.error.connect(
             lambda message, worker=worker:
@@ -247,13 +247,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         )
         worker.start()
 
-    def _on_screen_awareness_finished(self, worker: ScreenAwarenessVisionWorker, character: str, trigger_now, summary: str, metrics: dict):
+    def _on_screen_awareness_finished(self, worker: ScreenAwarenessVisionWorker, character: str, trigger_now, result: dict):
         if worker is not self._screen_awareness_worker:
             return
         self._screen_awareness_worker = None
         worker.deleteLater()
-        summary = str(summary or "").strip()
-        if not summary:
+        result = result if isinstance(result, dict) else {}
+        summary = str(result.get("screen_observation", "") or "").strip()
+        image_data_url = str(result.get("screen_image_data_url", "") or "").strip()
+        if not summary and not image_data_url:
             return
         self._start_text_generation({
             "kind": "screen_awareness",
@@ -262,7 +264,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "character": character,
             "description": _tr("Reminder.screen_awareness_description", default="根据当前屏幕内容判断是否主动搭话。"),
             "screen_observation": summary,
-            "screen_metrics": metrics if isinstance(metrics, dict) else {},
+            "screen_image_data_url": image_data_url,
+            "screen_metrics": result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {},
             "triggered_at": isoformat(trigger_now),
         })
 
@@ -439,6 +442,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             chat_completions_api_url,
         )
 
+    def _main_api_config(self) -> tuple[str, str, str]:
+        if not self._cfg:
+            return "", "", ""
+        return (
+            str(self._cfg.get("llm_api_url", "") or "").strip(),
+            str(self._cfg.get("llm_api_key", "") or "").strip(),
+            str(self._cfg.get("llm_model_id", "") or "").strip(),
+        )
+
     def _start_text_generation(self, context: dict):
         self._pending_contexts.append(dict(context))
         self._drain_pending_contexts()
@@ -449,7 +461,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._text_generation_busy = True
         context = self._pending_contexts.pop(0)
         character = context.get("character", "")
-        api_url, api_key, model_id = self._api_config()
+        is_screen_awareness = context.get("kind") == "screen_awareness"
+        api_url, api_key, model_id = self._main_api_config() if is_screen_awareness else self._api_config()
         if not api_url or not api_key or not model_id:
             if context.get("kind") == "screen_awareness":
                 self._text_generation_busy = False
@@ -480,13 +493,18 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             instruction += _tr(
                 "Reminder.screen_awareness_llm_instruction",
                 default=(
-                    "\n如果这是 screen_awareness，请根据 screen_observation 判断是否值得主动开口。"
+                    "\n如果这是 screen_awareness，请根据附带的桌面截图或 screen_observation 判断是否值得主动开口。"
                     "只有在用户可能卡住、专注太久、切换任务、看起来需要鼓励或有自然搭话点时才说话；"
                     "如果不需要打扰，只输出 NO_SPEAK。不要说自己在截图或监控屏幕。"
                 ),
             )
+        reminder_payload = {
+            key: value
+            for key, value in context.items()
+            if key != "screen_image_data_url"
+        }
         payload = {
-            "reminder": context,
+            "reminder": reminder_payload,
             "character_display_name": display_name,
             "relationship_context": relationship,
         }
@@ -496,11 +514,19 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         desktop_state = desktop_state_payload(self._cfg)
         if desktop_state:
             payload["desktop_state"] = desktop_state
+        user_content = json.dumps(payload, ensure_ascii=False)
+        image_data_url = str(context.get("screen_image_data_url", "") or "").strip()
+        if image_data_url:
+            user_content = [
+                {"type": "text", "text": user_content},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]
         messages = [
             {"role": "system", "content": (system_prompt + "\n\n" + instruction).strip()},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "user", "content": user_content},
         ]
-        worker = NonStreamWorker(api_url, api_key, model_id, messages, self._cfg.get("llm_aux_enable_thinking", None), self)
+        enable_thinking = None if is_screen_awareness else self._cfg.get("llm_aux_enable_thinking", None)
+        worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking, self)
         self._workers.append(worker)
         worker.finished.connect(
             lambda text, _reasoning, _actions, worker=worker, context=dict(context):

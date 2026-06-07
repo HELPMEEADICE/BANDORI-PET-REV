@@ -204,7 +204,6 @@ SECRET_CONFIG_KEYS = {
     "ai_status_token",
     "chat_integration_token",
     "napcat_access_token",
-    "screen_awareness_vision_api_key",
 }
 
 DATA_CONFIG_KEYS = {
@@ -287,9 +286,7 @@ DATA_CONFIG_KEYS = {
         "screen_awareness_character_mode",
         "screen_awareness_character",
         "screen_awareness_max_screenshot_width",
-        "screen_awareness_vision_api_url",
-        "screen_awareness_vision_model_id",
-        "screen_awareness_vision_enable_thinking",
+        "screen_awareness_model_mode",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",

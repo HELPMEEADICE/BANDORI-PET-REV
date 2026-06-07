@@ -9,10 +9,7 @@ SCREEN_AWARENESS_CONFIG_KEYS = (
     "screen_awareness_character_mode",
     "screen_awareness_character",
     "screen_awareness_max_screenshot_width",
-    "screen_awareness_vision_api_url",
-    "screen_awareness_vision_api_key",
-    "screen_awareness_vision_model_id",
-    "screen_awareness_vision_enable_thinking",
+    "screen_awareness_model_mode",
 )
 
 
@@ -49,7 +46,7 @@ class ScreenAwarenessPageMixin:
         screen_title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.screen_awareness_title", default="屏幕感知主动搭话"), screen_panel))
         screen_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.screen_awareness_hint",
-            default="定期截取当前屏幕发送给视觉模型观察，再由角色判断是否自然主动搭话。",
+            default="主模型可以直接看屏幕，也可以先由辅助模型读取内容，再交给主模型自然搭话。",
         ), screen_panel))
         screen_hint.setObjectName("screenAwarenessHint")
         screen_title_col.addWidget(screen_hint)
@@ -82,34 +79,18 @@ class ScreenAwarenessPageMixin:
         self._screen_awareness_max_width.setFixedHeight(34)
         screen_form.addWidget(self._screen_awareness_max_width, 1, 1)
 
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_model", default="视觉模型 ID"), screen_panel), 1, 2)
-        self._screen_awareness_vision_model_id = LineEdit(screen_panel)
-        self._screen_awareness_vision_model_id.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_model_placeholder", default="留空则复用辅助模型，再回退主模型"))
-        self._screen_awareness_vision_model_id.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_model_id, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_url", default="视觉 API 地址"), screen_panel), 2, 0)
-        self._screen_awareness_vision_api_url = LineEdit(screen_panel)
-        self._screen_awareness_vision_api_url.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_url_placeholder", default="留空则复用辅助/主模型 API 地址"))
-        self._screen_awareness_vision_api_url.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_api_url, 2, 1, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_api_key", default="视觉 API 密钥"), screen_panel), 3, 0)
-        self._screen_awareness_vision_api_key = LineEdit(screen_panel)
-        self._screen_awareness_vision_api_key.setPlaceholderText(_tr("SettingsWindow.screen_awareness_vision_api_key_placeholder", default="留空则复用辅助/主模型 API 密钥"))
-        self._screen_awareness_vision_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self._screen_awareness_vision_api_key.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_api_key, 3, 1, 1, 3)
-
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_vision_thinking", default="视觉模型思考模式"), screen_panel), 4, 0)
-        self._screen_awareness_vision_thinking = OpaqueDropDownComboBox(screen_panel)
-        self._screen_awareness_vision_thinking.addItems([
-            _tr("SettingsWindow.llm_enable_thinking_default"),
-            _tr("SettingsWindow.llm_enable_thinking_on"),
-            _tr("SettingsWindow.llm_enable_thinking_off"),
-        ])
-        self._screen_awareness_vision_thinking.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_vision_thinking, 4, 1)
+        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_model_mode", default="屏幕读取方式"), screen_panel), 1, 2)
+        self._screen_awareness_model_mode = OpaqueDropDownComboBox(screen_panel)
+        self._screen_awareness_model_mode.addItem(
+            _tr("SettingsWindow.screen_awareness_model_mode_main", default="主模型直接识别"),
+            userData="main",
+        )
+        self._screen_awareness_model_mode.addItem(
+            _tr("SettingsWindow.screen_awareness_model_mode_aux", default="辅助模型读取后交给主模型"),
+            userData="aux",
+        )
+        self._screen_awareness_model_mode.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_model_mode, 1, 3)
 
         test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
         test_screen_btn.setFixedHeight(34)
@@ -117,8 +98,8 @@ class ScreenAwarenessPageMixin:
         save_screen_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), screen_panel)
         save_screen_btn.setFixedHeight(34)
         save_screen_btn.clicked.connect(lambda: self._save_screen_awareness_config(show_info=True, emit_update=True))
-        screen_form.addWidget(test_screen_btn, 4, 2)
-        screen_form.addWidget(save_screen_btn, 4, 3)
+        screen_form.addWidget(test_screen_btn, 2, 2)
+        screen_form.addWidget(save_screen_btn, 2, 3)
         screen_layout.addLayout(screen_form)
         layout.addWidget(screen_panel)
 
@@ -162,16 +143,19 @@ class ScreenAwarenessPageMixin:
             return "default", ""
         return "fixed", value
 
-    def _screen_awareness_thinking_value(self):
-        if not hasattr(self, "_screen_awareness_vision_thinking"):
-            return None
-        index = self._screen_awareness_vision_thinking.currentIndex()
-        return True if index == 1 else False if index == 2 else None
+    def _selected_screen_awareness_model_mode(self) -> str:
+        if not hasattr(self, "_screen_awareness_model_mode"):
+            return "main"
+        mode = str(self._screen_awareness_model_mode.currentData() or "main").strip()
+        return "aux" if mode == "aux" else "main"
 
-    def _set_screen_awareness_thinking_value(self, value):
-        if not hasattr(self, "_screen_awareness_vision_thinking"):
-            return
-        self._screen_awareness_vision_thinking.setCurrentIndex(1 if value is True else 2 if value is False else 0)
+    def _set_screen_awareness_model_mode(self, mode):
+        target = "aux" if str(mode or "").strip() == "aux" else "main"
+        for index in range(self._screen_awareness_model_mode.count()):
+            if self._screen_awareness_model_mode.itemData(index) == target:
+                self._screen_awareness_model_mode.setCurrentIndex(index)
+                return
+        self._screen_awareness_model_mode.setCurrentIndex(0)
 
     def _load_screen_awareness_controls(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
@@ -183,10 +167,7 @@ class ScreenAwarenessPageMixin:
             self._cfg.get("screen_awareness_character", ""),
         )
         self._screen_awareness_max_width.setValue(max(640, min(1920, int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920))))
-        self._screen_awareness_vision_api_url.setText(str(self._cfg.get("screen_awareness_vision_api_url", "") or ""))
-        self._screen_awareness_vision_api_key.setText(str(self._cfg.get("screen_awareness_vision_api_key", "") or ""))
-        self._screen_awareness_vision_model_id.setText(str(self._cfg.get("screen_awareness_vision_model_id", "") or ""))
-        self._set_screen_awareness_thinking_value(self._cfg.get("screen_awareness_vision_enable_thinking", None))
+        self._set_screen_awareness_model_mode(self._cfg.get("screen_awareness_model_mode", "main"))
 
     def _sync_screen_awareness_config_from_ui(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
@@ -197,10 +178,7 @@ class ScreenAwarenessPageMixin:
         self._cfg.set("screen_awareness_character_mode", mode)
         self._cfg.set("screen_awareness_character", character)
         self._cfg.set("screen_awareness_max_screenshot_width", int(self._screen_awareness_max_width.value()))
-        self._cfg.set("screen_awareness_vision_api_url", self._screen_awareness_vision_api_url.text().strip())
-        self._cfg.set("screen_awareness_vision_api_key", self._screen_awareness_vision_api_key.text().strip())
-        self._cfg.set("screen_awareness_vision_model_id", self._screen_awareness_vision_model_id.text().strip())
-        self._cfg.set("screen_awareness_vision_enable_thinking", self._screen_awareness_thinking_value())
+        self._cfg.set("screen_awareness_model_mode", self._selected_screen_awareness_model_mode())
 
     def _screen_awareness_settings_data(self) -> dict:
         if self._cfg:
@@ -210,10 +188,7 @@ class ScreenAwarenessPageMixin:
                 "screen_awareness_character_mode": str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
                 "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
                 "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
-                "screen_awareness_vision_api_url": str(self._cfg.get("screen_awareness_vision_api_url", "") or ""),
-                "screen_awareness_vision_api_key": str(self._cfg.get("screen_awareness_vision_api_key", "") or ""),
-                "screen_awareness_vision_model_id": str(self._cfg.get("screen_awareness_vision_model_id", "") or ""),
-                "screen_awareness_vision_enable_thinking": self._cfg.get("screen_awareness_vision_enable_thinking", None),
+                "screen_awareness_model_mode": str(self._cfg.get("screen_awareness_model_mode", "main") or "main"),
             }
         return {
             "screen_awareness_enabled": False,
@@ -221,10 +196,7 @@ class ScreenAwarenessPageMixin:
             "screen_awareness_character_mode": "random_visible",
             "screen_awareness_character": "",
             "screen_awareness_max_screenshot_width": 1920,
-            "screen_awareness_vision_api_url": "",
-            "screen_awareness_vision_api_key": "",
-            "screen_awareness_vision_model_id": "",
-            "screen_awareness_vision_enable_thinking": None,
+            "screen_awareness_model_mode": "main",
         }
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):
@@ -272,7 +244,7 @@ class ScreenAwarenessPageMixin:
             self.settings_changed.emit(data)
             InfoBar.success(
                 _tr("SettingsWindow.screen_awareness_test_sent_title", default="已发送测试请求"),
-                _tr("SettingsWindow.screen_awareness_test_sent_content", default="主程序会立即截屏并调用视觉模型；如果模型判断不必打扰，可能不会弹出消息。"),
+                _tr("SettingsWindow.screen_awareness_test_sent_content", default="主程序会立即截屏并按所选方式调用模型；如果主模型判断不必打扰，可能不会弹出消息。"),
                 duration=3500,
                 position=InfoBarPosition.TOP,
                 parent=self,

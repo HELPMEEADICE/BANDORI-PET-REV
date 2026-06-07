@@ -11,7 +11,12 @@ from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
 from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros, normalize_proactive_companion
-from screen_awareness import clamp_screen_awareness_interval, clamp_screen_awareness_screenshot_width
+from screen_awareness import (
+    SCREEN_AWARENESS_MODEL_MODE_MAIN,
+    clamp_screen_awareness_interval,
+    clamp_screen_awareness_screenshot_width,
+    normalize_screen_awareness_model_mode,
+)
 
 
 def _try_replace_file(src, dst) -> OSError | None:
@@ -314,10 +319,7 @@ DEFAULTS = {
     "screen_awareness_character_mode": "random_visible",
     "screen_awareness_character": "",
     "screen_awareness_max_screenshot_width": 1920,
-    "screen_awareness_vision_api_url": "",
-    "screen_awareness_vision_api_key": "",
-    "screen_awareness_vision_model_id": "",
-    "screen_awareness_vision_enable_thinking": None,
+    "screen_awareness_model_mode": SCREEN_AWARENESS_MODEL_MODE_MAIN,
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -751,14 +753,16 @@ class ConfigManager:
         self._data["screen_awareness_max_screenshot_width"] = clamp_screen_awareness_screenshot_width(
             self._data.get("screen_awareness_max_screenshot_width", 1920)
         )
-        for key in (
+        self._data["screen_awareness_model_mode"] = normalize_screen_awareness_model_mode(
+            self._data.get("screen_awareness_model_mode", SCREEN_AWARENESS_MODEL_MODE_MAIN)
+        )
+        for legacy_key in (
             "screen_awareness_vision_api_url",
             "screen_awareness_vision_api_key",
             "screen_awareness_vision_model_id",
+            "screen_awareness_vision_enable_thinking",
         ):
-            self._data[key] = str(self._data.get(key, "") or "").strip()
-        thinking = self._data.get("screen_awareness_vision_enable_thinking", None)
-        self._data["screen_awareness_vision_enable_thinking"] = thinking if thinking in (True, False, None) else None
+            self._data.pop(legacy_key, None)
 
     def _normalize_model_action_settings(self):
         profiles = self._data.get("model_action_settings", {})
