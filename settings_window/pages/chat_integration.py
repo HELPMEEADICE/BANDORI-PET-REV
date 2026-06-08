@@ -1,3 +1,4 @@
+from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -273,9 +274,9 @@ class ChatIntegrationPageMixin:
 
     def _chat_integration_endpoint_url(self) -> str:
         if self._chat_integration_widgets_ready():
-            port = self._clamp_chat_integration_port(self._chat_integration_port_input.text())
+            port = clamp_int(self._chat_integration_port_input.text(), 1024, 65535, 38473)
         elif self._cfg:
-            port = self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))
+            port = clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
         else:
             port = 38473
         return f"http://127.0.0.1:{port}/chat-events"
@@ -438,7 +439,7 @@ class ChatIntegrationPageMixin:
         self._chat_integration_enabled.setChecked(bool(self._cfg.get("chat_integration_enabled", False)))
         self._chat_integration_overlay_enabled.setChecked(bool(self._cfg.get("chat_integration_overlay_enabled", True)))
         self._chat_integration_include_context.setChecked(bool(self._cfg.get("chat_integration_include_context", True)))
-        self._chat_integration_port_input.setText(str(self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473))))
+        self._chat_integration_port_input.setText(str(clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)))
         self._chat_integration_token_input.setText(str(self._cfg.get("chat_integration_token", "") or ""))
         self._load_napcat_config()
         self._update_chat_integration_quick_setup()
@@ -450,7 +451,7 @@ class ChatIntegrationPageMixin:
             "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False),
             "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True),
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True),
-            "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)),
+            "chat_integration_port": clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473),
             "chat_integration_token": self._cfg.get("chat_integration_token", ""),
         }
         data.update(self._napcat_settings_data())
@@ -462,7 +463,7 @@ class ChatIntegrationPageMixin:
         self._cfg.set("chat_integration_enabled", self._chat_integration_enabled.isChecked())
         self._cfg.set("chat_integration_overlay_enabled", self._chat_integration_overlay_enabled.isChecked())
         self._cfg.set("chat_integration_include_context", self._chat_integration_include_context.isChecked())
-        self._cfg.set("chat_integration_port", self._clamp_chat_integration_port(self._chat_integration_port_input.text()))
+        self._cfg.set("chat_integration_port", clamp_int(self._chat_integration_port_input.text(), 1024, 65535, 38473))
         self._cfg.set("chat_integration_token", self._chat_integration_token_input.text().strip())
         self._save_napcat_into_cfg()
         try:
@@ -740,9 +741,9 @@ class ChatIntegrationPageMixin:
         self._napcat_reply_mention_sender.setChecked(bool(self._cfg.get("napcat_reply_mention_sender", True)))
         self._set_combo_by_data(self._napcat_save_policy_combo, str(self._cfg.get("napcat_save_policy", "all") or "all"))
         self._set_combo_by_data(self._napcat_group_retention_mode_combo, str(self._cfg.get("napcat_group_retention_mode", "manual") or "manual"))
-        self._napcat_group_retention_days_spin.setValue(self._clamp_retention_days(self._cfg.get("napcat_group_retention_days", 7)))
+        self._napcat_group_retention_days_spin.setValue(clamp_int(self._cfg.get("napcat_group_retention_days", 7), 1, 3650, 7))
         self._set_combo_by_data(self._napcat_private_retention_mode_combo, str(self._cfg.get("napcat_private_retention_mode", "manual") or "manual"))
-        self._napcat_private_retention_days_spin.setValue(self._clamp_retention_days(self._cfg.get("napcat_private_retention_days", 30)))
+        self._napcat_private_retention_days_spin.setValue(clamp_int(self._cfg.get("napcat_private_retention_days", 30), 1, 3650, 7))
         self._napcat_group_retention_days_spin.setEnabled(
             (self._napcat_group_retention_mode_combo.itemData(self._napcat_group_retention_mode_combo.currentIndex()) or "") == "auto"
         )
@@ -781,9 +782,9 @@ class ChatIntegrationPageMixin:
         self._cfg.set("napcat_reply_mention_sender", self._napcat_reply_mention_sender.isChecked())
         self._cfg.set("napcat_save_policy", self._napcat_save_policy_combo.itemData(self._napcat_save_policy_combo.currentIndex()) or "all")
         self._cfg.set("napcat_group_retention_mode", self._napcat_group_retention_mode_combo.itemData(self._napcat_group_retention_mode_combo.currentIndex()) or "manual")
-        self._cfg.set("napcat_group_retention_days", self._clamp_retention_days(self._napcat_group_retention_days_spin.value()))
+        self._cfg.set("napcat_group_retention_days", clamp_int(self._napcat_group_retention_days_spin.value(), 1, 3650, 7))
         self._cfg.set("napcat_private_retention_mode", self._napcat_private_retention_mode_combo.itemData(self._napcat_private_retention_mode_combo.currentIndex()) or "manual")
-        self._cfg.set("napcat_private_retention_days", self._clamp_retention_days(self._napcat_private_retention_days_spin.value()))
+        self._cfg.set("napcat_private_retention_days", clamp_int(self._napcat_private_retention_days_spin.value(), 1, 3650, 7))
 
     def _test_napcat_connection(self):
         if not self._napcat_widgets_ready():
@@ -856,27 +857,3 @@ class ChatIntegrationPageMixin:
         timer.timeout.connect(lambda: finish(False, _tr("SettingsWindow.napcat_status_timeout", default="超时")))
         timer.start()
         socket.open(request)
-
-    @staticmethod
-    def _clamp_ai_status_port(value) -> int:
-        try:
-            port = int(value)
-        except (TypeError, ValueError):
-            port = 38472
-        return max(1024, min(65535, port))
-
-    @staticmethod
-    def _clamp_chat_integration_port(value) -> int:
-        try:
-            port = int(value)
-        except (TypeError, ValueError):
-            port = 38473
-        return max(1024, min(65535, port))
-
-    @staticmethod
-    def _clamp_retention_days(value) -> int:
-        try:
-            days = int(value)
-        except (TypeError, ValueError):
-            days = 7
-        return max(1, min(3650, days))

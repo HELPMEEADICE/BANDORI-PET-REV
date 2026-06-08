@@ -1,3 +1,4 @@
+from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -276,7 +277,7 @@ class CompactPageMixin:
         self._compact_ai_window_enabled.setChecked(bool(self._cfg.get("compact_ai_window_enabled", False)))
         self._ai_event_overlay_enabled.setChecked(bool(self._cfg.get("ai_event_overlay_enabled", False)))
         self._ai_status_port_enabled.setChecked(bool(self._cfg.get("ai_status_port_enabled", False)))
-        self._ai_status_port_input.setText(str(self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472))))
+        self._ai_status_port_input.setText(str(clamp_int(self._cfg.get("ai_status_port", 38472), 1024, 65535, 38472)))
         self._ai_status_token_input.setText(str(self._cfg.get("ai_status_token", "") or ""))
         opacity = self._cfg.get("compact_ai_window_opacity", 44)
         try:
@@ -312,7 +313,7 @@ class CompactPageMixin:
             "compact_ai_window_text_color": self._cfg.get("compact_ai_window_text_color", "#24242a"),
             "ai_event_overlay_enabled": self._cfg.get("ai_event_overlay_enabled", False),
             "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False),
-            "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)),
+            "ai_status_port": clamp_int(self._cfg.get("ai_status_port", 38472), 1024, 65535, 38472),
             "ai_status_token": self._cfg.get("ai_status_token", ""),
         }
         if self._compact_window_reset_position_pending:
@@ -329,7 +330,7 @@ class CompactPageMixin:
         self._cfg.set("compact_ai_window_text_color", self._selected_compact_color(self._compact_text_color_btns, "#24242a"))
         self._cfg.set("ai_event_overlay_enabled", self._ai_event_overlay_enabled.isChecked())
         self._cfg.set("ai_status_port_enabled", self._ai_status_port_enabled.isChecked())
-        self._cfg.set("ai_status_port", self._clamp_ai_status_port(self._ai_status_port_input.text()))
+        self._cfg.set("ai_status_port", clamp_int(self._ai_status_port_input.text(), 1024, 65535, 38472))
         self._cfg.set("ai_status_token", self._ai_status_token_input.text().strip())
         try:
             self._cfg.save()

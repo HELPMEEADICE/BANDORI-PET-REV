@@ -41,22 +41,8 @@ from reminder_core import (
 )
 from screen_awareness import ScreenAwarenessVisionWorker, clamp_screen_awareness_interval
 from tts_common import SingleShotTTSCallbacksMixin, strip_tts_action_tags
-
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker
-    _TTS_AVAILABLE = True
-except (ImportError, OSError):
-    _TTS_AVAILABLE = False
-
-    class TTSPlayer(QObject):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-
-        def stop(self): pass
-        def enqueue(self, audio, media_type): pass
-        def prepare_lip_sync_text(self, text, language=""): pass
-
-    TTSRequestWorker = None
+from tts_manager import TTSPlayer, TTSRequestWorker
+_TTS_AVAILABLE = True
 
 
 class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):

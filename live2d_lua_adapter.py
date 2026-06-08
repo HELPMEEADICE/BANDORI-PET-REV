@@ -24,10 +24,6 @@ def _normalize_lua_path(path) -> str:
     return str(path).replace("\\", "/")
 
 
-def _read_lua_chunk_bytes(path: Path) -> bytes:
-    return path.read_bytes()
-
-
 _GL_LOADER_CORE_TYPEDEFS = b"""
 ffi.cdef("typedef void (" .. CC .. "*PFNGLCLEARPROC)(GLbitfield mask);")
 ffi.cdef("typedef void (" .. CC .. "*PFNGLCLEARCOLORPROC)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);")
@@ -140,7 +136,7 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
         module_path = module_paths.get(module_name)
         if module_path is None:
             return None, None
-        chunk = _read_lua_chunk_bytes(module_path)
+        chunk = module_path.read_bytes()
         return _patch_lua_gl_loader(module_name, chunk), ("@" + module_path.as_posix()).encode("utf-8")
 
     lua.globals()[b"__bandori_lazy_lua_module_source"] = load_module_source
@@ -599,8 +595,7 @@ class LuaLAppModel:
         self.last_lua_update_draw_seconds = 0.0
         self.last_lua_gc_seconds = 0.0
 
-    def LoadModelJson(self, model_json_path: str, disable_precision=False):
-        del disable_precision
+    def LoadModelJson(self, model_json_path: str):
         self._dispose_renderer()
         self._renderer = self._module._new_renderer(self._width, self._height)
         opts = self._module._new_options(model_json_path)

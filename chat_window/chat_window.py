@@ -47,7 +47,7 @@ else:
 
 from llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
-    consume_stream_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
+    consume_stream_action_tags, merged_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
 from llm_api_compat import chat_completions_api_url, use_responses_api
@@ -62,26 +62,8 @@ from local_tools import reminder_tools_enabled
 from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import clean_tts_payload
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
-    _TTS_AVAILABLE = True
-except (ImportError, OSError):
-    _TTS_AVAILABLE = False
-
-    class TTSPlayer(QObject):
-        error = Signal(str)
-        level_changed = Signal(float)
-        mouth_pose_changed = Signal(float, float)
-        playback_finished = Signal()
-        def prepare_lip_sync_text(self, text, language=""): pass
-        def enqueue(self, audio, media_type): pass
-        def stop(self): pass
-        def is_idle(self): return True
-    TTSRequestWorker = None
-    TTSTranslationWorker = None
-
-    def flush_tts_sentence(buffer: str) -> str:
-        return buffer.strip()
+from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
+_TTS_AVAILABLE = True
 
 try:
     from asr_manager import ASRRecorderWorker, ASRRequestWorker
@@ -5331,7 +5313,7 @@ class ChatWindow(QWidget):
 
     def _finalize_current_response_segment(self, full_text: str, reasoning_text: str, actions: list) -> str:
         self._merge_search_sources(actions)
-        acts = self._merged_action_tags(
+        acts = merged_action_tags(
             self._current_response_actions,
             parse_action_tags(self._action_tag_stream_buffer + full_text),
         )
@@ -5464,20 +5446,6 @@ class ChatWindow(QWidget):
             self._seen_actions.add(key)
             self.action_triggered.emit(self._pending_action_character, action)
         self._pending_actions.clear()
-
-    @staticmethod
-    def _merged_action_tags(*groups: list[str]) -> list[str]:
-        seen = set()
-        result = []
-        for group in groups:
-            for action in group or []:
-                key = str(action or "").strip()
-                dedupe_key = key.lower()
-                if not key or dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                result.append(key)
-        return result
 
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))

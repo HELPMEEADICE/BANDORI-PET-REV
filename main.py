@@ -7,6 +7,7 @@ import uuid
 
 from process_utils import (
     app_base_dir,
+    clamp_int,
     configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     ipc_server_name,
@@ -50,14 +51,6 @@ from event_db_manager import SpecialEvent
 
 class AiEventBridge(QObject):
     line_received = Signal(str)
-
-
-def _clamp_ai_status_port(value) -> int:
-    try:
-        port = int(value)
-    except (TypeError, ValueError):
-        port = 38472
-    return max(1024, min(65535, port))
 
 
 def main():
@@ -328,7 +321,7 @@ def main():
         stop_ai_status_server()
         if not cfg.get("ai_status_port_enabled", False):
             return
-        port = _clamp_ai_status_port(cfg.get("ai_status_port", 38472))
+        port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
         token = cfg.get("ai_status_token") or ""
 
         def on_ai_event(event: dict):
@@ -420,7 +413,7 @@ def main():
         stop_chat_integration_server()
         if not cfg.get("chat_integration_enabled", False):
             return
-        port = _clamp_ai_status_port(cfg.get("chat_integration_port", 38473))
+        port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
         token = cfg.get("chat_integration_token") or ""
         try:
             server = ChatIntegrationHttpServer(
@@ -886,7 +879,7 @@ def main():
         for cfg_key, ref_key, default in _SETTINGS_MAP:
             value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
             if cfg_key in ("ai_status_port", "chat_integration_port"):
-                value = _clamp_ai_status_port(value)
+                value = clamp_int(value, 1024, 65535, default)
             pet_window_ref[ref_key] = value
         cfg.load()
         if language:
@@ -1232,7 +1225,6 @@ def main():
     def usage_db():
         db = usage_session_ref.get("db")
         if db is None:
-            from database_manager import DatabaseManager
             db = DatabaseManager()
             usage_session_ref["db"] = db
         return db

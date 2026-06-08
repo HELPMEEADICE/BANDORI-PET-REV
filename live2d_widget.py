@@ -323,7 +323,6 @@ class Live2DWidget(QOpenGLWidget):
     # --------------------------------------------------------------------------
 
     def _load_model_internal(self, model_json_path: str):
-        from live2d_quality import LIVE2D_QUALITY_PROFILES
         from lua_hit_area_projection import LuaCustomHitAreaState
         from platform_patch import set_live2d_texture_quality
         from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
@@ -338,17 +337,16 @@ class Live2DWidget(QOpenGLWidget):
                 prefetch_virtual_model_resources(model_json_path)
                 
             set_live2d_texture_quality(self._quality_profile)
-            disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             
             self._dispose_model_renderer()
             self._model = self._live2d.LAppModel()
             if is_virtual_path(model_json_path):
                 try:
-                    self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                    self._model.LoadModelJson(model_json_path)
                 finally:
                     clear_virtual_byte_cache()
             else:
-                self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                self._model.LoadModelJson(model_json_path)
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
             self._update_custom_hit_area_projection()

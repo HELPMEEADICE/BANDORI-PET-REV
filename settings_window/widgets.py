@@ -112,7 +112,6 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self.update()
 
     def _load_model(self, model_json_path: str):
-        from live2d_quality import LIVE2D_QUALITY_PROFILES
         from platform_patch import set_live2d_texture_quality
         from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
 
@@ -127,10 +126,9 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
                 clear_virtual_byte_cache()
                 prefetch_virtual_model_resources(model_json_path)
             set_live2d_texture_quality(self._quality_profile)
-            disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             model = self._live2d.LAppModel()
             try:
-                model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                model.LoadModelJson(model_json_path)
             finally:
                 if virtual:
                     clear_virtual_byte_cache()

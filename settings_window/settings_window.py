@@ -1,3 +1,4 @@
+from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -2730,12 +2731,12 @@ class SettingsWindow(
             "compact_ai_window_text_color": self._cfg.get("compact_ai_window_text_color", "#24242a") if self._cfg else "#24242a",
             "ai_event_overlay_enabled": self._cfg.get("ai_event_overlay_enabled", False) if self._cfg else False,
             "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False) if self._cfg else False,
-            "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)) if self._cfg else 38472,
+            "ai_status_port": clamp_int(self._cfg.get("ai_status_port", 38472), 1024, 65535, 38472) if self._cfg else 38472,
             "ai_status_token": self._cfg.get("ai_status_token", "") if self._cfg else "",
             "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False) if self._cfg else False,
             "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True) if self._cfg else True,
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True) if self._cfg else True,
-            "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)) if self._cfg else 38473,
+            "chat_integration_port": clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473) if self._cfg else 38473,
             "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
             "napcat_enabled": self._cfg.get("napcat_enabled", False) if self._cfg else False,
             "napcat_ws_url": self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001") if self._cfg else "ws://127.0.0.1:3001",

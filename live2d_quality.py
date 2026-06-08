@@ -8,13 +8,11 @@ LIVE2D_SCALE_MAX = 500
 
 LIVE2D_QUALITY_PROFILES = {
     "performance": {
-        "disable_precision": True,
         "texture_scale": 0.5,
         "use_mipmap": False,
         "bleed_passes": 0,
     },
     "balanced": {
-        "disable_precision": True,
         "texture_scale": 1.0,
         "use_mipmap": True,
         "bleed_passes": 1,
