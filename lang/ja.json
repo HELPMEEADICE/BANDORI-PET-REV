@@ -956,6 +956,7 @@
   "SettingsWindow.screen_awareness_model_mode": "画面の読み取り方法",
   "SettingsWindow.screen_awareness_model_mode_main": "メインモデルが直接認識",
   "SettingsWindow.screen_awareness_model_mode_aux": "補助モデルが先に読み取る",
+  "SettingsWindow.screen_awareness_display_mode": "画面感知の通知方法",
   "SettingsWindow.screen_awareness_saved_title": "画面感知設定を保存しました",
   "SettingsWindow.screen_awareness_saved_content": "画面観察と自発的な声かけ設定を更新しました。",
   "SettingsWindow.screen_awareness_failed_title": "画面感知設定の保存に失敗しました",

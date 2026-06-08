@@ -10,6 +10,7 @@ SCREEN_AWARENESS_CONFIG_KEYS = (
     "screen_awareness_character",
     "screen_awareness_max_screenshot_width",
     "screen_awareness_model_mode",
+    SCREEN_AWARENESS_DISPLAY_MODE_KEY,
 )
 
 
@@ -92,6 +93,22 @@ class ScreenAwarenessPageMixin:
         self._screen_awareness_model_mode.setFixedHeight(34)
         screen_form.addWidget(self._screen_awareness_model_mode, 1, 3)
 
+        screen_form.addWidget(BodyLabel(_tr(
+            "SettingsWindow.screen_awareness_display_mode",
+            default="提醒展示方式",
+        ), screen_panel), 2, 0)
+        self._screen_awareness_display_mode = OpaqueDropDownComboBox(screen_panel)
+        self._screen_awareness_display_mode.addItem(
+            _tr("SettingsWindow.reminder_display_floating", default="悬浮窗显示"),
+            userData=DISPLAY_MODE_FLOATING,
+        )
+        self._screen_awareness_display_mode.addItem(
+            _tr("SettingsWindow.reminder_display_system", default="系统通知提醒"),
+            userData=DISPLAY_MODE_SYSTEM,
+        )
+        self._screen_awareness_display_mode.setFixedHeight(34)
+        screen_form.addWidget(self._screen_awareness_display_mode, 2, 1)
+
         test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
         test_screen_btn.setFixedHeight(34)
         test_screen_btn.clicked.connect(self._test_screen_awareness_now)
@@ -157,6 +174,14 @@ class ScreenAwarenessPageMixin:
                 return
         self._screen_awareness_model_mode.setCurrentIndex(0)
 
+    def _set_screen_awareness_display_mode(self, mode):
+        target = normalize_display_mode(mode)
+        for index in range(self._screen_awareness_display_mode.count()):
+            if self._screen_awareness_display_mode.itemData(index) == target:
+                self._screen_awareness_display_mode.setCurrentIndex(index)
+                return
+        self._screen_awareness_display_mode.setCurrentIndex(0)
+
     def _load_screen_awareness_controls(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
             return
@@ -168,6 +193,9 @@ class ScreenAwarenessPageMixin:
         )
         self._screen_awareness_max_width.setValue(max(640, min(1920, int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920))))
         self._set_screen_awareness_model_mode(self._cfg.get("screen_awareness_model_mode", "main"))
+        self._set_screen_awareness_display_mode(
+            self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
+        )
 
     def _sync_screen_awareness_config_from_ui(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
@@ -179,6 +207,8 @@ class ScreenAwarenessPageMixin:
         self._cfg.set("screen_awareness_character", character)
         self._cfg.set("screen_awareness_max_screenshot_width", int(self._screen_awareness_max_width.value()))
         self._cfg.set("screen_awareness_model_mode", self._selected_screen_awareness_model_mode())
+        display_mode = self._screen_awareness_display_mode.currentData() or DISPLAY_MODE_FLOATING
+        self._cfg.set(SCREEN_AWARENESS_DISPLAY_MODE_KEY, normalize_display_mode(display_mode))
 
     def _screen_awareness_settings_data(self) -> dict:
         if self._cfg:
@@ -189,6 +219,9 @@ class ScreenAwarenessPageMixin:
                 "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
                 "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
                 "screen_awareness_model_mode": str(self._cfg.get("screen_awareness_model_mode", "main") or "main"),
+                SCREEN_AWARENESS_DISPLAY_MODE_KEY: normalize_display_mode(
+                    self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
+                ),
             }
         return {
             "screen_awareness_enabled": False,
@@ -197,6 +230,7 @@ class ScreenAwarenessPageMixin:
             "screen_awareness_character": "",
             "screen_awareness_max_screenshot_width": 1920,
             "screen_awareness_model_mode": "main",
+            SCREEN_AWARENESS_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
         }
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):

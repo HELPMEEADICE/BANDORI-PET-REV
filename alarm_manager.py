@@ -25,6 +25,7 @@ from reminder_core import (
     POMODORO_CONFIG_KEY,
     PROACTIVE_COMPANION_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
+    SCREEN_AWARENESS_DISPLAY_MODE_KEY,
     SHORT_BREAK_SECONDS,
     compute_next_alarm_at,
     compute_next_proactive_at,
@@ -671,7 +672,12 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         title = str(context.get("title", "") or "提醒")
         character = str(context.get("character", "") or "").strip()
         display_name = self._display_name(character)
-        mode = normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, "floating"))
+        display_mode_key = (
+            SCREEN_AWARENESS_DISPLAY_MODE_KEY
+            if context.get("kind") == "screen_awareness"
+            else REMINDER_DISPLAY_MODE_KEY
+        )
+        mode = normalize_display_mode(self._cfg.get(display_mode_key, "floating"))
         if mode == DISPLAY_MODE_SYSTEM:
             notification_title = str(context.get("notification_title", "") or title)
             self._system_notify(notification_title, display_name, text)

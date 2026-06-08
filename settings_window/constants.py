@@ -86,6 +86,7 @@ from reminder_core import (
     DISPLAY_MODE_SYSTEM,
     POMODORO_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
+    SCREEN_AWARENESS_DISPLAY_MODE_KEY,
     create_alarm,
     create_pomodoro,
     default_reminder_character,
@@ -287,6 +288,7 @@ DATA_CONFIG_KEYS = {
         "screen_awareness_character",
         "screen_awareness_max_screenshot_width",
         "screen_awareness_model_mode",
+        "screen_awareness_display_mode",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",

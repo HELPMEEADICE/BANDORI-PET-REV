@@ -871,6 +871,7 @@ def main():
             ("screen_awareness_character", "screen_awareness_character", ""),
             ("screen_awareness_max_screenshot_width", "screen_awareness_max_screenshot_width", 1920),
             ("screen_awareness_model_mode", "screen_awareness_model_mode", "main"),
+            ("screen_awareness_display_mode", "screen_awareness_display_mode", "floating"),
         )
         language = data.get("language")
         if language:

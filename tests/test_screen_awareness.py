@@ -96,6 +96,28 @@ class ScreenAwarenessTest(unittest.TestCase):
         ):
             self.assertNotIn(key, config._data)
 
+    def test_legacy_config_inherits_reminder_display_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({
+                "reminder_display_mode": "system",
+            }), encoding="utf-8")
+            config = ConfigManager(path)
+
+        self.assertEqual("system", config.get("screen_awareness_display_mode"))
+
+    def test_legacy_display_mode_migration_is_persisted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({
+                "reminder_display_mode": "system",
+            }), encoding="utf-8")
+            config = ConfigManager(path)
+            config.save()
+            reloaded = ConfigManager(path)
+
+        self.assertEqual("system", reloaded.get("screen_awareness_display_mode"))
+
 
 if __name__ == "__main__":
     unittest.main()

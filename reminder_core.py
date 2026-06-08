@@ -10,6 +10,7 @@ from i18n_manager import tr as _tr
 ALARM_CONFIG_KEY = "alarms"
 POMODORO_CONFIG_KEY = "pomodoros"
 REMINDER_DISPLAY_MODE_KEY = "reminder_display_mode"
+SCREEN_AWARENESS_DISPLAY_MODE_KEY = "screen_awareness_display_mode"
 PROACTIVE_COMPANION_CONFIG_KEY = "proactive_companion"
 
 DISPLAY_MODE_FLOATING = "floating"

@@ -956,6 +956,7 @@
   "SettingsWindow.screen_awareness_model_mode": "螢幕讀取方式",
   "SettingsWindow.screen_awareness_model_mode_main": "主模型直接識別",
   "SettingsWindow.screen_awareness_model_mode_aux": "輔助模型讀取後交給主模型",
+  "SettingsWindow.screen_awareness_display_mode": "螢幕感知提醒方式",
   "SettingsWindow.screen_awareness_saved_title": "螢幕感知設定已儲存",
   "SettingsWindow.screen_awareness_saved_content": "螢幕觀察和主動搭話設定已更新。",
   "SettingsWindow.screen_awareness_failed_title": "螢幕感知設定儲存失敗",

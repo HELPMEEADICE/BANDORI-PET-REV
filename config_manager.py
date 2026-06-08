@@ -320,6 +320,7 @@ DEFAULTS = {
     "screen_awareness_character": "",
     "screen_awareness_max_screenshot_width": 1920,
     "screen_awareness_model_mode": SCREEN_AWARENESS_MODEL_MODE_MAIN,
+    "screen_awareness_display_mode": "floating",
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -519,6 +520,10 @@ class ConfigManager:
                 for k in DEFAULTS:
                     if k in loaded:
                         next_data[k] = loaded[k]
+                if "screen_awareness_display_mode" not in loaded:
+                    next_data["screen_awareness_display_mode"] = normalize_display_mode(
+                        loaded.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
+                    )
             except (json.JSONDecodeError, OSError, ValueError):
                 self._backup_corrupt_config()
                 loaded = None
@@ -756,6 +761,9 @@ class ConfigManager:
         self._data["screen_awareness_model_mode"] = normalize_screen_awareness_model_mode(
             self._data.get("screen_awareness_model_mode", SCREEN_AWARENESS_MODEL_MODE_MAIN)
         )
+        self._data["screen_awareness_display_mode"] = normalize_display_mode(
+            self._data.get("screen_awareness_display_mode", DEFAULTS["screen_awareness_display_mode"])
+        )
         for legacy_key in (
             "screen_awareness_vision_api_url",
             "screen_awareness_vision_api_key",
@@ -872,6 +880,9 @@ class ConfigManager:
             value = self._data.get(key, DEFAULTS[key])
             loaded_value = self._loaded_data.get(key, DEFAULTS[key])
             current_value = current.get(key, DEFAULTS[key])
+            if key == "screen_awareness_display_mode" and key not in current:
+                merged[key] = value
+                continue
             merged[key] = current_value if value == loaded_value and current_value != loaded_value else value
         return merged
 

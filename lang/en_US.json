@@ -956,6 +956,7 @@
   "SettingsWindow.screen_awareness_model_mode": "Screen reading mode",
   "SettingsWindow.screen_awareness_model_mode_main": "Main model reads directly",
   "SettingsWindow.screen_awareness_model_mode_aux": "Auxiliary model reads first",
+  "SettingsWindow.screen_awareness_display_mode": "Screen awareness display",
   "SettingsWindow.screen_awareness_saved_title": "Screen Awareness Saved",
   "SettingsWindow.screen_awareness_saved_content": "Screen observation and proactive check-in settings have been updated.",
   "SettingsWindow.screen_awareness_failed_title": "Could Not Save Screen Awareness",
