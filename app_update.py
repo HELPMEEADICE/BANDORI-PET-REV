@@ -3,6 +3,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -79,7 +80,7 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
     if info.action == "git_pull":
         return _apply_git_update(app_base_dir())
     if info.action == "portable_zip":
-        archive_path = _download_asset(info.download_url, info.asset_name)
+        archive_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
         _launch_portable_zip_updater(archive_path)
         return UpdateResult(
             True,
@@ -88,7 +89,7 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
             exits_app=True,
         )
     if info.action == "install_msi":
-        installer_path = _download_asset(info.download_url, info.asset_name)
+        installer_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
         _launch_msi_updater(installer_path)
         return UpdateResult(
             True,
@@ -97,7 +98,7 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
             exits_app=True,
         )
     if info.action == "install_inno":
-        installer_path = _download_asset(info.download_url, info.asset_name)
+        installer_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
         _launch_inno_updater(installer_path)
         return UpdateResult(
             True,
@@ -317,7 +318,7 @@ def _fetch_latest_release() -> dict:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _open_url(req, timeout=20, purpose="checking for updates") as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -331,6 +332,8 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
         name = str(asset.get("name") or "")
         lower = name.lower()
         if not str(asset.get("browser_download_url") or ""):
+            continue
+        if not _asset_matches_current_platform(lower):
             continue
         if channel == "msi":
             if not lower.endswith(".msi"):
@@ -398,16 +401,77 @@ def _arch_token() -> str:
     return machine
 
 
-def _download_asset(url: str, asset_name: str) -> Path:
+def _asset_platforms(name: str) -> set[str]:
+    tokens = [token for token in re.split(r"[^a-z0-9]+", name.lower()) if token]
+    platforms: set[str] = set()
+    for token in tokens:
+        if token.startswith("win") or token == "windows":
+            platforms.add("win")
+        if token.startswith("mac") or token in {"osx", "darwin"}:
+            platforms.add("mac")
+        if token.startswith("linux"):
+            platforms.add("linux")
+    return platforms
+
+
+def _asset_matches_current_platform(name: str) -> bool:
+    platforms = _asset_platforms(name)
+    return not platforms or _platform_token() in platforms
+
+
+def _direct_url_opener():
+    return urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+
+
+def _open_url(req: urllib.request.Request, timeout: int, purpose: str):
+    proxies = urllib.request.getproxies()
+    proxy_url = proxies.get("https") or proxies.get("http")
+    attempts = [("configured network path", urllib.request.urlopen)]
+    if proxy_url:
+        attempts.append(("direct connection", _direct_url_opener()))
+
+    failures: list[str] = []
+    for label, opener in attempts:
+        try:
+            return opener(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+            failures.append(f"{label}: {exc}")
+
+    proxy_hint = f" The configured proxy is {proxy_url}." if proxy_url else ""
+    detail = "; ".join(failures)
+    raise RuntimeError(
+        f"Network error while {purpose}.{proxy_hint} "
+        f"Check that the proxy is running or disable the stale system proxy, then retry. {detail}"
+    )
+
+
+def _download_asset(url: str, asset_name: str, expected_size: int = 0) -> Path:
     if not url:
         raise RuntimeError("Release asset URL is empty.")
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", asset_name or "BandoriPet-update")
     download_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
     download_dir.mkdir(parents=True, exist_ok=True)
     target = download_dir / safe_name
+    partial = target.with_name(f"{target.name}.part")
     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
-    with urllib.request.urlopen(req, timeout=120) as resp, open(target, "wb") as f:
-        shutil.copyfileobj(resp, f)
+    try:
+        with (
+            _open_url(req, timeout=30, purpose="downloading the update") as resp,
+            open(partial, "wb") as f,
+        ):
+            shutil.copyfileobj(resp, f, length=1024 * 1024)
+        actual_size = partial.stat().st_size
+        if expected_size > 0 and actual_size != expected_size:
+            raise RuntimeError(
+                f"The update download is incomplete: expected {expected_size} bytes, "
+                f"received {actual_size} bytes."
+            )
+        os.replace(partial, target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
     return target
 
 
