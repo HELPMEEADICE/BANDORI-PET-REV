@@ -1225,12 +1225,23 @@ class PetWindow(QWidget):
     def set_live2d_random_actions_enabled(self, enabled: bool):
         enabled = bool(enabled)
         if self._live2d_random_actions_enabled == enabled:
+            if not enabled:
+                self._motion_guard_token += 1
+                self._restore_default_motion(self._motion_guard_token, force_clear=True)
             return
         self._live2d_random_actions_enabled = enabled
+        self._motion_guard_token += 1
         self._last_context_idle_action_at = time.monotonic()
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
+        if not enabled:
+            self._restore_default_motion(self._motion_guard_token, force_clear=True)
+        else:
+            QTimer.singleShot(
+                50,
+                lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False),
+            )
 
     def set_live2d_head_tracking_enabled(self, enabled: bool):
         enabled = bool(enabled)
@@ -1799,8 +1810,24 @@ class PetWindow(QWidget):
         kwargs = {}
         if on_finish:
             kwargs["onFinishMotionHandler"] = on_finish
+        setting = getattr(model, "modelSetting", None)
+        motion_count = 0
+        if setting is not None:
+            try:
+                motion_count = int(setting.getMotionNum(motion_name))
+            except Exception:
+                motion_count = 0
+            try:
+                if motion_count <= 0 and setting.resolveMotion(motion_name, 0) is None:
+                    return False
+            except Exception:
+                if motion_count <= 0:
+                    return False
         try:
-            model.StartRandomMotion(motion_name, priority=priority, **kwargs)
+            if motion_count > 0:
+                model.StartRandomMotion(motion_name, priority=priority, **kwargs)
+            else:
+                model.StartMotion(motion_name, 0, priority, **kwargs)
             self._live2d_prewarmed_motions.add(str(motion_name))
             return True
         except Exception:
@@ -2102,6 +2129,11 @@ class PetWindow(QWidget):
         if "models" in data or "model_action_settings" in data:
             self._live2d_prewarm_token += 1
             self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
+            self._motion_guard_token += 1
+            QTimer.singleShot(
+                80,
+                lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True),
+            )
         self._save_config()
 
     def _live2d_size(self):
@@ -3630,7 +3662,11 @@ class PetWindow(QWidget):
         if model is None:
             return
         if force_clear:
-            QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=False))
+            try:
+                model.ClearMotions()
+            except Exception:
+                pass
+            QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=True))
         else:
             self._start_idle_motion_if_current(token, smooth=True)
 
@@ -3667,20 +3703,13 @@ class PetWindow(QWidget):
             return
         motion_names = self._current_motion_names()
         configured_motion = self._current_model_entry().get("default_motion", "")
-        if configured_motion in motion_names:
+        if configured_motion:
             if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE):
                 self._apply_default_expression(model)
                 return
-        if not self._live2d_random_actions_enabled:
-            try:
-                model.ClearMotions()
-            except Exception:
-                pass
-            self._apply_default_expression(model)
-            return
         idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
         if idle_names:
-            idle_name = random.choice(idle_names)
+            idle_name = random.choice(idle_names) if self._live2d_random_actions_enabled else idle_names[0]
             self._safe_start_motion(model, idle_name, priority=self._live2d.MotionPriority.FORCE)
         else:
             try:
