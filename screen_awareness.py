@@ -1,5 +1,6 @@
 from PySide6.QtCore import QThread, Signal
 
+from desktop_state import current_desktop_state
 from i18n_manager import tr as _tr
 from screen_capture import capture_screenshot_data_url
 from vision_fallback import analyze_images_with_aux_model
@@ -45,6 +46,28 @@ def screen_awareness_aux_config(config) -> tuple[str, str, str]:
     return api_url, api_key, model_id
 
 
+def screen_awareness_desktop_state() -> dict:
+    try:
+        state = current_desktop_state()
+    except Exception:
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    return {
+        key: state.get(key)
+        for key in (
+            "state",
+            "label",
+            "confidence",
+            "reason",
+            "idle_seconds",
+            "idle_threshold_seconds",
+            "captured_at",
+        )
+        if key in state
+    }
+
+
 class ScreenAwarenessVisionWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
@@ -73,6 +96,7 @@ class ScreenAwarenessVisionWorker(QThread):
                 "metrics": metrics,
                 "screen_observation": "",
                 "screen_image_data_url": "",
+                "desktop_state": screen_awareness_desktop_state(),
             }
             if mode == SCREEN_AWARENESS_MODEL_MODE_MAIN:
                 result["screen_image_data_url"] = data_url
