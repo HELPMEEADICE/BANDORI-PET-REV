@@ -87,17 +87,19 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(15_000)
         self._timer.timeout.connect(self._tick)
-        self.reload()
+        self.reload(skip_overdue_proactive=True)
         self._timer.start()
         QTimer.singleShot(1200, self._tick)
 
-    def reload(self):
+    def reload(self, skip_overdue_proactive: bool = False):
         if not self._cfg:
             return
         now = local_now()
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []), now)
         pomodoros = normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, []), now)
         proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}), now)
+        if skip_overdue_proactive and proactive.get("enabled"):
+            self._defer_overdue_proactive_items(proactive, now)
         if (
             alarms != self._cfg.get(ALARM_CONFIG_KEY, [])
             or pomodoros != self._cfg.get(POMODORO_CONFIG_KEY, [])
@@ -108,6 +110,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
             self._cfg.save()
         self._schedule_next_screen_awareness()
+
+    def _defer_overdue_proactive_items(self, proactive: dict, now):
+        for item in proactive.get("items", []):
+            if not isinstance(item, dict) or not item.get("enabled"):
+                continue
+            next_at = parse_iso_datetime(item.get("next_at"))
+            if next_at is None or next_at > now:
+                continue
+            item["next_at"] = isoformat(compute_next_proactive_at(item, now))
 
     def trigger_screen_awareness_now(self) -> bool:
         if not self._screen_awareness_enabled():
