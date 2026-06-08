@@ -409,6 +409,7 @@ class ChatWindow(QWidget):
         self._last_message_layout_width = -1
         self._last_message_layout_count = -1
         self._scroll_to_bottom_generation = 0
+        self._pending_scroll_to_bottom_generation = 0
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -883,6 +884,9 @@ class ChatWindow(QWidget):
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setWidget(self._msg_area)
+        message_scrollbar = self._scroll.verticalScrollBar()
+        message_scrollbar.rangeChanged.connect(self._on_message_scroll_range_changed)
+        message_scrollbar.actionTriggered.connect(self._cancel_pending_scroll_to_bottom)
         content_layout.addWidget(self._scroll, 1)
 
         content_layout.addWidget(self._build_input_area())
@@ -2224,6 +2228,7 @@ class ChatWindow(QWidget):
 
     def _clear_message_widgets(self):
         self._reset_tts_stream()
+        self._cancel_pending_scroll_to_bottom()
         self._last_message_layout_width = -1
         self._last_message_layout_count = -1
         if self._msg_layout.count() > 0:
@@ -5700,15 +5705,34 @@ class ChatWindow(QWidget):
     def _schedule_scroll_to_bottom_after_load(self):
         self._scroll_to_bottom_generation += 1
         generation = self._scroll_to_bottom_generation
-        delays = (0, 30, 80, 160, 300, 500, 800)
+        self._pending_scroll_to_bottom_generation = generation
+        delays = (0, 30, 80, 160, 300, 500, 800, 1200)
         for delay in delays:
             QTimer.singleShot(
                 delay,
                 lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
             )
+        QTimer.singleShot(
+            2000,
+            lambda generation=generation: self._finish_scroll_to_bottom_for_generation(generation),
+        )
+
+    def _on_message_scroll_range_changed(self, _minimum: int, _maximum: int):
+        generation = self._pending_scroll_to_bottom_generation
+        if generation:
+            QTimer.singleShot(
+                0,
+                lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
+            )
+
+    def _cancel_pending_scroll_to_bottom(self, _action: int = 0):
+        self._pending_scroll_to_bottom_generation = 0
 
     def _scroll_to_bottom_for_generation(self, generation: int):
-        if generation != self._scroll_to_bottom_generation:
+        if (
+            generation != self._scroll_to_bottom_generation
+            or generation != self._pending_scroll_to_bottom_generation
+        ):
             return
         if self._scroll is None or self._msg_area is None:
             return
@@ -5718,6 +5742,12 @@ class ChatWindow(QWidget):
             self._msg_area.layout().activate()
         self._relayout_message_bubbles(force=True)
         self._scroll_to_bottom()
+
+    def _finish_scroll_to_bottom_for_generation(self, generation: int):
+        if generation != self._pending_scroll_to_bottom_generation:
+            return
+        self._scroll_to_bottom_for_generation(generation)
+        self._pending_scroll_to_bottom_generation = 0
 
     def position_next_to_pet(self, pet_window: QWidget):
         pet_geo = pet_window if isinstance(pet_window, QRect) else pet_window.geometry()
