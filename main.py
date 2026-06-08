@@ -15,11 +15,16 @@ from process_utils import (
 )
 from config_manager import ConfigManager
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
+from startup_manager import repair_startup_command
 
 configure_debug_logging()
 BASE_DIR = str(app_base_dir())
 APP_AUMID = "BandoriPet"
 _STARTUP_CONFIG = ConfigManager()
+try:
+    repair_startup_command()
+except OSError:
+    pass
 configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
