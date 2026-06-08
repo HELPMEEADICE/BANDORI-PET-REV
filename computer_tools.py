@@ -349,7 +349,7 @@ def _type_text(text: str):
 
 def _press_keys(keys: str):
     pg = _pyautogui()
-    parts = [part.strip().lower() for part in re_split_keys(keys) if part.strip()]
+    parts = [part.strip().lower() for part in _re_split_keys(keys) if part.strip()]
     if not parts:
         return
     if len(parts) == 1:
@@ -358,7 +358,7 @@ def _press_keys(keys: str):
         pg.hotkey(*parts)
 
 
-def re_split_keys(keys: str) -> list[str]:
+def _re_split_keys(keys: str) -> list[str]:
     return str(keys or "").replace("+", " ").split()
 
 

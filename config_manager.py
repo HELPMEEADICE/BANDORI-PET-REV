@@ -1016,9 +1016,6 @@ class ConfigManager:
         self._normalize_click_motion_profiles()
         return list(self._data.get("click_motion_profiles", []))
 
-    def get_click_motion_active_profile(self) -> str:
-        return str(self._data.get("click_motion_active_profile", "")).strip()
-
     def set_click_motion_active_profile(self, name: str):
         name = str(name or "").strip()
         self._data["click_motion_active_profile"] = name

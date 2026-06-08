@@ -1224,40 +1224,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def add_mood_event(
-        self,
-        character: str,
-        user_key: str,
-        *,
-        event_type: str = "interaction",
-        affection_delta: int = 0,
-        trust_delta: int = 0,
-        familiarity_delta: int = 0,
-        mood: str = "",
-        mood_intensity: int = 0,
-        reason: str = "",
-    ) -> int:
-        user_key = self._normalize_user_key(user_key)
-        cur = self._conn.execute(
-            "INSERT INTO mood_events "
-            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, mood, mood_intensity, reason, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                character,
-                user_key,
-                event_type or "interaction",
-                _clamp_int(affection_delta, -100, 100, 0),
-                _clamp_int(trust_delta, -100, 100, 0),
-                _clamp_int(familiarity_delta, -100, 100, 0),
-                mood or "",
-                _clamp_int(mood_intensity, 0, 100, 0),
-                reason or "",
-                _now_text(),
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
-
     def create_conversation(self, character: str, title: str = "", user_key: str = "") -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_key = self._normalize_user_key(user_key)
