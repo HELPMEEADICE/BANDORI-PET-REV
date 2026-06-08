@@ -116,7 +116,6 @@ class SettingsWindow(
         self._memory_album_page = None
         self._relationship_guide_page = None
         self._reminder_page = None
-        self._screen_awareness_page = None
         self._memory_db = None
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
@@ -1280,9 +1279,6 @@ class SettingsWindow(
         if key == "reminders":
             self._reminder_page = self._add_lazy_page("reminders", self._build_reminder_page())
             return self._reminder_page
-        if key == "screen_awareness":
-            self._screen_awareness_page = self._add_lazy_page("screen_awareness", self._build_screen_awareness_page())
-            return self._screen_awareness_page
         if key == "behavior":
             self._behavior_page = self._add_lazy_page("behavior", self._build_behavior_page())
             return self._behavior_page
@@ -1492,16 +1488,16 @@ class SettingsWindow(
         self._nav_buttons["quality"] = btn_quality
         nav_layout.addWidget(btn_quality)
 
-        btn_screen_awareness = NavButton(
-            "screen_awareness",
-            FluentIcon.VIEW,
-            _tr("SettingsWindow.nav_screen_awareness", default="屏幕感知"),
+        btn_mcp_computer = NavButton(
+            "mcp_computer",
+            FluentIcon.DEVELOPER_TOOLS,
+            _tr("SettingsWindow.nav_mcp_computer", default="屏幕感知与工具控制"),
             nav_content,
-            "#0ea5e9",
+            "#64748b",
         )
-        btn_screen_awareness.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["screen_awareness"] = btn_screen_awareness
-        nav_layout.addWidget(btn_screen_awareness)
+        btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["mcp_computer"] = btn_mcp_computer
+        nav_layout.addWidget(btn_mcp_computer)
 
         btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), nav_content, "#f59e0b")
         btn_tts.nav_activated.connect(self._on_nav_selected)
@@ -1528,17 +1524,6 @@ class SettingsWindow(
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
         nav_layout.addWidget(btn_chat_integration)
-
-        btn_mcp_computer = NavButton(
-            "mcp_computer",
-            FluentIcon.DEVELOPER_TOOLS,
-            _tr("SettingsWindow.nav_mcp_computer", default="工具与电脑控制"),
-            nav_content,
-            "#64748b",
-        )
-        btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["mcp_computer"] = btn_mcp_computer
-        nav_layout.addWidget(btn_mcp_computer)
 
         btn_data_management = NavButton(
             "data_management",

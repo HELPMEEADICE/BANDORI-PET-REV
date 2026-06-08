@@ -15,24 +15,8 @@ SCREEN_AWARENESS_CONFIG_KEYS = (
 
 
 class ScreenAwarenessPageMixin:
-    def _build_screen_awareness_page(self):
-        page = self._make_theme_widget(QWidget())
-        page.setObjectName("screenAwarenessPage")
-        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        title = TitleLabel(_tr("SettingsWindow.screen_awareness_page_title", default="屏幕感知"), page)
-        layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr(
-            "SettingsWindow.screen_awareness_page_subtitle",
-            default="配置定期屏幕观察和主动搭话。截图仅用于本次视觉模型请求，不会保存到本地。",
-        ), page)
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
-
-        screen_panel = QWidget(page)
+    def _build_screen_awareness_section(self, parent: QWidget) -> QWidget:
+        screen_panel = QWidget(parent)
         screen_panel.setObjectName("screenAwarenessPanel")
         screen_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         screen_layout = QVBoxLayout(screen_panel)
@@ -118,13 +102,9 @@ class ScreenAwarenessPageMixin:
         screen_form.addWidget(test_screen_btn, 2, 2)
         screen_form.addWidget(save_screen_btn, 2, 3)
         screen_layout.addLayout(screen_form)
-        layout.addWidget(screen_panel)
 
-        layout.addStretch()
         self._load_screen_awareness_controls()
-        self._style_screen_awareness_page(page)
-        self._connect_theme_changed(lambda: self._style_screen_awareness_page(page))
-        return page
+        return screen_panel
 
     def _apply_screen_awareness_remote_settings(self, data: dict):
         if not isinstance(data, dict) or not self._cfg:
@@ -235,7 +215,7 @@ class ScreenAwarenessPageMixin:
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
-            return
+            return False
         self._sync_screen_awareness_config_from_ui()
         try:
             self._cfg.save()
@@ -249,6 +229,7 @@ class ScreenAwarenessPageMixin:
                     position=InfoBarPosition.TOP,
                     parent=self,
                 )
+            return True
         except Exception as exc:
             InfoBar.error(
                 _tr("SettingsWindow.screen_awareness_failed_title", default="屏幕感知设置保存失败"),
@@ -257,6 +238,7 @@ class ScreenAwarenessPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+            return False
 
     def _test_screen_awareness_now(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
@@ -291,33 +273,3 @@ class ScreenAwarenessPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-
-    def _style_screen_awareness_page(self, page: QWidget):
-        dark = isDarkTheme()
-        page_bg = _BG_DARK if dark else _BG_LIGHT
-        panel_bg = "#252525" if dark else "#ffffff"
-        border = "#3b3b3b" if dark else "#d8e3ef"
-        muted = "#a7b0bf" if dark else "#687385"
-        text = "#f3f3f6" if dark else "#202126"
-        page.setStyleSheet(f"""
-            QWidget#screenAwarenessPage {{
-                background: {page_bg};
-            }}
-            QWidget#screenAwarenessPanel {{
-                background: {panel_bg};
-                border: 1px solid {border};
-                border-radius: 12px;
-            }}
-            QWidget#screenAwarenessPanel BodyLabel,
-            QWidget#screenAwarenessPanel StrongBodyLabel {{
-                color: {text};
-            }}
-            BodyLabel#screenAwarenessHint {{
-                color: {muted};
-                font-size: 13px;
-            }}
-            QSpinBox {{
-                color: {text};
-                font-size: 13px;
-            }}
-        """)

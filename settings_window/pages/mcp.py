@@ -13,13 +13,15 @@ class MCPPageMixin:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.mcp_computer_title", default="智能工具与电脑控制"), page)
+        title = TitleLabel(_tr("SettingsWindow.mcp_computer_title", default="屏幕感知与工具控制"), page)
         layout.addWidget(title)
         subtitle = _wrap_label(SubtitleLabel(_tr(
             "SettingsWindow.mcp_computer_subtitle",
-            default="支持服务商原生 MCP，也支持 Chat Completions 的 tool_calls/function calling，把 MCP 和 Computer Use 转成兼容工具。",
+            default="集中配置屏幕观察、模型工具、Computer Use 和桌面状态感知。",
         ), page))
         layout.addWidget(subtitle)
+        layout.addWidget(self._build_screen_awareness_section(page))
+
         capability_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.mcp_capability_hint",
             default="提示：启用 MCP 或 Computer Use 只是把工具提供给模型；必须使用支持 tool_calls/function calling 的模型才会调用工具，截图理解还需要模型支持多模态输入。",
@@ -157,11 +159,12 @@ class MCPPageMixin:
         ), page)))
 
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
-        save_btn.clicked.connect(self._save_mcp_computer_config)
+        save_btn.clicked.connect(self._save_screen_tools_config)
         layout.addWidget(save_btn, 0, Qt.AlignmentFlag.AlignRight)
         layout.addStretch()
 
         self._load_mcp_computer_config()
+        self._load_screen_awareness_controls()
         self._style_mcp_computer_page(page)
         self._connect_theme_changed(lambda: self._style_mcp_computer_page(page))
         return page
@@ -181,9 +184,25 @@ class MCPPageMixin:
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
+        screen_panel_bg = "#252525" if dark else "#ffffff"
+        screen_panel_border = "#3b3b3b" if dark else "#d8e3ef"
+        muted = "#a7b0bf" if dark else "#687385"
         page.setStyleSheet(f"""
             QWidget#mcpComputerPage {{
                 background: {page_bg};
+            }}
+            QWidget#screenAwarenessPanel {{
+                background: {screen_panel_bg};
+                border: 1px solid {screen_panel_border};
+                border-radius: 12px;
+            }}
+            QWidget#screenAwarenessPanel BodyLabel,
+            QWidget#screenAwarenessPanel StrongBodyLabel {{
+                color: {text};
+            }}
+            BodyLabel#screenAwarenessHint {{
+                color: {muted};
+                font-size: 13px;
             }}
             #mcpRiskPanel {{
                 background: {risk_bg};
@@ -203,6 +222,10 @@ class MCPPageMixin:
             QPlainTextEdit#JsonCodeEdit {{
                 padding-left: 0px;
                 selection-background-color: {BANDORI_PRIMARY};
+            }}
+            QSpinBox {{
+                color: {text};
+                font-size: 13px;
             }}
             {_fluent_scrollbar_qss(dark=dark)}
         """)
@@ -384,10 +407,10 @@ class MCPPageMixin:
 
     def _save_mcp_computer_config(self, show_info: bool = True):
         if not self._cfg or not self._mcp_computer_widgets_ready():
-            return
+            return False
         servers = self._parse_mcp_servers_text()
         if servers is None:
-            return
+            return False
         try:
             max_width = int(self._computer_use_max_screenshot_width.text().strip() or "1280")
         except ValueError:
@@ -417,9 +440,23 @@ class MCPPageMixin:
         self._cfg.save()
         if show_info:
             InfoBar.success(
-                _tr("SettingsWindow.mcp_saved_title", default="智能工具与电脑控制已保存"),
-                _tr("SettingsWindow.mcp_saved_content", default="新的工具配置会在下一次聊天请求时生效。"),
+                _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),
+                _tr("SettingsWindow.mcp_saved_content", default="屏幕感知和工具配置已更新。"),
                 duration=2200,
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+        return True
+
+    def _save_screen_tools_config(self):
+        if not self._save_mcp_computer_config(show_info=False):
+            return
+        if not self._save_screen_awareness_config(show_info=False, emit_update=True):
+            return
+        InfoBar.success(
+            _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),
+            _tr("SettingsWindow.mcp_saved_content", default="屏幕感知和工具配置已更新。"),
+            duration=2200,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
