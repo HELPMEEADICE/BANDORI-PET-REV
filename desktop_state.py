@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import os
 import sys
 from datetime import datetime
@@ -147,45 +146,6 @@ GAME_TITLE_HINTS = (
 MEDIA_TITLE_HINTS = ("youtube", "bilibili", "哔哩哔哩", "netflix", "spotify", "music")
 
 
-def desktop_state_enabled(config: dict | None) -> bool:
-    return bool(config and config.get("desktop_state_awareness_enabled", False))
-
-
-def desktop_state_payload(config: dict | None = None) -> dict:
-    if not desktop_state_enabled(config):
-        return {}
-    idle_threshold = _idle_threshold(config)
-    state = current_desktop_state(idle_threshold)
-    if not bool((config or {}).get("desktop_state_include_window_title", True)):
-        state["foreground_title"] = ""
-    return state
-
-
-def desktop_state_context(config: dict | None = None) -> str:
-    state = desktop_state_payload(config)
-    if not state:
-        return ""
-    label = state.get("label") or STATE_LABELS.get(state.get("state", ""), "未知状态")
-    app = state.get("app_name") or state.get("process_name") or "未知应用"
-    title = state.get("foreground_title") or ""
-    idle_seconds = int(state.get("idle_seconds") or 0)
-    reason = state.get("reason") or ""
-    lines = [
-        "【桌面状态感知】",
-        f"当前推断用户正在：{label}。",
-        f"前台应用：{app}；键鼠空闲：{idle_seconds} 秒。",
-    ]
-    if title:
-        lines.append(f"前台窗口标题：{title}")
-    if reason:
-        lines.append(f"判断依据：{reason}")
-    lines.append(
-        "请把这当作轻量背景来调整语气；不要声称自己能看到全部屏幕内容，"
-        "也不要主动复述窗口标题、进程名等隐私细节。"
-    )
-    return "\n".join(lines)
-
-
 def current_desktop_state(idle_threshold_seconds: int = DEFAULT_IDLE_SECONDS) -> dict:
     idle_seconds = _idle_seconds()
     window = _foreground_window_info()
@@ -204,16 +164,6 @@ def current_desktop_state(idle_threshold_seconds: int = DEFAULT_IDLE_SECONDS) ->
         "idle_threshold_seconds": idle_threshold_seconds,
         "captured_at": datetime.now().replace(microsecond=0).isoformat(timespec="seconds"),
     }
-
-
-def current_desktop_state_json(config: dict | None = None) -> str:
-    state = desktop_state_payload(config)
-    if not state:
-        return json.dumps(
-            {"enabled": False, "message": "Desktop state awareness is disabled in settings."},
-            ensure_ascii=False,
-        )
-    return json.dumps(state, ensure_ascii=False)
 
 
 def _classify_state(process_name: str, title: str, idle_seconds: int, idle_threshold_seconds: int) -> tuple[str, float, str]:
@@ -313,14 +263,6 @@ def _idle_seconds() -> int:
         return max(0, int((now - int(info.dwTime)) / 1000))
     except Exception:
         return 0
-
-
-def _idle_threshold(config: dict | None) -> int:
-    try:
-        seconds = int((config or {}).get("desktop_state_idle_seconds", DEFAULT_IDLE_SECONDS) or DEFAULT_IDLE_SECONDS)
-    except (TypeError, ValueError):
-        seconds = DEFAULT_IDLE_SECONDS
-    return max(30, min(1800, seconds))
 
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:

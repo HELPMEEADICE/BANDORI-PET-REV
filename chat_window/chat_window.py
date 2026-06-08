@@ -59,7 +59,6 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
-from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
@@ -4618,9 +4617,6 @@ class ChatWindow(QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
-        desktop_context = desktop_state_context(self._cfg)
-        if desktop_context:
-            dynamic_context += "\n\n" + desktop_context
         if self._pending_interaction_context:
             dynamic_context += "\n\n【当前互动事件】\n" + self._pending_interaction_context
         if self._auto_active:

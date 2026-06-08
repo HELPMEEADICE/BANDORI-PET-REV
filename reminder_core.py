@@ -57,17 +57,6 @@ DEFAULT_PROACTIVE_ITEMS = (
         "active_end": "22:00",
     },
     {
-        "id": "desktop_state",
-        "enabled": True,
-        "kind": "desktop_state",
-        "title": "桌面状态关心",
-        "description": "根据当前桌面状态给出不同反应，例如写代码、看网页、打游戏或发呆。",
-        "schedule_type": PROACTIVE_INTERVAL,
-        "interval_minutes": 45,
-        "active_start": "09:00",
-        "active_end": "23:30",
-    },
-    {
         "id": "evening_review",
         "enabled": True,
         "kind": "evening_review",
@@ -429,6 +418,9 @@ def normalize_proactive_companion(value, now: datetime | None = None) -> dict:
             seen.add(item_id)
     for item in raw_by_id.values():
         item_id = str(item.get("id") or "").strip()
+        item_kind = str(item.get("kind") or item_id).strip()
+        if item_id == "desktop_state" or item_kind == "desktop_state":
+            continue
         if item_id in seen:
             continue
         normalized = normalize_proactive_item(item, None, now)
