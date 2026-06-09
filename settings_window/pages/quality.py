@@ -106,6 +106,25 @@ class QualityPageMixin:
         scale_row.addWidget(self._live2d_scale_input)
         layout.addLayout(scale_row)
 
+        reset_position_row = QHBoxLayout()
+        reset_position_row.setContentsMargins(0, 0, 0, 0)
+        reset_position_row.setSpacing(10)
+        reset_position_hint = BodyLabel(
+            _tr("SettingsWindow.reset_pet_position_hint"),
+            page,
+        )
+        reset_position_hint.setWordWrap(True)
+        reset_position_button = PushButton(
+            FluentIcon.SYNC,
+            _tr("SettingsWindow.reset_pet_position"),
+            page,
+        )
+        reset_position_button.setFixedHeight(36)
+        reset_position_button.clicked.connect(self._reset_pet_positions)
+        reset_position_row.addWidget(reset_position_hint, 1)
+        reset_position_row.addWidget(reset_position_button)
+        layout.addLayout(reset_position_row)
+
         opacity_label = BodyLabel(_tr("SettingsWindow.side_opacity"), page)
         layout.addWidget(opacity_label)
         self._opacity_slider = Slider(Qt.Orientation.Horizontal, page)
@@ -176,3 +195,17 @@ class QualityPageMixin:
         except (TypeError, ValueError):
             value = self._live2d_scale
         self._set_live2d_scale_controls(value)
+
+    def _reset_pet_positions(self):
+        send_line = getattr(self, "_ipc_output", None)
+        if not send_line:
+            return
+        self._pet_positions_reset_pending = True
+        send_line('SETTINGS\t{"reset_pet_positions": true}')
+        InfoBar.success(
+            _tr("SettingsWindow.reset_pet_position_success_title"),
+            _tr("SettingsWindow.reset_pet_position_success_content"),
+            duration=2000,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
