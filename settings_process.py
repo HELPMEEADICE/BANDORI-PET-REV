@@ -160,6 +160,10 @@ def main():
                 except Exception:
                     continue
                 window.apply_remote_settings(payload)
+            elif line.startswith("SHOW_COSTUMES"):
+                parts = line.split("\t", 1)
+                character = parts[1].strip() if len(parts) == 2 else ""
+                window.show_costume_picker(character)
 
     ipc_socket.readyRead.connect(on_ipc_ready)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

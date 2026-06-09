@@ -2417,6 +2417,26 @@ class SettingsWindow(
         self._costume_page.show()
         self._current_page = "costumes"
 
+    def show_costume_picker(self, char_key: str = ""):
+        char_key = (char_key or self._current_char or "").strip()
+        if char_key not in self._model_manager.characters:
+            char_key = self._current_char if self._current_char in self._model_manager.characters else ""
+        if not char_key and self._model_manager.characters:
+            char_key = self._model_manager.characters[0]
+        if not char_key:
+            return
+        self._ensure_page("characters")
+        self._hide_costume_preview()
+        for stacked_page in self._pages.values():
+            stacked_page.hide()
+        for key, btn in self._nav_buttons.items():
+            btn.setChecked(key == "characters")
+        self._on_char_selected(char_key)
+        self._animate_indicator("characters")
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _on_band_selected(self, band_id: str):
         self._populate_characters(band_id)
 

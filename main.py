@@ -685,6 +685,8 @@ def main():
             broadcast_ipc_line(line)
         elif line == "FOCUS_CHAT":
             broadcast_ipc_line(line, exclude_socket=source_socket)
+        elif line.startswith("OPEN_SETTINGS"):
+            handle_open_settings_request(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
             if line.startswith("SETTINGS\t"):
@@ -1120,14 +1122,26 @@ def main():
         if should_quit:
             quit_all()
 
-    def launch_settings_process(show_launch=True):
+    def handle_open_settings_request(line: str):
+        parts = line.split("\t")
+        target = parts[1].strip() if len(parts) >= 2 else "main"
+        character = parts[2].strip() if len(parts) >= 3 else ""
+        launch_settings_process(
+            show_launch=False,
+            start_on_costumes=target == "costumes",
+            costume_character=character,
+        )
+
+    def launch_settings_process(show_launch=True, start_on_costumes=False, costume_character=""):
         nonlocal mgr
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
+            if start_on_costumes:
+                broadcast_ipc_line(f"SHOW_COSTUMES\t{costume_character}")
             return
         cfg.load()
         mgr = ModelManager()
-        current_char = cfg.get("character", char)
+        current_char = costume_character if start_on_costumes and costume_character else cfg.get("character", char)
         current_costume = cfg.get("costume", costume)
         current_model_valid = bool(
             current_char and current_costume
@@ -1143,7 +1157,7 @@ def main():
             "--opacity", str(cfg.get("opacity", 1.0)),
             "--vsync", "1" if cfg.get("vsync", True) else "0",
             "--show-launch", "1" if show_launch else "0",
-            "--start-on-costumes", "0",
+            "--start-on-costumes", "1" if start_on_costumes else "0",
             "--first-run-wizard", "1" if first_run_wizard else "0",
         ])
         process.setProgram(program)

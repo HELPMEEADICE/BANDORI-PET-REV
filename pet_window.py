@@ -3856,6 +3856,16 @@ class PetWindow(QWidget):
             self.show()
 
     def _open_settings(self, start_on_costumes=False):
+        if self._ipc_socket and self._ipc_socket.isOpen():
+            parts = [
+                "OPEN_SETTINGS",
+                "costumes" if start_on_costumes else "main",
+                self._current_char,
+            ]
+            self._ipc_socket.write(("\t".join(parts) + "\n").encode("utf-8"))
+            self._ipc_socket.flush()
+            return
+
         if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
             return
 
