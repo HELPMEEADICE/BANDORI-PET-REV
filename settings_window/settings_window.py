@@ -180,6 +180,7 @@ class SettingsWindow(
         self._loading_user_profile = False
         self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
+        self._pet_positions_reset_pending = False
 
         icon_path = _app_icon_path()
         if icon_path:
@@ -2765,6 +2766,8 @@ class SettingsWindow(
         settings.update(self._screen_awareness_settings_data())
         if compact_reset_pending:
             settings["compact_ai_window_reset_position"] = True
+        if self._pet_positions_reset_pending:
+            settings["reset_pet_positions"] = True
         if self._cfg:
             self._cfg.set("language", settings["language"])
             self._cfg.set("fps", settings["fps"])

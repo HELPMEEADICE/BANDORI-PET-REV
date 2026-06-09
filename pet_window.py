@@ -2134,6 +2134,8 @@ class PetWindow(QWidget):
                 80,
                 lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True),
             )
+        if data.get("reset_pet_positions"):
+            self.reset_position()
         self._save_config()
 
     def _live2d_size(self):
@@ -2145,6 +2147,32 @@ class PetWindow(QWidget):
         if not self._pixel_mode:
             self.resize(*self._live2d_size())
         self._sync_compact_ai_window()
+
+    def reset_position(self):
+        screen = QGuiApplication.primaryScreen() or self._fallback_position_screen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        count = max(1, len(self._group_characters))
+        index = max(0, min(self._compute_layer_index(), count - 1))
+        offset_x = int(round((index - (count - 1) / 2.0) * 48))
+        target_x = geo.left() + (geo.width() - self.width()) // 2 + offset_x
+        target_y = geo.top() + (geo.height() - self.height()) // 2
+        target_x, target_y = self._constrain_position_to_screen(
+            target_x,
+            target_y,
+            screen,
+            allow_partial=False,
+        )
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
+        self._restoring_saved_position = True
+        try:
+            self._move_unconstrained(target_x, target_y)
+        finally:
+            self._restoring_saved_position = False
+        self._show_pos_set = True
+        self._sync_compact_ai_window(allow_create=True)
 
     def _on_tray_activated(self, reason):
         if sys.platform == "darwin":
