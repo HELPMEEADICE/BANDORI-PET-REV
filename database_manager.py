@@ -1331,18 +1331,28 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
-    def get_messages(self, conversation_id: int, limit: int | None = None) -> list[dict]:
+    def get_messages(
+        self,
+        conversation_id: int,
+        limit: int | None = None,
+        before_id: int | None = None,
+    ) -> list[dict]:
+        where = "WHERE conversation_id=?"
         params: tuple = (conversation_id,)
+        before_id = _db_int(before_id)
+        if before_id is not None and before_id > 0:
+            where += " AND id<?"
+            params = (*params, before_id)
         order = "ASC"
         limit_sql = ""
         if limit is not None:
             limit = _clamp_int(limit, 1, 1000, 1000)
-            params = (conversation_id, limit)
+            params = (*params, limit)
             order = "DESC"
             limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
-            f"WHERE conversation_id=? ORDER BY id {order}{limit_sql}",
+            f"{where} ORDER BY id {order}{limit_sql}",
             params,
         ).fetchall()
         if limit is not None:
@@ -1519,7 +1529,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
-    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None, user_key: str | None = None) -> list[dict]:
+    def get_group_messages(
+        self,
+        group_key: str,
+        conversation_id: str,
+        limit: int | None = None,
+        user_key: str | None = None,
+        before_id: int | None = None,
+    ) -> list[dict]:
         conversation_id = conversation_id or "default"
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         where = "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
@@ -1527,6 +1544,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         if user_filter is not None:
             where += " AND user_key=?"
             params = (group_key, conversation_id, conversation_id, user_filter)
+        before_id = _db_int(before_id)
+        if before_id is not None and before_id > 0:
+            where += " AND id<?"
+            params = (*params, before_id)
         order = "ASC"
         limit_sql = ""
         if limit is not None:
