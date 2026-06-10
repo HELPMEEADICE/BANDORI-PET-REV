@@ -138,20 +138,18 @@ def main():
         if quit_ref["running"]:
             return
         quit_ref["running"] = True
-        notify_chat_processes_shutdown()
-        stop_ipc_server()
-        stop_special_event_manager()
-        stop_ai_status_server()
-        stop_chat_integration_server()
-        stop_napcat_adapter(force=True)
-        stop_reminder_scheduler()
-        close_chat_integration_db()
-        close_pet_processes(force=True)
-        close_settings_process(force=True)
-        close_chat_process(force=True)
         if tray_icon is not None:
             tray_icon.hide()
         app.quit()
+
+        # Safety net: if the aboutToQuit handlers block or the event loop
+        # stalls, force-terminate after a short delay so the process never
+        # hangs on exit.
+        def _force_exit():
+            import os as _os
+            _os._exit(0)
+
+        QTimer.singleShot(10_000, _force_exit)
 
     def init_ipc_server():
         name = ipc_server_name()
@@ -795,15 +793,15 @@ def main():
             _close_qprocess(process, force, wait=wait)
         pet_window_ref["processes"] = []
 
-    def close_settings_process(force=False):
+    def close_settings_process(force=False, wait=True):
         process = settings_process_ref.get("process")
-        _close_qprocess(process, force)
+        _close_qprocess(process, force, wait=wait)
         settings_process_ref.pop("process", None)
         settings_process_ref.pop("show_launch", None)
 
-    def close_chat_process(force=False):
+    def close_chat_process(force=False, wait=True):
         process = chat_process_ref.get("process")
-        _close_qprocess(process, force)
+        _close_qprocess(process, force, wait=wait)
         chat_process_ref.pop("process", None)
 
     def on_model_selected(selected_char, selected_costume, relaunch=False):
@@ -1259,6 +1257,7 @@ def main():
     usage_heartbeat.start()
 
     app.aboutToQuit.connect(save_config)
+    app.aboutToQuit.connect(notify_chat_processes_shutdown)
     app.aboutToQuit.connect(stop_ipc_server)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
@@ -1266,9 +1265,9 @@ def main():
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(end_usage_session)
-    app.aboutToQuit.connect(lambda: close_settings_process(force=True))
-    app.aboutToQuit.connect(lambda: close_chat_process(force=True))
-    app.aboutToQuit.connect(lambda: close_pet_processes(force=True))
+    app.aboutToQuit.connect(lambda: close_settings_process(force=True, wait=False))
+    app.aboutToQuit.connect(lambda: close_chat_process(force=True, wait=False))
+    app.aboutToQuit.connect(lambda: close_pet_processes(force=True, wait=False))
 
     if has_configured_models or model_valid:
         pet_window_ref["char"] = char
