@@ -84,7 +84,11 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         if self._model and self._live2d:
             self.makeCurrent()
             try:
-                self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+                apply_quality = getattr(self._model, "ApplyTextureQuality", None)
+                if callable(apply_quality):
+                    apply_quality(profile)
+                elif getattr(self._model, "_renderer", None) is not None:
+                    self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
             finally:
                 self.doneCurrent()
             self._static_render_done = False
@@ -483,10 +487,12 @@ class ModelListItem(QWidget):
     selected = Signal(str)
     remove_requested = Signal(str)
 
-    def __init__(self, character: str, title: str, subtitle: str, current: bool, parent=None):
+    def __init__(self, character: str, title: str, subtitle: str, current: bool,
+                 parent=None, is_composite: bool = False):
         super().__init__(parent)
         self._character = character
         self._current = current
+        self._is_composite = bool(is_composite)
         self._selection_anim = None
         self._animated_bg = None
         self.setObjectName("ModelListItem")
@@ -501,13 +507,23 @@ class ModelListItem(QWidget):
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(1)
         self._title = BodyLabel(title, self)
+        subtitle_row = QHBoxLayout()
+        subtitle_row.setContentsMargins(0, 0, 0, 0)
+        subtitle_row.setSpacing(6)
         self._subtitle = QLabel(subtitle, self)
+        self._composite_badge = QLabel(_tr("SettingsWindow.webgal_composite_badge"), self)
+        self._composite_badge.setToolTip(_tr("SettingsWindow.webgal_composite_tooltip"))
+        self._composite_badge.setVisible(self._is_composite)
+        self._composite_badge.setFixedHeight(18)
+        self._composite_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         for label in (self._title, self._subtitle):
             label.setMinimumWidth(0)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             label.setToolTip(label.text())
+        subtitle_row.addWidget(self._subtitle, 1)
+        subtitle_row.addWidget(self._composite_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         text_col.addWidget(self._title)
-        text_col.addWidget(self._subtitle)
+        text_col.addLayout(subtitle_row)
         layout.addLayout(text_col, 1)
 
         self._remove_btn = QToolButton(self)
@@ -535,6 +551,20 @@ class ModelListItem(QWidget):
         text = "#f7f7fb" if dark else "#1f2328"
         muted = "#9aa5bd" if dark else "#657089"
         danger = "#ff6b6b" if dark else "#c42b1c"
+        badge_bg = "#4a3540" if dark else "#fff1f5"
+        badge_fg = "#ffb4c8" if dark else "#b4234a"
+        badge_border = "#77505d" if dark else "#ffc2d1"
+        self._composite_badge.setStyleSheet(f"""
+            QLabel {{
+                color: {badge_fg};
+                background: {badge_bg};
+                border: 1px solid {badge_border};
+                border-radius: 5px;
+                padding: 1px 5px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+        """)
         self.setStyleSheet(f"""
             #ModelListItem {{
                 background: {bg};
@@ -884,11 +914,13 @@ class CostumeItem(QPushButton):
     preview_cancelled = Signal(str)
     favorite_toggled = Signal(str, bool)
 
-    def __init__(self, costume_id: str, display_name: str, parent=None, favorite: bool = False):
+    def __init__(self, costume_id: str, display_name: str, parent=None,
+                 favorite: bool = False, is_composite: bool = False):
         super().__init__(parent)
         self._costume_id = costume_id
         self._display_name = display_name
         self._favorite = bool(favorite)
+        self._is_composite = bool(is_composite)
         self.setText(display_name)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(40)
@@ -906,8 +938,14 @@ class CostumeItem(QPushButton):
         self._favorite_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._favorite_btn.setFixedSize(28, 28)
         self._favorite_btn.clicked.connect(self._on_favorite_clicked)
+        self._composite_badge = QLabel(_tr("SettingsWindow.webgal_composite_badge"), self)
+        self._composite_badge.setToolTip(_tr("SettingsWindow.webgal_composite_tooltip"))
+        self._composite_badge.setVisible(self._is_composite)
+        self._composite_badge.setFixedHeight(20)
+        self._composite_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._preview_btn.raise_()
         self._favorite_btn.raise_()
+        self._composite_badge.raise_()
         self._update_stylesheet()
         connect_theme_changed_weak(self, "_update_stylesheet")
 
@@ -939,12 +977,26 @@ class CostumeItem(QPushButton):
         tool_border = "#4a4a4a" if dark else "#d9dde7"
         tool_hover = BANDORI_PRIMARY_SOFT_DARK_HOVER if dark else BANDORI_PRIMARY_SOFT_HOVER
         favorite_icon = accent_color(dark) if self._favorite else ("#9aa5bd" if dark else "#7b8494")
+        badge_bg = "#4a3540" if dark else "#fff1f5"
+        badge_fg = "#ffb4c8" if dark else "#b4234a"
+        badge_border = "#77505d" if dark else "#ffc2d1"
         self._preview_btn.setIcon(FluentIcon.VIEW.icon(color=QColor(text_color)))
         self._favorite_btn.setIcon(FluentIcon.HEART.icon(color=QColor(favorite_icon)))
+        self._composite_badge.setStyleSheet(f"""
+            QLabel {{
+                color: {badge_fg};
+                background: {badge_bg};
+                border: 1px solid {badge_border};
+                border-radius: 6px;
+                padding: 1px 6px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+        """)
         self.setStyleSheet(f"""
             QPushButton {{
                 text-align: left;
-                padding: 8px 84px 8px 16px;
+                padding: 8px 160px 8px 16px;
                 border: 1px solid {border};
                 border-radius: 6px;
                 background: {bg};
@@ -1003,8 +1055,13 @@ class CostumeItem(QPushButton):
         y = (self.height() - self._preview_btn.height()) // 2
         self._favorite_btn.move(self.width() - self._favorite_btn.width() - 10, y)
         self._preview_btn.move(self._favorite_btn.x() - self._preview_btn.width() - 8, y)
+        if self._is_composite:
+            self._composite_badge.adjustSize()
+            badge_y = (self.height() - self._composite_badge.height()) // 2
+            self._composite_badge.move(self._preview_btn.x() - self._composite_badge.width() - 8, badge_y)
         self._preview_btn.raise_()
         self._favorite_btn.raise_()
+        self._composite_badge.raise_()
 
 
 class Live2DPreviewBubble(QWidget):
