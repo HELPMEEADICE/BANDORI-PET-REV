@@ -1,10 +1,9 @@
 """Import / manage user-supplied Live2D models.
 
-A custom model is stored exactly like a built-in one: copied into
-``models/<character>/<costume>/`` containing a Cubism 2.1 ``model.json``
-plus its resources, so the rest of the app (ModelManager scan, band
-grouping, costume picker, click-motion config, pet process) reuses it
-without any special casing.
+A custom model is copied into ``models/<character>/<costume>/``. Standard
+Cubism 2.1 imports contain a ``model.json`` plus resources; WebGal-style
+multi-part folder imports contain a ``_webgal_composite.json`` manifest
+that points to multiple Cubism 2.1 layer ``model.json`` files.
 
 A marker file ``_custom.json`` is written at the character-folder level so
 imported models can be told apart from built-ins and deleted safely.
@@ -20,9 +19,10 @@ import time
 import zipfile
 from pathlib import Path
 
-from model_manager import MODELS_DIR
+from model_manager import MODELS_DIR, ModelManager
 
 CUSTOM_MARKER_FILENAME = "_custom.json"
+WEBGAL_COMPOSITE_FILENAME = "_webgal_composite.json"
 MODEL_JSON_NAME = "model.json"
 _INVALID_NAME_CHARS = '<>:"/\\|?*'
 _MAX_NAME_LENGTH = 64
@@ -79,56 +79,13 @@ def delete_custom_character(character: str) -> None:
 
 
 def _is_model_json(json_path: Path) -> bool:
-    """检查 JSON 文件是否是 Live2D 模型配置文件"""
-    try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-        # 模型配置文件必须包含 model 字段（指向 .moc 文件）
-        return "model" in data and isinstance(data["model"], str)
-    except (json.JSONDecodeError, OSError):
-        return False
+    """Return True when a JSON file is a Cubism 2 model config."""
+    return ModelManager._json_has_model_field(json_path)
 
 
 def _find_model_jsons(root: Path) -> list[Path]:
-    """查找所有可能的 Live2D 模型配置文件
-    
-    支持：
-    - model.json（标准名称）
-    - *.model.json（变体文件）
-    - 其他包含 model 字段的 JSON 文件
-    """
-    result = []
-    seen = set()
-    
-    # 递归查找所有 JSON 文件
-    for json_path in root.rglob("*.json"):
-        if not json_path.is_file():
-            continue
-        
-        # 跳过已知的非模型配置文件
-        if json_path.name in ("_custom.json", "outfit.json", "band.json", "config.json"):
-            continue
-        
-        # 标准 model.json 文件
-        if json_path.name.lower() == MODEL_JSON_NAME:
-            if json_path not in seen:
-                result.append(json_path)
-                seen.add(json_path)
-            continue
-        
-        # *.model.json 变体文件
-        if json_path.name.endswith(".model.json"):
-            if json_path not in seen:
-                result.append(json_path)
-                seen.add(json_path)
-            continue
-        
-        # 其他 JSON 文件：检查是否是模型配置文件
-        if _is_model_json(json_path):
-            if json_path not in seen:
-                result.append(json_path)
-                seen.add(json_path)
-    
-    return sorted(result)
+    """Find Cubism 2 model configs, including non-standard JSON names."""
+    return ModelManager._find_model_jsons(root)
 
 
 def _has_cubism3_artifacts(root: Path) -> bool:
@@ -170,25 +127,160 @@ def _validate_cubism2_model(model_json: Path) -> None:
             raise CustomModelImportError("missing_resource", resource=str(texture))
 
 
-def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Path, Path]]:
+def _sort_webgal_layers(model_jsons: list[Path], source_root: Path) -> list[Path]:
+    jsonl_order = ModelManager._webgal_jsonl_order(source_root)
+    return sorted(
+        model_jsons,
+        key=lambda path: ModelManager._webgal_layer_sort_key(source_root, path, jsonl_order),
+    )
+
+
+def _write_webgal_composite_manifest(costume_dir: Path, layers: list[tuple[Path, Path]]) -> None:
+    manifest = {
+        "format": "bandori_webgal_composite",
+        "version": 1,
+        "layers": [
+            {
+                "name": source_parent.name,
+                "model": model_json.relative_to(costume_dir).as_posix(),
+            }
+            for source_parent, model_json in layers
+        ],
+    }
+    (costume_dir / WEBGAL_COMPOSITE_FILENAME).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _read_existing_composite_layers(source_root: Path, manifest_path: Path) -> list[Path]:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    layers = manifest.get("layers", [])
+    if not isinstance(layers, list):
+        return []
+    result = []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        relative = str(layer.get("model", "") or "").strip()
+        if not relative:
+            continue
+        model_json = source_root / relative
+        if model_json.is_file() and _is_model_json(model_json):
+            result.append(model_json)
+    return result
+
+
+def _direct_webgal_layers(source_root: Path) -> list[Path]:
+    if ModelManager._find_root_model_json(source_root):
+        return []
+    model_jsons = ModelManager._find_direct_webgal_model_jsons(source_root)
+    if len(model_jsons) < 2:
+        return []
+    return _sort_webgal_layers(model_jsons, source_root)
+
+
+def _resolve_source_costume(source_root: Path, costume_id: str) -> dict | None:
+    root_model_json = ModelManager._find_root_model_json(source_root)
+    if root_model_json:
+        return {
+            "id": sanitize_costume_id(costume_id, source_root.name or "default"),
+            "source_dir": source_root,
+            "model_json": root_model_json,
+            "composite": False,
+        }
+
+    composite_manifest = source_root / WEBGAL_COMPOSITE_FILENAME
+    layers = _direct_webgal_layers(source_root)
+    if composite_manifest.is_file() or layers:
+        if not layers:
+            layers = _read_existing_composite_layers(source_root, composite_manifest)
+        if not layers:
+            return None
+        return {
+            "id": sanitize_costume_id(costume_id, source_root.name or "webgal"),
+            "source_dir": source_root,
+            "layers": layers,
+            "composite": True,
+        }
+
+    model_jsons = _find_model_jsons(source_root)
+    if len(model_jsons) == 1:
+        model_json = model_jsons[0]
+        return {
+            "id": sanitize_costume_id(costume_id, source_root.name or "default"),
+            "source_dir": model_json.parent,
+            "model_json": model_json,
+            "composite": False,
+        }
+    return None
+
+
+def _resolve_costumes(source_root: Path, costume_id: str, allow_webgal_composite: bool = True) -> list[dict]:
     """Map a source tree to a list of (costume_id, costume_dir, model_json_path) to copy.
 
     One model.json -> a single costume using the user-supplied id.
-    Multiple model.json -> one costume per containing folder (ids derived
-    from folder names), since the user only names a single costume.
+    WebGal folders can import as one composite costume, or as a multi-costume
+    package when each direct child is itself a composite costume.
     """
+    if allow_webgal_composite:
+        direct_costume = _resolve_source_costume(source_root, costume_id)
+        if direct_costume:
+            costumes = [direct_costume]
+        else:
+            costumes = []
+            used: set[str] = set()
+            for child in sorted(source_root.iterdir()):
+                if not child.is_dir() or child.name.startswith("_") or child.name == "_mtn_emp":
+                    continue
+                costume = _resolve_source_costume(child, child.name)
+                if not costume:
+                    continue
+                base = sanitize_costume_id(child.name, "costume")
+                cid = base
+                index = 2
+                while cid in used:
+                    cid = f"{base}_{index}"
+                    index += 1
+                used.add(cid)
+                costume["id"] = cid
+                costumes.append(costume)
+        if costumes:
+            for costume in costumes:
+                if costume.get("composite"):
+                    for model_json_path in costume["layers"]:
+                        _validate_cubism2_model(model_json_path)
+                else:
+                    _validate_cubism2_model(costume["model_json"])
+            return costumes
+
     model_jsons = _find_model_jsons(source_root)
     if not model_jsons:
         if _has_cubism3_artifacts(source_root):
             raise CustomModelImportError("cubism3_unsupported")
         raise CustomModelImportError("no_model_json")
 
-    costumes: list[tuple[str, Path, Path]] = []
-    if len(model_jsons) == 1:
+    costumes: list[dict] = []
+    if allow_webgal_composite and len(model_jsons) > 1:
+        layers = _sort_webgal_layers(model_jsons, source_root)
+        costumes.append({
+            "id": sanitize_costume_id(costume_id, source_root.name or "webgal"),
+            "source_dir": source_root,
+            "layers": layers,
+            "composite": True,
+        })
+    elif len(model_jsons) == 1:
         model_json = model_jsons[0]
         parent = model_json.parent
         fallback = parent.name if parent != source_root else "default"
-        costumes.append((sanitize_costume_id(costume_id, fallback), parent, model_json))
+        costumes.append({
+            "id": sanitize_costume_id(costume_id, fallback),
+            "source_dir": parent,
+            "model_json": model_json,
+            "composite": False,
+        })
     else:
         used: set[str] = set()
         for model_json in model_jsons:
@@ -200,10 +292,19 @@ def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Pat
                 cid = f"{base}_{index}"
                 index += 1
             used.add(cid)
-            costumes.append((cid, parent, model_json))
+            costumes.append({
+                "id": cid,
+                "source_dir": parent,
+                "model_json": model_json,
+                "composite": False,
+            })
 
-    for _cid, _costume_dir, model_json_path in costumes:
-        _validate_cubism2_model(model_json_path)
+    for costume in costumes:
+        if costume.get("composite"):
+            for model_json_path in costume["layers"]:
+                _validate_cubism2_model(model_json_path)
+        else:
+            _validate_cubism2_model(costume["model_json"])
     return costumes
 
 
@@ -218,8 +319,13 @@ def _write_marker(character_dir: Path, source_label: str) -> None:
     )
 
 
-def _import_from_dir(source_root: Path, display_name: str, costume_id: str,
-                     source_label: str) -> tuple[str, list[str]]:
+def _import_from_dir(
+    source_root: Path,
+    display_name: str,
+    costume_id: str,
+    source_label: str,
+    allow_webgal_composite: bool = True,
+) -> tuple[str, list[str]]:
     character = sanitize_character_name(display_name)
     if not character:
         raise CustomModelImportError("invalid_name")
@@ -228,13 +334,26 @@ def _import_from_dir(source_root: Path, display_name: str, costume_id: str,
     if target_dir.exists():
         raise CustomModelImportError("name_exists", name=character)
 
-    costumes = _resolve_costumes(source_root, costume_id)
+    costumes = _resolve_costumes(source_root, costume_id, allow_webgal_composite)
 
     try:
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=False)
-        for cid, costume_dir, _model_json_path in costumes:
-            shutil.copytree(costume_dir, target_dir / cid)
+        for costume in costumes:
+            cid = costume["id"]
+            destination = target_dir / cid
+            if costume.get("composite"):
+                shutil.copytree(costume["source_dir"], destination)
+                layers = [
+                    (
+                        model_json.parent,
+                        destination / model_json.relative_to(costume["source_dir"]),
+                    )
+                    for model_json in costume["layers"]
+                ]
+                _write_webgal_composite_manifest(destination, layers)
+            else:
+                shutil.copytree(costume["source_dir"], destination)
         _write_marker(target_dir, source_label)
     except CustomModelImportError:
         shutil.rmtree(target_dir, ignore_errors=True)
@@ -243,7 +362,7 @@ def _import_from_dir(source_root: Path, display_name: str, costume_id: str,
         shutil.rmtree(target_dir, ignore_errors=True)
         raise CustomModelImportError("copy_failed", detail=str(exc)) from exc
 
-    return character, [cid for cid, _dir, _model_json in costumes]
+    return character, [costume["id"] for costume in costumes]
 
 
 def import_from_folder(folder: str, display_name: str,
@@ -271,7 +390,13 @@ def import_from_zip(zip_path: str, display_name: str,
                 _safe_extract_zip(zf, tmp_root)
         except (zipfile.BadZipFile, OSError) as exc:
             raise CustomModelImportError("bad_zip", detail=str(exc)) from exc
-        return _import_from_dir(tmp_root, display_name, costume_id, archive.name)
+        return _import_from_dir(
+            tmp_root,
+            display_name,
+            costume_id,
+            archive.name,
+            allow_webgal_composite=False,
+        )
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:

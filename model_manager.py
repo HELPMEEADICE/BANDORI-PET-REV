@@ -22,6 +22,16 @@ OUTFIT_JSON = BASE_DIR / "outfit.json"
 BAND_JSON = BASE_DIR / "band.json"
 CHARACTERS_DIR = BASE_DIR / "characters"
 MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
+WEBGAL_COMPOSITE_FILENAME = "_webgal_composite.json"
+_SKIPPED_TOP_MODEL_DIR_NAMES = {"模型存放"}
+_SKIPPED_MODEL_JSON_NAMES = {
+    WEBGAL_COMPOSITE_FILENAME,
+    "_custom.json",
+    "outfit.json",
+    "band.json",
+    "config.json",
+}
+_SKIPPED_MODEL_DIR_NAMES = {"_mtn_emp"}
 
 
 def models_dir_exists() -> bool:
@@ -48,6 +58,8 @@ class ModelManager:
         self._characters: dict[str, dict] = {}
         self._costume_names: dict[str, dict[str, str]] = {}
         self._bands: list[dict] = []
+        self._directory_model_characters: set[str] = set()
+        self._archive_model_characters: set[str] = set()
         self._advanced_roleplay_cache: dict[str, bool] | None = None
         if scan_models:
             self._scan()
@@ -65,6 +77,8 @@ class ModelManager:
         self._characters = {}
         self._costume_names = {}
         self._bands = []
+        self._directory_model_characters = set()
+        self._archive_model_characters = set()
         self._advanced_roleplay_cache = None
         self._scan()
         self._parse_outfit_json()
@@ -73,16 +87,20 @@ class ModelManager:
     def _scan_model_keys(self):
         self._model_paths = {}
         self._character_images = {}
+        self._directory_model_characters = set()
+        self._archive_model_characters = set()
         if not models_dir_exists():
             return
         for entry in sorted(MODELS_DIR.iterdir()):
-            if entry.name.startswith("_"):
+            if entry.name.startswith("_") or entry.name in _SKIPPED_TOP_MODEL_DIR_NAMES:
                 continue
             if entry.is_dir():
                 character = entry.name
+                self._directory_model_characters.add(character)
                 image_path = self._find_dir_character_image(entry)
             elif entry.is_file() and entry.suffix.lower() == ".zst":
                 character = entry.stem
+                self._archive_model_characters.add(character)
                 try:
                     files = list_archive_files(entry)
                     image_path = self._find_archive_character_image(entry, files, character)
@@ -90,7 +108,7 @@ class ModelManager:
                     image_path = ""
             else:
                 continue
-            if image_path:
+            if image_path and character not in self._character_images:
                 self._character_images[character] = image_path
             self._characters.setdefault(character, {"costumes": [{"id": "default", "path": ""}]})
 
@@ -119,9 +137,14 @@ class ModelManager:
     def _scan(self):
         self._model_paths = {}
         self._character_images = {}
+        self._directory_model_characters = set()
+        self._archive_model_characters = set()
         if not models_dir_exists():
             return
-        entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
+        entries = [
+            entry for entry in sorted(MODELS_DIR.iterdir())
+            if not entry.name.startswith("_") and entry.name not in _SKIPPED_TOP_MODEL_DIR_NAMES
+        ]
         for entry in entries:
             if entry.is_dir():
                 self._scan_model_dir(entry)
@@ -129,8 +152,6 @@ class ModelManager:
         archive_paths = []
         for entry in entries:
             if entry.is_file() and entry.suffix.lower() == ".zst":
-                if entry.stem in self._characters:
-                    continue
                 archive_paths.append(entry)
 
         if not archive_paths:
@@ -143,25 +164,227 @@ class ModelManager:
 
     def _scan_model_dir(self, entry: Path):
         char_name = entry.name
+        direct_composite = self._ensure_direct_webgal_composite(entry)
+        if direct_composite:
+            model_path = str(direct_composite.resolve())
+            self._model_paths[(char_name, "default")] = model_path
+            self._characters[char_name] = {
+                "costumes": [{
+                    "id": "default",
+                    "path": model_path,
+                    "composite": "webgal",
+                }],
+            }
+            image_path = self._find_dir_character_image(entry)
+            if image_path:
+                self._character_images[char_name] = image_path
+            self._directory_model_characters.add(char_name)
+            return
+
         costumes = []
         for costume_dir in sorted(entry.iterdir()):
             if not costume_dir.is_dir():
                 continue
-            model_json = costume_dir / "model.json"
-            if model_json.exists():
-                model_path = str(model_json.resolve())
-                costumes.append({
-                    "id": costume_dir.name,
-                    "path": model_path,
-                })
-                self._model_paths[(char_name, costume_dir.name)] = model_path
+            resolved = self._resolve_dir_costume_model(costume_dir)
+            if not resolved:
+                continue
+            model_path, is_composite = resolved
+            costume = {
+                "id": costume_dir.name,
+                "path": model_path,
+            }
+            if is_composite:
+                costume["composite"] = "webgal"
+            costumes.append(costume)
+            self._model_paths[(char_name, costume_dir.name)] = model_path
         image_path = self._find_dir_character_image(entry)
         if image_path:
             self._character_images[char_name] = image_path
         if costumes:
+            self._directory_model_characters.add(char_name)
             self._characters[char_name] = {
                 "costumes": costumes,
             }
+
+    @staticmethod
+    def _json_has_model_field(path: Path) -> bool:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            return False
+        if not isinstance(data, dict) or not isinstance(data.get("model"), str):
+            return False
+        if "FileReferences" in data or str(data.get("Version", "")).startswith("3"):
+            return False
+        return not str(data.get("model", "")).lower().endswith(".moc3")
+
+    @staticmethod
+    def _is_skipped_model_json_path(root: Path, path: Path) -> bool:
+        if path.name in _SKIPPED_MODEL_JSON_NAMES:
+            return True
+        lower = path.name.lower()
+        if lower.endswith(".model3.json"):
+            return True
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            parts = path.parts
+        return any(part in _SKIPPED_MODEL_DIR_NAMES for part in parts)
+
+    @classmethod
+    def _find_model_jsons(cls, root: Path) -> list[Path]:
+        result = []
+        for json_path in sorted(root.rglob("*.json")):
+            if not json_path.is_file() or cls._is_skipped_model_json_path(root, json_path):
+                continue
+            if cls._json_has_model_field(json_path):
+                result.append(json_path)
+        return result
+
+    @classmethod
+    def _find_root_model_json(cls, root: Path) -> Path | None:
+        candidates = []
+        standard = root / "model.json"
+        if standard.is_file():
+            candidates.append(standard)
+        candidates.extend(
+            path for path in sorted(root.glob("*.json"))
+            if path != standard and path.is_file()
+        )
+        for json_path in candidates:
+            if (
+                not cls._is_skipped_model_json_path(root, json_path)
+                and cls._json_has_model_field(json_path)
+            ):
+                return json_path
+        return None
+
+    @classmethod
+    def _find_direct_webgal_model_jsons(cls, char_dir: Path) -> list[Path]:
+        result = []
+        for child in sorted(char_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("_") or child.name in _SKIPPED_MODEL_DIR_NAMES:
+                continue
+            model_jsons = cls._find_shallow_model_jsons(child)
+            if len(model_jsons) == 1:
+                result.append(model_jsons[0])
+        return result
+
+    @classmethod
+    def _find_shallow_model_jsons(cls, root: Path) -> list[Path]:
+        result = []
+        candidates = list(root.glob("*.json"))
+        for child in sorted(root.iterdir()):
+            if child.is_dir() and not child.name.startswith("_") and child.name not in _SKIPPED_MODEL_DIR_NAMES:
+                candidates.extend(child.glob("*.json"))
+        for json_path in sorted(candidates):
+            if (
+                json_path.is_file()
+                and not cls._is_skipped_model_json_path(root, json_path)
+                and cls._json_has_model_field(json_path)
+            ):
+                result.append(json_path)
+        return result
+
+    @classmethod
+    def _webgal_jsonl_order(cls, root: Path) -> dict[str, int]:
+        order: dict[str, int] = {}
+        index = 0
+        for jsonl_path in sorted(root.glob("*.jsonl")):
+            try:
+                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    item = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                relative = str(item.get("path", "") or "").replace("\\", "/").strip()
+                if not relative or not relative.lower().endswith(".json"):
+                    continue
+                order.setdefault(relative, index)
+                index += 1
+        return order
+
+    @staticmethod
+    def _webgal_layer_sort_key(root: Path, path: Path, jsonl_order: dict[str, int] | None = None):
+        jsonl_order = jsonl_order or {}
+        try:
+            relative_path = path.relative_to(root).as_posix()
+            relative_parent = path.parent.relative_to(root)
+            first_part = relative_parent.parts[0] if relative_parent.parts else path.parent.name
+        except ValueError:
+            relative_path = path.as_posix()
+            first_part = path.parent.name
+        prefix = ""
+        for ch in first_part:
+            if ch.isdigit():
+                prefix += ch
+            else:
+                break
+        numeric = int(prefix) if prefix else 999999
+        order = jsonl_order.get(relative_path, 999999)
+        return order, numeric, first_part.lower(), path.parent.as_posix().lower(), path.name.lower()
+
+    @classmethod
+    def _ensure_direct_webgal_composite(cls, char_dir: Path) -> Path | None:
+        manifest_path = char_dir / WEBGAL_COMPOSITE_FILENAME
+        if manifest_path.is_file():
+            return manifest_path
+
+        if cls._find_root_model_json(char_dir):
+            return None
+
+        model_jsons = cls._find_direct_webgal_model_jsons(char_dir)
+        if len(model_jsons) < 2:
+            return None
+
+        jsonl_order = cls._webgal_jsonl_order(char_dir)
+        model_jsons = sorted(
+            model_jsons,
+            key=lambda path: cls._webgal_layer_sort_key(char_dir, path, jsonl_order),
+        )
+        manifest = {
+            "format": "bandori_webgal_composite",
+            "version": 1,
+            "layers": [
+                {
+                    "name": model_json.parent.name,
+                    "model": model_json.relative_to(char_dir).as_posix(),
+                }
+                for model_json in model_jsons
+            ],
+        }
+        try:
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            print(f"Failed to write WebGal composite manifest {manifest_path}: {exc}")
+            return None
+        return manifest_path
+
+    @classmethod
+    def _resolve_dir_costume_model(cls, costume_dir: Path) -> tuple[str, bool] | None:
+        composite_json = costume_dir / WEBGAL_COMPOSITE_FILENAME
+        if composite_json.is_file():
+            return str(composite_json.resolve()), True
+
+        root_model_json = cls._find_root_model_json(costume_dir)
+        if root_model_json:
+            return str(root_model_json.resolve()), False
+
+        direct_composite = cls._ensure_direct_webgal_composite(costume_dir)
+        if direct_composite:
+            return str(direct_composite.resolve()), True
+
+        model_jsons = cls._find_shallow_model_jsons(costume_dir)
+        if len(model_jsons) == 1:
+            return str(model_jsons[0].resolve()), False
+        return None
 
     def _read_model_archive(self, archive_path: Path):
         char_name = archive_path.stem
@@ -197,13 +420,26 @@ class ModelManager:
         }
 
     def _apply_archive_scan_result(self, result: dict):
+        character = result["character"]
+        self._archive_model_characters.add(character)
+        existing_costumes = list(self._characters.get(character, {}).get("costumes", []))
+        existing_ids = {str(item.get("id", "")) for item in existing_costumes}
+        merged_costumes = [
+            costume
+            for costume in result["costumes"]
+            if str(costume.get("id", "")) not in existing_ids
+        ]
+        merged_costumes.extend(existing_costumes)
+
         for char_name, costume_id, model_path in result["model_paths"]:
+            if costume_id in existing_ids:
+                continue
             self._model_paths[(char_name, costume_id)] = model_path
         image_path = result["image_path"]
-        if image_path:
-            self._character_images[result["character"]] = image_path
-        self._characters[result["character"]] = {
-            "costumes": result["costumes"],
+        if image_path and character not in self._character_images:
+            self._character_images[character] = image_path
+        self._characters[character] = {
+            "costumes": merged_costumes,
         }
 
     def _parse_outfit_json(self):
@@ -249,6 +485,19 @@ class ModelManager:
                 "logo": str((BASE_DIR / band.get("logo", "")).resolve()) if band.get("logo") else "",
                 "characters": characters,
             })
+
+        custom_characters = [
+            c for c in self.characters
+            if c not in seen and self.get_costumes(c)
+            and c in self._directory_model_characters
+        ]
+        if custom_characters:
+            self._bands.append({
+                "id": "custom_models",
+                "display": _tr("ModelManager.custom_models_band"),
+                "characters": custom_characters,
+            })
+            seen.update(custom_characters)
 
         ungrouped = [
             c for c in self.characters
@@ -355,6 +604,13 @@ class ModelManager:
     def get_costume_display_name(self, character: str, costume_id: str) -> str:
         return self._costume_names.get(character, {}).get(costume_id, costume_id)
 
+    def is_composite_costume(self, character: str, costume: str) -> bool:
+        for item in self.get_costumes(character):
+            if item.get("id") == costume and item.get("composite") == "webgal":
+                return True
+        path = self.get_model_json_path(character, costume)
+        return bool(path and self._is_webgal_composite_path(path))
+
     def get_default_costume(self, character: str) -> str:
         costumes = self.get_costumes(character)
         if not costumes:
@@ -381,10 +637,45 @@ class ModelManager:
             return load_virtual_json(path)
         return json.loads(Path(path).read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _is_webgal_composite_path(path: str) -> bool:
+        return not is_virtual_path(path) and Path(path).name == WEBGAL_COMPOSITE_FILENAME
+
+    @classmethod
+    def _read_webgal_layer_jsons(cls, manifest_path: str) -> list[dict]:
+        manifest_file = Path(manifest_path)
+        try:
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            return []
+        layers = manifest.get("layers", [])
+        if not isinstance(layers, list):
+            return []
+        result = []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            relative = str(layer.get("model", "") or "").strip()
+            if not relative:
+                continue
+            layer_path = (manifest_file.parent / relative).resolve()
+            try:
+                result.append(json.loads(layer_path.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, OSError, ValueError):
+                continue
+        return result
+
     def get_motion_names(self, character: str, costume: str) -> list[str]:
         path = self.get_model_json_path(character, costume)
         if not path:
             return []
+        if self._is_webgal_composite_path(path):
+            names = set()
+            for data in self._read_webgal_layer_jsons(path):
+                motions = data.get("motions", {})
+                if isinstance(motions, dict):
+                    names.update(str(name) for name in motions if name)
+            return sorted(names)
         try:
             data = self._read_model_json(path)
         except (json.JSONDecodeError, OSError, ValueError, KeyError, RuntimeError, UnicodeDecodeError):
@@ -398,6 +689,17 @@ class ModelManager:
         path = self.get_model_json_path(character, costume)
         if not path:
             return []
+        if self._is_webgal_composite_path(path):
+            names = set()
+            for data in self._read_webgal_layer_jsons(path):
+                expressions = data.get("expressions", [])
+                if isinstance(expressions, list):
+                    names.update(
+                        str(item["name"])
+                        for item in expressions
+                        if isinstance(item, dict) and item.get("name")
+                    )
+            return sorted(names)
         try:
             data = self._read_model_json(path)
         except (json.JSONDecodeError, OSError, ValueError, KeyError, RuntimeError, UnicodeDecodeError):
