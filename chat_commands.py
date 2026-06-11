@@ -319,6 +319,20 @@ def _handle_token_usage(token_usage_resolver) -> dict:
             default="未统计历史回复：{count}",
             count=f"{untracked_count:,}",
         )
+    history_message_limit = stats.get("history_message_limit")
+    try:
+        history_message_limit = int(history_message_limit)
+    except (TypeError, ValueError):
+        history_message_limit = None
+    if history_message_limit == 0:
+        history_message_limit_text = _tr(
+            "SettingsWindow.llm_history_message_limit_unlimited",
+            default="不限",
+        )
+    elif history_message_limit is None:
+        history_message_limit_text = "-"
+    else:
+        history_message_limit_text = f"{history_message_limit:,}"
     return {
         "message": _tr(
             "ChatCommand.tokens_result",
@@ -327,6 +341,9 @@ def _handle_token_usage(token_usage_resolver) -> dict:
                 "总计：{total}\n"
                 "输入：{input}\n"
                 "输出：{output}\n"
+                "当前聊天消息数：{message_count}\n"
+                "下次请求附带历史消息数：{next_history_message_count}"
+                "（上限：{history_message_limit}）\n"
                 "下次请求输入（估算，不含尚未输入的新消息）：{next_input}\n"
                 "请求数：{requests}{untracked_note}"
             ),
@@ -334,6 +351,11 @@ def _handle_token_usage(token_usage_resolver) -> dict:
             total=f"{int(stats.get('total_tokens', 0) or 0):,}",
             input=f"{int(stats.get('input_tokens', 0) or 0):,}",
             output=f"{int(stats.get('output_tokens', 0) or 0):,}",
+            message_count=f"{int(stats.get('message_count', 0) or 0):,}",
+            next_history_message_count=(
+                f"{int(stats.get('next_history_message_count', 0) or 0):,}"
+            ),
+            history_message_limit=history_message_limit_text,
             next_input=f"{int(stats.get('next_input_tokens', 0) or 0):,}",
             requests=f"{int(stats.get('request_count', 0) or 0):,}",
             untracked_note=untracked_note,

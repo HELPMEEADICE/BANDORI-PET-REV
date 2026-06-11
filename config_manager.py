@@ -279,6 +279,8 @@ DEFAULTS = {
     "llm_web_fetch_enabled": False,
     "llm_auto_continue_enabled": False,
     "llm_auto_continue_max_turns": 5,
+    "llm_chat_history_message_limit": 40,
+    "llm_compact_history_message_limit": 12,
     "llm_cross_chat_history_enabled": True,
     "llm_custom_system_prompt_enabled": True,
     "llm_custom_system_prompt": "",
@@ -475,6 +477,14 @@ def _normalize_llm_api_profile(profile) -> dict | None:
             profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
         ),
         "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
+        "llm_chat_history_message_limit": (
+            0 if _int_value(profile.get("llm_chat_history_message_limit"), 40) == 0
+            else max(2, min(100, _int_value(profile.get("llm_chat_history_message_limit"), 40)))
+        ),
+        "llm_compact_history_message_limit": (
+            0 if _int_value(profile.get("llm_compact_history_message_limit"), 12) == 0
+            else max(2, min(100, _int_value(profile.get("llm_compact_history_message_limit"), 12)))
+        ),
         "llm_enable_thinking": profile.get("llm_enable_thinking")
         if isinstance(profile.get("llm_enable_thinking"), (bool, type(None))) else None,
         "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
@@ -555,26 +565,27 @@ class ConfigManager:
         has_action_settings = False
         next_data = dict(DEFAULTS)
         if self._path.exists():
-            try:
-                with open(self._path, "r", encoding="utf-8") as f:
-                    loaded_data = json.load(f)
-                loaded = loaded_data if isinstance(loaded_data, dict) else None
-                has_action_settings = loaded is not None and "model_action_settings" in loaded
-                if loaded is None:
-                    raise ValueError("config root must be a JSON object")
-                for k in DEFAULTS:
-                    if k in loaded:
-                        next_data[k] = loaded[k]
-                if bool(loaded.get("desktop_state_awareness_enabled", False)):
-                    next_data["screen_awareness_enabled"] = True
-                if "screen_awareness_display_mode" not in loaded:
-                    next_data["screen_awareness_display_mode"] = normalize_display_mode(
-                        loaded.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
-                    )
-            except (json.JSONDecodeError, OSError, ValueError):
-                self._backup_corrupt_config()
-                loaded = None
-                has_action_settings = False
+            with _config_file_lock(self._path):
+                try:
+                    with open(self._path, "r", encoding="utf-8") as f:
+                        loaded_data = json.load(f)
+                    loaded = loaded_data if isinstance(loaded_data, dict) else None
+                    has_action_settings = loaded is not None and "model_action_settings" in loaded
+                    if loaded is None:
+                        raise ValueError("config root must be a JSON object")
+                    for k in DEFAULTS:
+                        if k in loaded:
+                            next_data[k] = loaded[k]
+                    if bool(loaded.get("desktop_state_awareness_enabled", False)):
+                        next_data["screen_awareness_enabled"] = True
+                    if "screen_awareness_display_mode" not in loaded:
+                        next_data["screen_awareness_display_mode"] = normalize_display_mode(
+                            loaded.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
+                        )
+                except (json.JSONDecodeError, ValueError):
+                    self._backup_corrupt_config()
+                    loaded = None
+                    has_action_settings = False
         self._data = next_data
         if loaded is None or not has_action_settings:
             self._data["model_action_settings"] = {}

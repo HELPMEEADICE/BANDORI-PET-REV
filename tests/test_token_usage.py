@@ -8,12 +8,25 @@ from llm_manager import LLMStreamWorker, ResponsesStreamWorker
 from token_usage import (
     estimate_messages_tokens,
     estimate_untracked_history_usage,
+    history_message_limit_from_slider,
+    history_message_limit_to_slider,
+    history_message_query_limit,
     merge_token_usage,
+    normalize_history_message_limit,
     normalize_token_usage,
 )
 
 
 class TokenUsageTests(unittest.TestCase):
+    def test_history_message_limit_is_clamped(self):
+        self.assertEqual(normalize_history_message_limit(None, 40), 40)
+        self.assertEqual(normalize_history_message_limit(1, 40), 2)
+        self.assertEqual(normalize_history_message_limit(120, 40), 100)
+        self.assertEqual(normalize_history_message_limit(0, 40), 0)
+        self.assertEqual(history_message_limit_to_slider(0, 40), 101)
+        self.assertEqual(history_message_limit_from_slider(101), 0)
+        self.assertIsNone(history_message_query_limit(0, 40))
+
     def test_normalizes_both_api_usage_shapes(self):
         chat = normalize_token_usage({
             "prompt_tokens": 120,
@@ -132,6 +145,9 @@ class TokenUsageTests(unittest.TestCase):
                 "request_count": 2,
                 "untracked_count": 1,
                 "estimated": True,
+                "message_count": 46,
+                "next_history_message_count": 46,
+                "history_message_limit": 0,
             },
             publish=False,
         )
@@ -139,6 +155,13 @@ class TokenUsageTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn("1,500", result["message"])
         self.assertIn("1,350", result["message"])
+        self.assertIn("46", result["message"])
+        self.assertTrue(
+            any(
+                label in result["message"]
+                for label in ("不限", "Unlimited", "無制限")
+            )
+        )
 
     def test_chat_stream_worker_reads_usage_chunk(self):
         worker = LLMStreamWorker("https://example.com/v1", "key", "model", [])

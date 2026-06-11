@@ -39,7 +39,12 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
-from token_usage import estimate_messages_tokens, estimate_untracked_history_usage
+from token_usage import (
+    estimate_messages_tokens,
+    estimate_untracked_history_usage,
+    history_message_query_limit,
+    normalize_history_message_limit,
+)
 from tts_common import SingleShotTTSCallbacksMixin, clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, is_tts_enabled
 from chat_window.chat_window_base import ChatWindowMixin
@@ -626,7 +631,12 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         if not last:
             return
         self._conv_id = last["id"]
-        for message in self._db.get_messages(self._conv_id, limit=12):
+        history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_compact_history_message_limit", 12),
+            12,
+        )
+        query_limit = history_message_query_limit(history_limit, 12)
+        for message in self._db.get_messages(self._conv_id, limit=query_limit):
             role = message.get("role", "")
             if role not in {"user", "assistant"}:
                 continue
@@ -766,7 +776,12 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         conv_id = self._ensure_conversation()
         self._last_user_message_id = self._db.add_message(conv_id, "user", text)
         self._history.append({"role": "user", "content": text})
-        self._history = self._history[-12:]
+        history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_compact_history_message_limit", 12),
+            12,
+        )
+        if history_limit:
+            self._history = self._history[-history_limit:]
         self._last_user_text = text
         self._stream_text = ""
         self._thinking_text = ""
@@ -830,7 +845,30 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             if external_context:
                 dynamic_context += "\n\n" + external_context
         messages = [{"role": "system", "content": system_prompt}]
-        history = [dict(item) for item in self._history[-12:]]
+        history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_compact_history_message_limit", 12),
+            12,
+        )
+        query_limit = history_message_query_limit(history_limit, 12)
+        if self._conv_id:
+            history = [
+                {
+                    "role": message.get("role", ""),
+                    "content": str(message.get("content", "") or ""),
+                }
+                for message in self._db.get_messages(
+                    self._conv_id,
+                    limit=query_limit,
+                )
+                if message.get("role") in {"user", "assistant"}
+            ]
+        else:
+            cached_history = (
+                self._history
+                if history_limit == 0
+                else self._history[-history_limit:]
+            )
+            history = [dict(item) for item in cached_history]
         messages.extend(history)
         dynamic_context += f"\n\n【后置提示词】\n{current_time_instruction()}"
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
@@ -865,15 +903,23 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             responses_api=responses_api,
         )
         stats["next_input_tokens"] = next_input_tokens
-        history_limit = 12
+        current_history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_compact_history_message_limit", 12),
+            12,
+        )
+        current_history = (
+            history
+            if current_history_limit == 0
+            else history[-current_history_limit:]
+        )
         current_history_tokens = estimate_messages_tokens([
             {"role": item.get("role", ""), "content": item.get("content", "")}
-            for item in history[-history_limit:]
+            for item in current_history
         ])
         estimated = estimate_untracked_history_usage(
             history,
             input_overhead=max(0, next_input_tokens - current_history_tokens),
-            history_limit=history_limit,
+            history_limit=12,
         )
         stats["input_tokens"] += estimated["input_tokens"]
         stats["output_tokens"] += estimated["output_tokens"]
@@ -885,6 +931,9 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             0,
             stats.get("untracked_count", 0) - estimated["request_count"],
         )
+        stats["message_count"] = len(history)
+        stats["next_history_message_count"] = len(current_history)
+        stats["history_message_limit"] = current_history_limit
         return stats
 
     @staticmethod
@@ -944,7 +993,12 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._stream_text = clean
             self._set_output_text(clean)
             self._history.append({"role": "assistant", "content": clean})
-            self._history = self._history[-12:]
+            history_limit = normalize_history_message_limit(
+                self._cfg.get("llm_compact_history_message_limit", 12),
+                12,
+            )
+            if history_limit:
+                self._history = self._history[-history_limit:]
             usage = getattr(self._worker, "token_usage", None)
             tool_trace = {"llm_usage": usage} if usage else None
             self._db.add_message(

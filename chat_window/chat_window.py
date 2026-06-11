@@ -61,7 +61,12 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
-from token_usage import estimate_messages_tokens, estimate_untracked_history_usage
+from token_usage import (
+    estimate_messages_tokens,
+    estimate_untracked_history_usage,
+    history_message_query_limit,
+    normalize_history_message_limit,
+)
 from tts_common import clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
 from .chat_window_base import ChatWindowMixin
@@ -4767,12 +4772,16 @@ class ChatWindow(ChatWindowMixin, QWidget):
                     f"直接与其他角色交流，就像他们在你面前一样。"
                 )
         messages = [{"role": "system", "content": system_prompt}]
+        history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_chat_history_message_limit", 40),
+            40,
+        )
+        query_limit = history_message_query_limit(history_limit, 40)
         if self._is_group_chat:
-            max_history = 20
             history = self._db.get_group_messages(
                 self._conversation_key,
                 self._group_conv_id,
-                limit=max_history * 2,
+                limit=query_limit,
                 user_key=self._chat_user_key,
             ) if self._group_conv_id else []
             messages.extend(
@@ -4787,8 +4796,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 for m in history
             )
         elif self._conv_id:
-            max_history = 20
-            history = self._db.get_messages(self._conv_id, limit=max_history * 2)
+            history = self._db.get_messages(self._conv_id, limit=query_limit)
             messages.extend(
                 {
                     "role": m["role"],
@@ -4854,7 +4862,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
             responses_api=responses_api,
         )
         stats["next_input_tokens"] = next_input_tokens
-        history_limit = 40
+        current_history_limit = normalize_history_message_limit(
+            self._cfg.get("llm_chat_history_message_limit", 40),
+            40,
+        )
         prepared_history = [
             {
                 **item,
@@ -4865,14 +4876,19 @@ class ChatWindow(ChatWindowMixin, QWidget):
             }
             for item in history
         ]
+        current_history = (
+            prepared_history
+            if current_history_limit == 0
+            else prepared_history[-current_history_limit:]
+        )
         current_history_tokens = estimate_messages_tokens([
             {"role": item.get("role", ""), "content": item.get("content", "")}
-            for item in prepared_history[-history_limit:]
+            for item in current_history
         ])
         estimated = estimate_untracked_history_usage(
             prepared_history,
             input_overhead=max(0, next_input_tokens - current_history_tokens),
-            history_limit=history_limit,
+            history_limit=40,
         )
         stats["input_tokens"] += estimated["input_tokens"]
         stats["output_tokens"] += estimated["output_tokens"]
@@ -4884,6 +4900,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
             0,
             stats.get("untracked_count", 0) - estimated["request_count"],
         )
+        stats["message_count"] = len(prepared_history)
+        stats["next_history_message_count"] = len(current_history)
+        stats["history_message_limit"] = current_history_limit
         return stats
 
     @staticmethod

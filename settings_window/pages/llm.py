@@ -1,9 +1,33 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from token_usage import (
+    HISTORY_MESSAGE_LIMIT_SLIDER_MAX,
+    history_message_limit_from_slider,
+    history_message_limit_to_slider,
+    normalize_history_message_limit,
+)
 
 
 class LLMPageMixin:
+
+    @staticmethod
+    def _history_message_limit(value, default: int) -> int:
+        return normalize_history_message_limit(value, default)
+
+    @staticmethod
+    def _history_message_limit_slider_value(value, default: int) -> int:
+        return history_message_limit_to_slider(value, default)
+
+    @staticmethod
+    def _history_message_limit_config_value(value) -> int:
+        return history_message_limit_from_slider(value)
+
+    @staticmethod
+    def _history_message_limit_label(value: int) -> str:
+        if int(value) >= HISTORY_MESSAGE_LIMIT_SLIDER_MAX:
+            return _tr("SettingsWindow.llm_history_message_limit_unlimited", default="不限")
+        return str(value)
 
     def _build_llm_page(self):
         page = self._make_theme_widget(QWidget())
@@ -276,6 +300,61 @@ class LLMPageMixin:
         auto_continue_hint.setObjectName("llmHint")
         layout.addWidget(auto_continue_hint)
 
+        chat_history_limit_row = QHBoxLayout()
+        chat_history_limit_row.setContentsMargins(0, 0, 0, 0)
+        chat_history_limit_row.setSpacing(10)
+        chat_history_limit_label = BodyLabel(_tr(
+            "SettingsWindow.llm_chat_history_message_limit",
+            default="群聊 / 私聊完整对话窗上下文消息数",
+        ), page)
+        self._llm_chat_history_message_limit = Slider(Qt.Orientation.Horizontal, page)
+        self._llm_chat_history_message_limit.setRange(2, HISTORY_MESSAGE_LIMIT_SLIDER_MAX)
+        self._llm_chat_history_message_limit.setSingleStep(1)
+        self._llm_chat_history_message_limit.setValue(40)
+        self._llm_chat_history_message_limit_value = BodyLabel("40", page)
+        self._llm_chat_history_message_limit_value.setFixedWidth(48)
+        self._llm_chat_history_message_limit_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._llm_chat_history_message_limit.valueChanged.connect(
+            lambda value: self._llm_chat_history_message_limit_value.setText(
+                self._history_message_limit_label(value)
+            )
+        )
+        chat_history_limit_row.addWidget(chat_history_limit_label)
+        chat_history_limit_row.addWidget(self._llm_chat_history_message_limit, 1)
+        chat_history_limit_row.addWidget(self._llm_chat_history_message_limit_value)
+        layout.addLayout(chat_history_limit_row)
+
+        compact_history_limit_row = QHBoxLayout()
+        compact_history_limit_row.setContentsMargins(0, 0, 0, 0)
+        compact_history_limit_row.setSpacing(10)
+        compact_history_limit_label = BodyLabel(_tr(
+            "SettingsWindow.llm_compact_history_message_limit",
+            default="悬浮窗上下文消息数",
+        ), page)
+        self._llm_compact_history_message_limit = Slider(Qt.Orientation.Horizontal, page)
+        self._llm_compact_history_message_limit.setRange(2, HISTORY_MESSAGE_LIMIT_SLIDER_MAX)
+        self._llm_compact_history_message_limit.setSingleStep(1)
+        self._llm_compact_history_message_limit.setValue(12)
+        self._llm_compact_history_message_limit_value = BodyLabel("12", page)
+        self._llm_compact_history_message_limit_value.setFixedWidth(48)
+        self._llm_compact_history_message_limit_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._llm_compact_history_message_limit.valueChanged.connect(
+            lambda value: self._llm_compact_history_message_limit_value.setText(
+                self._history_message_limit_label(value)
+            )
+        )
+        compact_history_limit_row.addWidget(compact_history_limit_label)
+        compact_history_limit_row.addWidget(self._llm_compact_history_message_limit, 1)
+        compact_history_limit_row.addWidget(self._llm_compact_history_message_limit_value)
+        layout.addLayout(compact_history_limit_row)
+
+        history_limit_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_history_message_limit_hint",
+            default="控制每次请求附带的当前会话历史消息条数。最右侧“不限”会发送全部历史；上下文越多，输入 Token 消耗也越高。",
+        ), page))
+        history_limit_hint.setObjectName("llmHint")
+        layout.addWidget(history_limit_hint)
+
         cross_chat_history_row = QHBoxLayout()
         cross_chat_history_row.setContentsMargins(0, 0, 0, 0)
         cross_chat_history_label = BodyLabel(_tr(
@@ -419,6 +498,8 @@ class LLMPageMixin:
                 "_llm_web_fetch_enabled",
                 "_llm_auto_continue_enabled",
                 "_llm_auto_continue_max_turns",
+                "_llm_chat_history_message_limit",
+                "_llm_compact_history_message_limit",
                 "_llm_cross_chat_history_enabled",
                 "_llm_custom_system_prompt_enabled",
                 "_llm_custom_system_prompt",
@@ -523,6 +604,18 @@ class LLMPageMixin:
             except (TypeError, ValueError):
                 auto_continue_max = 5
             self._llm_auto_continue_max_turns.setValue(max(1, min(20, auto_continue_max)))
+            self._llm_chat_history_message_limit.setValue(
+                self._history_message_limit_slider_value(
+                    self._cfg.get("llm_chat_history_message_limit", 40),
+                    40,
+                )
+            )
+            self._llm_compact_history_message_limit.setValue(
+                self._history_message_limit_slider_value(
+                    self._cfg.get("llm_compact_history_message_limit", 12),
+                    12,
+                )
+            )
             self._llm_cross_chat_history_enabled.setChecked(bool(self._cfg.get("llm_cross_chat_history_enabled", True)))
             self._llm_custom_system_prompt_enabled.setChecked(bool(self._cfg.get("llm_custom_system_prompt_enabled", True)))
             self._llm_custom_system_prompt.setPlainText(self._cfg.get("llm_custom_system_prompt", ""))
@@ -606,6 +699,14 @@ class LLMPageMixin:
                 "llm_auto_continue_enabled": bool(profile.get("llm_auto_continue_enabled", False)),
                 "llm_auto_continue_max_turns": max(1, min(20, int(profile.get("llm_auto_continue_max_turns", 5) or 5)))
                 if str(profile.get("llm_auto_continue_max_turns", 5) or "").strip().lstrip("-").isdigit() else 5,
+                "llm_chat_history_message_limit": self._history_message_limit(
+                    profile.get("llm_chat_history_message_limit", 40),
+                    40,
+                ),
+                "llm_compact_history_message_limit": self._history_message_limit(
+                    profile.get("llm_compact_history_message_limit", 12),
+                    12,
+                ),
                 "llm_cross_chat_history_enabled": bool(profile.get("llm_cross_chat_history_enabled", True)),
                 "llm_enable_thinking": profile.get("llm_enable_thinking", None)
                 if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
@@ -635,6 +736,12 @@ class LLMPageMixin:
             "llm_web_fetch_enabled": self._llm_web_fetch_enabled.isChecked(),
             "llm_auto_continue_enabled": self._llm_auto_continue_enabled.isChecked(),
             "llm_auto_continue_max_turns": self._llm_auto_continue_max_turns.value(),
+            "llm_chat_history_message_limit": self._history_message_limit_config_value(
+                self._llm_chat_history_message_limit.value()
+            ),
+            "llm_compact_history_message_limit": self._history_message_limit_config_value(
+                self._llm_compact_history_message_limit.value()
+            ),
             "llm_cross_chat_history_enabled": self._llm_cross_chat_history_enabled.isChecked(),
             "llm_enable_thinking": thinking,
             "llm_show_reasoning": self._llm_show_reasoning.isChecked(),
@@ -662,6 +769,14 @@ class LLMPageMixin:
             "llm_auto_continue_enabled": bool(self._cfg.get("llm_auto_continue_enabled", False)),
             "llm_auto_continue_max_turns": max(1, min(20, int(self._cfg.get("llm_auto_continue_max_turns", 5) or 5)))
             if str(self._cfg.get("llm_auto_continue_max_turns", 5) or "").strip().lstrip("-").isdigit() else 5,
+            "llm_chat_history_message_limit": self._history_message_limit(
+                self._cfg.get("llm_chat_history_message_limit", 40),
+                40,
+            ),
+            "llm_compact_history_message_limit": self._history_message_limit(
+                self._cfg.get("llm_compact_history_message_limit", 12),
+                12,
+            ),
             "llm_cross_chat_history_enabled": bool(self._cfg.get("llm_cross_chat_history_enabled", True)),
             "llm_enable_thinking": self._cfg.get("llm_enable_thinking", None)
             if self._cfg.get("llm_enable_thinking", None) in (True, False, None) else None,
@@ -685,6 +800,8 @@ class LLMPageMixin:
             "llm_web_fetch_enabled",
             "llm_auto_continue_enabled",
             "llm_auto_continue_max_turns",
+            "llm_chat_history_message_limit",
+            "llm_compact_history_message_limit",
             "llm_cross_chat_history_enabled",
             "llm_enable_thinking",
             "llm_show_reasoning",
@@ -821,6 +938,18 @@ class LLMPageMixin:
         except (TypeError, ValueError):
             auto_continue_max = 5
         self._llm_auto_continue_max_turns.setValue(max(1, min(20, auto_continue_max)))
+        self._llm_chat_history_message_limit.setValue(
+            self._history_message_limit_slider_value(
+                profile.get("llm_chat_history_message_limit", 40),
+                40,
+            )
+        )
+        self._llm_compact_history_message_limit.setValue(
+            self._history_message_limit_slider_value(
+                profile.get("llm_compact_history_message_limit", 12),
+                12,
+            )
+        )
         self._llm_cross_chat_history_enabled.setChecked(bool(profile.get("llm_cross_chat_history_enabled", True)))
         self._on_llm_web_search_enabled_changed(self._llm_web_search_enabled.isChecked())
         thinking = profile.get("llm_enable_thinking", None)
@@ -967,6 +1096,18 @@ class LLMPageMixin:
             self._cfg.set("llm_web_fetch_enabled", self._llm_web_fetch_enabled.isChecked())
             self._cfg.set("llm_auto_continue_enabled", self._llm_auto_continue_enabled.isChecked())
             self._cfg.set("llm_auto_continue_max_turns", self._llm_auto_continue_max_turns.value())
+            self._cfg.set(
+                "llm_chat_history_message_limit",
+                self._history_message_limit_config_value(
+                    self._llm_chat_history_message_limit.value()
+                ),
+            )
+            self._cfg.set(
+                "llm_compact_history_message_limit",
+                self._history_message_limit_config_value(
+                    self._llm_compact_history_message_limit.value()
+                ),
+            )
             self._cfg.set("llm_cross_chat_history_enabled", self._llm_cross_chat_history_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt_enabled", self._llm_custom_system_prompt_enabled.isChecked())
             self._cfg.set("llm_custom_system_prompt", self._llm_custom_system_prompt.toPlainText().strip())

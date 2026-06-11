@@ -11,6 +11,42 @@ _CJK_RE = re.compile(
     r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
 )
 _ASCII_RUN_RE = re.compile(r"[A-Za-z0-9_]+|[^\x00-\x7f]")
+HISTORY_MESSAGE_LIMIT_UNLIMITED = 0
+HISTORY_MESSAGE_LIMIT_SLIDER_MAX = 101
+
+
+def normalize_history_message_limit(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    if parsed == HISTORY_MESSAGE_LIMIT_UNLIMITED:
+        return HISTORY_MESSAGE_LIMIT_UNLIMITED
+    return max(2, min(100, parsed))
+
+
+def history_message_limit_to_slider(value, default: int) -> int:
+    normalized = normalize_history_message_limit(value, default)
+    return (
+        HISTORY_MESSAGE_LIMIT_SLIDER_MAX
+        if normalized == HISTORY_MESSAGE_LIMIT_UNLIMITED
+        else normalized
+    )
+
+
+def history_message_limit_from_slider(value) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 2
+    if parsed >= HISTORY_MESSAGE_LIMIT_SLIDER_MAX:
+        return HISTORY_MESSAGE_LIMIT_UNLIMITED
+    return max(2, min(100, parsed))
+
+
+def history_message_query_limit(value, default: int) -> int | None:
+    normalized = normalize_history_message_limit(value, default)
+    return None if normalized == HISTORY_MESSAGE_LIMIT_UNLIMITED else normalized
 
 
 def _non_negative_int(value) -> int:
@@ -125,7 +161,10 @@ def estimate_untracked_history_usage(
 ) -> dict:
     """Reconstruct usage for assistant replies that predate usage tracking."""
     prepared = [message for message in messages or [] if isinstance(message, dict)]
-    history_limit = max(1, int(history_limit or 1))
+    try:
+        history_limit = int(history_limit)
+    except (TypeError, ValueError):
+        history_limit = 1
     input_overhead = max(0, int(input_overhead or 0))
     input_tokens = 0
     output_tokens = 0
@@ -143,7 +182,11 @@ def estimate_untracked_history_usage(
         if isinstance(trace.get("llm_usage"), dict):
             continue
 
-        preceding = prepared[max(0, index - history_limit):index]
+        preceding = (
+            prepared[:index]
+            if history_limit == HISTORY_MESSAGE_LIMIT_UNLIMITED
+            else prepared[max(0, index - max(1, history_limit)):index]
+        )
         request_messages = [
             {
                 "role": item.get("role", ""),
