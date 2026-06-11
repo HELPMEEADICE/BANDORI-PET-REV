@@ -28,6 +28,13 @@ from local_tools import (
     web_search_prefetch_context,
 )
 from event_db_manager import EventDbManager
+from token_usage import (
+    estimate_messages_tokens,
+    estimate_text_tokens,
+    estimate_value_tokens,
+    merge_token_usage,
+    normalize_token_usage,
+)
 
 
 # ── 12 个公共基础动作标签（所有角色共有） ──
@@ -547,6 +554,40 @@ def current_time_instruction(now: datetime | None = None) -> str:
     )
 
 
+def estimate_llm_request_tokens(
+    messages: list[dict],
+    *,
+    web_search: bool = False,
+    show_search_sources: bool = True,
+    tool_config: dict | None = None,
+    responses_api: bool = False,
+) -> int:
+    """Estimate the input tokens for the next request using current settings."""
+    config = dict(tool_config or {})
+    prepared = [dict(message) for message in messages]
+    use_tools = (
+        web_search
+        or bool(config.get("llm_web_fetch_enabled", False))
+        or bool(config.get("llm_auto_continue_enabled", False))
+        or reminder_tools_enabled(config)
+        or bool(config.get("llm_mcp_enabled", False))
+        or bool(config.get("computer_use_enabled", False))
+    )
+    if use_tools:
+        prepared = with_local_tool_system_hint(prepared, config)
+    if use_tools and web_search and not responses_api:
+        prepared = with_web_search_system_hint(prepared, show_search_sources)
+    total = estimate_messages_tokens(prepared)
+    tools = (
+        responses_native_tools(config)
+        if responses_api
+        else chat_completion_tools(web_search if use_tools else False, config if use_tools else {})
+    )
+    if tools:
+        total += estimate_value_tokens(tools)
+    return total
+
+
 class LLMStreamWorker(QThread):
     chunk_received = Signal(str, str)
     auto_continue_boundary = Signal(str, str, list)
@@ -570,9 +611,17 @@ class LLMStreamWorker(QThread):
         self._reasoning_text = ""
         self._stream_tool_calls = []
         self._search_sources = []
+        self._usage = normalize_token_usage({})
+        self._round_usage_seen = False
+        self._round_usage = None
+        self._round_output_text = ""
 
     def cancel(self):
         self._cancelled = True
+
+    @property
+    def token_usage(self) -> dict:
+        return dict(self._usage)
 
     def run(self):
         try:
@@ -715,7 +764,12 @@ class LLMStreamWorker(QThread):
             body["tool_choice"] = "auto"
         _apply_thinking_options(body, self._enable_thinking)
         sanitize_chat_body_for_url(body, self._api_url)
+        if "api.openai.com" in self._api_url.lower():
+            body["stream_options"] = {"include_usage": True}
         data = json.dumps(body).encode("utf-8")
+        self._round_usage_seen = False
+        self._round_usage = None
+        self._round_output_text = ""
 
         headers = {
             "Content-Type": "application/json",
@@ -738,6 +792,17 @@ class LLMStreamWorker(QThread):
                     self._process_line(line.decode("utf-8", errors="replace"))
             if not self._cancelled and buffer.strip():
                 self._process_line(buffer.decode("utf-8", errors="replace"))
+        if self._round_usage_seen:
+            self._usage = merge_token_usage(self._usage, self._round_usage or {})
+        else:
+            estimated = {
+                "input_tokens": estimate_messages_tokens(messages)
+                + estimate_value_tokens(body.get("tools", [])),
+                "output_tokens": estimate_text_tokens(self._round_output_text),
+                "estimated": True,
+            }
+            estimated["total_tokens"] = estimated["input_tokens"] + estimated["output_tokens"]
+            self._usage = merge_token_usage(self._usage, estimated)
 
     def _process_line(self, line: str):
         line = line.strip()
@@ -748,6 +813,9 @@ class LLMStreamWorker(QThread):
             return
         try:
             data = json.loads(data_str)
+            if isinstance(data.get("usage"), dict):
+                self._round_usage = normalize_token_usage(data["usage"])
+                self._round_usage_seen = bool(self._round_usage["total_tokens"])
             choices = data.get("choices", [{}])
             if not choices:
                 return
@@ -756,10 +824,12 @@ class LLMStreamWorker(QThread):
             reasoning = _extract_reasoning(delta)
             if reasoning:
                 self._reasoning_text += reasoning
+                self._round_output_text += reasoning
                 self.chunk_received.emit("", reasoning)
             content = delta.get("content", "")
             if content:
                 self._full_text += content
+                self._round_output_text += content
                 self.chunk_received.emit(content, "")
         except (json.JSONDecodeError, KeyError, IndexError):
             pass
@@ -783,12 +853,15 @@ class LLMStreamWorker(QThread):
                 target["type"] = call_delta["type"]
             function_delta = call_delta.get("function") or {}
             if function_delta.get("name"):
+                self._round_output_text += function_delta["name"]
                 if target["function"]["name"]:
                     target["function"]["name"] += function_delta["name"]
                 else:
                     target["function"]["name"] = function_delta["name"]
             if "arguments" in function_delta:
-                target["function"]["arguments"] += function_delta.get("arguments") or ""
+                arguments_delta = function_delta.get("arguments") or ""
+                self._round_output_text += arguments_delta
+                target["function"]["arguments"] += arguments_delta
         function_call = delta.get("function_call")
         if isinstance(function_call, dict):
             if not self._stream_tool_calls:
@@ -799,9 +872,12 @@ class LLMStreamWorker(QThread):
                 })
             target = self._stream_tool_calls[0]
             if function_call.get("name"):
+                self._round_output_text += function_call["name"]
                 target["function"]["name"] = function_call["name"]
             if "arguments" in function_call:
-                target["function"]["arguments"] += function_call.get("arguments") or ""
+                arguments_delta = function_call.get("arguments") or ""
+                self._round_output_text += arguments_delta
+                target["function"]["arguments"] += arguments_delta
 
     def _remember_search_sources(self, text: str):
         for source in _extract_search_sources(text):
@@ -838,9 +914,14 @@ class ResponsesStreamWorker(QThread):
         self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
+        self._usage = normalize_token_usage({})
 
     def cancel(self):
         self._cancelled = True
+
+    @property
+    def token_usage(self) -> dict:
+        return dict(self._usage)
 
     def run(self):
         try:
@@ -891,6 +972,17 @@ class ResponsesStreamWorker(QThread):
 
             if self._cancelled:
                 return
+            if not self._usage["total_tokens"]:
+                estimated = {
+                    "input_tokens": estimate_messages_tokens(messages)
+                    + estimate_value_tokens(body.get("tools", [])),
+                    "output_tokens": estimate_text_tokens(
+                        self._full_text + self._reasoning_text
+                    ),
+                    "estimated": True,
+                }
+                estimated["total_tokens"] = estimated["input_tokens"] + estimated["output_tokens"]
+                self._usage = normalize_token_usage(estimated)
             content, reasoning = split_thinking_text(
                 self._full_text,
                 self._reasoning_text,
@@ -933,9 +1025,12 @@ class ResponsesStreamWorker(QThread):
                 self.chunk_received.emit("", reasoning)
             return
         if event_type in ("response.completed", "response.done"):
-            output_text = _extract_response_output_text(data.get("response", {}))
+            response = data.get("response", {})
+            output_text = _extract_response_output_text(response)
             if output_text and not self._full_text:
                 self._full_text = output_text
+            if isinstance(response.get("usage"), dict):
+                self._usage = normalize_token_usage(response["usage"])
 
 
 class NonStreamWorker(QThread):
@@ -1232,6 +1327,3 @@ def split_thinking_text(content: str, reasoning: str = "") -> tuple[str, str]:
 
     clean = _THINK_PATTERN.sub(collect, content).strip()
     return clean, "\n\n".join(collected).strip()
-
-
-

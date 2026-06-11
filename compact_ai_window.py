@@ -27,6 +27,7 @@ from llm_manager import (
     merged_action_tags,
     parse_action_tags,
     strip_action_tags,
+    estimate_llm_request_tokens,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
 from llm_api_compat import chat_completions_api_url, use_responses_api
@@ -38,6 +39,7 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
+from token_usage import estimate_messages_tokens, estimate_untracked_history_usage
 from tts_common import SingleShotTTSCallbacksMixin, clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, is_tts_enabled
 from chat_window.chat_window_base import ChatWindowMixin
@@ -834,6 +836,57 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._append_dynamic_context_to_last_user(messages, dynamic_context)
         return messages
 
+    def _current_token_usage_stats(self) -> dict:
+        stats = self._db.get_conversation_token_usage(self._conv_id)
+        history = self._db.get_messages(self._conv_id) if self._conv_id else []
+        messages = self._build_messages()
+        tool_config = tool_config_snapshot(
+            self._cfg,
+            include_chat_keys=True,
+            latest_user_text=self._last_user_text,
+        )
+        api_url = self._cfg.get("llm_api_url", "") if self._cfg else ""
+        web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
+        web_fetch = bool(self._cfg.get("llm_web_fetch_enabled", False)) if self._cfg else False
+        use_reminder_tools = reminder_tools_enabled(tool_config)
+        responses_api = (
+            self._use_responses_api(api_url)
+            and not web_search
+            and not web_fetch
+            and not use_reminder_tools
+        )
+        next_input_tokens = estimate_llm_request_tokens(
+            messages,
+            web_search=web_search,
+            show_search_sources=bool(
+                self._cfg.get("llm_web_search_show_sources", True)
+            ) if self._cfg else True,
+            tool_config=tool_config,
+            responses_api=responses_api,
+        )
+        stats["next_input_tokens"] = next_input_tokens
+        history_limit = 12
+        current_history_tokens = estimate_messages_tokens([
+            {"role": item.get("role", ""), "content": item.get("content", "")}
+            for item in history[-history_limit:]
+        ])
+        estimated = estimate_untracked_history_usage(
+            history,
+            input_overhead=max(0, next_input_tokens - current_history_tokens),
+            history_limit=history_limit,
+        )
+        stats["input_tokens"] += estimated["input_tokens"]
+        stats["output_tokens"] += estimated["output_tokens"]
+        stats["total_tokens"] += estimated["total_tokens"]
+        stats["request_count"] += estimated["request_count"]
+        stats["estimated_request_count"] = estimated["request_count"]
+        stats["estimated"] = stats["estimated"] or estimated["estimated"]
+        stats["untracked_count"] = max(
+            0,
+            stats.get("untracked_count", 0) - estimated["request_count"],
+        )
+        return stats
+
     @staticmethod
     def _append_dynamic_context_to_last_user(messages: list[dict], context: str):
         context = str(context or "").strip()
@@ -892,7 +945,15 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._set_output_text(clean)
             self._history.append({"role": "assistant", "content": clean})
             self._history = self._history[-12:]
-            self._db.add_message(self._ensure_conversation(), "assistant", clean, reasoning_clean)
+            usage = getattr(self._worker, "token_usage", None)
+            tool_trace = {"llm_usage": usage} if usage else None
+            self._db.add_message(
+                self._ensure_conversation(),
+                "assistant",
+                clean,
+                reasoning_clean,
+                tool_trace=tool_trace,
+            )
             self._speak_tts_text(clean, self._character)
         self._apply_relationship_update(clean, acts)
         for action in acts:
@@ -943,6 +1004,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._cfg,
             stripped,
             name_resolver=self._model_manager.get_display_name,
+            token_usage_resolver=self._current_token_usage_stats,
         ) if self._cfg else None
         if command_result is not None:
             self._input.clear()

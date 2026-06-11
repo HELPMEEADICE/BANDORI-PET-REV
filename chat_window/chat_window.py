@@ -48,6 +48,7 @@ else:
 from llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     consume_stream_action_tags, merged_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
+    estimate_llm_request_tokens,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
 from llm_api_compat import chat_completions_api_url, use_responses_api
@@ -60,6 +61,7 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
+from token_usage import estimate_messages_tokens, estimate_untracked_history_usage
 from tts_common import clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
 from .chat_window_base import ChatWindowMixin
@@ -3802,6 +3804,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._cfg,
             stripped,
             name_resolver=self._model_manager.get_display_name,
+            token_usage_resolver=self._current_token_usage_stats,
         ) if self._cfg else None
         if command_result is not None:
             self._input.clear()
@@ -4808,6 +4811,81 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 })
         return messages
 
+    def _current_token_usage_stats(self) -> dict:
+        if self._is_group_chat:
+            stats = self._db.get_group_conversation_token_usage(
+                self._conversation_key,
+                self._group_conv_id,
+                self._chat_user_key,
+            )
+            character = self._group_characters[0] if self._group_characters else self._character
+            history = self._db.get_group_messages(
+                self._conversation_key,
+                self._group_conv_id,
+                user_key=self._chat_user_key,
+            ) if self._group_conv_id else []
+        else:
+            stats = self._db.get_conversation_token_usage(self._conv_id)
+            character = self._character
+            history = self._db.get_messages(self._conv_id) if self._conv_id else []
+        messages = self._build_messages_for_character(character, [])
+        tool_config = tool_config_snapshot(
+            self._cfg,
+            include_chat_keys=True,
+            latest_user_text=self._last_user_text,
+        )
+        if self._is_group_chat:
+            tool_config["llm_auto_continue_enabled"] = False
+        api_url = self._cfg.get("llm_api_url", "")
+        web_search = bool(self._cfg.get("llm_web_search_enabled", False))
+        web_fetch = bool(self._cfg.get("llm_web_fetch_enabled", False))
+        use_reminder_tools = reminder_tools_enabled(tool_config)
+        responses_api = (
+            self._use_responses_api(api_url)
+            and not web_search
+            and not web_fetch
+            and not use_reminder_tools
+        )
+        next_input_tokens = estimate_llm_request_tokens(
+            messages,
+            web_search=web_search,
+            show_search_sources=True,
+            tool_config=tool_config,
+            responses_api=responses_api,
+        )
+        stats["next_input_tokens"] = next_input_tokens
+        history_limit = 40
+        prepared_history = [
+            {
+                **item,
+                "content": self._chat_message_content(
+                    item.get("content", ""),
+                    item.get("attachments_json"),
+                ),
+            }
+            for item in history
+        ]
+        current_history_tokens = estimate_messages_tokens([
+            {"role": item.get("role", ""), "content": item.get("content", "")}
+            for item in prepared_history[-history_limit:]
+        ])
+        estimated = estimate_untracked_history_usage(
+            prepared_history,
+            input_overhead=max(0, next_input_tokens - current_history_tokens),
+            history_limit=history_limit,
+        )
+        stats["input_tokens"] += estimated["input_tokens"]
+        stats["output_tokens"] += estimated["output_tokens"]
+        stats["total_tokens"] += estimated["total_tokens"]
+        stats["request_count"] += estimated["request_count"]
+        stats["estimated_request_count"] = estimated["request_count"]
+        stats["estimated"] = stats["estimated"] or estimated["estimated"]
+        stats["untracked_count"] = max(
+            0,
+            stats.get("untracked_count", 0) - estimated["request_count"],
+        )
+        return stats
+
     @staticmethod
     def _append_dynamic_context_to_last_user(messages: list[dict], context: str):
         context = str(context or "").strip()
@@ -5439,7 +5517,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._finalize_current_response_segment(full_text, reasoning_text, actions)
         self._start_auto_continue_bubble(self._active_response_character)
 
-    def _finalize_current_response_segment(self, full_text: str, reasoning_text: str, actions: list) -> str:
+    def _finalize_current_response_segment(
+        self,
+        full_text: str,
+        reasoning_text: str,
+        actions: list,
+        llm_usage: dict | None = None,
+    ) -> str:
         self._merge_search_sources(actions)
         acts = merged_action_tags(
             self._current_response_actions,
@@ -5484,7 +5568,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._current_bubble.set_text(clean)
 
         stored = self._assistant_content(self._active_response_character, clean)
-        tool_trace = {"web_search_sources": self._stream_search_sources} if self._stream_search_sources else None
+        tool_trace = {}
+        if self._stream_search_sources:
+            tool_trace["web_search_sources"] = self._stream_search_sources
+        if llm_usage:
+            tool_trace["llm_usage"] = llm_usage
+        tool_trace = tool_trace or None
         if self._is_group_chat:
             self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace, user_key=self._chat_user_key)
             self._refresh_group_list()
@@ -5523,7 +5612,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
             return
-        self._finalize_current_response_segment(full_text, reasoning_text, actions)
+        usage = getattr(self._worker, "token_usage", None)
+        self._finalize_current_response_segment(
+            full_text,
+            reasoning_text,
+            actions,
+            llm_usage=usage,
+        )
 
         if self._is_group_chat:
             self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))

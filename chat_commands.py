@@ -11,6 +11,7 @@ Supported commands::
     @sys-instruction [bool]  toggle the highest-priority system prompt preset
     @clock HHMM [desc]       add a one-shot alarm within the next 24h
     @pomodoro [count] [desc] start a Pomodoro timer
+    @tokens                  show token usage for the current chat
 
 The boolean argument is optional; when omitted the current value is flipped.
 Clocks and Pomodoros default to the first visible Live2D character so that the
@@ -118,6 +119,10 @@ _TOGGLE_DEFS = (
 
 _CLOCK_ALIASES = {"@clock", "/clock", "@时钟", "/时钟", "@闹钟", "/闹钟"}
 _POMODORO_ALIASES = {"@pomodoro", "/pomodoro", "@番茄", "/番茄", "@番茄钟", "/番茄钟"}
+_TOKEN_ALIASES = {
+    "@tokens", "/tokens", "@token", "/token",
+    "@令牌", "/令牌", "@令牌用量", "/令牌用量", "@token消耗", "/token消耗",
+}
 
 
 def _reminder_payload(cfg, alarms: list[dict], pomodoros: list[dict]) -> dict:
@@ -281,7 +286,69 @@ def _resolve_name(character: str, name_resolver) -> str:
     return character or _tr("ChatCommand.default_character", default="桌宠")
 
 
-def handle_command(cfg, text: str, *, name_resolver=None, publish: bool = True):
+def _handle_token_usage(token_usage_resolver) -> dict:
+    if not callable(token_usage_resolver):
+        return {
+            "message": _tr(
+                "ChatCommand.tokens_unavailable",
+                default="当前聊天暂时无法读取 Token 统计。",
+            )
+        }
+    try:
+        stats = token_usage_resolver() or {}
+    except Exception as exc:
+        log_swallowed("chat_commands._handle_token_usage", exc)
+        stats = {}
+    estimated_note = (
+        _tr("ChatCommand.tokens_contains_estimate", default="（包含估算值）")
+        if stats.get("estimated")
+        else ""
+    )
+    untracked_count = int(stats.get("untracked_count", 0) or 0)
+    estimated_request_count = int(stats.get("estimated_request_count", 0) or 0)
+    untracked_note = ""
+    if estimated_request_count:
+        untracked_note += "\n" + _tr(
+            "ChatCommand.tokens_estimated_requests",
+            default="其中历史估算请求：{count}",
+            count=f"{estimated_request_count:,}",
+        )
+    if untracked_count:
+        untracked_note += "\n" + _tr(
+            "ChatCommand.tokens_untracked",
+            default="未统计历史回复：{count}",
+            count=f"{untracked_count:,}",
+        )
+    return {
+        "message": _tr(
+            "ChatCommand.tokens_result",
+            default=(
+                "当前聊天累计 Token 消耗{estimated_note}\n"
+                "总计：{total}\n"
+                "输入：{input}\n"
+                "输出：{output}\n"
+                "下次请求输入（估算，不含尚未输入的新消息）：{next_input}\n"
+                "请求数：{requests}{untracked_note}"
+            ),
+            estimated_note=estimated_note,
+            total=f"{int(stats.get('total_tokens', 0) or 0):,}",
+            input=f"{int(stats.get('input_tokens', 0) or 0):,}",
+            output=f"{int(stats.get('output_tokens', 0) or 0):,}",
+            next_input=f"{int(stats.get('next_input_tokens', 0) or 0):,}",
+            requests=f"{int(stats.get('request_count', 0) or 0):,}",
+            untracked_note=untracked_note,
+        )
+    }
+
+
+def handle_command(
+    cfg,
+    text: str,
+    *,
+    name_resolver=None,
+    token_usage_resolver=None,
+    publish: bool = True,
+):
     """Dispatch one of the extra ``@`` commands.
 
     Returns a result dict with a ``message`` key (and optionally
@@ -303,4 +370,6 @@ def handle_command(cfg, text: str, *, name_resolver=None, publish: bool = True):
         return _handle_clock(cfg, rest, publish, name_resolver)
     if head in _POMODORO_ALIASES:
         return _handle_pomodoro(cfg, rest, publish, name_resolver)
+    if head in _TOKEN_ALIASES:
+        return _handle_token_usage(token_usage_resolver)
     return None

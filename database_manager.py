@@ -1314,6 +1314,68 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
+    @staticmethod
+    def _token_usage_from_rows(rows) -> dict:
+        totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated": False,
+            "request_count": 0,
+            "untracked_count": 0,
+        }
+        for row in rows:
+            try:
+                trace = json.loads(_db_text(row[0])) if row and row[0] else {}
+            except (TypeError, ValueError):
+                trace = {}
+            usage = trace.get("llm_usage") if isinstance(trace, dict) else None
+            if not isinstance(usage, dict):
+                totals["untracked_count"] += 1
+                continue
+            input_tokens = max(0, _db_int(usage.get("input_tokens")) or 0)
+            output_tokens = max(0, _db_int(usage.get("output_tokens")) or 0)
+            total_tokens = max(
+                0,
+                _db_int(usage.get("total_tokens")) or (input_tokens + output_tokens),
+            )
+            totals["input_tokens"] += input_tokens
+            totals["output_tokens"] += output_tokens
+            totals["total_tokens"] += total_tokens
+            totals["estimated"] = totals["estimated"] or bool(usage.get("estimated", False))
+            totals["request_count"] += 1
+        return totals
+
+    def get_conversation_token_usage(self, conversation_id: int | None) -> dict:
+        if not conversation_id:
+            return self._token_usage_from_rows([])
+        rows = self._conn.execute(
+            "SELECT tool_trace_json FROM messages "
+            "WHERE conversation_id=? AND role='assistant'",
+            (int(conversation_id),),
+        ).fetchall()
+        return self._token_usage_from_rows(rows)
+
+    def get_group_conversation_token_usage(
+        self,
+        group_key: str,
+        conversation_id: str,
+        user_key: str | None = None,
+    ) -> dict:
+        if not group_key or not conversation_id:
+            return self._token_usage_from_rows([])
+        where, params = self._user_filter_clause(
+            user_key,
+            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
+            "AND role='assistant'",
+            (group_key, conversation_id, conversation_id),
+        )
+        rows = self._conn.execute(
+            f"SELECT tool_trace_json FROM group_messages {where}",
+            params,
+        ).fetchall()
+        return self._token_usage_from_rows(rows)
+
     def get_messages(
         self,
         conversation_id: int,

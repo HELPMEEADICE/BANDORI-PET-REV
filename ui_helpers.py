@@ -33,6 +33,7 @@ COMMAND_REGISTRY = [
     ("@sys",      "@sys-instruction 或 @系统提示", "切换最高优先级系统提示词"),
     ("@clock",    "@clock 或 @时钟",           "添加闹钟"),
     ("@pomodoro", "@pomodoro 或 @番茄钟",      "启动番茄钟计时器"),
+    ("@tokens",   "@tokens 或 @令牌用量",       "查看当前聊天 Token 消耗"),
     ("@memory",   "@memory 或 @记忆",          "查看记忆状态"),
     ("@status",   "@status 或 @状态",          "查看关系状态"),
     ("@remember", "@remember 或 @记住",        "手动记住内容"),
