@@ -148,6 +148,8 @@ class TokenUsageTests(unittest.TestCase):
                 "message_count": 46,
                 "next_history_message_count": 46,
                 "history_message_limit": 0,
+                "next_history_tokens": 350,
+                "next_context_tokens": 1000,
             },
             publish=False,
         )
@@ -155,6 +157,8 @@ class TokenUsageTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertIn("1,500", result["message"])
         self.assertIn("1,350", result["message"])
+        self.assertIn("350", result["message"])
+        self.assertIn("1,000", result["message"])
         self.assertIn("46", result["message"])
         self.assertTrue(
             any(

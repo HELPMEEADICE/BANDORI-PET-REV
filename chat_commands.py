@@ -345,6 +345,8 @@ def _handle_token_usage(token_usage_resolver) -> dict:
                 "下次请求附带历史消息数：{next_history_message_count}"
                 "（上限：{history_message_limit}）\n"
                 "下次请求输入（估算，不含尚未输入的新消息）：{next_input}\n"
+                "其中当前聊天历史：{next_history_tokens}\n"
+                "其他上下文与工具：{next_context_tokens}\n"
                 "请求数：{requests}{untracked_note}"
             ),
             estimated_note=estimated_note,
@@ -357,6 +359,12 @@ def _handle_token_usage(token_usage_resolver) -> dict:
             ),
             history_message_limit=history_message_limit_text,
             next_input=f"{int(stats.get('next_input_tokens', 0) or 0):,}",
+            next_history_tokens=(
+                f"{int(stats.get('next_history_tokens', 0) or 0):,}"
+            ),
+            next_context_tokens=(
+                f"{int(stats.get('next_context_tokens', 0) or 0):,}"
+            ),
             requests=f"{int(stats.get('request_count', 0) or 0):,}",
             untracked_note=untracked_note,
         )

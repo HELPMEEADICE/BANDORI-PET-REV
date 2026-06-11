@@ -916,10 +916,13 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             {"role": item.get("role", ""), "content": item.get("content", "")}
             for item in current_history
         ])
+        input_overhead = max(0, next_input_tokens - current_history_tokens)
+        stats["next_history_tokens"] = current_history_tokens
+        stats["next_context_tokens"] = input_overhead
         estimated = estimate_untracked_history_usage(
             history,
-            input_overhead=max(0, next_input_tokens - current_history_tokens),
-            history_limit=12,
+            input_overhead=input_overhead,
+            history_limit=current_history_limit,
         )
         stats["input_tokens"] += estimated["input_tokens"]
         stats["output_tokens"] += estimated["output_tokens"]
