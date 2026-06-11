@@ -29,6 +29,7 @@ from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager
 from settings_window import SettingsWindow
 from app_theme import apply_app_theme
+from app_info import APP_NAME
 from live2d_widget import Live2DWidget
 from gpu_acceleration import configure_qt_gpu_acceleration
 
@@ -89,9 +90,9 @@ def main():
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
     Live2DWidget.configure_default_surface_format()
 
-    app_user_model_id = "BandoriPet.Settings"
+    app_user_model_id = f"{APP_NAME}.Settings"
     if not _ensure_taskbar_icon_identity(app_user_model_id):
-        app_user_model_id = "BandoriPet"
+        app_user_model_id = APP_NAME
     set_windows_app_user_model_id(app_user_model_id)
 
     app = QApplication(sys.argv)
@@ -100,8 +101,8 @@ def main():
     if sys.platform == "darwin":
         import macos_patch
         macos_patch.hide_dock_icon()
-    app.setApplicationName("BandoriPetSettings")
-    app.setOrganizationName("BandoriPet")
+    app.setApplicationName(f"{APP_NAME}Settings")
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(True)
     _apply_app_icon(app)
 

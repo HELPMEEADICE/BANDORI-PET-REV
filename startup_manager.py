@@ -2,11 +2,12 @@ import os
 import subprocess
 import sys
 
+from app_info import APP_NAME
 from process_utils import app_base_dir, frozen_executable_name
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_RUN_VALUE = "BandoriPet"
+APP_RUN_VALUE = APP_NAME
 
 
 def is_supported() -> bool:

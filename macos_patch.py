@@ -45,6 +45,18 @@ def _get_ns_window(view_ptr: int) -> int:
     return _send_id(view_ptr, "window")
 
 
+def _get_ns_window_for_widget(widget) -> int:
+    if not _init_objc() or widget is None:
+        return 0
+    try:
+        win_id = int(widget.winId())
+    except (TypeError, ValueError):
+        return 0
+    if not win_id:
+        return 0
+    return _get_ns_window(win_id)
+
+
 def set_window_level_floating(widget) -> bool:
     return _set_window_level(widget, 3)
 
@@ -62,15 +74,7 @@ def set_window_level_above_menu_bar(widget) -> bool:
 
 
 def _set_window_level(widget, level: int) -> bool:
-    if not _init_objc() or widget is None:
-        return False
-    try:
-        win_id = int(widget.winId())
-    except (TypeError, ValueError):
-        return False
-    if not win_id:
-        return False
-    window = _get_ns_window(win_id)
+    window = _get_ns_window_for_widget(widget)
     if not window:
         return False
     f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long)
@@ -80,15 +84,7 @@ def _set_window_level(widget, level: int) -> bool:
 
 
 def set_window_no_shadow(widget) -> bool:
-    if not _init_objc() or widget is None:
-        return False
-    try:
-        win_id = int(widget.winId())
-    except (TypeError, ValueError):
-        return False
-    if not win_id:
-        return False
-    window = _get_ns_window(win_id)
+    window = _get_ns_window_for_widget(widget)
     if not window:
         return False
     f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
@@ -101,15 +97,7 @@ def set_hides_on_deactivate(widget, hides: bool) -> bool:
     # Qt.Tool maps to NSPanel on macOS, and NSPanel defaults to
     # hidesOnDeactivate:YES — so any time the user clicks another app the
     # window vanishes. Force it off so floating helpers stay visible.
-    if not _init_objc() or widget is None:
-        return False
-    try:
-        win_id = int(widget.winId())
-    except (TypeError, ValueError):
-        return False
-    if not win_id:
-        return False
-    window = _get_ns_window(win_id)
+    window = _get_ns_window_for_widget(widget)
     if not window:
         return False
     f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
@@ -138,15 +126,7 @@ def set_ignores_mouse_events(widget, ignores: bool) -> bool:
     # to let clicks fall through the pet's transparent margins to the app behind
     # is to toggle NSWindow.ignoresMouseEvents as the cursor moves on/off the
     # opaque character. This is the macOS counterpart of WS_EX_TRANSPARENT.
-    if not _init_objc() or widget is None:
-        return False
-    try:
-        win_id = int(widget.winId())
-    except (TypeError, ValueError):
-        return False
-    if not win_id:
-        return False
-    window = _get_ns_window(win_id)
+    window = _get_ns_window_for_widget(widget)
     if not window:
         return False
     f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
@@ -155,16 +135,25 @@ def set_ignores_mouse_events(widget, ignores: bool) -> bool:
     return True
 
 
-def set_collection_behavior(widget, mask: int) -> bool:
+def get_ignores_mouse_events(widget):
     if not _init_objc() or widget is None:
-        return False
+        return None
     try:
         win_id = int(widget.winId())
     except (TypeError, ValueError):
-        return False
+        return None
     if not win_id:
-        return False
+        return None
     window = _get_ns_window(win_id)
+    if not window:
+        return None
+    f = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    return bool(sender(window, _sel("ignoresMouseEvents")))
+
+
+def set_collection_behavior(widget, mask: int) -> bool:
+    window = _get_ns_window_for_widget(widget)
     if not window:
         return False
     # NSWindowCollectionBehavior is NSUInteger (unsigned long on 64-bit darwin).
@@ -226,6 +215,5 @@ def hide_dock_icon():
         sender(app, _sel("setActivationPolicy:"), 1)
     except Exception:
         pass
-
 
 

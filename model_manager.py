@@ -24,6 +24,10 @@ CHARACTERS_DIR = BASE_DIR / "characters"
 MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
 WEBGAL_COMPOSITE_FILENAME = "_webgal_composite.json"
 _SKIPPED_TOP_MODEL_DIR_NAMES = {"模型存放"}
+
+
+def is_webgal_composite_path(path: str) -> bool:
+    return not is_virtual_path(path) and Path(path).name == WEBGAL_COMPOSITE_FILENAME
 _SKIPPED_MODEL_JSON_NAMES = {
     WEBGAL_COMPOSITE_FILENAME,
     "_custom.json",
@@ -639,7 +643,7 @@ class ModelManager:
 
     @staticmethod
     def _is_webgal_composite_path(path: str) -> bool:
-        return not is_virtual_path(path) and Path(path).name == WEBGAL_COMPOSITE_FILENAME
+        return is_webgal_composite_path(path)
 
     @classmethod
     def _read_webgal_layer_jsons(cls, manifest_path: str) -> list[dict]:

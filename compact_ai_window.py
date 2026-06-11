@@ -39,7 +39,8 @@ from chat_config_snapshots import (
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import SingleShotTTSCallbacksMixin, clean_tts_payload
-from tts_manager import TTSPlayer, TTSRequestWorker
+from tts_manager import TTSPlayer, TTSRequestWorker, is_tts_enabled
+from chat_window.chat_window_base import ChatWindowMixin
 _TTS_AVAILABLE = True
 
 from database_manager import DatabaseManager
@@ -161,7 +162,7 @@ class CompactSendButton(QPushButton):
         )
 
 
-class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
+class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     action_triggered = Signal(str)
 
     def __init__(self, character: str, model_manager, config_manager, parent=None):
@@ -213,14 +214,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self.refresh_theme()
         self._load_last_conversation()
         self._update_output_height(animated=False)
-
-    def _assign_legacy_chat_history(self):
-        if not self._cfg or not hasattr(self._cfg, "legacy_chat_user_key"):
-            return
-        try:
-            self._db.assign_legacy_chat_history_user(self._cfg.legacy_chat_user_key())
-        except Exception:
-            pass
 
     def _init_ui(self):
         self.setWindowFlags(
@@ -908,9 +901,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._set_busy(False)
         self._input.setFocus()
 
-    def _user_memory_key(self) -> str:
-        return user_key_from_config(self._cfg)
-
     def _display_user_name(self) -> str:
         return str(self._cfg.get("user_name", "") or "").strip() if self._cfg else ""
 
@@ -1136,7 +1126,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
 
     def _tts_enabled(self) -> bool:
-        return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
+        return is_tts_enabled(_TTS_AVAILABLE, self._cfg)
 
     def _clean_tts_payload(self, text: str) -> str:
         return clean_tts_payload(text, strip_search_sources=True)
@@ -1210,15 +1200,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._set_busy(False)
         self._input.clear()
         self._input.setFocus()
-
-    def _park_cancelled_worker(self, worker):
-        if worker is None:
-            return
-        self._cancelled_workers.append(worker)
-        QTimer.singleShot(1000, self._prune_cancelled_workers)
-
-    def _prune_cancelled_workers(self):
-        self._cancelled_workers = [worker for worker in self._cancelled_workers if worker is not None and worker.isRunning()]
 
     def _scroll_output_to_bottom(self):
         bar = self._output.verticalScrollBar()

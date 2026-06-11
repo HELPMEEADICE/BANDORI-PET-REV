@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import FunctionType
 from process_utils import app_base_dir, clamp_int as _clamp_int
+from config_manager import DEFAULT_USER_PROFILE_KEY
 
 BASE_DIR = app_base_dir()
 DB_PATH = os.path.join(BASE_DIR, "data.db")
@@ -534,7 +535,7 @@ def import_relationship_data(data, db_path=DB_PATH) -> dict:
             character = _db_text(item.get("character")).strip()
             if not character:
                 continue
-            user_key = _db_text(item.get("user_key"), "__default__").strip() or "__default__"
+            user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
             updated_at = _db_text(item.get("updated_at")) or _now_text()
             conn.execute(
                 "INSERT INTO relationship_states "
@@ -565,7 +566,7 @@ def import_relationship_data(data, db_path=DB_PATH) -> dict:
             content = _db_text(item.get("content")).strip()
             if not character or not content:
                 continue
-            user_key = _db_text(item.get("user_key"), "__default__").strip() or "__default__"
+            user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
             created_at = _db_text(item.get("created_at")) or _now_text()
             updated_at = _db_text(item.get("updated_at")) or created_at
             conn.execute(
@@ -874,7 +875,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
 
     def _normalize_user_key(self, user_key: str) -> str:
-        return (user_key or "__default__").strip() or "__default__"
+        return (user_key or DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
 
     def assign_legacy_chat_history_user(self, user_key: str) -> int:
         user_key = self._normalize_user_key(user_key)

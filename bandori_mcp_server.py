@@ -4,6 +4,7 @@ from pathlib import Path
 from action_bus import publish_action, publish_lip_sync
 from ai_event_bus import publish_ai_event
 from mcp_base import error, handle_tools_message, iter_input_messages, write_message
+from app_info import APP_NAME
 from process_utils import app_base_dir, configure_debug_logging
 
 configure_debug_logging()
@@ -80,7 +81,7 @@ def handle_message(message: dict):
     return handle_tools_message(
         message,
         protocol_version=PROTOCOL_VERSION,
-        server_name="BandoriPet",
+        server_name=APP_NAME,
         tools=TOOLS,
         call_tool=call_tool,
     )

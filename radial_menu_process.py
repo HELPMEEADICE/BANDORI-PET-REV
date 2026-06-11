@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, set_windows_app_user_model_id
+from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, interaction_trace, set_windows_app_user_model_id
 
 configure_debug_logging()
 
@@ -15,6 +15,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
+from app_info import APP_NAME
 from radial_menu import RadialMenu
 
 
@@ -104,23 +105,17 @@ def main():
     if not server_name:
         return 2
 
-    set_windows_app_user_model_id("BandoriPet.RadialMenu")
+    set_windows_app_user_model_id(f"{APP_NAME}.RadialMenu")
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
-    app.setApplicationName("BandoriPet-RadialMenu")
-    app.setOrganizationName("BandoriPet")
+    app.setApplicationName(f"{APP_NAME}-RadialMenu")
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
     if sys.platform == "darwin":
         import macos_patch
 
         macos_patch.hide_dock_icon()
-
-    idle_timer = QTimer(app)
-    idle_timer.setSingleShot(True)
-    idle_timer.setInterval(12000)
-    idle_timer.timeout.connect(app.quit)
-    idle_timer.start()
 
     QLocalServer.removeServer(server_name)
     server = QLocalServer(app)
@@ -133,8 +128,8 @@ def main():
     buffers: dict[QLocalSocket, str] = {}
 
     def on_menu_closed():
+        interaction_trace("radial_process", "menu_closed")
         _emit("STATE\tCLOSED")
-        idle_timer.start()
 
     def on_lock_toggled(locked: bool):
         _emit(f"LOCK\t{1 if locked else 0}")
@@ -157,7 +152,13 @@ def main():
 
     def show_payload(payload: dict):
         nonlocal menu
-        idle_timer.stop()
+        interaction_trace(
+            "radial_process",
+            "show_payload",
+            x=payload.get("x"),
+            y=payload.get("y"),
+            existing=menu is not None,
+        )
         if menu is None:
             attach_menu(_build_menu(payload, menu_actions))
         elif not _update_menu(menu, payload, menu_actions):
@@ -172,10 +173,13 @@ def main():
     def close_menu():
         if menu is not None:
             menu.dismiss()
-        else:
-            idle_timer.start()
 
     def handle_line(line: str):
+        interaction_trace(
+            "radial_process",
+            "command",
+            command=line.split("\t", 1)[0],
+        )
         if line.startswith("SHOW\t"):
             try:
                 payload = json.loads(line.split("\t", 1)[1])

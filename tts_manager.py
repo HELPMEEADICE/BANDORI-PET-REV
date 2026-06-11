@@ -16,6 +16,10 @@ from tts_common import strip_tts_action_tags
 
 
 _DIALOG_GROUPS_KEY = "__groups"
+
+
+def is_tts_enabled(tts_available: bool, config_manager) -> bool:
+    return bool(tts_available and config_manager and config_manager.get("tts_enabled", False))
 _WORD_RE = re.compile(r"[A-Za-z']+")
 _NUMPY_MODULE = None
 _REQUESTS_MODULE = None

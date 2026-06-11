@@ -17,10 +17,11 @@ from process_utils import (
 from config_manager import ConfigManager
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 from startup_manager import repair_startup_command
+from app_info import APP_NAME
 
 configure_debug_logging()
 BASE_DIR = str(app_base_dir())
-APP_AUMID = "BandoriPet"
+APP_AUMID = APP_NAME
 _STARTUP_CONFIG = ConfigManager()
 try:
     repair_startup_command()
@@ -69,7 +70,7 @@ def main():
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
     Live2DWidget.configure_default_surface_format()
     icon_path = os.path.join(BASE_DIR, "logo.ico")
-    ensure_windows_app_user_model_shortcut(APP_AUMID, "BandoriPet", icon_path)
+    ensure_windows_app_user_model_shortcut(APP_AUMID, APP_NAME, icon_path)
     set_windows_app_user_model_id(APP_AUMID)
 
     app = QApplication(sys.argv)
@@ -78,9 +79,9 @@ def main():
         import macos_patch
         macos_patch.hide_dock_icon()
     app.setWindowIcon(load_tray_icon())
-    app.setApplicationName("BandoriPet")
-    app.setApplicationDisplayName("BandoriPet")
-    app.setOrganizationName("BandoriPet")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
     apply_app_theme(cfg.get("dark_theme", False))
@@ -236,8 +237,8 @@ def main():
             app.setWindowIcon(icon)
             tray_icon.setIcon(icon)
         set_windows_app_user_model_id(APP_AUMID)
-        app.setApplicationName("BandoriPet")
-        app.setApplicationDisplayName("BandoriPet")
+        app.setApplicationName(APP_NAME)
+        app.setApplicationDisplayName(APP_NAME)
         tray_icon.showMessage(
             str(title or "提醒"),
             str(text or ""),
@@ -285,7 +286,7 @@ def main():
                 )
             except (KeyError, ValueError):
                 text = event.prompt_template
-            show_system_notification("BandoriPet", f"\U0001f389 {title}", text)
+            show_system_notification(APP_NAME, f"\U0001f389 {title}", text)
 
         manager.event_detected.connect(on_special_event)
         manager.start()

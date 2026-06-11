@@ -1,15 +1,20 @@
 import atexit
 import hmac
+import json
 import os
 import sys
 import hashlib
 import subprocess
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
+from app_info import APP_NAME
+
 
 DEBUG_LOG_ENV = "BANDORI_PET_DEBUG_LOG"
+INTERACTION_TRACE_ENV = "BANDORI_PET_INTERACTION_TRACE"
 _DEBUG_LOG_LOCK = threading.RLock()
 _DEBUG_LOG_FILE = None
 _DEBUG_LOG_CONFIGURED = False
@@ -156,6 +161,25 @@ def configure_debug_logging(argv: list[str] | None = None) -> Path | None:
     return path
 
 
+def interaction_trace(component: str, event: str, **fields) -> None:
+    if os.environ.get(INTERACTION_TRACE_ENV, "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return
+    payload = {
+        "t": round(time.monotonic(), 6),
+        "pid": os.getpid(),
+        "component": str(component),
+        "event": str(event),
+        **fields,
+    }
+    print(
+        "[interaction] " + json.dumps(payload, ensure_ascii=False, default=str),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def ensure_xwayland():
     if sys.platform not in ("linux", "linux2"):
         return
@@ -195,7 +219,7 @@ def set_windows_app_user_model_id(app_id: str) -> None:
 
 def ensure_windows_app_user_model_shortcut(
     app_id: str,
-    name: str = "BandoriPet",
+    name: str = APP_NAME,
     icon_path: str = "",
     target_path: str = "",
     arguments: str = "",
@@ -253,9 +277,9 @@ def ensure_windows_app_user_model_shortcut(
 
 
 def _safe_shortcut_name(name: str) -> str:
-    cleaned = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in str(name or "BandoriPet"))
+    cleaned = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in str(name or APP_NAME))
     cleaned = cleaned.strip().strip(".")
-    return cleaned or "BandoriPet"
+    return cleaned or APP_NAME
 
 
 def ipc_server_name() -> str:
