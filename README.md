@@ -236,20 +236,27 @@ python setup.py build_msi
 
 ### 自动更新发布约定
 
-设置页的「关于」中带有检查更新入口。三种运行方式会自动走不同更新路径：
+设置页的「关于」中带有检查更新入口。不同运行方式会自动走对应的更新路径：
 
 | 运行方式 | 更新方式 |
 |----------|----------|
-| `git clone` 后运行源码 | `git fetch` 检查上游，点击更新后执行 `git pull --ff-only`，并用当前 Python 安装 `requirements.txt` |
+| `git clone` 后运行源码 | `git fetch` 检查上游，点击更新后执行 `git pull --ff-only`；仅在依赖清单变化时安装 `requirements.txt` |
 | 便携版 exe | 从 GitHub Release 下载最新 `.zip`，关闭程序后覆盖当前目录并重启 |
+| Inno Setup EXE 安装包 | 从 GitHub Release 下载最新 `.exe`，校验安装结果后重启 |
 | MSI 安装包 | 从 GitHub Release 下载最新 `.msi`，启动安装器完成升级 |
+| macOS App | 按 CPU 架构下载 `.dmg` 或 `.zip`，替换当前 `.app`、重新签名并重启 |
 
 发布新版本时请同步修改 `app_info.py` 中的 `APP_VERSION`，并在 GitHub Release 上传匹配当前平台的资产，例如：
 
 ```text
 BandoriPet-3.0.1-WIN-AMD64.zip
 BandoriPet-3.0.1-WIN-AMD64.msi
+BandoriPet-3.0.1-winamd64-setup.exe
+BandoriPet-3.0.1-macos-arm64.dmg
+BandoriPet-3.0.1-macos-x86_64.dmg
 ```
+
+Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Release 的资产，否则已安装客户端会判定为无更新。
 
 如果你要从自己的仓库发布更新，请把 `app_info.py` 里的 `APP_REPOSITORY` 改成发布 Release 的仓库名。
 

@@ -627,6 +627,7 @@
   "SettingsWindow.update_channel_portable": "Portable exe",
   "SettingsWindow.update_channel_inno": "Inno Setup installer",
   "SettingsWindow.update_channel_msi": "MSI installer",
+  "SettingsWindow.update_channel_macos_app": "macOS App",
   "SettingsWindow.update_channel_unknown": "Unknown",
   "SettingsWindow.side_settings": "Settings",
   "SettingsWindow.side_fps": "Refresh Rate (FPS)",
