@@ -410,6 +410,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._last_message_layout_count = -1
         self._scroll_to_bottom_generation = 0
         self._pending_scroll_to_bottom_generation = 0
+        self._follow_stream_output = True
         self._history_oldest_message_id: int | None = None
         self._history_has_more = False
         self._history_loading = False
@@ -886,6 +887,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         message_scrollbar.rangeChanged.connect(self._on_message_scroll_range_changed)
         message_scrollbar.actionTriggered.connect(self._cancel_pending_scroll_to_bottom)
         message_scrollbar.valueChanged.connect(self._on_message_scroll_value_changed)
+        message_scrollbar.sliderPressed.connect(self._pause_stream_output_follow)
         self._scroll.viewport().installEventFilter(self)
         content_layout.addWidget(self._scroll, 1)
 
@@ -1927,7 +1929,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
         message_viewport = getattr(getattr(self, "_scroll", None), "viewport", lambda: None)()
         if obj == message_viewport and event.type() == QEvent.Type.Wheel:
             scrollbar = self._scroll.verticalScrollBar()
-            if event.angleDelta().y() > 0 and scrollbar.value() <= scrollbar.minimum():
+            vertical_delta = event.angleDelta().y() or event.pixelDelta().y()
+            if vertical_delta > 0:
+                self._pause_stream_output_follow()
+            if vertical_delta > 0 and scrollbar.value() <= scrollbar.minimum():
                 if self._load_older_messages():
                     event.accept()
                     return True
@@ -3471,6 +3476,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             name=display,
         )
         self._set_busy(True, planning=False)
+        self._follow_stream_output = True
         self._reset_tts_stream()
         self._stream_buffer = ""
         self._visible_stream_text = ""
@@ -3491,7 +3497,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._connect_message_bubble(user_bubble)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
         self._relayout_message_bubbles()
-        self._scroll_to_bottom()
+        self._scroll_to_bottom_for_stream()
 
         if self._is_group_chat:
             self._last_group_user_message_id = self._db.add_group_message(
@@ -4991,6 +4997,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._refresh_attachment_previews()
         self._update_attachment_hint()
         self._set_busy(True, planning=self._is_group_chat)
+        self._follow_stream_output = True
         self._reset_tts_stream()
         self._stream_buffer = ""
         self._visible_stream_text = ""
@@ -5008,6 +5015,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._connect_message_bubble(user_bubble)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, user_bubble)
         self._relayout_message_bubbles()
+        self._scroll_to_bottom_for_stream()
 
         if self._attachments_need_aux_vision(attachments):
             self._start_aux_vision_fallback(text, attachments)
@@ -5304,7 +5312,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._current_bubble.set_streaming(True)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
         self._relayout_message_bubbles()
-        self._scroll_to_bottom()
+        self._scroll_to_bottom_for_stream()
 
         messages = self._build_messages_for_character(character, spoken_names)
         self._pending_interaction_context = ""
@@ -5366,7 +5374,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._sync_input_height()
             self._worker = None
             self._current_bubble = None
-            self._scroll_to_bottom()
+            self._scroll_to_bottom_for_stream()
             return
         character = self._group_queue.pop(0)
         self._stream_buffer = ""
@@ -5382,7 +5390,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             if self._current_bubble:
                 self._current_bubble.set_reasoning(self._reasoning_stream_text)
                 self._current_bubble.set_streaming(True)
-                self._scroll_to_bottom()
+                self._scroll_to_bottom_for_stream()
 
         text = self._extract_stream_search_sources(text)
         chunk_actions, self._action_tag_stream_buffer = consume_stream_action_tags(
@@ -5423,7 +5431,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._visible_stream_text += self._stream_buffer[:take]
         self._stream_buffer = self._stream_buffer[take:]
         self._current_bubble.set_text(self._visible_stream_text)
-        self._scroll_to_bottom()
+        self._scroll_to_bottom_for_stream()
 
     def _on_auto_continue_boundary(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
@@ -5510,7 +5518,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._current_bubble.set_streaming(True)
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
         self._relayout_message_bubbles()
-        self._scroll_to_bottom()
+        self._scroll_to_bottom_for_stream()
 
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
@@ -5532,7 +5540,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._sync_input_height()
             self._worker = None
             self._current_bubble = None
-            self._scroll_to_bottom()
+            self._scroll_to_bottom_for_stream()
 
     def _on_response_error(self, error_msg: str):
         if self.sender() is not self._worker:
@@ -5817,6 +5825,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
         sb = self._scroll.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _scroll_to_bottom_for_stream(self):
+        if self._follow_stream_output:
+            self._scroll_to_bottom()
+
+    def _pause_stream_output_follow(self):
+        self._follow_stream_output = False
+
     def _schedule_scroll_to_bottom_after_load(self):
         self._scroll_to_bottom_generation += 1
         generation = self._scroll_to_bottom_generation
@@ -5839,11 +5854,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 0,
                 lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
             )
+        elif self._follow_stream_output and self._current_bubble is not None:
+            QTimer.singleShot(0, self._scroll_to_bottom_for_stream)
 
     def _on_message_scroll_value_changed(self, value: int):
+        scrollbar = self._scroll.verticalScrollBar()
+        self._follow_stream_output = value >= scrollbar.maximum()
         if not self._history_pagination_ready or self._history_loading:
             return
-        scrollbar = self._scroll.verticalScrollBar()
         if value <= scrollbar.minimum() + 48:
             self._load_older_messages()
 
