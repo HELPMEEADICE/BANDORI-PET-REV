@@ -1716,15 +1716,6 @@ class PetWindow(QWidget):
             except Exception:
                 pass
             QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
-            return
-        if self._live2d_prewarm_expression_queue:
-            name = self._live2d_prewarm_expression_queue.pop(0)
-            try:
-                model.PreloadExpression(name)
-                self._live2d_prewarmed_expressions.add(name)
-            except Exception:
-                pass
-            QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()

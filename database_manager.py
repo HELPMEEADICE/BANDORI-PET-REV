@@ -877,6 +877,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def _normalize_user_key(self, user_key: str) -> str:
         return (user_key or DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
 
+    def _user_filter_clause(self, user_key, where: str, params: tuple, column: str = "user_key") -> tuple[str, tuple]:
+        if user_key is None:
+            return where, params
+        normalized = self._normalize_user_key(user_key)
+        conjunction = " AND " if where else "WHERE "
+        return f"{where}{conjunction}{column}=?", (*params, normalized)
+
     def assign_legacy_chat_history_user(self, user_key: str) -> int:
         user_key = self._normalize_user_key(user_key)
         def operation():
@@ -1236,41 +1243,21 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return cur.lastrowid
 
     def get_conversations(self, character: str = "", user_key: str | None = None) -> list[dict]:
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         if character:
-            where = "WHERE c.character=?"
-            params: tuple = (character,)
-            if user_filter is not None:
-                where += " AND c.user_key=?"
-                params = (character, user_filter)
-            rows = self._conn.execute(
-                "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
-                "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
-                "FROM conversations c "
-                "JOIN messages latest ON latest.id=("
-                "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
-                ") "
-                f"{where} "
-                "ORDER BY latest.id DESC",
-                params,
-            ).fetchall()
+            where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
         else:
-            where = ""
-            params = ()
-            if user_filter is not None:
-                where = "WHERE c.user_key=?"
-                params = (user_filter,)
-            rows = self._conn.execute(
-                "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
-                "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
-                "FROM conversations c "
-                "JOIN messages latest ON latest.id=("
-                "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
-                ") "
-                f"{where} "
-                "ORDER BY latest.id DESC",
-                params,
-            ).fetchall()
+            where, params = self._user_filter_clause(user_key, "", (), "c.user_key")
+        rows = self._conn.execute(
+            "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
+            "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
+            "FROM conversations c "
+            "JOIN messages latest ON latest.id=("
+            "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
+            ") "
+            f"{where} "
+            "ORDER BY latest.id DESC",
+            params,
+        ).fetchall()
         result = []
         for r in rows:
             conv_id = _db_int(r[0])
@@ -1288,12 +1275,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return result
 
     def get_last_conversation(self, character: str, user_key: str | None = None) -> dict | None:
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        where = "WHERE c.character=?"
-        params: tuple = (character,)
-        if user_filter is not None:
-            where += " AND c.user_key=?"
-            params = (character, user_filter)
+        where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
         row = self._conn.execute(
             "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
             "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
@@ -1548,12 +1530,11 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         before_id: int | None = None,
     ) -> list[dict]:
         conversation_id = conversation_id or "default"
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        where = "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
-        params: tuple = (group_key, conversation_id, conversation_id)
-        if user_filter is not None:
-            where += " AND user_key=?"
-            params = (group_key, conversation_id, conversation_id, user_filter)
+        where, params = self._user_filter_clause(
+            user_key,
+            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
+            (group_key, conversation_id, conversation_id),
+        )
         before_id = _db_int(before_id)
         if before_id is not None and before_id > 0:
             where += " AND id<?"
@@ -1581,30 +1562,18 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
     def delete_group_conversation(self, group_key: str, conversation_id: str, user_key: str | None = None):
         conversation_id = conversation_id or "default"
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
+        base_where = "group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
+        base_params = (group_key, conversation_id, conversation_id)
+        where, params = self._user_filter_clause(user_key, base_where, base_params)
 
         def operation():
-            if user_filter is None:
-                self._conn.execute(
-                    "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
-                    (group_key, conversation_id, conversation_id),
-                )
-            else:
-                self._conn.execute(
-                    "DELETE FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) AND user_key=?",
-                    (group_key, conversation_id, conversation_id, user_filter),
-                )
+            self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
             self._conn.commit()
 
         _run_with_locked_retry(self._conn, operation, lock=self._lock)
 
     def get_group_conversations(self, group_key: str, user_key: str | None = None) -> list[dict]:
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        where = "WHERE group_key=?"
-        params: tuple = (group_key,)
-        if user_filter is not None:
-            where += " AND user_key=?"
-            params = (group_key, user_filter)
+        where, params = self._user_filter_clause(user_key, "WHERE group_key=?", (group_key,))
         rows = self._conn.execute(
             "SELECT g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at "
             "FROM group_messages g "
@@ -1636,12 +1605,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return result
 
     def get_group_chats(self, user_key: str | None = None) -> list[dict]:
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
-        where = ""
-        params: tuple = ()
-        if user_filter is not None:
-            where = "WHERE user_key=?"
-            params = (user_filter,)
+        where, params = self._user_filter_clause(user_key, "", ())
         rows = self._conn.execute(
             "SELECT g.group_key, g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at "
             "FROM group_messages g "
@@ -1703,26 +1667,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         _run_with_locked_retry(self._conn, operation, lock=self._lock)
 
     def delete_empty_conversations(self, character: str = "", user_key: str | None = None):
-        user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         def operation():
-            if character:
-                where = "character=?"
-                params: tuple = (character,)
-                if user_filter is not None:
-                    where += " AND user_key=?"
-                    params = (character, user_filter)
-                self._conn.execute(
-                    f"DELETE FROM conversations WHERE {where} AND NOT EXISTS ("
-                    "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                    ")",
-                    params,
-                )
-            else:
-                self._conn.execute(
-                    "DELETE FROM conversations WHERE NOT EXISTS ("
-                    "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                    ")"
-                )
+            base = "character=?" if character else ""
+            base_params: tuple = (character,) if character else ()
+            where, params = self._user_filter_clause(user_key, base, base_params)
+            suffix = " AND " if where else ""
+            self._conn.execute(
+                f"DELETE FROM conversations {('WHERE ' + where) if where else ''}{suffix}NOT EXISTS ("
+                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
+                ")",
+                params,
+            )
             self._conn.commit()
 
         _run_with_locked_retry(self._conn, operation, lock=self._lock)

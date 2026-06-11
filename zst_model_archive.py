@@ -314,21 +314,12 @@ def _open_tar_zst(archive_path: str):
         archive = tarfile.open(fileobj=reader, mode="r|")
         yield archive
     finally:
-        if archive is not None:
-            try:
-                archive.close()
-            except Exception:
-                pass
-        if reader is not None:
-            try:
-                reader.close()
-            except Exception:
-                pass
-        if raw_file is not None:
-            try:
-                raw_file.close()
-            except Exception:
-                pass
+        for resource in (archive, reader, raw_file):
+            if resource is not None:
+                try:
+                    resource.close()
+                except OSError:
+                    pass
 
 
 def _normalize_member(path: str) -> str:

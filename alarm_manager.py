@@ -384,10 +384,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
 
     def _current_desktop_state(self) -> dict:
         try:
-            state = current_desktop_state()
+            return current_desktop_state()
         except Exception:
             return {}
-        return state if isinstance(state, dict) else {}
 
     def _care_policy(self) -> dict:
         return self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}) if self._cfg else {}

@@ -149,8 +149,7 @@ def main():
         # stalls, force-terminate after a short delay so the process never
         # hangs on exit.
         def _force_exit():
-            import os as _os
-            _os._exit(0)
+            os._exit(0)
 
         QTimer.singleShot(10_000, _force_exit)
 

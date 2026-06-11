@@ -10,6 +10,17 @@ _TOOL_PREFIX = "computer_"
 _LAST_SCREENSHOT_METRICS: dict[str, int] = {}
 
 
+def _parse_arguments(arguments):
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    return arguments
+
+
 def computer_tools(config: dict) -> list[dict]:
     if not bool(config.get("computer_use_enabled", False)):
         return []
@@ -98,13 +109,7 @@ def is_computer_tool_name(name: str) -> bool:
 
 
 def run_computer_tool(name: str, arguments, config: dict) -> dict:
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments)
     if not bool(config.get("computer_use_enabled", False)):
         return _result("Computer Use is disabled in settings.")
 

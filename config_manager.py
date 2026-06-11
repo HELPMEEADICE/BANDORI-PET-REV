@@ -466,8 +466,8 @@ def _normalize_llm_api_profile(profile) -> dict | None:
         "llm_aux_api_url": str(profile.get("llm_aux_api_url", "")).strip(),
         "llm_aux_api_key": str(profile.get("llm_aux_api_key", "")).strip(),
         "llm_aux_model_id": str(profile.get("llm_aux_model_id", "")).strip(),
-        "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
-        if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
+        "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking")
+        if isinstance(profile.get("llm_aux_enable_thinking"), (bool, type(None))) else None,
         "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
         "llm_api_mode": api_mode,
         "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
@@ -475,8 +475,8 @@ def _normalize_llm_api_profile(profile) -> dict | None:
             profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
         ),
         "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
-        "llm_enable_thinking": profile.get("llm_enable_thinking", None)
-        if profile.get("llm_enable_thinking", None) in (True, False, None) else None,
+        "llm_enable_thinking": profile.get("llm_enable_thinking")
+        if isinstance(profile.get("llm_enable_thinking"), (bool, type(None))) else None,
         "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),
     }
 

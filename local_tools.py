@@ -24,6 +24,17 @@ from reminder_core import (
 )
 
 
+def _parse_arguments(arguments, fallback_key: str | None = None):
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {fallback_key: arguments} if fallback_key else {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    return arguments
+
+
 WEB_SEARCH_TOOL_NAME = "web_search"
 WEB_FETCH_TOOL_NAME = "web_fetch"
 AUTO_CONTINUE_TOOL_NAME = "continue_conversation"
@@ -354,13 +365,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
         if is_computer_tool_name(name):
             return run_computer_tool(name, arguments, tool_config or {})
         return {"content": f"Unsupported tool: {name}", "extra_messages": []}
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {"query": arguments}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments, fallback_key="query")
     query = _normalize_web_search_query(
         arguments.get("query", ""),
         (tool_config or {}).get("_latest_user_text", ""),
@@ -375,13 +380,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
 
 
 def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict:
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {"url": arguments}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments, fallback_key="url")
     url = str(arguments.get("url", "") or "").strip()
     try:
         max_chars = int(arguments.get("max_chars", 6000) or 6000)
@@ -392,13 +391,7 @@ def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict
 
 
 def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments)
     try:
         from config_manager import ConfigManager
         from settings_bus import publish_settings
@@ -459,13 +452,7 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
 
 
 def _run_poke_user_tool_call(arguments, tool_config: dict | None = None) -> dict:
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments)
     character = str((tool_config or {}).get("_active_character", "") or "").strip()
     message = str(arguments.get("message", "") or "").strip()
     try:

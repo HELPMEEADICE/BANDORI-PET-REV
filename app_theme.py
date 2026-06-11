@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import sys
 
@@ -32,7 +33,8 @@ def _detect_system_dark() -> bool:
             value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
             winreg.CloseKey(key)
             return value == 0
-        except Exception:
+        except OSError as exc:
+            logging.debug("app_theme: registry read failed: %s", exc)
             return False
     elif sys.platform == "darwin":
         try:
@@ -41,7 +43,8 @@ def _detect_system_dark() -> bool:
                 capture_output=True, text=True, timeout=5
             )
             return result.stdout.strip().lower() == "dark"
-        except Exception:
+        except (subprocess.SubprocessError, OSError) as exc:
+            logging.debug("app_theme: macOS detection failed: %s", exc)
             return False
     elif sys.platform.startswith("linux"):
         try:
@@ -51,8 +54,8 @@ def _detect_system_dark() -> bool:
             )
             if "prefer-dark" in result.stdout.strip().lower():
                 return True
-        except Exception:
-            pass
+        except (subprocess.SubprocessError, OSError) as exc:
+            logging.debug("app_theme: gsettings color-scheme failed: %s", exc)
         try:
             result = subprocess.run(
                 ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
@@ -60,8 +63,8 @@ def _detect_system_dark() -> bool:
             )
             if "dark" in result.stdout.strip().lower():
                 return True
-        except Exception:
-            pass
+        except (subprocess.SubprocessError, OSError) as exc:
+            logging.debug("app_theme: gsettings gtk-theme failed: %s", exc)
         return False
     return False
 

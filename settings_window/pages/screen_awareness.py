@@ -17,6 +17,9 @@ SCREEN_AWARENESS_CONFIG_KEYS = (
 
 
 class ScreenAwarenessPageMixin:
+    def _screen_awareness_ready(self) -> bool:
+        return bool(self._cfg) and hasattr(self, "_screen_awareness_enabled")
+
     def _build_screen_awareness_section(self, parent: QWidget) -> QWidget:
         screen_panel = QWidget(parent)
         screen_panel.setObjectName("screenAwarenessPanel")
@@ -225,7 +228,7 @@ class ScreenAwarenessPageMixin:
         self._screen_awareness_display_mode.setCurrentIndex(0)
 
     def _load_screen_awareness_controls(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+        if not self._screen_awareness_ready():
             return
         self._screen_awareness_enabled.setChecked(bool(self._cfg.get("screen_awareness_enabled", False)))
         self._screen_awareness_interval.setValue(max(1, min(120, int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30))))
@@ -248,7 +251,7 @@ class ScreenAwarenessPageMixin:
             )
 
     def _sync_screen_awareness_config_from_ui(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+        if not self._screen_awareness_ready():
             return
         self._cfg.set("screen_awareness_enabled", bool(self._screen_awareness_enabled.isChecked()))
         self._cfg.set("screen_awareness_interval_minutes", int(self._screen_awareness_interval.value()))
@@ -298,7 +301,7 @@ class ScreenAwarenessPageMixin:
         }
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+        if not self._screen_awareness_ready():
             return False
         self._sync_screen_awareness_config_from_ui()
         try:
@@ -325,7 +328,7 @@ class ScreenAwarenessPageMixin:
             return False
 
     def _test_screen_awareness_now(self):
-        if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
+        if not self._screen_awareness_ready():
             return
         if not self._screen_awareness_enabled.isChecked():
             InfoBar.warning(

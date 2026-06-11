@@ -20,6 +20,17 @@ _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
 _TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
 _CLIENTS: dict[str, "StdioMcpClient"] = {}
+
+
+def _parse_arguments(arguments):
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    return arguments
 _LOCK = threading.RLock()
 _thread_local = threading.local()
 _APP_DIR = Path(app_base_dir()).resolve()
@@ -170,13 +181,7 @@ def is_mcp_tool_name(name: str) -> bool:
 
 
 def call_mcp_tool(public_name: str, arguments) -> str:
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
+    arguments = _parse_arguments(arguments)
     with _LOCK:
         server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
     if not server or not tool_name:
