@@ -1,7 +1,9 @@
 import html
 import re
+from typing import Any
 
-from PySide6.QtCore import QDate, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QDate, QModelIndex, QRect, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
     QDateEdit,
@@ -9,12 +11,15 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLayout,
+    QListView,
+    QPushButton,
     QSizePolicy,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import ProgressRing
+from qfluentwidgets import ListView, ProgressRing
 
 from settings_window.constants import *
 from settings_window.widgets import *
@@ -43,9 +48,304 @@ class _ChatHistoryWorker(QThread):
             self.error.emit(str(exc))
 
 
+class ChatHistoryModel:
+    """聊天记录数据模型，管理记录列表和分页状态"""
+
+    def __init__(self):
+        self.records: list[dict] = []
+        self.total: int = 0
+        self.has_more: bool = False
+        self.keyword: str = ""
+
+    def clear(self):
+        self.records.clear()
+        self.total = 0
+        self.has_more = False
+
+    def append_records(self, records: list[dict]):
+        self.records.extend(records)
+
+    def set_result(self, result: dict):
+        self.total = result.get("total", -1)
+        self.has_more = result.get("has_more", False)
+
+    @property
+    def shown_count(self) -> int:
+        return len(self.records)
+
+
+class ChatHistoryDelegate(QStyledItemDelegate):
+    """聊天记录渲染代理，使用 QPainter 绘制卡片"""
+
+    _CARD_RADIUS = 10
+    _CARD_PADDING_H = 14
+    _CARD_PADDING_V = 11
+    _CARD_SPACING = 7
+    _CARD_MARGIN_BOTTOM = 9
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._keyword = ""
+        self._colors = {
+            "card_bg": "#ffffff",
+            "border": "#e3e7ee",
+            "muted": "#687385",
+            "text": "#20242a",
+            "highlight_bg": "#facc15",
+            "highlight_fg": "#111827",
+        }
+
+    def set_keyword(self, keyword: str):
+        self._keyword = keyword
+
+    def update_theme(self, dark: bool):
+        if dark:
+            self._colors = {
+                "card_bg": "#242424",
+                "border": "#3b3b3b",
+                "muted": "#a7b0bf",
+                "text": "#f2f2f2",
+                "highlight_bg": "#facc15",
+                "highlight_fg": "#111827",
+            }
+        else:
+            self._colors = {
+                "card_bg": "#ffffff",
+                "border": "#e3e7ee",
+                "muted": "#687385",
+                "text": "#20242a",
+                "highlight_bg": "#facc15",
+                "highlight_fg": "#111827",
+            }
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        record = index.data(Qt.ItemDataRole.UserRole)
+        if not record:
+            painter.restore()
+            return
+
+        rect = option.rect.adjusted(
+            0, 0, 0, -self._CARD_MARGIN_BOTTOM
+        )
+
+        # 绘制卡片背景
+        card_bg = QColor(self._colors["card_bg"])
+        border_color = QColor(self._colors["border"])
+        painter.setPen(border_color)
+        painter.setBrush(card_bg)
+        painter.drawRoundedRect(rect, self._CARD_RADIUS, self._CARD_RADIUS)
+
+        # 计算内容区域
+        content_rect = rect.adjusted(
+            self._CARD_PADDING_H, self._CARD_PADDING_V,
+            -self._CARD_PADDING_H, -self._CARD_PADDING_V
+        )
+
+        y_offset = content_rect.top()
+        available_width = content_rect.width()
+
+        # 绘制 header
+        header_text = self._build_header_text(record)
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(10)
+        header_rect = QRect(content_rect.left(), int(y_offset), available_width, 1000)
+        header_height = self._draw_text(
+            painter, header_rect, header_text, header_font,
+            QColor(self._colors["text"]), Qt.TextFlag.TextWordWrap
+        )
+        y_offset += header_height + self._CARD_SPACING
+
+        # 绘制 meta
+        meta_text = self._build_meta_text(record)
+        meta_font = QFont()
+        meta_font.setPointSize(9)
+        meta_rect = QRect(content_rect.left(), int(y_offset), available_width, 1000)
+        meta_height = self._draw_text(
+            painter, meta_rect, meta_text, meta_font,
+            QColor(self._colors["muted"]), Qt.TextFlag.TextWordWrap
+        )
+        y_offset += meta_height + self._CARD_SPACING
+
+        # 绘制 content（带关键词高亮）
+        content_text = str(record.get("content") or "")
+        content_font = QFont()
+        content_font.setPointSize(10)
+        content_rect_y = QRect(content_rect.left(), int(y_offset), available_width, 1000)
+        self._draw_content_with_highlight(
+            painter, content_rect_y, content_text, content_font,
+            QColor(self._colors["text"])
+        )
+
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        record = index.data(Qt.ItemDataRole.UserRole)
+        if not record:
+            return QSize(0, 0)
+
+        available_width = option.rect.width() - 2 * self._CARD_PADDING_H
+
+        # 计算 header 高度
+        header_text = self._build_header_text(record)
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(10)
+        header_height = self._calculate_text_height(header_text, header_font, available_width)
+
+        # 计算 meta 高度
+        meta_text = self._build_meta_text(record)
+        meta_font = QFont()
+        meta_font.setPointSize(9)
+        meta_height = self._calculate_text_height(meta_text, meta_font, available_width)
+
+        # 计算 content 高度
+        content_text = str(record.get("content") or "")
+        content_font = QFont()
+        content_font.setPointSize(10)
+        content_height = self._calculate_text_height(content_text, content_font, available_width)
+
+        total_height = (
+            self._CARD_PADDING_V
+            + header_height
+            + self._CARD_SPACING
+            + meta_height
+            + self._CARD_SPACING
+            + content_height
+            + self._CARD_PADDING_V
+            + self._CARD_MARGIN_BOTTOM
+        )
+
+        return QSize(option.rect.width(), max(80, total_height))
+
+    def _build_header_text(self, record: dict) -> str:
+        source = _tr(
+            "SettingsWindow.chat_history_group", default="群聊"
+        ) if record.get("source") == "group" else _tr(
+            "SettingsWindow.chat_history_private", default="私聊"
+        )
+        character = record.get("_display_character", "")
+        speaker = record.get("_display_speaker", "")
+        return _tr(
+            "SettingsWindow.chat_history_record_header",
+            default="{speaker} · {source} · {character}",
+            speaker=speaker, source=source, character=character,
+        )
+
+    def _build_meta_text(self, record: dict) -> str:
+        user = record.get("_display_user", "")
+        time = record.get("created_at", "")
+        return _tr(
+            "SettingsWindow.chat_history_record_meta",
+            default="{time} · 用户身份：{user}",
+            time=time, user=user,
+        )
+
+    def _draw_text(self, painter: QPainter, rect: QRect, text: str,
+                   font: QFont, color: QColor, flags: Qt.TextFlag = 0) -> int:
+        painter.setFont(font)
+        painter.setPen(color)
+        text_rect = painter.boundingRect(
+            rect, flags | Qt.TextFlag.TextWordWrap, text
+        )
+        painter.drawText(rect, flags | Qt.TextFlag.TextWordWrap, text)
+        return text_rect.height()
+
+    def _calculate_text_height(self, text: str, font: QFont, width: int) -> int:
+        doc = QTextDocument()
+        doc.setDefaultFont(font)
+        doc.setTextWidth(width)
+        doc.setPlainText(text)
+        return int(doc.size().height())
+
+    def _draw_content_with_highlight(self, painter: QPainter, rect: QRect,
+                                     content: str, font: QFont, color: QColor):
+        if not self._keyword:
+            self._draw_text(painter, rect, content, font, color)
+            return
+
+        keyword = self._keyword.strip()
+        if not keyword:
+            self._draw_text(painter, rect, content, font, color)
+            return
+
+        painter.setFont(font)
+        painter.setPen(color)
+
+        # 使用 QTextDocument 来渲染带高亮的文本
+        doc = QTextDocument()
+        doc.setDefaultFont(font)
+        doc.setTextWidth(rect.width())
+
+        # 构建带高亮的 HTML
+        highlighted = self._highlight_keyword(content, keyword)
+        doc.setHtml(highlighted)
+
+        painter.save()
+        painter.translate(rect.topLeft())
+        doc.drawContents(painter)
+        painter.restore()
+
+    @staticmethod
+    def _highlight_keyword(content: str, keyword: str) -> str:
+        content = str(content or "")
+        keyword = str(keyword or "").strip()
+        if not keyword:
+            return html.escape(content).replace("\n", "<br>")
+        parts = []
+        cursor = 0
+        for match in re.finditer(re.escape(keyword), content, flags=re.IGNORECASE):
+            parts.append(html.escape(content[cursor:match.start()]))
+            parts.append(
+                '<span style="background-color:#facc15;color:#111827;">'
+                + html.escape(match.group(0))
+                + "</span>"
+            )
+            cursor = match.end()
+        parts.append(html.escape(content[cursor:]))
+        return "".join(parts).replace("\n", "<br>")
+
+
+class ChatHistoryListView(ListView):
+    """继承 qfluentwidgets.ListView，使用 Fluent 风格滚动条"""
+
+    load_more_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._load_more_widget: QPushButton | None = None
+        self._has_more = False
+
+        self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSelectionMode(QListView.SelectionMode.NoSelection)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        # 连接滚动信号
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+
+    def set_has_more(self, has_more: bool):
+        self._has_more = has_more
+        self._update_load_more_visibility()
+
+    def _on_scroll_changed(self, value: int):
+        if not self._has_more:
+            return
+        scrollbar = self.verticalScrollBar()
+        if scrollbar.maximum() - value < 100:
+            self.load_more_requested.emit()
+
+    def _update_load_more_visibility(self):
+        # 在 QListView 中，加载更多通过滚动触发
+        pass
+
+
 class ChatHistoryPageMixin:
-    _CHAT_HISTORY_PAGE_SIZE = 100
-    _CHAT_HISTORY_BATCH_SIZE = 20
+    _CHAT_HISTORY_PAGE_SIZE = 50
 
     def _build_chat_history_page(self):
         page = self._make_theme_widget(QWidget())
@@ -213,33 +513,63 @@ class ChatHistoryPageMixin:
         summary_row.addWidget(self._history_refresh_button)
         layout.addLayout(summary_row)
 
-        self._history_scroll = ScrollArea(page)
-        self._history_scroll.setObjectName("chatHistoryScroll")
-        self._history_scroll.setWidgetResizable(True)
-        self._history_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._reserve_overlay_scrollbar(self._history_scroll)
+        # 创建 QListView 替代 QScrollArea
+        self._history_list_view = ChatHistoryListView(page)
+        self._history_list_view.setObjectName("chatHistoryList")
 
-        self._history_content = QWidget(self._history_scroll)
-        self._history_content.setObjectName("chatHistoryContent")
-        self._history_content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._history_results_layout = QVBoxLayout(self._history_content)
-        self._history_results_layout.setContentsMargins(0, 0, 12, 0)
-        self._history_results_layout.setSpacing(9)
-        self._history_results_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        self._history_results_layout.addStretch()
-        self._history_scroll.setWidget(self._history_content)
-        layout.addWidget(self._history_scroll, 1)
+        # 创建数据模型和代理
+        self._history_data_model = ChatHistoryModel()
+        self._history_delegate = ChatHistoryDelegate(self._history_list_view)
+        self._history_list_view.setItemDelegate(self._history_delegate)
+
+        # 创建 Qt 模型
+        from PySide6.QtCore import QAbstractListModel
+
+        class ListModel(QAbstractListModel):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self._items: list[dict] = []
+
+            def rowCount(self, parent=QModelIndex()):
+                return len(self._items)
+
+            def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+                if not index.isValid() or index.row() >= len(self._items):
+                    return None
+                if role == Qt.ItemDataRole.UserRole:
+                    return self._items[index.row()]
+                return None
+
+            def set_items(self, items: list[dict]):
+                self.beginResetModel()
+                self._items = items
+                self.endResetModel()
+
+            def append_items(self, items: list[dict]):
+                if not items:
+                    return
+                begin = len(self._items)
+                self.beginInsertRows(QModelIndex(), begin, begin + len(items) - 1)
+                self._items.extend(items)
+                self.endInsertRows()
+
+            def clear(self):
+                self.beginResetModel()
+                self._items.clear()
+                self.endResetModel()
+
+        self._history_qmodel = ListModel()
+        self._history_list_view.setModel(self._history_qmodel)
+
+        # 连接加载更多信号
+        self._history_list_view.load_more_requested.connect(self._load_more_chat_history)
+
+        layout.addWidget(self._history_list_view, 1)
 
         self._history_db = None
-        self._history_shown = 0
-        self._history_total = 0
-        self._history_has_more = False
-        self._history_load_more_button = None
         self._history_worker = None
         self._history_filter_cache = None
-        self._history_loading_ring = None
+        self._history_loading_widget = None
         self._history_search_generation = 0
         self._history_search_timer = QTimer(page)
         self._history_search_timer.setSingleShot(True)
@@ -404,14 +734,6 @@ class ChatHistoryPageMixin:
             combo.blockSignals(False)
         self._on_history_range_changed()
 
-    @staticmethod
-    def _clear_history_results(layout):
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
     def _history_display_character(self, record: dict) -> str:
         character = str(record.get("character") or "")
         if character:
@@ -440,91 +762,12 @@ class ChatHistoryPageMixin:
                 return speaker.group(1).strip()
         return self._history_display_character(record)
 
-    @staticmethod
-    def _highlight_history_keyword(content: str, keyword: str) -> str:
-        content = str(content or "")
-        keyword = str(keyword or "").strip()
-        if not keyword:
-            return html.escape(content).replace("\n", "<br>")
-        parts = []
-        cursor = 0
-        for match in re.finditer(re.escape(keyword), content, flags=re.IGNORECASE):
-            parts.append(html.escape(content[cursor:match.start()]))
-            parts.append(
-                '<span style="background-color:#facc15;color:#111827;">'
-                + html.escape(match.group(0))
-                + "</span>"
-            )
-            cursor = match.end()
-        parts.append(html.escape(content[cursor:]))
-        return "".join(parts).replace("\n", "<br>")
-
-    def _add_chat_history_record(self, record: dict, keyword: str):
-        card = QFrame(self._history_content)
-        card.setObjectName("chatHistoryRecord")
-        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        card.setMinimumWidth(0)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 11, 14, 11)
-        card_layout.setSpacing(7)
-
-        source_label = _tr(
-            "SettingsWindow.chat_history_group",
-            default="群聊",
-        ) if record.get("source") == "group" else _tr(
-            "SettingsWindow.chat_history_private",
-            default="私聊",
-        )
-        character_label = self._history_display_character(record)
-        role_label = self._history_role_label(record)
-        header = StrongBodyLabel(
-            _tr(
-                "SettingsWindow.chat_history_record_header",
-                default="{speaker} · {source} · {character}",
-                speaker=role_label,
-                source=source_label,
-                character=character_label,
-            ),
-            card,
-        )
-        header.setMinimumWidth(0)
-        header.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        header.setWordWrap(True)
-        card_layout.addWidget(header)
-
-        meta = BodyLabel(
-            _tr(
-                "SettingsWindow.chat_history_record_meta",
-                default="{time} · 用户身份：{user}",
-                time=record.get("created_at", ""),
-                user=self._history_display_user(record.get("user_key", "")),
-            ),
-            card,
-        )
-        meta.setObjectName("chatHistoryMuted")
-        meta.setMinimumWidth(0)
-        meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        meta.setWordWrap(True)
-        card_layout.addWidget(meta)
-
-        content = QLabel(card)
-        content.setObjectName("chatHistoryBody")
-        content.setTextFormat(Qt.TextFormat.RichText)
-        content.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        content.setMinimumWidth(0)
-        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        content.setWordWrap(True)
-        content.setText(self._highlight_history_keyword(record.get("content", ""), keyword))
-        card_layout.addWidget(content)
-        self._history_results_layout.addWidget(card)
-
-    def _add_chat_history_records_batch(self, records, keyword: str):
-        batch = self._CHAT_HISTORY_BATCH_SIZE
-        for i, record in enumerate(records):
-            self._add_chat_history_record(record, keyword)
-            if (i + 1) % batch == 0:
-                QApplication.processEvents()
+    def _enrich_record(self, record: dict) -> dict:
+        """为记录添加显示字段"""
+        record["_display_character"] = self._history_display_character(record)
+        record["_display_speaker"] = self._history_role_label(record)
+        record["_display_user"] = self._history_display_user(record.get("user_key", ""))
+        return record
 
     def _build_chat_history_query_params(self, offset: int = 0, skip_count: bool = False) -> dict:
         date_from, date_to = self._history_date_bounds()
@@ -551,7 +794,7 @@ class ChatHistoryPageMixin:
         worker = _ChatHistoryWorker(
             db_factory=lambda: DatabaseManager(),
             query_params=params,
-            parent=self._history_content,
+            parent=self._history_list_view,
         )
         worker.finished.connect(on_result)
         worker.error.connect(on_error or self._on_history_query_error)
@@ -566,62 +809,49 @@ class ChatHistoryPageMixin:
 
     def _show_history_loading(self):
         self._hide_history_loading()
-        ring = ProgressRing(self._history_content)
+        ring = ProgressRing(self._history_list_view)
         ring.setFixedSize(36, 36)
         ring.setStrokeWidth(4)
         ring.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        container = QWidget(self._history_content)
+        container = QWidget(self._history_list_view)
         container.setObjectName("chatHistoryLoadingContainer")
         cl = QHBoxLayout(container)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cl.setContentsMargins(0, 24, 0, 24)
         cl.addWidget(ring)
-        self._history_results_layout.addWidget(container)
-        self._history_loading_ring = container
+        container.setFixedSize(self._history_list_view.viewport().size())
+        container.show()
+        self._history_loading_widget = container
 
     def _hide_history_loading(self):
-        if self._history_loading_ring is not None:
-            self._history_loading_ring.setParent(None)
-            self._history_loading_ring.deleteLater()
-            self._history_loading_ring = None
+        if self._history_loading_widget is not None:
+            self._history_loading_widget.setParent(None)
+            self._history_loading_widget.deleteLater()
+            self._history_loading_widget = None
 
-    def _finish_chat_history_results(self):
-        if self._history_has_more:
-            self._history_load_more_button = PushButton(
-                _tr("SettingsWindow.chat_history_load_more", default="加载更多"),
-                self._history_content,
-            )
-            self._history_load_more_button.setFixedHeight(36)
-            self._history_load_more_button.clicked.connect(self._load_more_chat_history)
-            self._history_results_layout.addWidget(
-                self._history_load_more_button,
-                0,
-                Qt.AlignmentFlag.AlignHCenter,
-            )
-        else:
-            self._history_load_more_button = None
-        self._history_results_layout.addStretch()
-        if self._history_total >= 0:
+    def _update_summary_label(self):
+        if self._history_data_model.total >= 0:
             self._history_summary_label.setText(_tr(
                 "SettingsWindow.chat_history_result_count",
                 default="找到 {total} 条，当前显示 {shown} 条",
-                total=self._history_total,
-                shown=self._history_shown,
+                total=self._history_data_model.total,
+                shown=self._history_data_model.shown_count,
             ))
         else:
             self._history_summary_label.setText(_tr(
                 "SettingsWindow.chat_history_result_count_approx",
                 default="当前显示 {shown} 条",
-                shown=self._history_shown,
+                shown=self._history_data_model.shown_count,
             ))
 
     def _refresh_chat_history(self, *_args):
-        if not hasattr(self, "_history_results_layout"):
+        if not hasattr(self, "_history_list_view"):
             return
         self._history_search_generation += 1
         gen = self._history_search_generation
         params = self._build_chat_history_query_params(offset=0, skip_count=True)
-        self._clear_history_results(self._history_results_layout)
+        self._history_data_model.clear()
+        self._history_qmodel.clear()
         self._show_history_loading()
         self._start_history_worker(
             params,
@@ -634,34 +864,31 @@ class ChatHistoryPageMixin:
         self._hide_history_loading()
         keyword = self._history_keyword_edit.text().strip()
         records = result["records"]
-        self._history_total = result.get("total", -1)
-        self._history_has_more = result.get("has_more", False)
-        self._history_shown = len(records)
+
+        self._history_data_model.keyword = keyword
+        self._history_data_model.set_result(result)
+        self._history_delegate.set_keyword(keyword)
+
         if not records:
-            empty = BodyLabel(
-                _tr("SettingsWindow.chat_history_empty", default="没有找到符合条件的聊天记录。"),
-                self._history_content,
+            self._history_summary_label.setText(
+                _tr("SettingsWindow.chat_history_empty", default="没有找到符合条件的聊天记录。")
             )
-            empty.setObjectName("chatHistoryEmpty")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setMinimumHeight(120)
-            self._history_results_layout.addWidget(empty)
         else:
-            self._add_chat_history_records_batch(records, keyword)
-        self._finish_chat_history_results()
+            # 为每条记录添加显示字段
+            enriched_records = [self._enrich_record(r) for r in records]
+            self._history_data_model.append_records(enriched_records)
+            self._history_qmodel.set_items(self._history_data_model.records)
+            self._history_list_view.set_has_more(self._history_data_model.has_more)
+            self._update_summary_label()
 
     def _load_more_chat_history(self):
-        if not self._history_has_more and self._history_total >= 0 and self._history_shown >= self._history_total:
+        if not self._history_data_model.has_more:
             return
-        if self._history_results_layout.count():
-            self._history_results_layout.takeAt(self._history_results_layout.count() - 1)
-        if self._history_load_more_button is not None:
-            self._history_results_layout.removeWidget(self._history_load_more_button)
-            self._history_load_more_button.deleteLater()
-            self._history_load_more_button = None
+        if self._history_data_model.total >= 0 and self._history_data_model.shown_count >= self._history_data_model.total:
+            return
 
         params = self._build_chat_history_query_params(
-            offset=self._history_shown, skip_count=True,
+            offset=self._history_data_model.shown_count, skip_count=True,
         )
         self._start_history_worker(
             params,
@@ -671,48 +898,47 @@ class ChatHistoryPageMixin:
     def _on_load_more_finished(self, result):
         keyword = self._history_keyword_edit.text().strip()
         records = result["records"]
-        self._history_total = result.get("total", self._history_total)
-        self._history_has_more = result.get("has_more", False)
+        self._history_data_model.total = result.get("total", self._history_data_model.total)
+        self._history_data_model.has_more = result.get("has_more", False)
+        self._history_delegate.set_keyword(keyword)
+
         if records:
-            self._add_chat_history_records_batch(records, keyword)
-            self._history_shown += len(records)
+            enriched_records = [self._enrich_record(r) for r in records]
+            self._history_data_model.append_records(enriched_records)
+            self._history_qmodel.append_items(enriched_records)
         else:
-            self._history_has_more = False
-        self._finish_chat_history_results()
+            self._history_data_model.has_more = False
+
+        self._history_list_view.set_has_more(self._history_data_model.has_more)
+        self._update_summary_label()
 
     def _style_chat_history_page(self, page: QWidget):
         dark = isDarkTheme()
         page_bg = _BG_DARK if dark else _BG_LIGHT
         panel_bg = "#252525" if dark else "#f8fafc"
-        card_bg = "#242424" if dark else "#ffffff"
-        border = "#3b3b3b" if dark else "#e3e7ee"
-        muted = "#a7b0bf" if dark else "#687385"
-        text = "#f2f2f2" if dark else "#20242a"
+        list_bg = page_bg
+
+        # 更新代理主题
+        self._history_delegate.update_theme(dark)
+
         page.setStyleSheet(f"""
-            QWidget#chatHistoryPage, QWidget#chatHistoryContent {{
+            QWidget#chatHistoryPage {{
                 background: {page_bg};
             }}
             QFrame#chatHistoryFilterPanel {{
                 background: {panel_bg};
-                border: 1px solid {border};
+                border: 1px solid {self._history_delegate._colors['border']};
                 border-radius: 10px;
             }}
-            QFrame#chatHistoryRecord {{
-                background: {card_bg};
-                border: 1px solid {border};
-                border-radius: 10px;
+            QListView#chatHistoryList {{
+                background: {list_bg};
+                border: none;
+                outline: none;
             }}
-            BodyLabel#chatHistoryMuted {{
-                color: {muted};
-                font-size: 12px;
-            }}
-            QLabel#chatHistoryBody {{
-                color: {text};
+            QListView#chatHistoryList::item {{
                 background: transparent;
-                font-size: 14px;
-            }}
-            BodyLabel#chatHistoryEmpty {{
-                color: {muted};
+                border: none;
+                padding: 0px;
             }}
             QWidget#chatHistoryLoadingContainer {{
                 background: transparent;
