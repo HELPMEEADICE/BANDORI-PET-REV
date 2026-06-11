@@ -627,7 +627,20 @@ def main():
         character_for_event = character
         cleanup_state = {"done": False}
 
+        # Bound to the worker's lifetime rather than fired and forgotten: a
+        # reply that finishes early cancels this immediately, so high-frequency
+        # group messages don't pile up timers waiting out the full timeout.
+        timeout_timer = QTimer(app)
+        timeout_timer.setSingleShot(True)
+        timeout_timer.setInterval(130_000)
+
+        def _stop_timeout_timer():
+            if isValid(timeout_timer):
+                timeout_timer.stop()
+                timeout_timer.deleteLater()
+
         def _cleanup(delete_later=True):
+            _stop_timeout_timer()
             with napcat_ref["lock"]:
                 if cleanup_state["done"]:
                     return False
@@ -643,6 +656,7 @@ def main():
                 worker.requestInterruption()
 
         def _on_destroyed():
+            _stop_timeout_timer()
             with napcat_ref["lock"]:
                 cleanup_state["done"] = True
                 if worker in napcat_ref["workers"]:
@@ -682,10 +696,11 @@ def main():
         worker.finished.connect(_on_finished)
         worker.error.connect(_on_error)
         worker.destroyed.connect(_on_destroyed)
+        timeout_timer.timeout.connect(_on_timeout)
         with napcat_ref["lock"]:
             napcat_ref["workers"].append(worker)
         worker.start()
-        QTimer.singleShot(130_000, _on_timeout)
+        timeout_timer.start()
 
     def read_ipc_client(socket):
         if not isValid(socket):

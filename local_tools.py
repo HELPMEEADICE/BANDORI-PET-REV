@@ -10,7 +10,7 @@ from html import unescape
 
 from computer_tools import computer_tools, is_computer_tool_name, run_computer_tool
 from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_proxy_tools
-from process_utils import run_off_gui_thread
+from process_utils import log_swallowed, run_off_gui_thread
 from reminder_core import (
     ALARM_CONFIG_KEY,
     POMODORO_CONFIG_KEY,
@@ -527,8 +527,8 @@ def _resolve_reminder_character(value: str, cfg) -> str:
             display = manager.get_display_name(character)
             if requested == display or requested_lower == str(display).lower():
                 return character
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("local_tools.resolve_character", exc)
     return fallback
 
 

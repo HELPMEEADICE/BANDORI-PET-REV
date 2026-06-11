@@ -180,6 +180,35 @@ def interaction_trace(component: str, event: str, **fields) -> None:
     )
 
 
+def debug_logging_enabled() -> bool:
+    return _DEBUG_LOG_CONFIGURED or bool(os.environ.get(DEBUG_LOG_ENV, "").strip())
+
+
+def log_swallowed(context: str, exc: BaseException | None = None) -> None:
+    """Record an intentionally swallowed exception so it can be diagnosed.
+
+    Stays silent unless --debug logging is active (BANDORI_PET_DEBUG_LOG set),
+    so normal runs behave exactly as a bare ``except ...: pass`` while a debug
+    session surfaces the hidden traceback. Never raises.
+    """
+    if not debug_logging_enabled():
+        return
+    try:
+        import traceback
+
+        if exc is None:
+            exc = sys.exc_info()[1]
+        if exc is not None:
+            detail = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ).rstrip()
+        else:
+            detail = "(no active exception)"
+        print(f"[swallowed] {context}: {detail}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 def ensure_xwayland():
     if sys.platform not in ("linux", "linux2"):
         return

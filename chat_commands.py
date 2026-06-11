@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from i18n_manager import tr as _tr
+from process_utils import log_swallowed
 from reminder_core import (
     ALARM_CONFIG_KEY,
     POMODORO_CONFIG_KEY,
@@ -131,8 +132,8 @@ def _publish(payload: dict) -> None:
     try:
         from settings_bus import publish_settings
         publish_settings(payload)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("chat_commands._publish", exc)
 
 
 def _handle_toggle(cfg, definition: dict, arg: str, publish: bool) -> dict:
@@ -275,8 +276,8 @@ def _resolve_name(character: str, name_resolver) -> str:
             resolved = str(name_resolver(character) or "").strip()
             if resolved:
                 return resolved
-        except Exception:
-            pass
+        except Exception as exc:
+            log_swallowed("chat_commands._resolve_name", exc)
     return character or _tr("ChatCommand.default_character", default="桌宠")
 
 

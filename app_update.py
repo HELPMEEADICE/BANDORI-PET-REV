@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app_info import APP_NAME, APP_REPOSITORY, APP_VERSION, MAIN_EXECUTABLE
-from process_utils import app_base_dir, hidden_subprocess_kwargs
+from process_utils import app_base_dir, hidden_subprocess_kwargs, log_swallowed
 
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+){0,3}")
@@ -194,8 +194,8 @@ def _git_upstream(cwd: Path) -> str:
         # whether the remote has new commits, so fall through to the remote refs.
         if upstream and "/" in upstream:
             return upstream
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("app_update.resolve_upstream", exc)
 
     branch = _run_git(["branch", "--show-current"], cwd, timeout=10)
     if branch and _ref_exists(cwd, f"origin/{branch}"):
@@ -205,8 +205,8 @@ def _git_upstream(cwd: Path) -> str:
         head = _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd, timeout=10)
         if head and _ref_exists(cwd, head):
             return head
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("app_update.resolve_origin_head", exc)
 
     raise RuntimeError(
         "No remote-tracking branch was found for this Git checkout. "

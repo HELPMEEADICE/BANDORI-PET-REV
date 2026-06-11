@@ -1,4 +1,5 @@
 from ipc_bus import send_ipc_message
+from process_utils import log_swallowed
 import json
 
 
@@ -20,8 +21,8 @@ def publish_user_poke(character: str = "", message: str = "", source: str = "", 
         payload["direction"] = direction
     try:
         send_ipc_message(f"POKE_USER\t{json.dumps(payload, ensure_ascii=False)}\n", 200)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("action_bus.publish_user_poke", exc)
 
 
 def publish_emotion_behavior(character: str, behavior: dict):
@@ -31,8 +32,8 @@ def publish_emotion_behavior(character: str, behavior: dict):
     payload["character"] = character
     try:
         send_ipc_message(f"EMOTION\t{json.dumps(payload, ensure_ascii=False)}\n", 200)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("action_bus.publish_emotion_behavior", exc)
 
 
 def publish_lip_sync(character: str, level: float, form: float | None = None):
@@ -45,5 +46,5 @@ def publish_lip_sync(character: str, level: float, form: float | None = None):
             form = max(-1.0, min(float(form), 1.0))
             suffix = f"\t{form:.3f}"
         send_ipc_message(f"LIP\t{character}\t{level:.3f}{suffix}\n", 50)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_swallowed("action_bus.publish_lip_sync", exc)
