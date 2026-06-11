@@ -477,6 +477,12 @@ def _normalize_llm_api_profile(profile) -> dict | None:
             profile.get("llm_web_search_engine", DEFAULTS["llm_web_search_engine"])
         ),
         "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
+        "llm_web_fetch_enabled": bool(profile.get("llm_web_fetch_enabled", False)),
+        "llm_auto_continue_enabled": bool(profile.get("llm_auto_continue_enabled", False)),
+        "llm_auto_continue_max_turns": max(
+            1,
+            min(20, _int_value(profile.get("llm_auto_continue_max_turns"), 5)),
+        ),
         "llm_chat_history_message_limit": (
             0 if _int_value(profile.get("llm_chat_history_message_limit"), 40) == 0
             else max(2, min(100, _int_value(profile.get("llm_chat_history_message_limit"), 40)))
@@ -485,6 +491,7 @@ def _normalize_llm_api_profile(profile) -> dict | None:
             0 if _int_value(profile.get("llm_compact_history_message_limit"), 12) == 0
             else max(2, min(100, _int_value(profile.get("llm_compact_history_message_limit"), 12)))
         ),
+        "llm_cross_chat_history_enabled": bool(profile.get("llm_cross_chat_history_enabled", True)),
         "llm_enable_thinking": profile.get("llm_enable_thinking")
         if isinstance(profile.get("llm_enable_thinking"), (bool, type(None))) else None,
         "llm_show_reasoning": bool(profile.get("llm_show_reasoning", True)),

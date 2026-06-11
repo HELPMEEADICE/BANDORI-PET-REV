@@ -16,6 +16,7 @@ RECENT_SETTINGS_KEYS = {
     "SettingsWindow.llm_auto_continue_enabled",
     "SettingsWindow.llm_auto_continue_max_turns",
     "SettingsWindow.llm_auto_continue_hint",
+    "SettingsWindow.llm_api_profile_save_hint",
     "SettingsWindow.llm_chat_history_message_limit",
     "SettingsWindow.llm_compact_history_message_limit",
     "SettingsWindow.llm_history_message_limit_hint",

@@ -40,12 +40,20 @@ class ChatContextLimitTests(unittest.TestCase):
     def test_profile_context_limits_are_preserved_and_clamped(self):
         profile = _normalize_llm_api_profile({
             "name": "test",
+            "llm_web_fetch_enabled": True,
+            "llm_auto_continue_enabled": True,
+            "llm_auto_continue_max_turns": 99,
             "llm_chat_history_message_limit": 80,
             "llm_compact_history_message_limit": 1,
+            "llm_cross_chat_history_enabled": False,
         })
 
+        self.assertTrue(profile["llm_web_fetch_enabled"])
+        self.assertTrue(profile["llm_auto_continue_enabled"])
+        self.assertEqual(profile["llm_auto_continue_max_turns"], 20)
         self.assertEqual(profile["llm_chat_history_message_limit"], 80)
         self.assertEqual(profile["llm_compact_history_message_limit"], 2)
+        self.assertFalse(profile["llm_cross_chat_history_enabled"])
 
         unlimited_profile = _normalize_llm_api_profile({
             "name": "unlimited",

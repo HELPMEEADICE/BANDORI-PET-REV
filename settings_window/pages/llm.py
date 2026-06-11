@@ -9,6 +9,30 @@ from token_usage import (
 )
 
 
+LLM_API_PROFILE_KEYS = (
+    "llm_api_url",
+    "llm_api_key",
+    "llm_model_id",
+    "llm_aux_api_url",
+    "llm_aux_api_key",
+    "llm_aux_model_id",
+    "llm_aux_enable_thinking",
+    "llm_aux_vision_fallback_enabled",
+    "llm_api_mode",
+    "llm_web_search_enabled",
+    "llm_web_search_engine",
+    "llm_web_search_show_sources",
+    "llm_web_fetch_enabled",
+    "llm_auto_continue_enabled",
+    "llm_auto_continue_max_turns",
+    "llm_chat_history_message_limit",
+    "llm_compact_history_message_limit",
+    "llm_cross_chat_history_enabled",
+    "llm_enable_thinking",
+    "llm_show_reasoning",
+)
+
+
 class LLMPageMixin:
 
     @staticmethod
@@ -68,7 +92,7 @@ class LLMPageMixin:
         self._llm_api_profile_name.setFixedHeight(36)
         profile_row.addWidget(self._llm_api_profile_name, 1)
 
-        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_api_profile_save", default="保存配置"), page)
+        save_profile_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_api_profile_save", default="保存并应用"), page)
         save_profile_btn.setFixedHeight(36)
         save_profile_btn.clicked.connect(self._save_llm_api_profile)
         profile_row.addWidget(save_profile_btn)
@@ -78,6 +102,12 @@ class LLMPageMixin:
         delete_profile_btn.clicked.connect(self._delete_llm_api_profile)
         profile_row.addWidget(delete_profile_btn)
         layout.addLayout(profile_row)
+        profile_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_api_profile_save_hint",
+            default="保存并立即应用 API 地址/密钥、主/辅助模型、API 模式、联网、自动接话、上下文与思考显示设置；不包含系统提示词、用户档案或视角设置。",
+        ), page))
+        profile_hint.setObjectName("llmHint")
+        layout.addWidget(profile_hint)
 
         api_url_label = BodyLabel(_tr("SettingsWindow.llm_api_url"), page)
         layout.addWidget(api_url_label)
@@ -452,6 +482,7 @@ class LLMPageMixin:
         layout.addLayout(btn_row)
 
         self._load_llm_config()
+        self._connect_llm_api_profile_change_tracking()
         self._style_llm_inputs()
         self._connect_theme_changed(self._style_llm_inputs)
 
@@ -475,6 +506,74 @@ class LLMPageMixin:
         list_layout.setSpacing(1)
         scroll.setWidget(list_widget)
         return label, scroll, list_widget, list_layout
+
+    def _connect_llm_api_profile_change_tracking(self):
+        for widget in (
+            self._llm_api_url,
+            self._llm_api_key,
+            self._llm_model_id,
+            self._llm_aux_api_url,
+            self._llm_aux_api_key,
+            self._llm_aux_model_id,
+        ):
+            widget.textChanged.connect(self._on_llm_api_profile_field_changed)
+        for widget in (
+            self._llm_enable_thinking,
+            self._llm_aux_enable_thinking,
+            self._llm_api_mode,
+            self._llm_web_search_engine,
+        ):
+            widget.currentIndexChanged.connect(self._on_llm_api_profile_field_changed)
+        for widget in (
+            self._llm_show_reasoning,
+            self._llm_aux_vision_fallback_enabled,
+            self._llm_web_search_enabled,
+            self._llm_web_search_show_sources,
+            self._llm_web_fetch_enabled,
+            self._llm_auto_continue_enabled,
+            self._llm_cross_chat_history_enabled,
+        ):
+            widget.checkedChanged.connect(self._on_llm_api_profile_field_changed)
+        for widget in (
+            self._llm_auto_continue_max_turns,
+            self._llm_chat_history_message_limit,
+            self._llm_compact_history_message_limit,
+        ):
+            widget.valueChanged.connect(self._on_llm_api_profile_field_changed)
+
+    def _on_llm_api_profile_field_changed(self, *_args):
+        if getattr(self, "_loading_llm_profile", False):
+            return
+        if self._cfg and self._llm_api_profile_widgets_ready():
+            self._update_current_llm_api_profile_label()
+
+    def _llm_api_profile_widgets_ready(self) -> bool:
+        return all(
+            hasattr(self, attr)
+            for attr in (
+                "_llm_active_api_profile_label",
+                "_llm_api_url",
+                "_llm_api_key",
+                "_llm_model_id",
+                "_llm_aux_api_url",
+                "_llm_aux_api_key",
+                "_llm_aux_model_id",
+                "_llm_aux_enable_thinking",
+                "_llm_aux_vision_fallback_enabled",
+                "_llm_api_mode",
+                "_llm_web_search_enabled",
+                "_llm_web_search_engine",
+                "_llm_web_search_show_sources",
+                "_llm_web_fetch_enabled",
+                "_llm_auto_continue_enabled",
+                "_llm_auto_continue_max_turns",
+                "_llm_chat_history_message_limit",
+                "_llm_compact_history_message_limit",
+                "_llm_cross_chat_history_enabled",
+                "_llm_enable_thinking",
+                "_llm_show_reasoning",
+            )
+        )
 
     def _llm_config_widgets_ready(self) -> bool:
         return all(
@@ -784,29 +883,7 @@ class LLMPageMixin:
         }
 
     def _llm_profiles_equal(self, left: dict, right: dict) -> bool:
-        keys = (
-            "llm_api_url",
-            "llm_api_key",
-            "llm_model_id",
-            "llm_aux_api_url",
-            "llm_aux_api_key",
-            "llm_aux_model_id",
-            "llm_aux_enable_thinking",
-            "llm_aux_vision_fallback_enabled",
-            "llm_api_mode",
-            "llm_web_search_enabled",
-            "llm_web_search_engine",
-            "llm_web_search_show_sources",
-            "llm_web_fetch_enabled",
-            "llm_auto_continue_enabled",
-            "llm_auto_continue_max_turns",
-            "llm_chat_history_message_limit",
-            "llm_compact_history_message_limit",
-            "llm_cross_chat_history_enabled",
-            "llm_enable_thinking",
-            "llm_show_reasoning",
-        )
-        return all(left.get(key) == right.get(key) for key in keys)
+        return all(left.get(key) == right.get(key) for key in LLM_API_PROFILE_KEYS)
 
     def _llm_profile_api_identity_equal(self, left: dict, right: dict) -> bool:
         keys = (
@@ -854,22 +931,31 @@ class LLMPageMixin:
     def _applied_llm_api_profile_display_name(self) -> tuple[str, bool]:
         if not self._cfg:
             return "", False
-        current = self._saved_llm_api_profile("__current__")
+        current = (
+            self._current_llm_api_profile("__current__")
+            if self._llm_api_profile_widgets_ready()
+            else self._saved_llm_api_profile("__current__")
+        )
+        profiles = self._normalized_llm_api_profiles()
+        active_name = str(self._cfg.get("llm_active_api_profile", "") or "").strip()
+        active_profile = next(
+            (profile for profile in profiles if profile["name"] == active_name),
+            None,
+        )
         if not (
             current.get("llm_api_url")
             or current.get("llm_api_key")
             or current.get("llm_model_id")
         ):
+            if active_profile:
+                return active_profile["name"], True
             return "", False
-        profiles = self._normalized_llm_api_profiles()
         for profile in profiles:
             if self._llm_profiles_equal(current, profile):
                 return profile["name"], False
 
-        active_name = str(self._cfg.get("llm_active_api_profile", "") or "").strip()
-        for profile in profiles:
-            if profile["name"] == active_name and self._llm_profile_api_identity_equal(current, profile):
-                return profile["name"], True
+        if active_profile:
+            return active_profile["name"], True
         for profile in profiles:
             if self._llm_profile_api_identity_equal(current, profile):
                 return profile["name"], True
@@ -966,7 +1052,12 @@ class LLMPageMixin:
             return
         for profile in self._normalized_llm_api_profiles():
             if profile["name"] == name:
-                self._apply_llm_api_profile(profile)
+                self._loading_llm_profile = True
+                try:
+                    self._apply_llm_api_profile(profile)
+                finally:
+                    self._loading_llm_profile = False
+                self._update_current_llm_api_profile_label()
                 return
 
     def _save_llm_api_profile(self):
@@ -985,16 +1076,22 @@ class LLMPageMixin:
                 parent=self,
             )
             return
+        profile = self._current_llm_api_profile(name)
         profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
-        profiles.append(self._current_llm_api_profile(name))
+        profiles.append(profile)
         self._cfg.set("llm_api_profiles", profiles)
+        for key in LLM_API_PROFILE_KEYS:
+            self._cfg.set(key, profile[key])
+        self._cfg.set("llm_active_api_profile", name)
         try:
             self._cfg.save()
             self._reload_llm_api_profiles(name)
             self._update_current_llm_api_profile_label()
+            if hasattr(self, "settings_changed") and hasattr(self, "_user_profile_settings_data"):
+                self.settings_changed.emit(self._user_profile_settings_data())
             InfoBar.success(
                 _tr("SettingsWindow.llm_api_profile_saved_title", default="档案已保存"),
-                _tr("SettingsWindow.llm_api_profile_saved_content", default="当前 API 配置已保存。"),
+                _tr("SettingsWindow.llm_api_profile_saved_content", default="API 档案已保存并应用为当前配置。"),
                 duration=2000,
                 position=InfoBarPosition.TOP,
                 parent=self,
