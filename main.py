@@ -788,6 +788,7 @@ def main():
         cfg.load()
         cfg.set("language", current_language())
         cfg.save()
+        cfg.flush_save()
 
     def _close_qprocess(process, force=False, wait=True):
         if not process or not isValid(process):

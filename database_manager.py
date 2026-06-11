@@ -528,71 +528,72 @@ def import_relationship_data(data, db_path=DB_PATH) -> dict:
 
     state_count = 0
     memory_count = 0
-    with closing(sqlite3.connect(str(db_path), timeout=10)) as conn:
-        for item in states:
-            if not isinstance(item, dict):
-                continue
-            character = _db_text(item.get("character")).strip()
-            if not character:
-                continue
-            user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
-            updated_at = _db_text(item.get("updated_at")) or _now_text()
-            conn.execute(
-                "INSERT INTO relationship_states "
-                "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(character, user_key) DO UPDATE SET "
-                "affection=excluded.affection, trust=excluded.trust, familiarity=excluded.familiarity, "
-                "mood=excluded.mood, mood_intensity=excluded.mood_intensity, summary=excluded.summary, "
-                "updated_at=excluded.updated_at",
-                (
-                    character,
-                    user_key,
-                    _clamp_int(item.get("affection"), 0, 100, 50),
-                    _clamp_int(item.get("trust"), 0, 100, 50),
-                    _clamp_int(item.get("familiarity"), 0, 100, 0),
-                    _db_text(item.get("mood"), "calm").strip() or "calm",
-                    _clamp_int(item.get("mood_intensity"), 0, 100, 20),
-                    _db_text(item.get("summary")),
-                    updated_at,
-                ),
-            )
-            state_count += 1
+    with _shared_database_lock(str(db_path)):
+        with closing(sqlite3.connect(str(db_path), timeout=10)) as conn:
+            for item in states:
+                if not isinstance(item, dict):
+                    continue
+                character = _db_text(item.get("character")).strip()
+                if not character:
+                    continue
+                user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
+                updated_at = _db_text(item.get("updated_at")) or _now_text()
+                conn.execute(
+                    "INSERT INTO relationship_states "
+                    "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(character, user_key) DO UPDATE SET "
+                    "affection=excluded.affection, trust=excluded.trust, familiarity=excluded.familiarity, "
+                    "mood=excluded.mood, mood_intensity=excluded.mood_intensity, summary=excluded.summary, "
+                    "updated_at=excluded.updated_at",
+                    (
+                        character,
+                        user_key,
+                        _clamp_int(item.get("affection"), 0, 100, 50),
+                        _clamp_int(item.get("trust"), 0, 100, 50),
+                        _clamp_int(item.get("familiarity"), 0, 100, 0),
+                        _db_text(item.get("mood"), "calm").strip() or "calm",
+                        _clamp_int(item.get("mood_intensity"), 0, 100, 20),
+                        _db_text(item.get("summary")),
+                        updated_at,
+                    ),
+                )
+                state_count += 1
 
-        for item in memories:
-            if not isinstance(item, dict):
-                continue
-            character = _db_text(item.get("character")).strip()
-            content = _db_text(item.get("content")).strip()
-            if not character or not content:
-                continue
-            user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
-            created_at = _db_text(item.get("created_at")) or _now_text()
-            updated_at = _db_text(item.get("updated_at")) or created_at
-            conn.execute(
-                "INSERT INTO character_memories "
-                "(character, user_key, kind, content, importance, source_message_id, "
-                "source_group_message_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(character, user_key, content) DO UPDATE SET "
-                "kind=excluded.kind, importance=excluded.importance, "
-                "source_message_id=coalesce(excluded.source_message_id, character_memories.source_message_id), "
-                "source_group_message_id=coalesce(excluded.source_group_message_id, character_memories.source_group_message_id), "
-                "updated_at=excluded.updated_at",
-                (
-                    character,
-                    user_key,
-                    _db_text(item.get("kind"), "note").strip() or "note",
-                    content,
-                    _clamp_int(item.get("importance"), 1, 100, 50),
-                    _db_int(item.get("source_message_id")),
-                    _db_int(item.get("source_group_message_id")),
-                    created_at,
-                    updated_at,
-                ),
-            )
-            memory_count += 1
-        conn.commit()
+            for item in memories:
+                if not isinstance(item, dict):
+                    continue
+                character = _db_text(item.get("character")).strip()
+                content = _db_text(item.get("content")).strip()
+                if not character or not content:
+                    continue
+                user_key = _db_text(item.get("user_key"), DEFAULT_USER_PROFILE_KEY).strip() or DEFAULT_USER_PROFILE_KEY
+                created_at = _db_text(item.get("created_at")) or _now_text()
+                updated_at = _db_text(item.get("updated_at")) or created_at
+                conn.execute(
+                    "INSERT INTO character_memories "
+                    "(character, user_key, kind, content, importance, source_message_id, "
+                    "source_group_message_id, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(character, user_key, content) DO UPDATE SET "
+                    "kind=excluded.kind, importance=excluded.importance, "
+                    "source_message_id=coalesce(excluded.source_message_id, character_memories.source_message_id), "
+                    "source_group_message_id=coalesce(excluded.source_group_message_id, character_memories.source_group_message_id), "
+                    "updated_at=excluded.updated_at",
+                    (
+                        character,
+                        user_key,
+                        _db_text(item.get("kind"), "note").strip() or "note",
+                        content,
+                        _clamp_int(item.get("importance"), 1, 100, 50),
+                        _db_int(item.get("source_message_id")),
+                        _db_int(item.get("source_group_message_id")),
+                        created_at,
+                        updated_at,
+                    ),
+                )
+                memory_count += 1
+            conn.commit()
     return {
         "relationship_states": state_count,
         "character_memories": memory_count,

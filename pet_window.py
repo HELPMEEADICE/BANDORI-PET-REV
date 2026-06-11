@@ -4035,6 +4035,10 @@ class PetWindow(QWidget):
                         self._cfg.set("window_placement", self._window_placement())
             self._cfg.save()
 
+    def _flush_save(self):
+        if self._cfg:
+            self._cfg.flush_save()
+
     def _sync_current_model_entry(self, path: str, save: bool = True, include_position: bool = True):
         if not self._cfg or not path:
             return

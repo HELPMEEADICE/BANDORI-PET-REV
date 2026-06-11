@@ -144,6 +144,7 @@ def main():
 
     app.aboutToQuit.connect(lambda: cfg.set("language", current_language()))
     app.aboutToQuit.connect(pet._save_config)
+    app.aboutToQuit.connect(pet._flush_save)
     app.aboutToQuit.connect(live2d.dispose)
 
     if not cfg.get("hide_live2d_model", False):

@@ -175,6 +175,7 @@ class ScreenAwarenessTest(unittest.TestCase):
             }), encoding="utf-8")
             config = ConfigManager(path)
             config.save()
+            config.flush_save()
             reloaded = ConfigManager(path)
 
         self.assertEqual("system", reloaded.get("screen_awareness_display_mode"))
@@ -190,6 +191,7 @@ class ScreenAwarenessTest(unittest.TestCase):
             }), encoding="utf-8")
             config = ConfigManager(path)
             config.save()
+            config.flush_save()
             saved = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertTrue(config.get("screen_awareness_enabled"))

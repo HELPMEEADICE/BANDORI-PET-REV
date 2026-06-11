@@ -1,8 +1,10 @@
 import json
+import logging
 import os
 import re
 import copy
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -564,6 +566,9 @@ class ConfigManager:
         self._path = Path(path)
         self._data = dict(DEFAULTS)
         self._loaded_data = copy.deepcopy(self._data)
+        self._save_generation = 0
+        self._save_pending = threading.Event()
+        self._save_data_snapshot = None
         cleanup_stale_config_temp_files(self._path)
         self.load()
 
@@ -905,35 +910,68 @@ class ConfigManager:
             self._data["costume"] = first["costume"]
 
     def save(self):
+        self._flush_pending_save()
         with _config_file_lock(self._path):
             data_to_save = self._merged_data_for_save()
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_path = tempfile.mkstemp(
-                prefix=self._path.name + ".",
-                suffix=".tmp",
-                dir=str(self._path.parent),
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(data_to_save, f, indent=2, ensure_ascii=False)
-                    f.flush()
-                    os.fsync(f.fileno())
-                last_error = None
-                for attempt in range(25):
-                    last_error = _try_replace_file(tmp_path, self._path)
-                    if last_error is None:
-                        self._data = copy.deepcopy(data_to_save)
-                        self._loaded_data = copy.deepcopy(data_to_save)
-                        return
-                    time.sleep(min(0.02 * (attempt + 1), 0.2))
-                if last_error is not None:
-                    raise last_error
-            except Exception:
+            self._data = copy.deepcopy(data_to_save)
+        self._save_generation += 1
+        self._save_data_snapshot = copy.deepcopy(data_to_save)
+        self._save_pending.set()
+        threading.Thread(
+            target=self._async_write_file,
+            args=(self._save_generation,),
+            daemon=True,
+        ).start()
+
+    def flush_save(self):
+        self._flush_pending_save()
+
+    def _flush_pending_save(self):
+        gen = self._save_generation
+        while self._save_pending.is_set():
+            self._save_pending.wait(timeout=5.0)
+            if self._save_generation != gen:
+                gen = self._save_generation
+
+    def _async_write_file(self, gen):
+        try:
+            self._save_pending.wait(timeout=CONFIG_FILE_LOCK_TIMEOUT_SECONDS + 1.0)
+            if gen != self._save_generation:
+                return
+            data = self._save_data_snapshot
+            if data is None:
+                return
+            with _config_file_lock(self._path):
+                if gen != self._save_generation:
+                    return
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix=self._path.name + ".",
+                    suffix=".tmp",
+                    dir=str(self._path.parent),
+                )
                 try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    last_error = None
+                    for attempt in range(25):
+                        last_error = _try_replace_file(tmp_path, self._path)
+                        if last_error is None:
+                            self._loaded_data = copy.deepcopy(data)
+                            return
+                        time.sleep(min(0.02 * (attempt + 1), 0.2))
+                    if last_error is not None:
+                        logging.warning("Config save failed after retries: %s", last_error)
+                except Exception as exc:
+                    logging.warning("Config save failed: %s", exc)
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+        finally:
+            self._save_pending.clear()
 
     def _merged_data_for_save(self) -> dict:
         try:
