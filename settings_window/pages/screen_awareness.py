@@ -28,7 +28,11 @@ class ScreenAwarenessPageMixin:
         screen_title_col = QVBoxLayout()
         screen_title_col.setContentsMargins(0, 0, 0, 0)
         screen_title_col.setSpacing(2)
-        screen_title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.screen_awareness_title", default="屏幕感知主动搭话"), screen_panel))
+        screen_title = _wrap_label(StrongBodyLabel(
+            _tr("SettingsWindow.screen_awareness_title", default="屏幕感知主动搭话"),
+            screen_panel,
+        ))
+        screen_title_col.addWidget(screen_title)
         screen_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.screen_awareness_hint",
             default="主模型可以直接看屏幕，也可以先由辅助模型读取内容，再交给主模型自然搭话。",
@@ -41,30 +45,57 @@ class ScreenAwarenessPageMixin:
         screen_layout.addLayout(screen_header)
 
         screen_form = QGridLayout()
-        screen_form.setHorizontalSpacing(10)
-        screen_form.setVerticalSpacing(8)
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_interval", default="触发频率"), screen_panel), 0, 0)
+        screen_form.setHorizontalSpacing(12)
+        screen_form.setVerticalSpacing(10)
+        screen_form.setColumnStretch(0, 1)
+        screen_form.setColumnStretch(1, 1)
+
+        def add_field(row: int, column: int, label_text: str, control: QWidget):
+            field = QWidget(screen_panel)
+            field.setMinimumWidth(0)
+            field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            field_layout = QVBoxLayout(field)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            field_layout.setSpacing(5)
+            field_layout.addWidget(_wrap_label(BodyLabel(label_text, field)))
+            control.setMinimumWidth(0)
+            control.setSizePolicy(QSizePolicy.Policy.Expanding, control.sizePolicy().verticalPolicy())
+            field_layout.addWidget(control)
+            screen_form.addWidget(field, row, column)
+
         self._screen_awareness_interval = SpinBox(screen_panel)
         self._screen_awareness_interval.setRange(1, 120)
         self._screen_awareness_interval.setValue(30)
         self._screen_awareness_interval.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
         self._screen_awareness_interval.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_interval, 0, 1)
+        add_field(
+            0,
+            0,
+            _tr("SettingsWindow.screen_awareness_interval", default="触发频率"),
+            self._screen_awareness_interval,
+        )
 
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_speaker", default="说话角色"), screen_panel), 0, 2)
         self._screen_awareness_character = OpaqueDropDownComboBox(screen_panel)
         self._screen_awareness_character.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_character, 0, 3)
+        add_field(
+            0,
+            1,
+            _tr("SettingsWindow.screen_awareness_speaker", default="说话角色"),
+            self._screen_awareness_character,
+        )
 
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_max_width", default="截图最长边"), screen_panel), 1, 0)
         self._screen_awareness_max_width = SpinBox(screen_panel)
         self._screen_awareness_max_width.setRange(640, 1920)
         self._screen_awareness_max_width.setSingleStep(160)
         self._screen_awareness_max_width.setValue(1920)
         self._screen_awareness_max_width.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_max_width, 1, 1)
+        add_field(
+            1,
+            0,
+            _tr("SettingsWindow.screen_awareness_max_width", default="截图最长边"),
+            self._screen_awareness_max_width,
+        )
 
-        screen_form.addWidget(BodyLabel(_tr("SettingsWindow.screen_awareness_model_mode", default="屏幕读取方式"), screen_panel), 1, 2)
         self._screen_awareness_model_mode = OpaqueDropDownComboBox(screen_panel)
         self._screen_awareness_model_mode.addItem(
             _tr("SettingsWindow.screen_awareness_model_mode_main", default="主模型直接识别"),
@@ -75,12 +106,13 @@ class ScreenAwarenessPageMixin:
             userData="aux",
         )
         self._screen_awareness_model_mode.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_model_mode, 1, 3)
+        add_field(
+            1,
+            1,
+            _tr("SettingsWindow.screen_awareness_model_mode", default="屏幕读取方式"),
+            self._screen_awareness_model_mode,
+        )
 
-        screen_form.addWidget(BodyLabel(_tr(
-            "SettingsWindow.screen_awareness_display_mode",
-            default="提醒展示方式",
-        ), screen_panel), 2, 0)
         self._screen_awareness_display_mode = OpaqueDropDownComboBox(screen_panel)
         self._screen_awareness_display_mode.addItem(
             _tr("SettingsWindow.reminder_display_floating", default="悬浮窗显示"),
@@ -91,7 +123,12 @@ class ScreenAwarenessPageMixin:
             userData=DISPLAY_MODE_SYSTEM,
         )
         self._screen_awareness_display_mode.setFixedHeight(34)
-        screen_form.addWidget(self._screen_awareness_display_mode, 2, 1)
+        add_field(
+            2,
+            0,
+            _tr("SettingsWindow.screen_awareness_display_mode", default="提醒展示方式"),
+            self._screen_awareness_display_mode,
+        )
 
         test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
         test_screen_btn.setFixedHeight(34)
@@ -99,8 +136,17 @@ class ScreenAwarenessPageMixin:
         save_screen_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), screen_panel)
         save_screen_btn.setFixedHeight(34)
         save_screen_btn.clicked.connect(lambda: self._save_screen_awareness_config(show_info=True, emit_update=True))
-        screen_form.addWidget(test_screen_btn, 2, 2)
-        screen_form.addWidget(save_screen_btn, 2, 3)
+        action_field = QWidget(screen_panel)
+        action_field.setMinimumWidth(0)
+        action_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        action_layout = QHBoxLayout(action_field)
+        action_layout.setContentsMargins(0, 24, 0, 0)
+        action_layout.setSpacing(8)
+        test_screen_btn.setMinimumWidth(0)
+        save_screen_btn.setMinimumWidth(0)
+        action_layout.addWidget(test_screen_btn, 1)
+        action_layout.addWidget(save_screen_btn, 1)
+        screen_form.addWidget(action_field, 2, 1)
         screen_layout.addLayout(screen_form)
 
         self._load_screen_awareness_controls()
