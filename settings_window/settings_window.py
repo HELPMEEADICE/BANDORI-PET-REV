@@ -1774,15 +1774,10 @@ class SettingsWindow(
         self._detail_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._detail_costume = SubtitleLabel("", self._detail_card)
         self._detail_costume.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._detail_composite_badge = QLabel(_tr("SettingsWindow.webgal_composite_badge"), self._detail_card)
-        self._detail_composite_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._detail_composite_badge.setToolTip(_tr("SettingsWindow.webgal_composite_tooltip"))
-        self._detail_composite_badge.setVisible(False)
         self._detail_band = BodyLabel("", self._detail_card)
         self._detail_band.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._detail_name)
         card_layout.addWidget(self._detail_costume)
-        card_layout.addWidget(self._detail_composite_badge, 0, Qt.AlignmentFlag.AlignHCenter)
         card_layout.addWidget(self._detail_band)
 
         action_scroll = ScrollArea(self._model_detail_widget)
@@ -1974,25 +1969,11 @@ class SettingsWindow(
         card_bg = "#252525" if dark else "#ffffff"
         card_border = "#3a3a3a" if dark else "#e5e7eb"
         hint_color = "#a7b0bf" if dark else "#687385"
-        badge_bg = "#4a3540" if dark else "#fff1f5"
-        badge_fg = "#ffb4c8" if dark else "#b4234a"
-        badge_border = "#77505d" if dark else "#ffc2d1"
         self._detail_card.setStyleSheet(f"""
             CardWidget {{
                 background: {card_bg};
                 border: 1px solid {card_border};
                 border-radius: 18px;
-            }}
-        """)
-        self._detail_composite_badge.setStyleSheet(f"""
-            QLabel {{
-                color: {badge_fg};
-                background: {badge_bg};
-                border: 1px solid {badge_border};
-                border-radius: 6px;
-                padding: 2px 8px;
-                font-size: 11px;
-                font-weight: 600;
             }}
         """)
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
@@ -2056,7 +2037,6 @@ class SettingsWindow(
         band_name = self._model_manager.get_band_display_name(self._selected_band) if self._selected_band else ""
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
-        self._detail_composite_badge.setVisible(self._model_manager.is_composite_costume(character, costume))
         self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
@@ -2521,7 +2501,6 @@ class SettingsWindow(
                 cname,
                 self._costume_list_widget,
                 favorite=self._is_favorite_costume(char_key, cid),
-                is_composite=self._model_manager.is_composite_costume(char_key, cid),
             )
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
             btn.preview_requested.connect(self._show_costume_preview)
@@ -3010,14 +2989,7 @@ class SettingsWindow(
             costume = item["costume"]
             title = self._model_manager.get_display_name(character)
             subtitle = self._model_manager.get_costume_display_name(character, costume)
-            row = ModelListItem(
-                character,
-                title,
-                subtitle,
-                character == self._selected_list_character,
-                self._model_list_widget,
-                is_composite=self._model_manager.is_composite_costume(character, costume),
-            )
+            row = ModelListItem(character, title, subtitle, character == self._selected_list_character, self._model_list_widget)
             row.selected.connect(self._select_model_list_item)
             row.remove_requested.connect(self._remove_model_list_item)
             self._model_list_layout.addWidget(row)

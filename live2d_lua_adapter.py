@@ -1,5 +1,4 @@
 import ctypes
-import json
 import os
 import random
 import sys
@@ -8,7 +7,6 @@ from pathlib import Path
 
 from lupa.luajit21 import LuaRuntime
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
-from model_manager import WEBGAL_COMPOSITE_FILENAME, is_webgal_composite_path
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
 from zst_model_archive import is_virtual_path, load_virtual_bytes, split_virtual_path
@@ -279,29 +277,6 @@ def _safe_model_file_path(path: str | Path) -> Path:
     return fs_path
 
 
-def _webgal_composite_layer_paths(manifest_path: str) -> list[str]:
-    manifest_file = _safe_model_file_path(manifest_path)
-    try:
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"Invalid WebGal composite manifest: {exc}") from exc
-    layers = manifest.get("layers", [])
-    if not isinstance(layers, list) or not layers:
-        raise ValueError("WebGal composite manifest has no layers")
-
-    result = []
-    for layer in layers:
-        if not isinstance(layer, dict):
-            continue
-        relative = str(layer.get("model", "") or "").strip()
-        if not relative:
-            continue
-        result.append(str(_safe_model_file_path(manifest_file.parent / relative)))
-    if not result:
-        raise ValueError("WebGal composite manifest has no valid model layers")
-    return result
-
-
 class _ModelSetting:
     def __init__(self, data):
         self._motion_names = _lua_array(data[b"motion_names"] or [])
@@ -342,45 +317,6 @@ class _ModelSetting:
 
     def getCustomHitAreas(self) -> dict[str, list[float]]:
         return dict(self._custom_hit_areas)
-
-
-class _CompositeModelSetting:
-    def __init__(self, settings: list[_ModelSetting]):
-        self._settings = [setting for setting in settings if setting is not None]
-        self._motion_names = []
-        seen = set()
-        for setting in self._settings:
-            for name in setting.getMotionNames():
-                if name not in seen:
-                    seen.add(name)
-                    self._motion_names.append(name)
-
-    def getMotionNames(self) -> list[str]:
-        return list(self._motion_names)
-
-    def getMotionNum(self, name: str) -> int:
-        return max((setting.getMotionNum(name) for setting in self._settings), default=0)
-
-    def resolveMotion(self, name: str, no: int = 0) -> tuple[str, int] | None:
-        for setting in self._settings:
-            resolved = setting.resolveMotion(name, no)
-            if resolved is not None:
-                return resolved
-        return None
-
-    def getHitAreaNum(self) -> int:
-        for setting in self._settings:
-            count = setting.getHitAreaNum()
-            if count:
-                return count
-        return 0
-
-    def getCustomHitAreas(self) -> dict[str, list[float]]:
-        for setting in self._settings:
-            areas = setting.getCustomHitAreas()
-            if areas:
-                return areas
-        return {}
 
 
 def _decode_lua_string(value) -> str:
@@ -481,7 +417,7 @@ class LuaLive2DModule:
         self._initialized = False
 
     def LAppModel(self):
-        return LuaCompositeLAppModel(self)
+        return LuaLAppModel(self)
 
     def _ensure_runtime(self):
         if self._initialized:
@@ -774,11 +710,6 @@ class LuaLAppModel:
             return
         self._module._reset_expression(self._renderer)
 
-    def ApplyTextureQuality(self, profile: str):
-        if self._renderer is None:
-            return
-        self._module._apply_texture_quality(self._renderer, str(profile).encode("utf-8"))
-
     def _dispose_renderer(self):
         if self._renderer is None or self._module._dispose_renderer is None:
             self._renderer = None
@@ -795,143 +726,6 @@ class LuaLAppModel:
         for name in expressions.keys():
             names[_decode_lua_string(name)] = None
         return names
-
-
-class LuaCompositeLAppModel:
-    def __init__(self, module: LuaLive2DModule):
-        self._module = module
-        self._single = LuaLAppModel(module)
-        self._layers: list[LuaLAppModel] = []
-        self._width = 1
-        self._height = 1
-        self.modelSetting = None
-        self.matrixManager = _MatrixManager()
-        self.expressions = {}
-        self.last_lua_update_draw_seconds = 0.0
-        self.last_lua_gc_seconds = 0.0
-
-    @property
-    def _active_models(self) -> list[LuaLAppModel]:
-        return self._layers if self._layers else [self._single]
-
-    @property
-    def _renderer(self):
-        return self._single._renderer if not self._layers else None
-
-    def LoadModelJson(self, model_json_path: str):
-        self._dispose_renderer()
-        if is_webgal_composite_path(model_json_path):
-            self._layers = []
-            for layer_path in _webgal_composite_layer_paths(model_json_path):
-                layer = LuaLAppModel(self._module)
-                layer.Resize(self._width, self._height)
-                layer.LoadModelJson(layer_path)
-                self._layers.append(layer)
-            self._sync_public_model_info()
-            return
-        self._single.LoadModelJson(model_json_path)
-        self._single.Resize(self._width, self._height)
-        self._sync_public_model_info()
-
-    def _sync_public_model_info(self):
-        models = self._active_models
-        settings = [model.modelSetting for model in models if model.modelSetting is not None]
-        self.modelSetting = _CompositeModelSetting(settings) if self._layers else self._single.modelSetting
-        expressions = {}
-        for model in models:
-            expressions.update(getattr(model, "expressions", {}) or {})
-        self.expressions = expressions
-
-    def Resize(self, width: int, height: int):
-        self._width = max(int(width), 1)
-        self._height = max(int(height), 1)
-        self.matrixManager.on_resize(self._width, self._height)
-        for model in self._active_models:
-            model.Resize(self._width, self._height)
-
-    def Draw(self):
-        self.last_lua_update_draw_seconds = 0.0
-        self.last_lua_gc_seconds = 0.0
-        for model in self._active_models:
-            model.Draw()
-            self.last_lua_update_draw_seconds += getattr(model, "last_lua_update_draw_seconds", 0.0)
-            self.last_lua_gc_seconds += getattr(model, "last_lua_gc_seconds", 0.0)
-
-    def Drag(self, x: float, y: float):
-        for model in self._active_models:
-            model.Drag(x, y)
-
-    def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
-        for model in self._active_models:
-            model.SetParameterValue(param_id, value, weight)
-
-    def HitTest(self, area_name: str, x: float, y: float):
-        for model in reversed(self._active_models):
-            if model.HitTest(area_name, x, y):
-                return "hit"
-        return None
-
-    def StartMotion(self, name: str, no: int = 0, priority=MotionPriority.FORCE, **kwargs):
-        for model in self._active_models:
-            setting = getattr(model, "modelSetting", None)
-            if setting is None or setting.resolveMotion(str(name), int(no)) is None:
-                continue
-            model.StartMotion(name, no, priority, **kwargs)
-
-    def StartRandomMotion(self, name: str | None = None, priority=MotionPriority.IDLE, **kwargs):
-        if self.modelSetting is None:
-            return
-        if not name:
-            names = self.modelSetting.getMotionNames()
-            if not names:
-                return
-            name = random.choice(names)
-        count = self.modelSetting.getMotionNum(name)
-        if count <= 0:
-            return
-        self.StartMotion(name, random.randrange(count), priority, **kwargs)
-
-    def PreloadMotionGroup(self, name: str):
-        for model in self._active_models:
-            setting = getattr(model, "modelSetting", None)
-            if setting is None or setting.resolveMotion(str(name), 0) is None:
-                continue
-            model.PreloadMotionGroup(name)
-
-    def PreloadExpression(self, name: str):
-        for model in self._active_models:
-            if name not in (getattr(model, "expressions", {}) or {}):
-                continue
-            model.PreloadExpression(name)
-
-    def ClearMotions(self):
-        for model in self._active_models:
-            model.ClearMotions()
-
-    def IsMotionFinished(self) -> bool:
-        return all(model.IsMotionFinished() for model in self._active_models)
-
-    def SetExpression(self, name: str):
-        for model in self._active_models:
-            if name not in (getattr(model, "expressions", {}) or {}):
-                continue
-            model.SetExpression(name)
-
-    def ResetExpression(self):
-        for model in self._active_models:
-            model.ResetExpression()
-
-    def ApplyTextureQuality(self, profile: str):
-        for model in self._active_models:
-            model.ApplyTextureQuality(profile)
-
-    def _dispose_renderer(self):
-        for model in self._layers:
-            model._dispose_renderer()
-        self._layers = []
-        self._single._dispose_renderer()
-        self.modelSetting = None
-        self.expressions = {}
 
 
 live2d = LuaLive2DModule()

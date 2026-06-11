@@ -77,24 +77,5 @@ class CustomModelImportTest(unittest.TestCase):
 
             self.assertEqual("unsafe_resource_path", raised.exception.code)
 
-    def test_webgal_manifest_rejects_layer_paths_outside_source_root(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = root / "source"
-            source.mkdir()
-            (source / custom_model_import.WEBGAL_COMPOSITE_FILENAME).write_text(
-                json.dumps({"layers": [{"model": "../outside/model.json"}]}),
-                encoding="utf-8",
-            )
-
-            with (
-                patch.object(custom_model_import, "MODELS_DIR", root / "models"),
-                self.assertRaises(CustomModelImportError) as raised,
-            ):
-                import_from_folder(str(source), "WebGal Character", "default")
-
-            self.assertEqual("unsafe_resource_path", raised.exception.code)
-
-
 if __name__ == "__main__":
     unittest.main()

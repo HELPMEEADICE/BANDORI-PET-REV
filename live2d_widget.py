@@ -222,11 +222,7 @@ class Live2DWidget(QOpenGLWidget):
         self._quality_profile = profile
         set_live2d_texture_quality(profile)
         if self._model:
-            apply_quality = getattr(self._model, "ApplyTextureQuality", None)
-            if callable(apply_quality):
-                apply_quality(profile)
-            elif getattr(self._model, "_renderer", None) is not None:
-                self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+            self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
             self.update()
 
     def set_static_render(self, enabled: bool):
