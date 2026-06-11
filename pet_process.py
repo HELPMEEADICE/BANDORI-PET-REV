@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
+from app_info import APP_NAME
 from i18n_manager import current_language, detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
@@ -106,8 +107,8 @@ def main():
         import macos_patch
         macos_patch.hide_dock_icon()
 
-    app.setApplicationName(f"BandoriPet-{args.character}")
-    app.setOrganizationName("BandoriPet")
+    app.setApplicationName(f"{APP_NAME}-{args.character}")
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
     apply_app_theme(cfg.get("dark_theme", False))
 

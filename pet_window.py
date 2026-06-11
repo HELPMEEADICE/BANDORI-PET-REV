@@ -942,14 +942,10 @@ class PetWindow(QWidget):
         return result
 
     def _broadcast_layer_order(self):
-        if not self._ipc_socket or not self._ipc_socket.isOpen():
-            return
         payload = json.dumps({
             "order": list(self._group_characters),
         }, ensure_ascii=False)
-        msg = f"LAYER_ORDER\t{payload}"
-        self._ipc_socket.write((msg + "\n").encode("utf-8"))
-        self._ipc_socket.flush()
+        self._send_ipc(f"LAYER_ORDER\t{payload}")
 
     def _handle_layer_order(self, data: dict):
         order = data.get("order", None)
@@ -1301,17 +1297,13 @@ class PetWindow(QWidget):
 
     def _broadcast_window_position(self):
         """广播自己的窗口位置给其他角色"""
-        if not self._ipc_socket or not self._ipc_socket.isOpen():
-            return
         center = self.geometry().center()
         payload = json.dumps({
             "character": self._current_char,
             "x": center.x(),
             "y": center.y(),
         }, ensure_ascii=False)
-        msg = f"PEER_POS\t{payload}"
-        self._ipc_socket.write((msg + "\n").encode("utf-8"))
-        self._ipc_socket.flush()
+        self._send_ipc(f"PEER_POS\t{payload}")
 
     def _handle_peer_pos(self, data: dict):
         """处理其他角色的窗口位置信息"""
@@ -1325,15 +1317,12 @@ class PetWindow(QWidget):
     def _broadcast_peer_drag(self, dx: int, dy: int):
         if not self._move_all_roles_together:
             return
-        if not self._ipc_socket or not self._ipc_socket.isOpen():
-            return
         payload = json.dumps({
             "character": self._current_char,
             "dx": int(dx),
             "dy": int(dy),
         }, ensure_ascii=False)
-        self._ipc_socket.write((f"PEER_DRAG\t{payload}\n").encode("utf-8"))
-        self._ipc_socket.flush()
+        self._send_ipc(f"PEER_DRAG\t{payload}")
 
     def _handle_peer_drag(self, data: dict):
         if not self._move_all_roles_together:
@@ -2626,12 +2615,9 @@ class PetWindow(QWidget):
             self._radial_menu_opening = False
 
     def _broadcast_radial_menu_state(self, *, open: bool):
-        if not self._ipc_socket or not self._ipc_socket.isOpen():
-            return
         prefix = "RADIAL_MENU_OPEN" if open else "RADIAL_MENU_CLOSED"
         payload = json.dumps({"character": self._current_char}, ensure_ascii=False)
-        self._ipc_socket.write(f"{prefix}\t{payload}\n".encode("utf-8"))
-        self._ipc_socket.flush()
+        self._send_ipc(f"{prefix}\t{payload}")
 
     def _send_radial_menu_command(self, line: str):
         self._radial_menu_command_queue.append(line)
@@ -2825,6 +2811,11 @@ class PetWindow(QWidget):
         process.setWorkingDirectory(base_dir)
         process.start()
 
+    def _send_ipc(self, msg: str):
+        if self._ipc_socket and self._ipc_socket.isOpen():
+            self._ipc_socket.write((msg + "\n").encode("utf-8"))
+            self._ipc_socket.flush()
+
     def _connect_ipc_socket(self):
         if self._ipc_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
             return
@@ -2836,8 +2827,7 @@ class PetWindow(QWidget):
 
     def _on_ipc_connected(self):
         self._ipc_reconnect_timer.stop()
-        self._ipc_socket.write(f"REGISTER\tPET\t{self._current_char}\n".encode("utf-8"))
-        self._ipc_socket.flush()
+        self._send_ipc(f"REGISTER\tPET\t{self._current_char}")
 
     def _read_ipc_messages(self):
         data = bytes(self._ipc_socket.readAll()).decode("utf-8", errors="replace")
@@ -3955,8 +3945,7 @@ class PetWindow(QWidget):
                 "costumes" if start_on_costumes else "main",
                 self._current_char,
             ]
-            self._ipc_socket.write(("\t".join(parts) + "\n").encode("utf-8"))
-            self._ipc_socket.flush()
+            self._send_ipc("\t".join(parts))
             return
 
         if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:

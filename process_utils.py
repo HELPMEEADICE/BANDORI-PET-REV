@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from app_info import APP_NAME
+
 
 DEBUG_LOG_ENV = "BANDORI_PET_DEBUG_LOG"
 INTERACTION_TRACE_ENV = "BANDORI_PET_INTERACTION_TRACE"
@@ -217,7 +219,7 @@ def set_windows_app_user_model_id(app_id: str) -> None:
 
 def ensure_windows_app_user_model_shortcut(
     app_id: str,
-    name: str = "BandoriPet",
+    name: str = APP_NAME,
     icon_path: str = "",
     target_path: str = "",
     arguments: str = "",
@@ -275,9 +277,9 @@ def ensure_windows_app_user_model_shortcut(
 
 
 def _safe_shortcut_name(name: str) -> str:
-    cleaned = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in str(name or "BandoriPet"))
+    cleaned = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in str(name or APP_NAME))
     cleaned = cleaned.strip().strip(".")
-    return cleaned or "BandoriPet"
+    return cleaned or APP_NAME
 
 
 def ipc_server_name() -> str:

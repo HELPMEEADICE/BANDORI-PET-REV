@@ -19,10 +19,9 @@ import time
 import zipfile
 from pathlib import Path, PureWindowsPath
 
-from model_manager import MODELS_DIR, ModelManager
+from model_manager import MODELS_DIR, WEBGAL_COMPOSITE_FILENAME, ModelManager
 
 CUSTOM_MARKER_FILENAME = "_custom.json"
-WEBGAL_COMPOSITE_FILENAME = "_webgal_composite.json"
 MODEL_JSON_NAME = "model.json"
 _INVALID_NAME_CHARS = '<>:"/\\|?*'
 _MAX_NAME_LENGTH = 64

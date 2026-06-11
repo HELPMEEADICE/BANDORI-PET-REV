@@ -12,6 +12,7 @@ from screen_awareness import (
     ScreenAwarenessVisionWorker,
     normalize_screen_awareness_model_mode,
     screen_awareness_aux_config,
+    screen_awareness_desktop_state,
 )
 
 
@@ -63,9 +64,53 @@ class ScreenAwarenessTest(unittest.TestCase):
         self.assertEqual("data:image/png;base64,abc", results[0]["screen_image_data_url"])
         self.assertEqual("", results[0]["screen_observation"])
         self.assertEqual("coding", results[0]["desktop_state"]["state"])
+        self.assertEqual("code.exe", results[0]["desktop_state"]["process_name"])
         self.assertNotIn("foreground_title", results[0]["desktop_state"])
-        self.assertNotIn("process_name", results[0]["desktop_state"])
         analyze.assert_not_called()
+
+    def test_desktop_state_context_privacy_defaults(self):
+        with patch("screen_awareness.current_desktop_state", return_value={
+            "state": "coding",
+            "label": "写代码",
+            "confidence": 0.9,
+            "reason": "dev tool",
+            "foreground_title": "secret.py - Project",
+            "process_name": "code.exe",
+            "app_name": "Code",
+            "process_path": "C:/Users/name/AppData/Code.exe",
+            "idle_seconds": 5,
+            "idle_threshold_seconds": 180,
+            "captured_at": "2026-06-09T02:00:00",
+        }):
+            state = screen_awareness_desktop_state({})
+
+        self.assertEqual("code.exe", state["process_name"])
+        self.assertEqual("Code", state["app_name"])
+        self.assertNotIn("foreground_title", state)
+        self.assertNotIn("process_path", state)
+
+    def test_desktop_state_can_hide_process_name(self):
+        with patch("screen_awareness.current_desktop_state", return_value={
+            "state": "web",
+            "process_name": "chrome.exe",
+            "app_name": "Chrome",
+        }):
+            state = screen_awareness_desktop_state({"screen_awareness_include_process_name": False})
+
+        self.assertNotIn("process_name", state)
+        self.assertNotIn("app_name", state)
+
+    def test_desktop_state_can_include_window_title(self):
+        with patch("screen_awareness.current_desktop_state", return_value={
+            "state": "web",
+            "foreground_title": "Example Page",
+            "process_name": "chrome.exe",
+            "app_name": "Chrome",
+        }):
+            state = screen_awareness_desktop_state({"screen_awareness_include_window_title": True})
+
+        self.assertEqual("Example Page", state["foreground_title"])
+        self.assertNotIn("process_path", state)
 
     def test_aux_mode_returns_summary_without_forwarding_screenshot(self):
         results = []

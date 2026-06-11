@@ -18,7 +18,7 @@ from process_utils import app_base_dir, hidden_subprocess_kwargs
 
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+){0,3}")
-_PROCESS_NAMES = ("BandoriPet", "pet_process", "settings_process", "chat_process")
+_PROCESS_NAMES = (APP_NAME, "pet_process", "settings_process", "chat_process")
 _PORTABLE_UPDATE_PROTECTED_FILES = (
     "config.json",
     "data.db",

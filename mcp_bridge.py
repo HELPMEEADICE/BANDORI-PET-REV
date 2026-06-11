@@ -13,6 +13,7 @@ from PySide6.QtCore import QByteArray, QEventLoop, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from i18n_manager import tr as _tr
+from app_info import APP_NAME
 from process_utils import app_base_dir, hidden_subprocess_kwargs, run_off_gui_thread
 
 _PROTOCOL_VERSION = "2025-06-18"
@@ -465,7 +466,7 @@ def _http_request_with_init(server: dict, method: str, params: dict | None = Non
             "params": {
                 "protocolVersion": _PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "BandoriPet", "version": "1.0"},
+                "clientInfo": {"name": APP_NAME, "version": "1.0"},
             },
         }
         _request_http_json(server, init)

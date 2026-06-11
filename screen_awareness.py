@@ -46,26 +46,28 @@ def screen_awareness_aux_config(config) -> tuple[str, str, str]:
     return api_url, api_key, model_id
 
 
-def screen_awareness_desktop_state() -> dict:
+def screen_awareness_desktop_state(config: dict | None = None) -> dict:
     try:
         state = current_desktop_state()
     except Exception:
         return {}
     if not isinstance(state, dict):
         return {}
-    return {
-        key: state.get(key)
-        for key in (
-            "state",
-            "label",
-            "confidence",
-            "reason",
-            "idle_seconds",
-            "idle_threshold_seconds",
-            "captured_at",
-        )
-        if key in state
-    }
+    config = config if isinstance(config, dict) else {}
+    keys = [
+        "state",
+        "label",
+        "confidence",
+        "reason",
+        "idle_seconds",
+        "idle_threshold_seconds",
+        "captured_at",
+    ]
+    if bool(config.get("screen_awareness_include_process_name", True)):
+        keys.extend(("process_name", "app_name"))
+    if bool(config.get("screen_awareness_include_window_title", False)):
+        keys.append("foreground_title")
+    return {key: state.get(key) for key in keys if key in state}
 
 
 class ScreenAwarenessVisionWorker(QThread):
@@ -96,7 +98,7 @@ class ScreenAwarenessVisionWorker(QThread):
                 "metrics": metrics,
                 "screen_observation": "",
                 "screen_image_data_url": "",
-                "desktop_state": screen_awareness_desktop_state(),
+                "desktop_state": screen_awareness_desktop_state(self._config),
             }
             if mode == SCREEN_AWARENESS_MODEL_MODE_MAIN:
                 result["screen_image_data_url"] = data_url

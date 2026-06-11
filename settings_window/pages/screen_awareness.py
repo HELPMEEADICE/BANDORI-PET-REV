@@ -11,6 +11,8 @@ SCREEN_AWARENESS_CONFIG_KEYS = (
     "screen_awareness_max_screenshot_width",
     "screen_awareness_model_mode",
     SCREEN_AWARENESS_DISPLAY_MODE_KEY,
+    "screen_awareness_include_process_name",
+    "screen_awareness_include_window_title",
 )
 
 
@@ -130,6 +132,20 @@ class ScreenAwarenessPageMixin:
             self._screen_awareness_display_mode,
         )
 
+        screen_form.addWidget(BodyLabel(_tr(
+            "SettingsWindow.screen_awareness_include_process_name",
+            default="???????",
+        ), screen_panel), 3, 0)
+        self._screen_awareness_include_process_name = SwitchButton(screen_panel)
+        screen_form.addWidget(self._screen_awareness_include_process_name, 3, 1)
+
+        screen_form.addWidget(BodyLabel(_tr(
+            "SettingsWindow.screen_awareness_include_window_title",
+            default="??????",
+        ), screen_panel), 3, 2)
+        self._screen_awareness_include_window_title = SwitchButton(screen_panel)
+        screen_form.addWidget(self._screen_awareness_include_window_title, 3, 3)
+
         test_screen_btn = PushButton(FluentIcon.PLAY, _tr("SettingsWindow.screen_awareness_test", default="立即测试"), screen_panel)
         test_screen_btn.setFixedHeight(34)
         test_screen_btn.clicked.connect(self._test_screen_awareness_now)
@@ -222,6 +238,14 @@ class ScreenAwarenessPageMixin:
         self._set_screen_awareness_display_mode(
             self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
         )
+        if hasattr(self, "_screen_awareness_include_process_name"):
+            self._screen_awareness_include_process_name.setChecked(
+                bool(self._cfg.get("screen_awareness_include_process_name", True))
+            )
+        if hasattr(self, "_screen_awareness_include_window_title"):
+            self._screen_awareness_include_window_title.setChecked(
+                bool(self._cfg.get("screen_awareness_include_window_title", False))
+            )
 
     def _sync_screen_awareness_config_from_ui(self):
         if not self._cfg or not hasattr(self, "_screen_awareness_enabled"):
@@ -235,6 +259,16 @@ class ScreenAwarenessPageMixin:
         self._cfg.set("screen_awareness_model_mode", self._selected_screen_awareness_model_mode())
         display_mode = self._screen_awareness_display_mode.currentData() or DISPLAY_MODE_FLOATING
         self._cfg.set(SCREEN_AWARENESS_DISPLAY_MODE_KEY, normalize_display_mode(display_mode))
+        if hasattr(self, "_screen_awareness_include_process_name"):
+            self._cfg.set(
+                "screen_awareness_include_process_name",
+                bool(self._screen_awareness_include_process_name.isChecked()),
+            )
+        if hasattr(self, "_screen_awareness_include_window_title"):
+            self._cfg.set(
+                "screen_awareness_include_window_title",
+                bool(self._screen_awareness_include_window_title.isChecked()),
+            )
 
     def _screen_awareness_settings_data(self) -> dict:
         if self._cfg:
@@ -245,6 +279,8 @@ class ScreenAwarenessPageMixin:
                 "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
                 "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
                 "screen_awareness_model_mode": str(self._cfg.get("screen_awareness_model_mode", "main") or "main"),
+                "screen_awareness_include_process_name": bool(self._cfg.get("screen_awareness_include_process_name", True)),
+                "screen_awareness_include_window_title": bool(self._cfg.get("screen_awareness_include_window_title", False)),
                 SCREEN_AWARENESS_DISPLAY_MODE_KEY: normalize_display_mode(
                     self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
                 ),
@@ -256,6 +292,8 @@ class ScreenAwarenessPageMixin:
             "screen_awareness_character": "",
             "screen_awareness_max_screenshot_width": 1920,
             "screen_awareness_model_mode": "main",
+            "screen_awareness_include_process_name": True,
+            "screen_awareness_include_window_title": False,
             SCREEN_AWARENESS_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
         }
 

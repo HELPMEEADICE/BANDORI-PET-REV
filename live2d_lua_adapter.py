@@ -8,6 +8,7 @@ from pathlib import Path
 
 from lupa.luajit21 import LuaRuntime
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
+from model_manager import WEBGAL_COMPOSITE_FILENAME, is_webgal_composite_path
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir
 from zst_model_archive import is_virtual_path, load_virtual_bytes, split_virtual_path
@@ -16,7 +17,6 @@ from zst_model_archive import is_virtual_path, load_virtual_bytes, split_virtual
 BASE_DIR = Path(app_base_dir())
 LIVE2D_LUA_DIR = BASE_DIR / "third_party" / "Live2D-v2-Lua"
 MODELS_DIR = BASE_DIR / "models"
-WEBGAL_COMPOSITE_FILENAME = "_webgal_composite.json"
 LIVE2D_PROFILE_ENABLED = os.environ.get("BANDORI_LIVE2D_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -277,10 +277,6 @@ def _safe_model_file_path(path: str | Path) -> Path:
     if not fs_path.is_relative_to(models_dir):
         raise ValueError(f"Model resource path is outside models directory: {path}")
     return fs_path
-
-
-def _is_webgal_composite_path(path: str) -> bool:
-    return not is_virtual_path(path) and Path(path).name == WEBGAL_COMPOSITE_FILENAME
 
 
 def _webgal_composite_layer_paths(manifest_path: str) -> list[str]:
@@ -824,7 +820,7 @@ class LuaCompositeLAppModel:
 
     def LoadModelJson(self, model_json_path: str):
         self._dispose_renderer()
-        if _is_webgal_composite_path(model_json_path):
+        if is_webgal_composite_path(model_json_path):
             self._layers = []
             for layer_path in _webgal_composite_layer_paths(model_json_path):
                 layer = LuaLAppModel(self._module)

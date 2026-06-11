@@ -61,7 +61,8 @@ from chat_config_snapshots import (
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import clean_tts_payload
-from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
+from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
+from .chat_window_base import ChatWindowMixin
 _TTS_AVAILABLE = True
 
 try:
@@ -80,7 +81,6 @@ from relationship_memory import (
     format_character_status,
     parse_relationship_analysis_response,
     store_extracted_memories,
-    user_key_from_config,
 )
 from action_bus import publish_action, publish_emotion_behavior, publish_lip_sync, publish_user_poke
 
@@ -283,7 +283,7 @@ class AttachmentImportWorker(QThread):
         }
 
 
-class ChatWindow(QWidget):
+class ChatWindow(ChatWindowMixin, QWidget):
     action_triggered = Signal(str, str)
     closed = Signal()
 
@@ -487,14 +487,6 @@ class ChatWindow(QWidget):
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-
-    def _assign_legacy_chat_history(self):
-        if not self._cfg or not hasattr(self._cfg, "legacy_chat_user_key"):
-            return
-        try:
-            self._db.assign_legacy_chat_history_user(self._cfg.legacy_chat_user_key())
-        except Exception:
-            pass
 
     def _normalized_group_sidebar_ratio(self, value) -> float:
         try:
@@ -3426,9 +3418,6 @@ class ChatWindow(QWidget):
         text = self._sanitize_group_assistant_reply(character, text)
         return f"【{self._model_manager.get_display_name(character)}】\n{text}"
 
-    def _user_memory_key(self) -> str:
-        return user_key_from_config(self._cfg)
-
     def _memory_target_characters(self) -> list[str]:
         return list(self._group_characters) if self._is_group_chat else [self._character]
 
@@ -3590,15 +3579,6 @@ class ChatWindow(QWidget):
         if clear_input:
             self._input.clear()
         self._input.setFocus()
-
-    def _park_cancelled_worker(self, worker):
-        if worker is None:
-            return
-        self._cancelled_workers.append(worker)
-        QTimer.singleShot(1000, self._prune_cancelled_workers)
-
-    def _prune_cancelled_workers(self):
-        self._cancelled_workers = [worker for worker in self._cancelled_workers if worker is not None and worker.isRunning()]
 
     def _relationship_status_text(self, sections: tuple[str, ...] | None = None) -> str:
         user_key = self._user_memory_key()
@@ -5588,7 +5568,7 @@ class ChatWindow(QWidget):
         self._pending_actions.clear()
 
     def _tts_enabled(self) -> bool:
-        return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
+        return is_tts_enabled(_TTS_AVAILABLE, self._cfg)
 
     def _reset_tts_stream(self, stop_player: bool = True):
         self._tts_text_buffer = ""

@@ -24,6 +24,7 @@ from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
+from app_info import APP_NAME
 from chat_window import ChatWindow
 from config_manager import ConfigManager
 from i18n_manager import detect_system_language, set_language
@@ -70,7 +71,7 @@ def _parse_group_characters(value: str, valid_characters: set[str], current_char
 def _chat_lock_path() -> str:
     runtime_dir = os.path.join(BASE_DIR, ".runtime")
     os.makedirs(runtime_dir, exist_ok=True)
-    server_name = ipc_server_name() or "BandoriPet"
+    server_name = ipc_server_name() or APP_NAME
     safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in server_name)
     return os.path.join(runtime_dir, f"{safe_name}-chat.lock")
 
@@ -130,9 +131,9 @@ def main():
     lang = cfg.get("language", "") or detect_system_language()
     set_language(lang)
 
-    app_user_model_id = "BandoriPet.Chat"
+    app_user_model_id = f"{APP_NAME}.Chat"
     if not _ensure_taskbar_icon_identity(app_user_model_id):
-        app_user_model_id = "BandoriPet"
+        app_user_model_id = APP_NAME
     set_windows_app_user_model_id(app_user_model_id)
     try:
         QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -156,7 +157,7 @@ def main():
         macos_patch.hide_dock_icon()
     app.setApplicationName("BandoriPetChat")
     app.setApplicationDisplayName("BandoriPet Chat")
-    app.setOrganizationName("BandoriPet")
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
     app_icon = _apply_app_icon(app)
 

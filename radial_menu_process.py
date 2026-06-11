@@ -15,6 +15,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
+from app_info import APP_NAME
 from radial_menu import RadialMenu
 
 
@@ -104,11 +105,11 @@ def main():
     if not server_name:
         return 2
 
-    set_windows_app_user_model_id("BandoriPet.RadialMenu")
+    set_windows_app_user_model_id(f"{APP_NAME}.RadialMenu")
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
-    app.setApplicationName("BandoriPet-RadialMenu")
-    app.setOrganizationName("BandoriPet")
+    app.setApplicationName(f"{APP_NAME}-RadialMenu")
+    app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
     if sys.platform == "darwin":
