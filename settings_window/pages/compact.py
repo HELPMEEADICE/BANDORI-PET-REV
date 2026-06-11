@@ -1,3 +1,5 @@
+import secrets
+
 from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
@@ -329,9 +331,16 @@ class CompactPageMixin:
         self._cfg.set("compact_ai_window_background_color", self._selected_compact_color(self._compact_bg_color_btns, BANDORI_PRIMARY))
         self._cfg.set("compact_ai_window_text_color", self._selected_compact_color(self._compact_text_color_btns, "#24242a"))
         self._cfg.set("ai_event_overlay_enabled", self._ai_event_overlay_enabled.isChecked())
-        self._cfg.set("ai_status_port_enabled", self._ai_status_port_enabled.isChecked())
+        ai_status_enabled = self._ai_status_port_enabled.isChecked()
+        ai_status_token = self._ai_status_token_input.text().strip()
+        if ai_status_enabled and not ai_status_token:
+            # Never persist an enabled port without a token: an unauthenticated
+            # loopback port can be driven by any local process or web page.
+            ai_status_token = secrets.token_urlsafe(18)
+            self._ai_status_token_input.setText(ai_status_token)
+        self._cfg.set("ai_status_port_enabled", ai_status_enabled)
         self._cfg.set("ai_status_port", clamp_int(self._ai_status_port_input.text(), 1024, 65535, 38472))
-        self._cfg.set("ai_status_token", self._ai_status_token_input.text().strip())
+        self._cfg.set("ai_status_token", ai_status_token)
         try:
             self._cfg.save()
             if emit_update:

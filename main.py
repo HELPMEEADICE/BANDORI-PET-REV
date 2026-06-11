@@ -1,5 +1,6 @@
 import sys
 import json
+import secrets
 import signal
 import threading
 import os
@@ -15,7 +16,7 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from config_manager import ConfigManager
+from config_manager import ConfigManager, DEFAULTS
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 from startup_manager import repair_startup_command
 from app_info import APP_NAME
@@ -334,6 +335,24 @@ def main():
             server.stop()
         chat_integration_ref["server"] = None
 
+    def ensure_local_port_token(token_key: str) -> str:
+        # A loopback HTTP port with no token accepts unauthenticated requests
+        # from any local process or web page (CORS does not block plain POSTs),
+        # which could inject fake chat/AI events into the pet. When such a port
+        # is enabled without a token, mint and persist one so the running server
+        # is always authenticated. cfg.save() merges with disk, so this never
+        # clobbers other settings.
+        token = str(cfg.get(token_key, "") or "").strip()
+        if token:
+            return token
+        token = secrets.token_urlsafe(18)
+        cfg.set(token_key, token)
+        try:
+            cfg.save()
+        except Exception as exc:
+            print(f"Failed to persist generated {token_key}: {exc}")
+        return token
+
     def close_chat_integration_db():
         db = chat_integration_ref.get("db")
         if db is not None:
@@ -345,7 +364,7 @@ def main():
         if not cfg.get("ai_status_port_enabled", False):
             return
         port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
-        token = cfg.get("ai_status_token") or ""
+        token = ensure_local_port_token("ai_status_token")
 
         def on_ai_event(event: dict):
             payload = json.dumps(event, ensure_ascii=False)
@@ -437,7 +456,7 @@ def main():
         if not cfg.get("chat_integration_enabled", False):
             return
         port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
-        token = cfg.get("chat_integration_token") or ""
+        token = ensure_local_port_token("chat_integration_token")
         try:
             server = ChatIntegrationHttpServer(
                 port,
@@ -859,7 +878,9 @@ def main():
             ("poke_expression", "poke_expression", ""),
             ("birthday_tray_notifications_enabled", "birthday_tray_notifications_enabled", True),
             ("live2d_quality", "live2d_quality", "balanced"),
-            ("live2d_scale", "live2d_scale", 100),
+            # 0 is the canonical "auto" sentinel (clamp_live2d_scale resolves it);
+            # source it from DEFAULTS so this path never drifts from config_manager.
+            ("live2d_scale", "live2d_scale", DEFAULTS["live2d_scale"]),
             ("compact_ai_window_enabled", "compact_ai_window_enabled", False),
             ("compact_ai_window_opacity", "compact_ai_window_opacity", 44),
             ("compact_ai_window_font_size", "compact_ai_window_font_size", 12),

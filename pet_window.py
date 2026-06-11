@@ -271,7 +271,9 @@ class PetWindow(QWidget):
             self._live2d_quality = normalize_live2d_quality(
                 self._cfg.get("live2d_quality", "balanced")
             )
-            self._live2d_scale = clamp_live2d_scale(self._cfg.get("live2d_scale", 100))
+            # 0 is the canonical "unset" sentinel (matches config_manager DEFAULTS);
+            # clamp_live2d_scale resolves it to the baseline scale.
+            self._live2d_scale = clamp_live2d_scale(self._cfg.get("live2d_scale", 0))
             self._live2d_hit_alpha_threshold = _clamp_int(
                 self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
                 0,

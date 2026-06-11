@@ -514,11 +514,18 @@ class ChatIntegrationPageMixin:
     def _save_chat_integration_config(self, show_info: bool = True, emit_update: bool = False):
         if not self._cfg or not self._chat_integration_widgets_ready():
             return
-        self._cfg.set("chat_integration_enabled", self._chat_integration_enabled.isChecked())
+        enabled = self._chat_integration_enabled.isChecked()
+        token = self._chat_integration_token_input.text().strip()
+        if enabled and not token:
+            # Never persist an enabled port without a token: an unauthenticated
+            # loopback port can be driven by any local process or web page.
+            token = secrets.token_urlsafe(18)
+            self._chat_integration_token_input.setText(token)
+        self._cfg.set("chat_integration_enabled", enabled)
         self._cfg.set("chat_integration_overlay_enabled", self._chat_integration_overlay_enabled.isChecked())
         self._cfg.set("chat_integration_include_context", self._chat_integration_include_context.isChecked())
         self._cfg.set("chat_integration_port", clamp_int(self._chat_integration_port_input.text(), 1024, 65535, 38473))
-        self._cfg.set("chat_integration_token", self._chat_integration_token_input.text().strip())
+        self._cfg.set("chat_integration_token", token)
         self._save_napcat_into_cfg()
         try:
             self._cfg.save()
