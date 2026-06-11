@@ -627,6 +627,7 @@
   "SettingsWindow.update_channel_portable": "便攜版 exe",
   "SettingsWindow.update_channel_inno": "Inno Setup 安裝包",
   "SettingsWindow.update_channel_msi": "MSI 安裝包",
+  "SettingsWindow.update_channel_macos_app": "macOS App",
   "SettingsWindow.update_channel_unknown": "未知",
   "SettingsWindow.side_settings": "設定",
   "SettingsWindow.side_fps": "更新率（FPS）",

@@ -524,6 +524,7 @@ build_exe_options = {
         "PySide6.QtOpenGL",
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",
+        "certifi",
         "darkdetect",
         "numpy",
         "qfluentwidgets",

@@ -627,6 +627,7 @@
   "SettingsWindow.update_channel_portable": "ポータブル exe",
   "SettingsWindow.update_channel_inno": "Inno Setup インストーラー",
   "SettingsWindow.update_channel_msi": "MSI インストーラー",
+  "SettingsWindow.update_channel_macos_app": "macOS App",
   "SettingsWindow.update_channel_unknown": "不明",
   "SettingsWindow.side_settings": "設定",
   "SettingsWindow.side_fps": "リフレッシュレート（FPS）",
