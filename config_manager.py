@@ -10,7 +10,13 @@ from pathlib import Path
 from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
-from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros, normalize_proactive_companion
+from reminder_core import (
+    normalize_alarms,
+    normalize_display_mode,
+    normalize_pomodoros,
+    normalize_proactive_care_policy,
+    normalize_proactive_companion,
+)
 from screen_awareness import (
     SCREEN_AWARENESS_MODEL_MODE_MAIN,
     clamp_screen_awareness_interval,
@@ -349,6 +355,7 @@ DEFAULTS = {
     "alarms": [],
     "pomodoros": [],
     "proactive_companion": {},
+    "proactive_care_policy": {},
     "screen_awareness_enabled": False,
     "screen_awareness_interval_minutes": 30,
     "screen_awareness_character_mode": "random_visible",
@@ -356,6 +363,8 @@ DEFAULTS = {
     "screen_awareness_max_screenshot_width": 1920,
     "screen_awareness_model_mode": SCREEN_AWARENESS_MODEL_MODE_MAIN,
     "screen_awareness_display_mode": "floating",
+    "screen_awareness_include_process_name": True,
+    "screen_awareness_include_window_title": False,
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -598,6 +607,9 @@ class ConfigManager:
         self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
         self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
         self._data["proactive_companion"] = normalize_proactive_companion(self._data.get("proactive_companion", {}))
+        self._data["proactive_care_policy"] = normalize_proactive_care_policy(
+            self._data.get("proactive_care_policy", {})
+        )
         self._normalize_click_motion_profiles()
         self._data["reminder_display_mode"] = normalize_display_mode(
             self._data.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
@@ -795,6 +807,12 @@ class ConfigManager:
         )
         self._data["screen_awareness_display_mode"] = normalize_display_mode(
             self._data.get("screen_awareness_display_mode", DEFAULTS["screen_awareness_display_mode"])
+        )
+        self._data["screen_awareness_include_process_name"] = bool(
+            self._data.get("screen_awareness_include_process_name", True)
+        )
+        self._data["screen_awareness_include_window_title"] = bool(
+            self._data.get("screen_awareness_include_window_title", False)
         )
         for legacy_key in (
             "screen_awareness_vision_api_url",

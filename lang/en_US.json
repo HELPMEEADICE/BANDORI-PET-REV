@@ -1,4 +1,4 @@
-﻿{
+{
   "costume_count": "{count} costumes",
   "character_count": "{count} characters",
   "Common.undo": "Undo",
@@ -1265,5 +1265,30 @@
   "SettingsWindow.wizard_models_downloading": "Downloading model packages...",
   "SettingsWindow.wizard_models_missing_packages": "Missing {count} model package(s)",
   "StatisticsPage.duration_minutes": "{m} min",
-  "StatisticsPage.duration_minutes_short": "{m}min"
+  "StatisticsPage.duration_minutes_short": "{m}min",
+  "SettingsWindow.care_policy_title": "Care policy",
+  "SettingsWindow.care_policy_hint": "Control proactive messages by desktop state to reduce interruptions.",
+  "SettingsWindow.care_policy_cooldown": "Global cooldown",
+  "SettingsWindow.care_policy_quiet_hours": "Quiet hours",
+  "SettingsWindow.care_policy_screen_respect": "Screen awareness follows policy",
+  "SettingsWindow.care_policy_state": "State",
+  "SettingsWindow.care_policy_mode": "Mode",
+  "SettingsWindow.care_policy_multiplier": "Cooldown",
+  "SettingsWindow.care_policy_allow_screen": "Screen",
+  "SettingsWindow.care_policy_allow_lifestyle": "Lifestyle",
+  "SettingsWindow.care_policy_mode_normal": "Normal",
+  "SettingsWindow.care_policy_mode_quiet": "Less often",
+  "SettingsWindow.care_policy_mode_silent": "Silent",
+  "SettingsWindow.care_policy_mode_encourage": "Encourage",
+  "SettingsWindow.care_policy_state_gaming": "Gaming",
+  "SettingsWindow.care_policy_state_media": "Media",
+  "SettingsWindow.care_policy_state_coding": "Coding",
+  "SettingsWindow.care_policy_state_writing": "Writing",
+  "SettingsWindow.care_policy_state_chatting": "Chatting",
+  "SettingsWindow.care_policy_state_web": "Web",
+  "SettingsWindow.care_policy_state_desktop": "Desktop",
+  "SettingsWindow.care_policy_state_idle": "Idle",
+  "SettingsWindow.care_policy_state_unknown": "Unknown",
+  "SettingsWindow.screen_awareness_include_process_name": "Send foreground process name",
+  "SettingsWindow.screen_awareness_include_window_title": "Send window title"
 }

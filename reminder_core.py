@@ -12,6 +12,7 @@ POMODORO_CONFIG_KEY = "pomodoros"
 REMINDER_DISPLAY_MODE_KEY = "reminder_display_mode"
 SCREEN_AWARENESS_DISPLAY_MODE_KEY = "screen_awareness_display_mode"
 PROACTIVE_COMPANION_CONFIG_KEY = "proactive_companion"
+PROACTIVE_CARE_POLICY_CONFIG_KEY = "proactive_care_policy"
 
 DISPLAY_MODE_FLOATING = "floating"
 DISPLAY_MODE_SYSTEM = "system"
@@ -531,3 +532,9 @@ def default_reminder_character(config) -> str:
                 if character:
                     return character
     return str(config.get("character", "") or "").strip() if config else ""
+
+
+def normalize_proactive_care_policy(value) -> dict:
+    from proactive_care_policy import normalize_proactive_care_policy as _normalize
+
+    return _normalize(value)

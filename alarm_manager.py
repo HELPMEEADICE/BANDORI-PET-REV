@@ -13,9 +13,11 @@ from action_bus import publish_lip_sync
 from app_info import APP_NAME
 from chat_config_snapshots import memory_extraction_api_config, tts_config_snapshot
 from database_manager import DatabaseManager
+from desktop_state import current_desktop_state
 from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
+from proactive_care_policy import evaluate_proactive_care, mark_proactive_care_result
 from relationship_memory import build_relationship_context, user_key_from_config
 from reminder_core import (
     ALARM_CONFIG_KEY,
@@ -23,6 +25,7 @@ from reminder_core import (
     FOCUS_SECONDS,
     LONG_BREAK_SECONDS,
     POMODORO_CONFIG_KEY,
+    PROACTIVE_CARE_POLICY_CONFIG_KEY,
     PROACTIVE_COMPANION_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
     SCREEN_AWARENESS_DISPLAY_MODE_KEY,
@@ -114,7 +117,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return False
         now = local_now()
         self._schedule_next_screen_awareness(now)
-        self._start_screen_awareness_capture(now)
+        self._start_screen_awareness_capture(now, bypass_policy=True)
         return True
 
     def stop(self):
@@ -187,9 +190,16 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
                 next_at = parse_iso_datetime(item.get("next_at"))
                 if next_at is None or next_at > now:
                     continue
-                self._trigger_proactive_item(item, proactive, next_at)
-                item["last_triggered_at"] = isoformat(now)
-                item["next_at"] = isoformat(compute_next_proactive_at(item, now + timedelta(seconds=30)))
+                result = self._trigger_proactive_item(item, proactive, next_at)
+                if not isinstance(result, dict):
+                    result = {"triggered": True}
+                if result.get("triggered", True):
+                    item["last_triggered_at"] = isoformat(now)
+                delay = result.get("next_delay_minutes")
+                if delay:
+                    item["next_at"] = isoformat(now + timedelta(minutes=max(1, int(delay))))
+                else:
+                    item["next_at"] = isoformat(compute_next_proactive_at(item, now + timedelta(seconds=30)))
                 changed = True
 
         self._maybe_trigger_screen_awareness(now)
@@ -231,9 +241,10 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._schedule_next_screen_awareness(now)
         self._start_screen_awareness_capture(now)
 
-    def _start_screen_awareness_capture(self, trigger_now):
+    def _start_screen_awareness_capture(self, trigger_now, bypass_policy: bool = False):
         character = self._screen_awareness_character()
         worker = ScreenAwarenessVisionWorker(dict(getattr(self._cfg, "_data", {}) or {}), self)
+        worker._bandori_bypass_care_policy = bool(bypass_policy)
         self._screen_awareness_worker = worker
         worker.finished.connect(
             lambda result, worker=worker, character=character, trigger_now=trigger_now:
@@ -255,6 +266,19 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         image_data_url = str(result.get("screen_image_data_url", "") or "").strip()
         if not summary and not image_data_url:
             return
+        desktop_state = result.get("desktop_state", {}) if isinstance(result.get("desktop_state"), dict) else {}
+        decision = self._care_policy_decision(
+            "screen_awareness",
+            desktop_state=desktop_state,
+            now=trigger_now,
+            bypass=bool(getattr(worker, "_bandori_bypass_care_policy", False)),
+        )
+        if not decision.get("allow", True):
+            self._record_care_policy_skip("screen_awareness", decision, trigger_now)
+            delay = decision.get("next_delay_minutes")
+            if delay:
+                self._next_screen_awareness_at = trigger_now + timedelta(minutes=max(1, int(delay)))
+            return
         self._start_text_generation({
             "kind": "screen_awareness",
             "title": _tr("Reminder.title_screen_awareness", default="屏幕感知"),
@@ -264,7 +288,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "screen_observation": summary,
             "screen_image_data_url": image_data_url,
             "screen_metrics": result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {},
-            "desktop_state": result.get("desktop_state", {}) if isinstance(result.get("desktop_state"), dict) else {},
+            "desktop_state": desktop_state,
+            "care_policy": decision,
             "triggered_at": isoformat(trigger_now),
         })
 
@@ -316,6 +341,20 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
     def _trigger_proactive_item(self, item: dict, proactive: dict, scheduled_at):
         character = self._reminder_character(item.get("character", "") or proactive.get("character", ""))
         proactive_kind = str(item.get("kind") or item.get("id") or "")
+        trigger_now = local_now()
+        decision = self._care_policy_decision(
+            "proactive_companion",
+            proactive_kind=proactive_kind,
+            desktop_state=self._current_desktop_state(),
+            now=trigger_now,
+        )
+        if not decision.get("allow", True):
+            self._record_care_policy_skip("proactive_companion", decision, trigger_now)
+            return {
+                "triggered": False,
+                "next_delay_minutes": decision.get("next_delay_minutes"),
+                "reason": decision.get("reason", ""),
+            }
         title = _tr(
             f"Reminder.proactive_{proactive_kind}_title",
             default=str(item.get("title") or _tr("Reminder.title_proactive", default="生活节奏提醒")),
@@ -324,7 +363,6 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             f"Reminder.proactive_{proactive_kind}_description",
             default=str(item.get("description", "") or ""),
         )
-        trigger_now = local_now()
         context = {
             "kind": "proactive_companion",
             "proactive_kind": proactive_kind,
@@ -338,8 +376,61 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "interval_minutes": item.get("interval_minutes", 0),
             "active_start": item.get("active_start", ""),
             "active_end": item.get("active_end", ""),
+            "care_policy": decision,
         }
         self._start_text_generation(context)
+        self._record_care_policy_success("proactive_companion", trigger_now)
+        return {"triggered": True}
+
+    def _current_desktop_state(self) -> dict:
+        try:
+            state = current_desktop_state()
+        except Exception:
+            return {}
+        return state if isinstance(state, dict) else {}
+
+    def _care_policy(self) -> dict:
+        return self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}) if self._cfg else {}
+
+    def _set_care_policy(self, policy: dict):
+        if not self._cfg:
+            return
+        self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, policy)
+        try:
+            self._cfg.save()
+        except OSError as exc:
+            _log.error("ReminderScheduler: failed to persist care policy: %s", exc)
+
+    def _care_policy_decision(
+        self,
+        kind: str,
+        *,
+        proactive_kind: str = "",
+        desktop_state: dict | None = None,
+        now=None,
+        bypass: bool = False,
+    ) -> dict:
+        return evaluate_proactive_care(
+            self._care_policy(),
+            kind=kind,
+            proactive_kind=proactive_kind,
+            desktop_state=desktop_state or {},
+            now=now or local_now(),
+            bypass=bypass,
+        )
+
+    def _record_care_policy_success(self, kind: str, now=None):
+        policy = mark_proactive_care_result(self._care_policy(), kind=kind, now=now or local_now())
+        self._set_care_policy(policy)
+
+    def _record_care_policy_skip(self, kind: str, decision: dict, now=None):
+        policy = mark_proactive_care_result(
+            self._care_policy(),
+            kind=kind,
+            now=now or local_now(),
+            skip_reason=str(decision.get("reason", "") or "skipped"),
+        )
+        self._set_care_policy(policy)
 
     def _advance_pomodoro(self, pomodoro: dict, now):
         character = self._reminder_character(pomodoro.get("character", ""))
@@ -497,6 +588,10 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
                     "如果不需要打扰，只输出 NO_SPEAK。不要说自己在截图或监控屏幕。"
                 ),
             )
+            instruction += (
+                "\n如果 payload 中包含 process_name、app_name 或 foreground_title，只能把它们用于判断用户场景和语气；"
+                "不要在回复中复述进程名、窗口标题、文件名或聊天对象。"
+            )
         reminder_payload = {
             key: value
             for key, value in context.items()
@@ -510,6 +605,12 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         if context.get("screen_observation"):
             payload["screen_observation"] = context.get("screen_observation", "")
             payload["screen_metrics"] = context.get("screen_metrics", {})
+        if isinstance(context.get("care_policy"), dict):
+            payload["care_policy"] = {
+                key: value
+                for key, value in context.get("care_policy", {}).items()
+                if key in {"reason", "tone_hint"}
+            }
         desktop_state = context.get("desktop_state", {}) if is_screen_awareness else {}
         if desktop_state:
             payload["desktop_state"] = desktop_state
@@ -585,16 +686,20 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         actions = parse_action_tags(text)
         clean = strip_action_tags(text).strip()
         if context.get("kind") == "screen_awareness" and clean.upper().strip(" 。.!！") == "NO_SPEAK":
+            self._record_care_policy_skip("screen_awareness", {"reason": "model_no_speak"}, local_now())
             self._text_generation_busy = False
             QTimer.singleShot(300, self._drain_pending_contexts)
             return
         if not clean:
             clean = self._fallback_text(context)
         if context.get("kind") == "screen_awareness" and clean.upper().strip(" 。.!！") == "NO_SPEAK":
+            self._record_care_policy_skip("screen_awareness", {"reason": "model_no_speak"}, local_now())
             self._text_generation_busy = False
             QTimer.singleShot(300, self._drain_pending_contexts)
             return
         self._show_reminder(context, clean, actions[0] if actions else "surprised")
+        if context.get("kind") == "screen_awareness":
+            self._record_care_policy_success("screen_awareness", local_now())
         self._text_generation_busy = False
         QTimer.singleShot(300, self._drain_pending_contexts)
 

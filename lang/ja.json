@@ -1,4 +1,4 @@
-﻿{
+{
   "costume_count": "{count}着の衣装",
   "character_count": "{count}人のキャラクター",
   "Common.undo": "元に戻す",
@@ -1265,5 +1265,30 @@
   "SettingsWindow.wizard_models_downloading": "モデルパッケージをダウンロード中...",
   "SettingsWindow.wizard_models_missing_packages": "{count} 個のモデルパッケージが不足",
   "StatisticsPage.duration_minutes": "{m} 分",
-  "StatisticsPage.duration_minutes_short": "{m}分"
+  "StatisticsPage.duration_minutes_short": "{m}分",
+  "SettingsWindow.care_policy_title": "能動ケア方針",
+  "SettingsWindow.care_policy_hint": "デスクトップ状態ごとに声かけを調整します。",
+  "SettingsWindow.care_policy_cooldown": "共通クールダウン",
+  "SettingsWindow.care_policy_quiet_hours": "静音時間",
+  "SettingsWindow.care_policy_screen_respect": "画面認識も方針に従う",
+  "SettingsWindow.care_policy_state": "状態",
+  "SettingsWindow.care_policy_mode": "モード",
+  "SettingsWindow.care_policy_multiplier": "間隔倍率",
+  "SettingsWindow.care_policy_allow_screen": "画面認識",
+  "SettingsWindow.care_policy_allow_lifestyle": "生活リマインダー",
+  "SettingsWindow.care_policy_mode_normal": "通常",
+  "SettingsWindow.care_policy_mode_quiet": "頻度低め",
+  "SettingsWindow.care_policy_mode_silent": "静音",
+  "SettingsWindow.care_policy_mode_encourage": "積極",
+  "SettingsWindow.care_policy_state_gaming": "ゲーム",
+  "SettingsWindow.care_policy_state_media": "メディア",
+  "SettingsWindow.care_policy_state_coding": "コーディング",
+  "SettingsWindow.care_policy_state_writing": "執筆",
+  "SettingsWindow.care_policy_state_chatting": "チャット",
+  "SettingsWindow.care_policy_state_web": "Web",
+  "SettingsWindow.care_policy_state_desktop": "デスクトップ",
+  "SettingsWindow.care_policy_state_idle": "離席/アイドル",
+  "SettingsWindow.care_policy_state_unknown": "不明",
+  "SettingsWindow.screen_awareness_include_process_name": "前面プロセス名を送信",
+  "SettingsWindow.screen_awareness_include_window_title": "ウィンドウタイトルを送信"
 }

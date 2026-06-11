@@ -870,6 +870,8 @@ def main():
             ("screen_awareness_max_screenshot_width", "screen_awareness_max_screenshot_width", 1920),
             ("screen_awareness_model_mode", "screen_awareness_model_mode", "main"),
             ("screen_awareness_display_mode", "screen_awareness_display_mode", "floating"),
+            ("screen_awareness_include_process_name", "screen_awareness_include_process_name", True),
+            ("screen_awareness_include_window_title", "screen_awareness_include_window_title", False),
         )
         language = data.get("language")
         if language:
@@ -900,6 +902,7 @@ def main():
             "alarms",
             "pomodoros",
             "proactive_companion",
+            "proactive_care_policy",
             "reminder_display_mode",
         ):
             value = data.get(key)

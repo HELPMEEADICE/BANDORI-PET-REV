@@ -80,6 +80,7 @@ from relationship_memory import (
 )
 from reminder_core import (
     ALARM_CONFIG_KEY,
+    PROACTIVE_CARE_POLICY_CONFIG_KEY,
     PROACTIVE_COMPANION_CONFIG_KEY,
     DISPLAY_MODE_FLOATING,
     DISPLAY_MODE_SYSTEM,
@@ -92,11 +93,13 @@ from reminder_core import (
     normalize_alarms,
     normalize_display_mode,
     normalize_pomodoros,
+    normalize_proactive_care_policy,
     normalize_proactive_companion,
     parse_iso_datetime,
     pomodoro_phase_label,
     repeat_days_label,
 )
+from proactive_care_policy import CARE_DESKTOP_STATES, CARE_RULE_MODES
 from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 TTSPlayer = None
@@ -278,6 +281,7 @@ DATA_CONFIG_KEYS = {
         "alarms",
         "pomodoros",
         "proactive_companion",
+        "proactive_care_policy",
         "reminder_display_mode",
     ),
     DATA_CATEGORY_SCREEN_AWARENESS: (
@@ -288,6 +292,8 @@ DATA_CONFIG_KEYS = {
         "screen_awareness_max_screenshot_width",
         "screen_awareness_model_mode",
         "screen_awareness_display_mode",
+        "screen_awareness_include_process_name",
+        "screen_awareness_include_window_title",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",

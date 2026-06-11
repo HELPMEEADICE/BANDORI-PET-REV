@@ -1,4 +1,4 @@
-﻿{
+{
   "costume_count": "{count}套服装",
   "character_count": "{count}名角色",
   "Common.undo": "撤销",
@@ -1265,5 +1265,30 @@
   "SettingsWindow.wizard_models_downloading": "正在下载模型包...",
   "SettingsWindow.wizard_models_missing_packages": "缺少 {count} 个模型包",
   "StatisticsPage.duration_minutes": "{m} 分钟",
-  "StatisticsPage.duration_minutes_short": "{m}min"
+  "StatisticsPage.duration_minutes_short": "{m}min",
+  "SettingsWindow.care_policy_title": "主动关怀策略",
+  "SettingsWindow.care_policy_hint": "按当前桌面状态控制主动搭话，减少打扰。",
+  "SettingsWindow.care_policy_cooldown": "全局冷却",
+  "SettingsWindow.care_policy_quiet_hours": "勿扰时段",
+  "SettingsWindow.care_policy_screen_respect": "屏幕感知遵守策略",
+  "SettingsWindow.care_policy_state": "状态",
+  "SettingsWindow.care_policy_mode": "模式",
+  "SettingsWindow.care_policy_multiplier": "冷却倍率",
+  "SettingsWindow.care_policy_allow_screen": "屏幕感知",
+  "SettingsWindow.care_policy_allow_lifestyle": "生活提醒",
+  "SettingsWindow.care_policy_mode_normal": "正常",
+  "SettingsWindow.care_policy_mode_quiet": "降低频率",
+  "SettingsWindow.care_policy_mode_silent": "静默",
+  "SettingsWindow.care_policy_mode_encourage": "增强关怀",
+  "SettingsWindow.care_policy_state_gaming": "游戏",
+  "SettingsWindow.care_policy_state_media": "媒体",
+  "SettingsWindow.care_policy_state_coding": "编码",
+  "SettingsWindow.care_policy_state_writing": "写作",
+  "SettingsWindow.care_policy_state_chatting": "聊天",
+  "SettingsWindow.care_policy_state_web": "网页",
+  "SettingsWindow.care_policy_state_desktop": "桌面",
+  "SettingsWindow.care_policy_state_idle": "空闲",
+  "SettingsWindow.care_policy_state_unknown": "未知",
+  "SettingsWindow.screen_awareness_include_process_name": "发送前台进程名",
+  "SettingsWindow.screen_awareness_include_window_title": "发送窗口标题"
 }
