@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_theme import BANDORI_UI_FONT_FAMILY
+from process_utils import interaction_trace
 from win32_dwm import apply_windows_11_border_fix, frame_changed
 
 WM_NCCALCSIZE = 0x0083
@@ -48,6 +49,18 @@ if os.name == "nt":
 else:
     _set_window_pos = None
     _get_async_key_state = None
+
+_get_macos_button_state = None
+if sys.platform == "darwin":
+    try:
+        _application_services = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        _get_macos_button_state = _application_services.CGEventSourceButtonState
+        _get_macos_button_state.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        _get_macos_button_state.restype = ctypes.c_bool
+    except Exception:
+        _get_macos_button_state = None
 
 VK_LBUTTON = 0x01
 VK_RBUTTON = 0x02
@@ -440,6 +453,12 @@ class RadialMenu(QWidget):
 
         self._center = center
         self._is_showing = True
+        interaction_trace(
+            "radial_menu",
+            "show_at",
+            x=center.x(),
+            y=center.y(),
+        )
         self._ignore_outside_click_until_release = self._mouse_buttons_pressed()
         self._set_center_reveal_value(0.0)
 
@@ -486,6 +505,11 @@ class RadialMenu(QWidget):
                 bool(_get_async_key_state(button) & 0x8000)
                 for button in (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON)
             )
+        if _get_macos_button_state is not None:
+            return any(
+                bool(_get_macos_button_state(0, button))
+                for button in (0, 1, 2)
+            )
         return bool(QGuiApplication.mouseButtons())
 
     def _check_outside_click(self):
@@ -500,10 +524,12 @@ class RadialMenu(QWidget):
             return
         cursor_pos = QCursor.pos()
         if not self.geometry().contains(cursor_pos):
+            interaction_trace("radial_menu", "dismiss_outside_window")
             self.dismiss()
             return
         local_pos = self.mapFromGlobal(cursor_pos)
         if not self._is_interactive_point(local_pos):
+            interaction_trace("radial_menu", "dismiss_noninteractive_point")
             self.dismiss()
 
     def _is_interactive_point(self, pos: QPoint) -> bool:
@@ -578,6 +604,7 @@ class RadialMenu(QWidget):
         self._outside_click_timer.stop()
         self._is_showing = False
         self.hide()
+        interaction_trace("radial_menu", "hide_finished")
         self.closed.emit()
 
     def _on_item_clicked(self):
@@ -585,6 +612,11 @@ class RadialMenu(QWidget):
 
     def dismiss(self):
         self._outside_click_timer.stop()
+        interaction_trace(
+            "radial_menu",
+            "dismiss",
+            showing=self._is_showing,
+        )
         if self._is_showing:
             if self._anim_group and self._anim_group.state() == QPropertyAnimation.State.Running:
                 self._anim_group.stop()

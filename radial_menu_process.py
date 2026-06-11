@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, set_windows_app_user_model_id
+from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, interaction_trace, set_windows_app_user_model_id
 
 configure_debug_logging()
 
@@ -116,12 +116,6 @@ def main():
 
         macos_patch.hide_dock_icon()
 
-    idle_timer = QTimer(app)
-    idle_timer.setSingleShot(True)
-    idle_timer.setInterval(12000)
-    idle_timer.timeout.connect(app.quit)
-    idle_timer.start()
-
     QLocalServer.removeServer(server_name)
     server = QLocalServer(app)
     if not server.listen(server_name):
@@ -133,8 +127,8 @@ def main():
     buffers: dict[QLocalSocket, str] = {}
 
     def on_menu_closed():
+        interaction_trace("radial_process", "menu_closed")
         _emit("STATE\tCLOSED")
-        idle_timer.start()
 
     def on_lock_toggled(locked: bool):
         _emit(f"LOCK\t{1 if locked else 0}")
@@ -157,7 +151,13 @@ def main():
 
     def show_payload(payload: dict):
         nonlocal menu
-        idle_timer.stop()
+        interaction_trace(
+            "radial_process",
+            "show_payload",
+            x=payload.get("x"),
+            y=payload.get("y"),
+            existing=menu is not None,
+        )
         if menu is None:
             attach_menu(_build_menu(payload, menu_actions))
         elif not _update_menu(menu, payload, menu_actions):
@@ -172,10 +172,13 @@ def main():
     def close_menu():
         if menu is not None:
             menu.dismiss()
-        else:
-            idle_timer.start()
 
     def handle_line(line: str):
+        interaction_trace(
+            "radial_process",
+            "command",
+            command=line.split("\t", 1)[0],
+        )
         if line.startswith("SHOW\t"):
             try:
                 payload = json.loads(line.split("\t", 1)[1])

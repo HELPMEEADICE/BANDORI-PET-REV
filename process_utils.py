@@ -1,15 +1,18 @@
 import atexit
 import hmac
+import json
 import os
 import sys
 import hashlib
 import subprocess
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
 
 DEBUG_LOG_ENV = "BANDORI_PET_DEBUG_LOG"
+INTERACTION_TRACE_ENV = "BANDORI_PET_INTERACTION_TRACE"
 _DEBUG_LOG_LOCK = threading.RLock()
 _DEBUG_LOG_FILE = None
 _DEBUG_LOG_CONFIGURED = False
@@ -154,6 +157,25 @@ def configure_debug_logging(argv: list[str] | None = None) -> Path | None:
     atexit.register(_close_debug_log)
     print(f"[debug] logging to {path}", file=sys.stderr)
     return path
+
+
+def interaction_trace(component: str, event: str, **fields) -> None:
+    if os.environ.get(INTERACTION_TRACE_ENV, "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return
+    payload = {
+        "t": round(time.monotonic(), 6),
+        "pid": os.getpid(),
+        "component": str(component),
+        "event": str(event),
+        **fields,
+    }
+    print(
+        "[interaction] " + json.dumps(payload, ensure_ascii=False, default=str),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def ensure_xwayland():

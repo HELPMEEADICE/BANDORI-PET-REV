@@ -155,6 +155,23 @@ def set_ignores_mouse_events(widget, ignores: bool) -> bool:
     return True
 
 
+def get_ignores_mouse_events(widget):
+    if not _init_objc() or widget is None:
+        return None
+    try:
+        win_id = int(widget.winId())
+    except (TypeError, ValueError):
+        return None
+    if not win_id:
+        return None
+    window = _get_ns_window(win_id)
+    if not window:
+        return None
+    f = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    sender = ctypes.cast(_OBJC.objc_msgSend, f)
+    return bool(sender(window, _sel("ignoresMouseEvents")))
+
+
 def set_collection_behavior(widget, mask: int) -> bool:
     if not _init_objc() or widget is None:
         return False
@@ -226,6 +243,5 @@ def hide_dock_icon():
         sender(app, _sel("setActivationPolicy:"), 1)
     except Exception:
         pass
-
 
 

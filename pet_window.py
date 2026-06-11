@@ -12,7 +12,7 @@ import uuid
 if os.name == "nt":
     import ctypes.wintypes
 
-from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QEvent, QCoreApplication, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QCoreApplication, QParallelAnimationGroup
 from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication, QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
@@ -24,7 +24,7 @@ from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
-from process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from process_utils import app_base_dir, interaction_trace, ipc_server_name, process_program_and_args
 from process_utils import clamp_float as _clamp_float, clamp_int as _clamp_int
 from win32_dwm import (
     SWP_FRAMECHANGED,
@@ -122,6 +122,8 @@ TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 MOUSE_PASSTHROUGH_INTERVAL_MS = 16
 MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
+MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS = 0.08
+MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE = 12
 LIVE2D_PREWARM_MAX_MOTIONS = 64
 LIVE2D_PREWARM_MAX_EXPRESSIONS = 32
 LIVE2D_PREWARM_STEP_MS = 90
@@ -280,6 +282,7 @@ class PetWindow(QWidget):
         self._radial_menu_server_name = ""
         self._radial_menu_command_queue = []
         self._radial_menu_process_ready = False
+        self._radial_menu_shutting_down = False
         self._radial_menu_visible = False
         self._radial_menu_opening = False
         self._radial_menu_opening_token = 0
@@ -361,7 +364,10 @@ class PetWindow(QWidget):
         self._windows_topmost_guard_timer.setInterval(TOPMOST_GUARD_INTERVAL_MS)
         self._windows_topmost_guard_timer.timeout.connect(self._tick_windows_topmost_guard)
         self._mouse_passthrough_enabled = False
+        self._mouse_passthrough_last_hit_at = 0.0
+        self._mouse_passthrough_last_hit_pos = None
         self._mouse_passthrough_timer = QTimer(self)
+        self._mouse_passthrough_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._mouse_passthrough_timer.setInterval(MOUSE_PASSTHROUGH_INTERVAL_MS)
         self._mouse_passthrough_timer.timeout.connect(self._tick_mouse_passthrough)
 
@@ -373,9 +379,6 @@ class PetWindow(QWidget):
         self._apply_game_topmost_state()
         self._connect_ipc_socket()
         self._radial_menu_prewarm_timer.start()
-        app = QCoreApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
 
         self.setWindowOpacity(self._opacity)
 
@@ -981,6 +984,9 @@ class PetWindow(QWidget):
         if not self._mouse_passthrough_supported() or not self.isVisible():
             self._set_mouse_passthrough(False)
             return
+        if self._is_pet_dragging() or self._mouse_interaction_in_progress():
+            self._set_mouse_passthrough(False)
+            return
         self._set_mouse_passthrough(self._should_passthrough_at(QCursor.pos()))
 
     def _passthrough_sample_pos(self, global_pos: QPoint):
@@ -1005,29 +1011,71 @@ class PetWindow(QWidget):
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
         return self._live2d_widget.is_model_hit_at_global(global_pos, sync=True)
 
-    def _is_pet_opaque_at_global(self, global_pos: QPoint) -> bool:
-        if self._pixel_mode:
-            return self._pixel_widget.is_sprite_opaque_at_global(global_pos)
-        return self._live2d_widget.is_model_opaque_at_global(global_pos, sync=True)
+    @staticmethod
+    def _mouse_interaction_in_progress() -> bool:
+        try:
+            return QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton
+        except Exception:
+            return False
 
     def _should_passthrough_at(self, global_pos: QPoint) -> bool:
         if not self._mouse_passthrough_supported() or not self.isVisible():
+            return False
+        if self._mouse_interaction_in_progress():
             return False
         sample_pos = self._passthrough_sample_pos(global_pos)
         if sample_pos is None:
             return False
         try:
-            return not self._is_pet_opaque_at_global(sample_pos)
+            hit = self._is_pet_hit_at_global(sample_pos)
         except Exception:
             return False
+        now = time.monotonic()
+        if hit:
+            self._mouse_passthrough_last_hit_at = now
+            self._mouse_passthrough_last_hit_pos = (global_pos.x(), global_pos.y())
+            return False
+        # Animated frames can briefly clear the alpha below a stationary cursor.
+        last_pos = self._mouse_passthrough_last_hit_pos
+        if (
+            last_pos is not None
+            and now - self._mouse_passthrough_last_hit_at
+            < MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS
+        ):
+            dx = global_pos.x() - last_pos[0]
+            dy = global_pos.y() - last_pos[1]
+            if dx * dx + dy * dy <= MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE ** 2:
+                return False
+        return True
 
     def _set_mouse_passthrough(self, enabled: bool):
-        if not self._mouse_passthrough_supported() or self._mouse_passthrough_enabled == bool(enabled):
+        if enabled and self._mouse_interaction_in_progress():
+            enabled = False
+        if not self._mouse_passthrough_supported():
             return
+        enabled = bool(enabled)
         if sys.platform == "darwin":
-            if not macos_patch.set_ignores_mouse_events(self, bool(enabled)):
+            native_enabled = macos_patch.get_ignores_mouse_events(self)
+            if native_enabled == enabled:
+                self._mouse_passthrough_enabled = enabled
                 return
-            self._mouse_passthrough_enabled = bool(enabled)
+            interaction_trace(
+                "pet",
+                "passthrough_change",
+                requested=enabled,
+                cached=self._mouse_passthrough_enabled,
+                native=native_enabled,
+                cursor=[QCursor.pos().x(), QCursor.pos().y()],
+            )
+            if not macos_patch.set_ignores_mouse_events(self, enabled):
+                interaction_trace("pet", "passthrough_change_failed", requested=enabled)
+                return
+            actual_enabled = macos_patch.get_ignores_mouse_events(self)
+            self._mouse_passthrough_enabled = (
+                enabled if actual_enabled is None else bool(actual_enabled)
+            )
+            return
+        if self._mouse_passthrough_enabled == enabled:
             return
         hwnd = int(self.winId())
         if not hwnd:
@@ -1087,15 +1135,6 @@ class PetWindow(QWidget):
             return
         self._last_topmost_interaction_refresh_at = now
         self._enforce_windows_z_order(force=force)
-
-    def eventFilter(self, obj, event):
-        if self._is_radial_menu_visible():
-            event_type = event.type()
-            if event_type == QEvent.Type.ApplicationDeactivate:
-                self._send_radial_menu_command("CLOSE")
-            elif obj is self and event_type == QEvent.Type.WindowDeactivate:
-                self._send_radial_menu_command("CLOSE")
-        return super().eventFilter(obj, event)
 
     def set_fps(self, fps: int):
         self._fps = fps
@@ -1281,6 +1320,8 @@ class PetWindow(QWidget):
         if self._mouse_passthrough_supported():
             self._mouse_passthrough_timer.stop()
             self._set_mouse_passthrough(False)
+            self._mouse_passthrough_last_hit_at = 0.0
+            self._mouse_passthrough_last_hit_pos = None
         self._close_poke_user_badge()
         if self._compact_ai_window is not None:
             self._compact_ai_window.hide()
@@ -1298,9 +1339,6 @@ class PetWindow(QWidget):
         self._close_compact_ai_window()
         self._close_settings_process()
         self._save_config()
-        app = QCoreApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def _schedule_position_save(self):
@@ -2336,7 +2374,17 @@ class PetWindow(QWidget):
 
     def _on_right_click(self, gx: int, gy: int):
         self._note_user_interaction()
+        self._radial_menu_shutting_down = False
         self._begin_radial_menu_opening()
+        interaction_trace(
+            "pet",
+            "right_click_callback",
+            gx=gx,
+            gy=gy,
+            menu_visible=self._radial_menu_visible,
+            process_ready=self._radial_menu_process_ready,
+            socket_state=self._radial_menu_socket.state().name,
+        )
         # Always SHOW on right-click. The child dismisses on outside-click
         # already, and toggling here races with the child's hide animation
         # (parent's _radial_menu_visible can lag the actual menu state by
@@ -2389,6 +2437,8 @@ class PetWindow(QWidget):
         }
 
     def _ensure_radial_menu_process(self):
+        if self._radial_menu_shutting_down:
+            return
         process = self._radial_menu_process
         if process is not None and process.state() != QProcess.ProcessState.NotRunning:
             if (
@@ -2448,6 +2498,12 @@ class PetWindow(QWidget):
 
     def _send_radial_menu_command(self, line: str):
         self._radial_menu_command_queue.append(line)
+        interaction_trace(
+            "pet",
+            "radial_queue",
+            command=line.split("\t", 1)[0],
+            queue_size=len(self._radial_menu_command_queue),
+        )
         self._ensure_radial_menu_process()
         self._flush_radial_menu_commands()
 
@@ -2456,11 +2512,17 @@ class PetWindow(QWidget):
             return
         while self._radial_menu_command_queue:
             line = self._radial_menu_command_queue.pop(0)
+            interaction_trace(
+                "pet",
+                "radial_send",
+                command=line.split("\t", 1)[0],
+            )
             self._radial_menu_socket.write((line + "\n").encode("utf-8"))
         self._radial_menu_socket.flush()
 
     def _on_radial_menu_socket_disconnected(self):
         was_visible = self._radial_menu_visible
+        self._radial_menu_opening = False
         self._radial_menu_visible = False
         self._tick_mouse_passthrough()
         if was_visible:
@@ -2474,6 +2536,7 @@ class PetWindow(QWidget):
             and not self._radial_menu_process_ready
         ):
             return
+        self._radial_menu_opening = False
         self._radial_menu_visible = False
         self._tick_mouse_passthrough()
         self._broadcast_radial_menu_state(open=False)
@@ -2481,6 +2544,7 @@ class PetWindow(QWidget):
 
     def _close_radial_menu_process(self, force: bool = False):
         self._radial_menu_prewarm_timer.stop()
+        self._radial_menu_shutting_down = True
         self._radial_menu_opening = False
         was_visible = self._radial_menu_visible
         if was_visible:
@@ -2545,6 +2609,7 @@ class PetWindow(QWidget):
             print(data, file=sys.stderr, end="")
 
     def _handle_radial_menu_process_line(self, line: str):
+        interaction_trace("pet", "radial_receive", line=line)
         if line == "READY":
             self._radial_menu_process_ready = True
             if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
@@ -2575,19 +2640,25 @@ class PetWindow(QWidget):
 
     def _on_radial_menu_process_finished(self, process: QProcess):
         was_visible = self._radial_menu_visible
+        should_restart = False
         if self._radial_menu_process is process:
             self._radial_menu_process = None
             self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
-            self._radial_menu_command_queue.clear()
             self._radial_menu_process_ready = False
             self._radial_menu_opening = False
             self._radial_menu_visible = False
+            should_restart = (
+                bool(self._radial_menu_command_queue)
+                and not self._radial_menu_shutting_down
+            )
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
         if self._radial_menu_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
             self._radial_menu_socket.abort()
         process.deleteLater()
+        if should_restart:
+            QTimer.singleShot(0, self._ensure_radial_menu_process)
 
     def _on_radial_chat(self):
         self._note_user_interaction()
@@ -3901,9 +3972,6 @@ class PetWindow(QWidget):
             self._cfg.save()
 
     def _quit(self):
-        app = QCoreApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
         self._close_radial_menu_process(force=True)
         self._close_chat_process()
         self._close_compact_ai_window()
