@@ -9,11 +9,16 @@ class MCPPageMixin:
         page = self._make_theme_widget(QWidget())
         page.setObjectName("mcpComputerPage")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        page.setMinimumWidth(0)
+        page.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.mcp_computer_title", default="屏幕感知与工具控制"), page)
+        title = _wrap_label(TitleLabel(
+            _tr("SettingsWindow.mcp_computer_title", default="屏幕感知与工具控制"),
+            page,
+        ))
         layout.addWidget(title)
         subtitle = _wrap_label(SubtitleLabel(_tr(
             "SettingsWindow.mcp_computer_subtitle",
@@ -76,7 +81,11 @@ class MCPPageMixin:
             default="这里是纯文本 JSON，只读取字符内容；支持 stdio、本地/远程 HTTP 代理，以及 OpenAI Responses 原生 native/server_url 配置。",
         ), page)))
 
-        mcp_btn_row = QHBoxLayout()
+        mcp_btn_grid = QGridLayout()
+        mcp_btn_grid.setHorizontalSpacing(8)
+        mcp_btn_grid.setVerticalSpacing(8)
+        mcp_btn_grid.setColumnStretch(0, 1)
+        mcp_btn_grid.setColumnStretch(1, 1)
         guide_btn = PushButton(FluentIcon.INFO, _tr("SettingsWindow.mcp_open_guide", default="打开教程"), page)
         guide_btn.clicked.connect(self._open_mcp_guide)
         format_btn = PushButton(FluentIcon.SYNC, _tr("SettingsWindow.mcp_format_json", default="格式化 JSON"), page)
@@ -85,12 +94,11 @@ class MCPPageMixin:
         copy_btn.clicked.connect(self._copy_mcp_servers_json)
         test_mcp_btn = PushButton(FluentIcon.WIFI, _tr("SettingsWindow.mcp_test_connection", default="测试 MCP 连接"), page)
         test_mcp_btn.clicked.connect(self._test_mcp_connection)
-        mcp_btn_row.addWidget(guide_btn)
-        mcp_btn_row.addWidget(format_btn)
-        mcp_btn_row.addWidget(copy_btn)
-        mcp_btn_row.addWidget(test_mcp_btn)
-        mcp_btn_row.addStretch()
-        layout.addLayout(mcp_btn_row)
+        for index, button in enumerate((guide_btn, format_btn, copy_btn, test_mcp_btn)):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, button.sizePolicy().verticalPolicy())
+            mcp_btn_grid.addWidget(button, index // 2, index % 2)
+        layout.addLayout(mcp_btn_grid)
 
         layout.addWidget(SubtitleLabel(_tr("SettingsWindow.computer_use_title", default="Computer Use 权限"), page))
         self._computer_use_enabled = SwitchButton(page)
@@ -141,8 +149,8 @@ class MCPPageMixin:
 
     def _add_switch_row(self, layout: QVBoxLayout, page: QWidget, label: str, switch: SwitchButton):
         row = QHBoxLayout()
-        row.addWidget(BodyLabel(label, page))
-        row.addStretch()
+        row.setSpacing(12)
+        row.addWidget(_wrap_label(BodyLabel(label, page)), 1)
         row.addWidget(switch)
         layout.addLayout(row)
 
