@@ -6,11 +6,14 @@ import numpy as np
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from process_utils import interaction_trace
 from qt_gl import gl, uses_qt_software_opengl
 
 
 DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
+HIT_STABILITY_GRACE_MS = 120
+HIT_STABILITY_DISTANCE = 12
 
 
 class _Live2DPerfProbe:
@@ -129,6 +132,8 @@ class Live2DWidget(QOpenGLWidget):
         self._last_hit_test_ms = -1000
         self._last_hit_test_key = None
         self._last_hit_state = False
+        self._last_confirmed_hit_ms = -1000
+        self._last_confirmed_hit_pos = None
         
         # PBO (Pixel Buffer Object) 属性
         self._hit_pbo_ids = []
@@ -471,7 +476,20 @@ class Live2DWidget(QOpenGLWidget):
         if event.button() == Qt.MouseButton.RightButton:
             pos = event.scenePosition()
             gpos = event.globalPosition()
+            interaction_trace(
+                "live2d",
+                "right_press",
+                x=round(pos.x(), 2),
+                y=round(pos.y(), 2),
+                gx=round(gpos.x(), 2),
+                gy=round(gpos.y(), 2),
+            )
             self._right_press_handled = self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y())
+            interaction_trace(
+                "live2d",
+                "right_press_result",
+                handled=self._right_press_handled,
+            )
             if self._right_press_handled:
                 self._suppress_next_context_menu = True
                 event.accept()
@@ -495,8 +513,10 @@ class Live2DWidget(QOpenGLWidget):
             
         pos = event.scenePosition()
         self._pressed_on_model = self._is_model_hit_at(pos.x(), pos.y(), sync=True)
+        if self._pressed_on_model:
+            event.accept()
         if self._drag_locked:
-            return super().mousePressEvent(event)
+            return
             
         if self._pressed_on_model:
             self._dragging = True
@@ -523,16 +543,16 @@ class Live2DWidget(QOpenGLWidget):
         should_click = False
         if event.button() == Qt.MouseButton.LeftButton:
             should_click = (
-                self._pressed_on_model and 
-                not self._drag_moved and 
-                self._click_callback and 
-                self._is_model_hit_at(x, y, sync=True)
+                self._pressed_on_model
+                and not self._drag_moved
+                and self._click_callback
             )
             self._pressed_on_model = False
 
         self._dragging = False
         if should_click:
             self._click_callback(x, y, self.hit_area_name_at(x, y))
+            event.accept()
 
     def mouseDoubleClickEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -551,11 +571,22 @@ class Live2DWidget(QOpenGLWidget):
     def contextMenuEvent(self, event):
         if self._suppress_next_context_menu:
             self._suppress_next_context_menu = False
+            interaction_trace("live2d", "context_suppressed")
             event.accept()
             return
         pos = event.pos()
         gpos = event.globalPos()
-        if self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y()):
+        handled = self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y())
+        interaction_trace(
+            "live2d",
+            "context_menu",
+            handled=handled,
+            x=pos.x(),
+            y=pos.y(),
+            gx=gpos.x(),
+            gy=gpos.y(),
+        )
+        if handled:
             event.accept()
             return
         super().contextMenuEvent(event)
@@ -789,7 +820,21 @@ class Live2DWidget(QOpenGLWidget):
             state = None if sync else self._hit_state_at(x, y)
             if state is None:
                 state = self._hit_state_at_sync(x, y)
-            return state is True
+            now = self._hit_clock.elapsed()
+            if state is True:
+                self._last_confirmed_hit_ms = now
+                self._last_confirmed_hit_pos = (float(x), float(y))
+                return True
+            last_pos = self._last_confirmed_hit_pos
+            if (
+                last_pos is not None
+                and now - self._last_confirmed_hit_ms < HIT_STABILITY_GRACE_MS
+            ):
+                dx = float(x) - last_pos[0]
+                dy = float(y) - last_pos[1]
+                if dx * dx + dy * dy <= HIT_STABILITY_DISTANCE ** 2:
+                    return True
+            return False
         finally:
             self._perf_probe.add("hit_test", self._perf_probe.now() - t0)
 
@@ -806,7 +851,15 @@ class Live2DWidget(QOpenGLWidget):
             return False
 
     def _emit_right_click(self, x: float, y: float, gx: float, gy: float) -> bool:
-        if self._right_click_callback and self._is_model_hit_at(x, y, sync=True):
+        hit = bool(self._right_click_callback) and self._is_model_hit_at(x, y, sync=True)
+        interaction_trace(
+            "live2d",
+            "right_hit_test",
+            hit=hit,
+            x=round(x, 2),
+            y=round(y, 2),
+        )
+        if hit:
             self._right_click_callback(int(gx), int(gy))
             return True
         return False
@@ -869,6 +922,8 @@ class Live2DWidget(QOpenGLWidget):
         self._last_hit_test_ms = -1000
         self._last_hit_test_key = None
         self._last_hit_state = False
+        self._last_confirmed_hit_ms = -1000
+        self._last_confirmed_hit_pos = None
         self._clear_pending_hit_pbos()
 
     def _safe_unbind_pbo(self):

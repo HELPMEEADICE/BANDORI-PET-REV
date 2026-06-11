@@ -283,8 +283,8 @@ class PixelPetWidget(QWidget):
         self._pressed_on_sprite = self.is_sprite_hit_at_global(event.globalPosition().toPoint())
         if not self._pressed_on_sprite:
             return
+        event.accept()
         if self._drag_locked:
-            event.accept()
             return
         self._dragging = True
         self._drag_moved = False
@@ -303,13 +303,13 @@ class PixelPetWidget(QWidget):
             self._pressed_on_sprite
             and not self._drag_moved
             and self._click_callback
-            and self.is_sprite_hit_at_global(event.globalPosition().toPoint())
         )
         self._pressed_on_sprite = False
         if self._dragging:
             self._dragging = False
         if should_click:
             self._click_callback()
+            event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._drag_locked or not (self._dragging and self._window_drag_callback):
