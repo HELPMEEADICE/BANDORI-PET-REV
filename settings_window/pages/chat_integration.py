@@ -10,17 +10,18 @@ class ChatIntegrationPageMixin:
         page = self._make_theme_widget(QWidget())
         page.setObjectName("chatIntegrationPage")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        page.setMinimumWidth(0)
+        page.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.chat_integration_title", default="聊天接入"), page)
+        title = _wrap_label(TitleLabel(_tr("SettingsWindow.chat_integration_title", default="聊天接入"), page))
         layout.addWidget(title)
-        subtitle = SubtitleLabel(_tr(
+        subtitle = _wrap_label(SubtitleLabel(_tr(
             "SettingsWindow.chat_integration_subtitle",
             default="接收外部聊天软件或脚本推送的消息，写入本地上下文，并在桌宠悬浮窗显示未读摘要。",
-        ), page)
-        subtitle.setWordWrap(True)
+        ), page))
         layout.addWidget(subtitle)
 
         self._chat_integration_enabled = SwitchButton(page)
@@ -52,40 +53,90 @@ class ChatIntegrationPageMixin:
             default="快速配置",
         ), page))
 
+        endpoint_field = QWidget(page)
+        endpoint_field.setMinimumWidth(0)
+        endpoint_field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        endpoint_layout = QVBoxLayout(endpoint_field)
+        endpoint_layout.setContentsMargins(0, 0, 0, 0)
+        endpoint_layout.setSpacing(5)
+        endpoint_layout.addWidget(_wrap_label(BodyLabel(_tr(
+            "SettingsWindow.chat_integration_endpoint",
+            default="接收地址",
+        ), endpoint_field)))
         endpoint_row = QHBoxLayout()
         endpoint_row.setContentsMargins(0, 0, 0, 0)
         endpoint_row.setSpacing(8)
         self._chat_integration_endpoint_input = FluentContextLineEdit(page)
         self._chat_integration_endpoint_input.setReadOnly(True)
         self._chat_integration_endpoint_input.setFixedHeight(36)
+        self._chat_integration_endpoint_input.setMinimumWidth(0)
+        self._chat_integration_endpoint_input.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self._chat_integration_endpoint_input.sizePolicy().verticalPolicy(),
+        )
         copy_endpoint_btn = PushButton(FluentIcon.COPY, _tr(
             "SettingsWindow.chat_integration_copy_endpoint",
             default="复制地址",
         ), page)
+        copy_endpoint_btn.setMinimumWidth(0)
         copy_endpoint_btn.clicked.connect(self._copy_chat_integration_endpoint)
-        endpoint_row.addWidget(BodyLabel(_tr(
-            "SettingsWindow.chat_integration_endpoint",
-            default="接收地址",
-        ), page))
         endpoint_row.addWidget(self._chat_integration_endpoint_input, 1)
         endpoint_row.addWidget(copy_endpoint_btn)
-        layout.addLayout(endpoint_row)
+        endpoint_layout.addLayout(endpoint_row)
+        layout.addWidget(endpoint_field)
 
-        config_row = QHBoxLayout()
-        config_row.setContentsMargins(0, 0, 0, 0)
-        config_row.setSpacing(8)
+        config_grid = QGridLayout()
+        config_grid.setContentsMargins(0, 0, 0, 0)
+        config_grid.setHorizontalSpacing(12)
+        config_grid.setVerticalSpacing(8)
+        config_grid.setColumnStretch(0, 1)
+        config_grid.setColumnStretch(1, 2)
+
+        port_field = QWidget(page)
+        port_field.setMinimumWidth(0)
+        port_field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        port_layout = QVBoxLayout(port_field)
+        port_layout.setContentsMargins(0, 0, 0, 0)
+        port_layout.setSpacing(5)
+        port_layout.addWidget(_wrap_label(BodyLabel(
+            _tr("SettingsWindow.chat_integration_port_number", default="端口"),
+            port_field,
+        )))
         self._chat_integration_port_input = LineEdit(page)
-        self._chat_integration_port_input.setFixedWidth(120)
         self._chat_integration_port_input.setFixedHeight(36)
+        self._chat_integration_port_input.setMinimumWidth(0)
         self._chat_integration_port_input.setValidator(QIntValidator(1024, 65535, self))
         self._chat_integration_port_input.setPlaceholderText("38473")
-        token_label = BodyLabel(_tr("SettingsWindow.chat_integration_token", default="Token"), page)
+        port_layout.addWidget(self._chat_integration_port_input)
+
+        token_field = QWidget(page)
+        token_field.setMinimumWidth(0)
+        token_field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        token_layout = QVBoxLayout(token_field)
+        token_layout.setContentsMargins(0, 0, 0, 0)
+        token_layout.setSpacing(5)
+        token_layout.addWidget(_wrap_label(BodyLabel(
+            _tr("SettingsWindow.chat_integration_token", default="Token"),
+            token_field,
+        )))
         self._chat_integration_token_input = LineEdit(page)
         self._chat_integration_token_input.setFixedHeight(36)
+        self._chat_integration_token_input.setMinimumWidth(0)
         self._chat_integration_token_input.setPlaceholderText(_tr(
             "SettingsWindow.chat_integration_token_placeholder",
             default="可留空；给第三方脚本使用时建议填写",
         ))
+        token_layout.addWidget(self._chat_integration_token_input)
+        config_grid.addWidget(port_field, 0, 0)
+        config_grid.addWidget(token_field, 0, 1)
+        layout.addLayout(config_grid)
+
+        token_actions = QGridLayout()
+        token_actions.setContentsMargins(0, 0, 0, 0)
+        token_actions.setHorizontalSpacing(8)
+        token_actions.setVerticalSpacing(8)
+        token_actions.setColumnStretch(0, 1)
+        token_actions.setColumnStretch(1, 1)
         generate_token_btn = PushButton(FluentIcon.SYNC, _tr(
             "SettingsWindow.chat_integration_generate_token",
             default="生成 Token",
@@ -96,29 +147,34 @@ class ChatIntegrationPageMixin:
             default="复制 Token",
         ), page)
         copy_token_btn.clicked.connect(self._copy_chat_integration_token)
-        config_row.addWidget(BodyLabel(_tr("SettingsWindow.chat_integration_port_number", default="端口"), page))
-        config_row.addWidget(self._chat_integration_port_input)
-        config_row.addSpacing(12)
-        config_row.addWidget(token_label)
-        config_row.addWidget(self._chat_integration_token_input, 1)
-        config_row.addWidget(generate_token_btn)
-        config_row.addWidget(copy_token_btn)
-        layout.addLayout(config_row)
+        for column, button in enumerate((generate_token_btn, copy_token_btn)):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, button.sizePolicy().verticalPolicy())
+            token_actions.addWidget(button, 0, column)
+        layout.addLayout(token_actions)
 
-        hint = BodyLabel(_tr(
+        hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.chat_integration_hint",
             default="开启后监听 127.0.0.1，可接收 JSON、表单、纯文本或 URL 参数。外部消息会进入本地数据库；开启上下文后，下一次角色聊天会看到最近消息。",
-        ), page)
-        hint.setWordWrap(True)
+        ), page))
         layout.addWidget(hint)
 
         self._chat_integration_preview = JsonCodeEdit(page)
         self._chat_integration_preview.setReadOnly(True)
         self._chat_integration_preview.setFixedHeight(170)
+        self._chat_integration_preview.setMinimumWidth(0)
+        self._chat_integration_preview.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            self._chat_integration_preview.sizePolicy().verticalPolicy(),
+        )
         layout.addWidget(self._chat_integration_preview)
 
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_grid = QGridLayout()
+        btn_grid.setContentsMargins(0, 0, 0, 0)
+        btn_grid.setHorizontalSpacing(8)
+        btn_grid.setVerticalSpacing(8)
+        btn_grid.setColumnStretch(0, 1)
+        btn_grid.setColumnStretch(1, 1)
         save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.chat_integration_save", default="保存聊天接入配置"), page)
         save_btn.clicked.connect(lambda: self._save_chat_integration_config(show_info=True, emit_update=True))
         copy_setup_btn = PushButton(FluentIcon.COPY, _tr(
@@ -136,18 +192,16 @@ class ChatIntegrationPageMixin:
             default="打开教程",
         ), page)
         guide_btn.clicked.connect(self._open_chat_integration_guide)
-        btn_row.addWidget(save_btn)
-        btn_row.addWidget(copy_setup_btn)
-        btn_row.addWidget(test_btn)
-        btn_row.addWidget(guide_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        for index, button in enumerate((save_btn, copy_setup_btn, test_btn, guide_btn)):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, button.sizePolicy().verticalPolicy())
+            btn_grid.addWidget(button, index // 2, index % 2)
+        layout.addLayout(btn_grid)
 
-        apply_hint = BodyLabel(_tr(
+        apply_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.chat_integration_apply_hint",
             default="保存后会立即通知正在运行的桌宠刷新端口；如果没有启动桌宠，请启动后再测试。",
-        ), page)
-        apply_hint.setWordWrap(True)
+        ), page))
         layout.addWidget(apply_hint)
 
         self._build_napcat_section(layout, page)
@@ -492,11 +546,10 @@ class ChatIntegrationPageMixin:
             "SettingsWindow.napcat_title",
             default="NapCat 适配（正向 WebSocket）",
         ), page))
-        napcat_desc = BodyLabel(_tr(
+        napcat_desc = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.napcat_desc",
             default="像 AstrBot 那样主动连接 NapCat。请先在 NapCat WebUI 开启 WebSocket 服务器，再在下方填写地址。",
-        ), page)
-        napcat_desc.setWordWrap(True)
+        ), page))
         layout.addWidget(napcat_desc)
 
         self._napcat_enabled = SwitchButton(page)
@@ -507,24 +560,37 @@ class ChatIntegrationPageMixin:
             self._napcat_enabled,
         )
 
-        url_row = QHBoxLayout()
-        url_row.setContentsMargins(0, 0, 0, 0)
-        url_row.setSpacing(8)
+        url_grid = QGridLayout()
+        url_grid.setContentsMargins(0, 0, 0, 0)
+        url_grid.setHorizontalSpacing(12)
+        url_grid.setVerticalSpacing(8)
+        url_grid.setColumnStretch(0, 1)
+        url_grid.setColumnStretch(1, 1)
         self._napcat_ws_url_input = LineEdit(page)
         self._napcat_ws_url_input.setFixedHeight(36)
+        self._napcat_ws_url_input.setMinimumWidth(0)
         self._napcat_ws_url_input.setPlaceholderText("ws://127.0.0.1:3001")
         self._napcat_token_input = LineEdit(page)
         self._napcat_token_input.setFixedHeight(36)
+        self._napcat_token_input.setMinimumWidth(0)
         self._napcat_token_input.setPlaceholderText(_tr(
             "SettingsWindow.napcat_token_placeholder",
             default="Access Token，可留空",
         ))
-        url_row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_ws_url", default="WS 地址"), page))
-        url_row.addWidget(self._napcat_ws_url_input, 1)
-        url_row.addSpacing(12)
-        url_row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_token", default="Token"), page))
-        url_row.addWidget(self._napcat_token_input, 1)
-        layout.addLayout(url_row)
+        for column, (label, control) in enumerate((
+            (_tr("SettingsWindow.napcat_ws_url", default="WS 地址"), self._napcat_ws_url_input),
+            (_tr("SettingsWindow.napcat_token", default="Token"), self._napcat_token_input),
+        )):
+            field = QWidget(page)
+            field.setMinimumWidth(0)
+            field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            field_layout = QVBoxLayout(field)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            field_layout.setSpacing(5)
+            field_layout.addWidget(_wrap_label(BodyLabel(label, field)))
+            field_layout.addWidget(control)
+            url_grid.addWidget(field, 0, column)
+        layout.addLayout(url_grid)
 
         self._napcat_auto_reply_enabled = SwitchButton(page)
         self._add_switch_row(
@@ -560,13 +626,16 @@ class ChatIntegrationPageMixin:
             default="聊天记录管理",
         ), page))
 
-        policy_row = QHBoxLayout()
-        policy_row.setContentsMargins(0, 0, 0, 0)
-        policy_row.setSpacing(8)
-        policy_row.addWidget(BodyLabel(_tr(
+        policy_field = QWidget(page)
+        policy_field.setMinimumWidth(0)
+        policy_field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        policy_layout = QVBoxLayout(policy_field)
+        policy_layout.setContentsMargins(0, 0, 0, 0)
+        policy_layout.setSpacing(5)
+        policy_layout.addWidget(_wrap_label(BodyLabel(_tr(
             "SettingsWindow.napcat_save_policy",
             default="聊天记录保存策略",
-        ), page))
+        ), policy_field)))
         self._napcat_save_policy_combo = OpaqueDropDownComboBox(page)
         self._napcat_save_policy_combo.setObjectName("NapcatRecordCombo")
         self._napcat_save_policy_combo.addItem(_tr(
@@ -578,10 +647,13 @@ class ChatIntegrationPageMixin:
         self._napcat_save_policy_combo.addItem(_tr(
             "SettingsWindow.napcat_save_policy_overlay", default="仅悬浮窗提示，不保存",
         ), userData="overlay_only")
-        self._napcat_save_policy_combo.setMinimumWidth(220)
-        policy_row.addWidget(self._napcat_save_policy_combo)
-        policy_row.addStretch()
-        layout.addLayout(policy_row)
+        self._napcat_save_policy_combo.setMinimumWidth(0)
+        self._napcat_save_policy_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            self._napcat_save_policy_combo.sizePolicy().verticalPolicy(),
+        )
+        policy_layout.addWidget(self._napcat_save_policy_combo)
+        layout.addWidget(policy_field)
 
         (
             self._napcat_group_retention_mode_combo,
@@ -611,36 +683,55 @@ class ChatIntegrationPageMixin:
         ), page)
         test_conn_btn.clicked.connect(self._test_napcat_connection)
         self._napcat_status_label = BodyLabel("", page)
+        self._napcat_status_label.setWordWrap(True)
+        self._napcat_status_label.setMinimumWidth(0)
+        self._napcat_status_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        test_conn_btn.setMinimumWidth(0)
         napcat_btn_row.addWidget(test_conn_btn)
         napcat_btn_row.addWidget(self._napcat_status_label, 1)
-        napcat_btn_row.addStretch()
         layout.addLayout(napcat_btn_row)
 
     def _build_napcat_retention_row(self, layout, page, *, label, delete_label, on_delete):
-        row = QHBoxLayout()
+        field = QWidget(page)
+        field.setMinimumWidth(0)
+        field.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        row = QGridLayout(field)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        row.addWidget(BodyLabel(label, page))
+        row.setHorizontalSpacing(8)
+        row.setVerticalSpacing(5)
+        row.setColumnStretch(0, 1)
+        row.setColumnStretch(1, 1)
+        row.setColumnStretch(2, 1)
+        row.addWidget(_wrap_label(BodyLabel(label, field)), 0, 0, 1, 3)
         mode_combo = OpaqueDropDownComboBox(page)
         mode_combo.setObjectName("NapcatRecordCombo")
         mode_combo.addItem(_tr("SettingsWindow.napcat_retention_auto", default="自动删除"), userData="auto")
         mode_combo.addItem(_tr("SettingsWindow.napcat_retention_manual", default="手动删除"), userData="manual")
-        mode_combo.setMinimumWidth(120)
-        row.addWidget(mode_combo)
+        mode_combo.setMinimumWidth(0)
+        mode_combo.setSizePolicy(QSizePolicy.Policy.Expanding, mode_combo.sizePolicy().verticalPolicy())
+        row.addWidget(mode_combo, 1, 0)
+        days_field = QWidget(field)
+        days_field.setMinimumWidth(0)
+        days_layout = QHBoxLayout(days_field)
+        days_layout.setContentsMargins(0, 0, 0, 0)
+        days_layout.setSpacing(6)
         days_spin = SpinBox(page)
         days_spin.setObjectName("NapcatRecordDaysSpin")
         days_spin.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         days_spin.lineEdit().setObjectName("NapcatRecordDaysSpinEdit")
         days_spin.lineEdit().setFrame(False)
         days_spin.setRange(1, 3650)
-        days_spin.setFixedWidth(136)
-        row.addWidget(days_spin)
-        row.addWidget(BodyLabel(_tr("SettingsWindow.napcat_retention_days_unit", default="天"), page))
-        row.addStretch()
+        days_spin.setMinimumWidth(0)
+        days_spin.setSizePolicy(QSizePolicy.Policy.Expanding, days_spin.sizePolicy().verticalPolicy())
+        days_layout.addWidget(days_spin, 1)
+        days_layout.addWidget(BodyLabel(_tr("SettingsWindow.napcat_retention_days_unit", default="天"), days_field))
+        row.addWidget(days_field, 1, 1)
         delete_btn = PushButton(FluentIcon.DELETE, delete_label, page)
+        delete_btn.setMinimumWidth(0)
+        delete_btn.setSizePolicy(QSizePolicy.Policy.Expanding, delete_btn.sizePolicy().verticalPolicy())
         delete_btn.clicked.connect(on_delete)
-        row.addWidget(delete_btn)
-        layout.addLayout(row)
+        row.addWidget(delete_btn, 1, 2)
+        layout.addWidget(field)
         mode_combo.currentIndexChanged.connect(
             lambda _i, c=mode_combo, s=days_spin: s.setEnabled((c.itemData(c.currentIndex()) or "") == "auto")
         )
