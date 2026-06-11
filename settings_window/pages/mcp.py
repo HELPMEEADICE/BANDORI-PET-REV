@@ -13,13 +13,15 @@ class MCPPageMixin:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        title = TitleLabel(_tr("SettingsWindow.mcp_computer_title", default="智能工具与电脑控制"), page)
+        title = TitleLabel(_tr("SettingsWindow.mcp_computer_title", default="屏幕感知与工具控制"), page)
         layout.addWidget(title)
         subtitle = _wrap_label(SubtitleLabel(_tr(
             "SettingsWindow.mcp_computer_subtitle",
-            default="支持服务商原生 MCP，也支持 Chat Completions 的 tool_calls/function calling，把 MCP 和 Computer Use 转成兼容工具。",
+            default="集中配置截屏识别、模型工具和 Computer Use。",
         ), page))
         layout.addWidget(subtitle)
+        layout.addWidget(self._build_screen_awareness_section(page))
+
         capability_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.mcp_capability_hint",
             default="提示：启用 MCP 或 Computer Use 只是把工具提供给模型；必须使用支持 tool_calls/function calling 的模型才会调用工具，截图理解还需要模型支持多模态输入。",
@@ -99,8 +101,6 @@ class MCPPageMixin:
         self._computer_use_allow_keyboard = SwitchButton(page)
         self._computer_use_allow_clipboard = SwitchButton(page)
         self._computer_use_allow_wait = SwitchButton(page)
-        self._desktop_state_awareness_enabled = SwitchButton(page)
-        self._desktop_state_include_window_title = SwitchButton(page)
         for label, widget in (
             (_tr("SettingsWindow.computer_use_enabled", default="启用 Computer Use"), self._computer_use_enabled),
             (_tr("SettingsWindow.computer_use_auto_detect", default="让模型按自然语义自行判断是否使用"), self._computer_use_auto_detect),
@@ -128,40 +128,13 @@ class MCPPageMixin:
             default="DeepSeek/OpenRouter 等兼容接口会通过 tool_calls/function calling 使用这些能力。模型需要支持图片输入，才能稳定理解屏幕截图；鼠标工具会把截图坐标映射到真实桌面坐标。",
         ), page)))
 
-        layout.addWidget(SubtitleLabel(_tr("SettingsWindow.desktop_state_title", default="桌面状态感知"), page))
-        self._add_switch_row(
-            layout,
-            page,
-            _tr("SettingsWindow.desktop_state_awareness_enabled", default="让角色知道当前桌面状态"),
-            self._desktop_state_awareness_enabled,
-        )
-        self._add_switch_row(
-            layout,
-            page,
-            _tr("SettingsWindow.desktop_state_include_window_title", default="允许读取前台窗口标题"),
-            self._desktop_state_include_window_title,
-        )
-        idle_row = QHBoxLayout()
-        idle_row.setSpacing(8)
-        idle_row.addWidget(BodyLabel(_tr("SettingsWindow.desktop_state_idle_seconds", default="判定发呆/离开的空闲秒数"), page))
-        self._desktop_state_idle_seconds = FluentContextLineEdit(page)
-        self._desktop_state_idle_seconds.setValidator(QIntValidator(30, 1800, self._desktop_state_idle_seconds))
-        self._desktop_state_idle_seconds.setFixedHeight(34)
-        self._desktop_state_idle_seconds.setMaximumWidth(120)
-        idle_row.addWidget(self._desktop_state_idle_seconds)
-        idle_row.addStretch()
-        layout.addLayout(idle_row)
-        layout.addWidget(_wrap_label(BodyLabel(_tr(
-            "SettingsWindow.desktop_state_hint",
-            default="开启后，聊天和主动陪伴会读取前台应用类别、窗口标题和键鼠空闲时长，用来判断你是在写代码、看网页、打游戏或发呆；不会自动截屏。",
-        ), page)))
-
         save_btn = PrimaryPushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), page)
-        save_btn.clicked.connect(self._save_mcp_computer_config)
+        save_btn.clicked.connect(self._save_screen_tools_config)
         layout.addWidget(save_btn, 0, Qt.AlignmentFlag.AlignRight)
         layout.addStretch()
 
         self._load_mcp_computer_config()
+        self._load_screen_awareness_controls()
         self._style_mcp_computer_page(page)
         self._connect_theme_changed(lambda: self._style_mcp_computer_page(page))
         return page
@@ -181,9 +154,25 @@ class MCPPageMixin:
         text_border = "#4a4a4a" if dark else "#d8d8d8"
         input_bg = "#2b2b2b" if dark else "#ffffff"
         text = "#f7f7fb" if dark else "#1f2328"
+        screen_panel_bg = "#252525" if dark else "#ffffff"
+        screen_panel_border = "#3b3b3b" if dark else "#d8e3ef"
+        muted = "#a7b0bf" if dark else "#687385"
         page.setStyleSheet(f"""
             QWidget#mcpComputerPage {{
                 background: {page_bg};
+            }}
+            QWidget#screenAwarenessPanel {{
+                background: {screen_panel_bg};
+                border: 1px solid {screen_panel_border};
+                border-radius: 12px;
+            }}
+            QWidget#screenAwarenessPanel BodyLabel,
+            QWidget#screenAwarenessPanel StrongBodyLabel {{
+                color: {text};
+            }}
+            BodyLabel#screenAwarenessHint {{
+                color: {muted};
+                font-size: 13px;
             }}
             #mcpRiskPanel {{
                 background: {risk_bg};
@@ -203,6 +192,10 @@ class MCPPageMixin:
             QPlainTextEdit#JsonCodeEdit {{
                 padding-left: 0px;
                 selection-background-color: {BANDORI_PRIMARY};
+            }}
+            QSpinBox {{
+                color: {text};
+                font-size: 13px;
             }}
             {_fluent_scrollbar_qss(dark=dark)}
         """)
@@ -226,9 +219,6 @@ class MCPPageMixin:
                 "_computer_use_allow_clipboard",
                 "_computer_use_allow_wait",
                 "_computer_use_max_screenshot_width",
-                "_desktop_state_awareness_enabled",
-                "_desktop_state_include_window_title",
-                "_desktop_state_idle_seconds",
             )
         )
 
@@ -273,9 +263,6 @@ class MCPPageMixin:
         self._computer_use_allow_clipboard.setChecked(bool(self._cfg.get("computer_use_allow_clipboard", False)))
         self._computer_use_allow_wait.setChecked(bool(self._cfg.get("computer_use_allow_wait", True)))
         self._computer_use_max_screenshot_width.setText(str(self._cfg.get("computer_use_max_screenshot_width", 1280)))
-        self._desktop_state_awareness_enabled.setChecked(bool(self._cfg.get("desktop_state_awareness_enabled", False)))
-        self._desktop_state_include_window_title.setChecked(bool(self._cfg.get("desktop_state_include_window_title", True)))
-        self._desktop_state_idle_seconds.setText(str(self._cfg.get("desktop_state_idle_seconds", 180)))
 
     def _parse_mcp_servers_text(self) -> list[dict] | None:
         text = self._llm_mcp_servers_text.toPlainText().strip()
@@ -384,20 +371,15 @@ class MCPPageMixin:
 
     def _save_mcp_computer_config(self, show_info: bool = True):
         if not self._cfg or not self._mcp_computer_widgets_ready():
-            return
+            return False
         servers = self._parse_mcp_servers_text()
         if servers is None:
-            return
+            return False
         try:
             max_width = int(self._computer_use_max_screenshot_width.text().strip() or "1280")
         except ValueError:
             max_width = 1280
         max_width = max(640, min(1920, max_width))
-        try:
-            idle_seconds = int(self._desktop_state_idle_seconds.text().strip() or "180")
-        except ValueError:
-            idle_seconds = 180
-        idle_seconds = max(30, min(1800, idle_seconds))
         self._cfg.set("llm_hide_tool_call_details", self._llm_hide_tool_call_details.isChecked())
         self._cfg.set("llm_mcp_enabled", self._llm_mcp_enabled.isChecked())
         self._cfg.set("llm_mcp_use_native", self._llm_mcp_use_native.isChecked())
@@ -411,15 +393,26 @@ class MCPPageMixin:
         self._cfg.set("computer_use_allow_keyboard", self._computer_use_allow_keyboard.isChecked())
         self._cfg.set("computer_use_allow_clipboard", self._computer_use_allow_clipboard.isChecked())
         self._cfg.set("computer_use_allow_wait", self._computer_use_allow_wait.isChecked())
-        self._cfg.set("desktop_state_awareness_enabled", self._desktop_state_awareness_enabled.isChecked())
-        self._cfg.set("desktop_state_include_window_title", self._desktop_state_include_window_title.isChecked())
-        self._cfg.set("desktop_state_idle_seconds", idle_seconds)
         self._cfg.save()
         if show_info:
             InfoBar.success(
-                _tr("SettingsWindow.mcp_saved_title", default="智能工具与电脑控制已保存"),
-                _tr("SettingsWindow.mcp_saved_content", default="新的工具配置会在下一次聊天请求时生效。"),
+                _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),
+                _tr("SettingsWindow.mcp_saved_content", default="屏幕感知和工具配置已更新。"),
                 duration=2200,
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+        return True
+
+    def _save_screen_tools_config(self):
+        if not self._save_mcp_computer_config(show_info=False):
+            return
+        if not self._save_screen_awareness_config(show_info=False, emit_update=True):
+            return
+        InfoBar.success(
+            _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),
+            _tr("SettingsWindow.mcp_saved_content", default="屏幕感知和工具配置已更新。"),
+            duration=2200,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )

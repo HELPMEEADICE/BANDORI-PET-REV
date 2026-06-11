@@ -222,7 +222,11 @@ class Live2DWidget(QOpenGLWidget):
         self._quality_profile = profile
         set_live2d_texture_quality(profile)
         if self._model:
-            self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+            apply_quality = getattr(self._model, "ApplyTextureQuality", None)
+            if callable(apply_quality):
+                apply_quality(profile)
+            elif getattr(self._model, "_renderer", None) is not None:
+                self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -328,7 +332,6 @@ class Live2DWidget(QOpenGLWidget):
     # --------------------------------------------------------------------------
 
     def _load_model_internal(self, model_json_path: str):
-        from live2d_quality import LIVE2D_QUALITY_PROFILES
         from lua_hit_area_projection import LuaCustomHitAreaState
         from platform_patch import set_live2d_texture_quality
         from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
@@ -343,17 +346,16 @@ class Live2DWidget(QOpenGLWidget):
                 prefetch_virtual_model_resources(model_json_path)
                 
             set_live2d_texture_quality(self._quality_profile)
-            disable_precision = LIVE2D_QUALITY_PROFILES[self._quality_profile]["disable_precision"]
             
             self._dispose_model_renderer()
             self._model = self._live2d.LAppModel()
             if is_virtual_path(model_json_path):
                 try:
-                    self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                    self._model.LoadModelJson(model_json_path)
                 finally:
                     clear_virtual_byte_cache()
             else:
-                self._model.LoadModelJson(model_json_path, disable_precision=disable_precision)
+                self._model.LoadModelJson(model_json_path)
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
             self._update_custom_hit_area_projection()
@@ -784,19 +786,18 @@ class Live2DWidget(QOpenGLWidget):
         local = self.mapFromGlobal(global_pos)
         return local if self.rect().contains(local) else None
 
-    def is_model_geometry_hit_at_global(self, global_pos: QPoint) -> bool:
-        local = self._get_valid_local_pos(global_pos)
-        return self._is_model_geometry_hit_at(local.x(), local.y()) if local else False
-
     def is_model_hit_at_global(self, global_pos: QPoint, *, sync: bool = True) -> bool:
         local = self._get_valid_local_pos(global_pos)
         return self._is_model_hit_at(local.x(), local.y(), sync=sync) if local else False
 
     def is_model_opaque_at_global(self, global_pos: QPoint, *, sync: bool = True) -> bool:
         local = self._get_valid_local_pos(global_pos)
-        if not local or not self._model:
+        return self.is_model_opaque_at_local(local.x(), local.y(), sync=sync) if local else False
+
+    def is_model_opaque_at_local(self, x: float, y: float, *, sync: bool = True) -> bool:
+        if not self._model:
             return False
-        alpha = self._alpha_at(local.x(), local.y(), sync=sync)
+        alpha = self._alpha_at(x, y, sync=sync)
         return bool(alpha is not None and alpha > self._hit_alpha_threshold)
 
     def hit_area_name_at(self, x: float, y: float) -> str:

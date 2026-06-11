@@ -56,7 +56,20 @@ def current_startup_command() -> str:
 
 
 def is_startup_enabled() -> bool:
-    return bool(current_startup_command())
+    current = current_startup_command()
+    return bool(current) and current == startup_command()
+
+
+def repair_startup_command() -> bool:
+    """Replace an enabled but stale startup command with this build's command."""
+    current = current_startup_command()
+    if not current:
+        return False
+    expected = startup_command()
+    if current == expected:
+        return False
+    set_startup_enabled(True)
+    return True
 
 
 def set_startup_enabled(enabled: bool) -> None:

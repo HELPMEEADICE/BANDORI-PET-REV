@@ -363,9 +363,13 @@ class TTSRequestWorker(QThread):
             if not text:
                 return
             if self._should_translate(selected_language):
-                translated = _translate_to_selected_language(self._config, text, selected_language)
-                if translated:
-                    text = translated
+                try:
+                    translated = _translate_to_selected_language(self._config, text, selected_language)
+                except Exception as exc:
+                    self.error.emit(f"TTS translation: {exc}")
+                else:
+                    if translated:
+                        text = translated
             self.prepared_text = text
             self.prepared_language = text_language
 

@@ -20,12 +20,11 @@ EXPECTED_NAV_ORDER = [
     "llm",
     "compact_window",
     "quality",
-    "screen_awareness",
+    "mcp_computer",
     "tts",
     "asr",
     "pov",
     "chat_integration",
-    "mcp_computer",
     "data_management",
 ]
 

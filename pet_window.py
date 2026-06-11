@@ -82,12 +82,20 @@ if os.name == "nt":
     _is_window_visible = _user32.IsWindowVisible
     _is_window_visible.argtypes = [ctypes.wintypes.HWND]
     _is_window_visible.restype = ctypes.wintypes.BOOL
+    _get_window_rect = _user32.GetWindowRect
+    _get_window_rect.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.RECT)]
+    _get_window_rect.restype = ctypes.wintypes.BOOL
+    _get_cursor_pos = _user32.GetCursorPos
+    _get_cursor_pos.argtypes = [ctypes.POINTER(ctypes.wintypes.POINT)]
+    _get_cursor_pos.restype = ctypes.wintypes.BOOL
 else:
     _get_window_long = None
     _set_window_long = None
     _set_window_pos = None
     _find_window = None
     _is_window_visible = None
+    _get_window_rect = None
+    _get_cursor_pos = None
 
 _x11 = None
 
@@ -717,8 +725,8 @@ class PetWindow(QWidget):
                 if msg.message == WM_NCCALCSIZE:
                     return True, 0
                 if msg.message == WM_NCHITTEST:
-                    pos = self._global_pos_from_lparam(int(msg.lParam))
-                    if self._should_passthrough_at(pos):
+                    native_pos = self._global_pos_from_lparam(int(msg.lParam))
+                    if self._should_passthrough_at_native(native_pos):
                         return True, HTTRANSPARENT
                 if (
                     msg.message == WM_POWERBROADCAST
@@ -749,6 +757,55 @@ class PetWindow(QWidget):
     @classmethod
     def _global_pos_from_lparam(cls, value: int) -> QPoint:
         return QPoint(cls._signed_word(value), cls._signed_word(value >> 16))
+
+    def _qt_global_pos_from_native_pos(self, native_pos: QPoint) -> QPoint:
+        if os.name != "nt":
+            return native_pos
+        hwnd = int(self.winId())
+        if not hwnd or _get_window_rect is None:
+            return native_pos
+        rect = ctypes.wintypes.RECT()
+        if not _get_window_rect(hwnd, ctypes.byref(rect)):
+            return native_pos
+
+        geometry = self.geometry()
+        native_w = max(1, int(rect.right - rect.left))
+        native_h = max(1, int(rect.bottom - rect.top))
+        scale_x = native_w / max(1.0, float(geometry.width()))
+        scale_y = native_h / max(1.0, float(geometry.height()))
+        return QPoint(
+            int(round(geometry.left() + (native_pos.x() - rect.left) / scale_x)),
+            int(round(geometry.top() + (native_pos.y() - rect.top) / scale_y)),
+        )
+
+    def _window_local_pos_from_native_pos(self, native_pos: QPoint):
+        if os.name != "nt":
+            local = self.mapFromGlobal(native_pos)
+            return local if self.rect().contains(local) else None
+        hwnd = int(self.winId())
+        if not hwnd or _get_window_rect is None:
+            local = self.mapFromGlobal(self._qt_global_pos_from_native_pos(native_pos))
+            return local if self.rect().contains(local) else None
+        rect = ctypes.wintypes.RECT()
+        if not _get_window_rect(hwnd, ctypes.byref(rect)):
+            local = self.mapFromGlobal(self._qt_global_pos_from_native_pos(native_pos))
+            return local if self.rect().contains(local) else None
+
+        native_w = max(1, int(rect.right - rect.left))
+        native_h = max(1, int(rect.bottom - rect.top))
+        local_x = (native_pos.x() - rect.left) * max(1.0, float(self.width())) / native_w
+        local_y = (native_pos.y() - rect.top) * max(1.0, float(self.height())) / native_h
+        if not (0 <= local_x < self.width() and 0 <= local_y < self.height()):
+            return None
+        return QPoint(int(local_x), int(local_y))
+
+    def _native_cursor_pos(self) -> QPoint:
+        if os.name != "nt" or _get_cursor_pos is None:
+            return QCursor.pos()
+        point = ctypes.wintypes.POINT()
+        if not _get_cursor_pos(ctypes.byref(point)):
+            return QCursor.pos()
+        return QPoint(int(point.x), int(point.y))
 
     def _apply_windows_frameless_fix(self):
         if os.name != "nt":
@@ -963,10 +1020,9 @@ class PetWindow(QWidget):
 
     @staticmethod
     def _mouse_passthrough_supported() -> bool:
-        # Windows toggles WS_EX_TRANSPARENT; macOS toggles
-        # NSWindow.ignoresMouseEvents. Both rely on the same polling timer that
-        # samples the cursor against the model's alpha so clicks fall through the
-        # transparent margins to whatever is behind the pet.
+        # Windows still needs WS_EX_TRANSPARENT polling so transparent regions
+        # can pass clicks to pet windows owned by other processes. WM_NCHITTEST
+        # remains a same-window safety net for stale cursor samples.
         return os.name == "nt" or (sys.platform == "darwin" and macos_patch is not None)
 
     def _sync_mouse_passthrough_timer(self):
@@ -986,6 +1042,9 @@ class PetWindow(QWidget):
             return
         if self._is_pet_dragging() or self._mouse_interaction_in_progress():
             self._set_mouse_passthrough(False)
+            return
+        if os.name == "nt":
+            self._set_mouse_passthrough(self._should_passthrough_at_native(self._native_cursor_pos()))
             return
         self._set_mouse_passthrough(self._should_passthrough_at(QCursor.pos()))
 
@@ -1018,6 +1077,13 @@ class PetWindow(QWidget):
         except Exception:
             return False
 
+    def _is_pet_opaque_at_window_local(self, local_pos: QPoint) -> bool:
+        if self._pixel_mode:
+            child_pos = self._pixel_widget.mapFrom(self, local_pos)
+            return self._pixel_widget.is_sprite_opaque_at_local(child_pos.x(), child_pos.y())
+        child_pos = self._live2d_widget.mapFrom(self, local_pos)
+        return self._live2d_widget.is_model_opaque_at_local(child_pos.x(), child_pos.y(), sync=True)
+
     def _should_passthrough_at(self, global_pos: QPoint) -> bool:
         if not self._mouse_passthrough_supported() or not self.isVisible():
             return False
@@ -1047,6 +1113,17 @@ class PetWindow(QWidget):
             if dx * dx + dy * dy <= MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE ** 2:
                 return False
         return True
+
+    def _should_passthrough_at_native(self, native_pos: QPoint) -> bool:
+        if not self.isVisible():
+            return False
+        local_pos = self._window_local_pos_from_native_pos(native_pos)
+        if local_pos is None:
+            return False
+        try:
+            return not self._is_pet_opaque_at_window_local(local_pos)
+        except Exception:
+            return False
 
     def _set_mouse_passthrough(self, enabled: bool):
         if enabled and self._mouse_interaction_in_progress():
@@ -1181,12 +1258,23 @@ class PetWindow(QWidget):
     def set_live2d_random_actions_enabled(self, enabled: bool):
         enabled = bool(enabled)
         if self._live2d_random_actions_enabled == enabled:
+            if not enabled:
+                self._motion_guard_token += 1
+                self._restore_default_motion(self._motion_guard_token, force_clear=True)
             return
         self._live2d_random_actions_enabled = enabled
+        self._motion_guard_token += 1
         self._last_context_idle_action_at = time.monotonic()
         self._cursor_was_near_live2d = False
         self._cursor_near_live2d_since = 0.0
         self._cursor_near_live2d_reacted = False
+        if not enabled:
+            self._restore_default_motion(self._motion_guard_token, force_clear=True)
+        else:
+            QTimer.singleShot(
+                50,
+                lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False),
+            )
 
     def set_live2d_head_tracking_enabled(self, enabled: bool):
         enabled = bool(enabled)
@@ -1754,8 +1842,24 @@ class PetWindow(QWidget):
         kwargs = {}
         if on_finish:
             kwargs["onFinishMotionHandler"] = on_finish
+        setting = getattr(model, "modelSetting", None)
+        motion_count = 0
+        if setting is not None:
+            try:
+                motion_count = int(setting.getMotionNum(motion_name))
+            except Exception:
+                motion_count = 0
+            try:
+                if motion_count <= 0 and setting.resolveMotion(motion_name, 0) is None:
+                    return False
+            except Exception:
+                if motion_count <= 0:
+                    return False
         try:
-            model.StartRandomMotion(motion_name, priority=priority, **kwargs)
+            if motion_count > 0:
+                model.StartRandomMotion(motion_name, priority=priority, **kwargs)
+            else:
+                model.StartMotion(motion_name, 0, priority, **kwargs)
             self._live2d_prewarmed_motions.add(str(motion_name))
             return True
         except Exception:
@@ -2057,6 +2161,13 @@ class PetWindow(QWidget):
         if "models" in data or "model_action_settings" in data:
             self._live2d_prewarm_token += 1
             self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
+            self._motion_guard_token += 1
+            QTimer.singleShot(
+                80,
+                lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True),
+            )
+        if data.get("reset_pet_positions"):
+            self.reset_position()
         self._save_config()
 
     def _live2d_size(self):
@@ -2068,6 +2179,32 @@ class PetWindow(QWidget):
         if not self._pixel_mode:
             self.resize(*self._live2d_size())
         self._sync_compact_ai_window()
+
+    def reset_position(self):
+        screen = QGuiApplication.primaryScreen() or self._fallback_position_screen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        count = max(1, len(self._group_characters))
+        index = max(0, min(self._compute_layer_index(), count - 1))
+        offset_x = int(round((index - (count - 1) / 2.0) * 48))
+        target_x = geo.left() + (geo.width() - self.width()) // 2 + offset_x
+        target_y = geo.top() + (geo.height() - self.height()) // 2
+        target_x, target_y = self._constrain_position_to_screen(
+            target_x,
+            target_y,
+            screen,
+            allow_partial=False,
+        )
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
+        self._restoring_saved_position = True
+        try:
+            self._move_unconstrained(target_x, target_y)
+        finally:
+            self._restoring_saved_position = False
+        self._show_pos_set = True
+        self._sync_compact_ai_window(allow_create=True)
 
     def _on_tray_activated(self, reason):
         if sys.platform == "darwin":
@@ -3618,7 +3755,11 @@ class PetWindow(QWidget):
         if model is None:
             return
         if force_clear:
-            QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=False))
+            try:
+                model.ClearMotions()
+            except Exception:
+                pass
+            QTimer.singleShot(50, lambda t=token: self._start_idle_motion_if_current(t, smooth=True))
         else:
             self._start_idle_motion_if_current(token, smooth=True)
 
@@ -3655,20 +3796,13 @@ class PetWindow(QWidget):
             return
         motion_names = self._current_motion_names()
         configured_motion = self._current_model_entry().get("default_motion", "")
-        if configured_motion in motion_names:
+        if configured_motion:
             if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE):
                 self._apply_default_expression(model)
                 return
-        if not self._live2d_random_actions_enabled:
-            try:
-                model.ClearMotions()
-            except Exception:
-                pass
-            self._apply_default_expression(model)
-            return
         idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
         if idle_names:
-            idle_name = random.choice(idle_names)
+            idle_name = random.choice(idle_names) if self._live2d_random_actions_enabled else idle_names[0]
             self._safe_start_motion(model, idle_name, priority=self._live2d.MotionPriority.FORCE)
         else:
             try:
@@ -3815,6 +3949,16 @@ class PetWindow(QWidget):
             self.show()
 
     def _open_settings(self, start_on_costumes=False):
+        if self._ipc_socket and self._ipc_socket.isOpen():
+            parts = [
+                "OPEN_SETTINGS",
+                "costumes" if start_on_costumes else "main",
+                self._current_char,
+            ]
+            self._ipc_socket.write(("\t".join(parts) + "\n").encode("utf-8"))
+            self._ipc_socket.flush()
+            return
+
         if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
             return
 

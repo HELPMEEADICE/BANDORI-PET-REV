@@ -24,12 +24,12 @@ from llm_manager import (
     build_system_prompt,
     consume_stream_action_tags,
     current_time_instruction,
+    merged_action_tags,
     parse_action_tags,
     strip_action_tags,
-    _build_event_context,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
+from llm_api_compat import chat_completions_api_url, use_responses_api
 from llm_error_hints import format_llm_error_message
 from chat_config_snapshots import (
     memory_extraction_api_config,
@@ -37,25 +37,10 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
-from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import SingleShotTTSCallbacksMixin, clean_tts_payload
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker
-    _TTS_AVAILABLE = True
-except (ImportError, OSError):
-    _TTS_AVAILABLE = False
-
-    class TTSPlayer(QObject):
-        error = Signal(str)
-        level_changed = Signal(float)
-        mouth_pose_changed = Signal(float, float)
-        playback_finished = Signal()
-        def prepare_lip_sync_text(self, text, language=""): pass
-        def enqueue(self, audio, media_type): pass
-        def stop(self): pass
-        def is_idle(self): return True
-    TTSRequestWorker = None
+from tts_manager import TTSPlayer, TTSRequestWorker
+_TTS_AVAILABLE = True
 
 from database_manager import DatabaseManager
 from i18n_manager import tr as _tr
@@ -849,9 +834,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
-        desktop_context = desktop_state_context(self._cfg)
-        if desktop_context:
-            dynamic_context += "\n\n" + desktop_context
         messages = [{"role": "system", "content": system_prompt}]
         history = [dict(item) for item in self._history[-12:]]
         messages.extend(history)
@@ -869,9 +851,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
             if messages[i].get("role") == "user":
                 messages[i]["content"] = str(messages[i].get("content", "")) + suffix
                 break
-
-    def _supports_openai_responses_api(self, api_url: str) -> bool:
-        return supports_openai_responses_api(api_url)
 
     def _use_responses_api(self, api_url: str = "") -> bool:
         return use_responses_api(self._cfg, api_url)
@@ -904,7 +883,7 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         if self.sender() is not self._worker:
             return
         del actions
-        acts = self._merged_action_tags(
+        acts = merged_action_tags(
             self._current_response_actions,
             parse_action_tags(self._action_tag_stream_buffer + full_text),
         )
@@ -928,20 +907,6 @@ class CompactAIWindow(SingleShotTTSCallbacksMixin, QWidget):
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()
-
-    @staticmethod
-    def _merged_action_tags(*groups: list[str]) -> list[str]:
-        seen = set()
-        result = []
-        for group in groups:
-            for action in group or []:
-                key = str(action or "").strip()
-                dedupe_key = key.lower()
-                if not key or dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                result.append(key)
-        return result
 
     def _user_memory_key(self) -> str:
         return user_key_from_config(self._cfg)

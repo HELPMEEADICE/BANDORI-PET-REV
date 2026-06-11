@@ -5,39 +5,29 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QRectF, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion, QTextCursor
+from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QScrollArea, QSizePolicy, QToolButton, QMenu,
-    QApplication, QGraphicsOpacityEffect, QWidgetAction,
-    QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
-    QSplitter, QSplitterHandle, QCheckBox,
+    QApplication, QWidgetAction,
+    QFrame, QFileDialog, QMessageBox,
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, ProgressBar, TransparentToolButton, isDarkTheme
+from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
 from app_theme import (
-    BANDORI_PRIMARY,
-    BANDORI_PRIMARY_HOVER,
-    BANDORI_PRIMARY_PRESSED,
-    BANDORI_PRIMARY_DARK,
-    BANDORI_PRIMARY_DARK_HOVER,
-    BANDORI_PRIMARY_DARK_PRESSED,
     BANDORI_PRIMARY_SOFT,
-    BANDORI_PRIMARY_SOFT_DARK,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter, circular_pixmap
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter
 from win32_dwm import apply_windows_11_border_fix
 
 import base64
-import math
 import mimetypes
-import numpy as np
 import os
 import shutil
 import sys
@@ -57,13 +47,11 @@ else:
 
 from llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
-    consume_stream_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
-    _build_event_context,
+    consume_stream_action_tags, merged_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import chat_completions_api_url, supports_openai_responses_api, use_responses_api
+from llm_api_compat import chat_completions_api_url, use_responses_api
 from llm_error_hints import format_llm_error_message
-from vision_fallback import analyze_images_with_aux_model
 from chat_config_snapshots import (
     asr_config_snapshot,
     memory_extraction_api_config,
@@ -71,29 +59,10 @@ from chat_config_snapshots import (
     tts_config_snapshot,
 )
 from local_tools import reminder_tools_enabled
-from desktop_state import desktop_state_context
 from chat_commands import handle_command as _handle_chat_command
 from tts_common import clean_tts_payload
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
-    _TTS_AVAILABLE = True
-except (ImportError, OSError):
-    _TTS_AVAILABLE = False
-
-    class TTSPlayer(QObject):
-        error = Signal(str)
-        level_changed = Signal(float)
-        mouth_pose_changed = Signal(float, float)
-        playback_finished = Signal()
-        def prepare_lip_sync_text(self, text, language=""): pass
-        def enqueue(self, audio, media_type): pass
-        def stop(self): pass
-        def is_idle(self): return True
-    TTSRequestWorker = None
-    TTSTranslationWorker = None
-
-    def flush_tts_sentence(buffer: str) -> str:
-        return buffer.strip()
+from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence
+_TTS_AVAILABLE = True
 
 try:
     from asr_manager import ASRRecorderWorker, ASRRequestWorker
@@ -117,24 +86,22 @@ from action_bus import publish_action, publish_emotion_behavior, publish_lip_syn
 
 from .constants import (
     _BG_LIGHT, _BG_DARK,
-    _USER_BUBBLE_LIGHT, _USER_BUBBLE_DARK,
-    _ASSIST_BUBBLE_LIGHT, _ASSIST_BUBBLE_DARK,
     _TEAMS_ACCENT, _TELEGRAM_ACCENT,
     _CHAT_IMAGE_EXTENSIONS,
-    _AVATAR_PIXMAP_CACHE, _AVATAR_PIXMAP_CACHE_LIMIT,
     _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT, _HISTORY_SCROLL_WIDTH,
+    _MESSAGE_HISTORY_PAGE_SIZE,
     _GROUP_SIDEBAR_DEFAULT_RATIO, _GROUP_SIDEBAR_MIN_RATIO,
     _GROUP_SIDEBAR_MAX_RATIO, _GROUP_SIDEBAR_ANIMATION_MS,
     _prepare_rounded_menu,
 )
 from .avatar_utils import _rounded_avatar_pixmap
 from .widgets import (
-    AuxVisionFallbackWorker, FluentContextLabel, GroupRenameDialog,
+    AuxVisionFallbackWorker, GroupRenameDialog,
     RoundedPanel, IconButton, ChatSendButton,
-    FluentSplitterHandle, FluentSplitter, ChatResizeGrip,
+    FluentSplitter, ChatResizeGrip,
     ConversationHistoryRow, GroupChatListRow,
-    _PickerRow, ChatCharacterPickerPanel,
-    PlanDivider, SearchSourcePopup, SearchSourceBadge, ChatImagePreview,
+    ChatCharacterPickerPanel,
+    PlanDivider,
     ComposerAttachmentCard,
 )
 from .message_bubble import MessageBubble
@@ -442,6 +409,13 @@ class ChatWindow(QWidget):
         self._last_message_layout_width = -1
         self._last_message_layout_count = -1
         self._scroll_to_bottom_generation = 0
+        self._pending_scroll_to_bottom_generation = 0
+        self._history_oldest_message_id: int | None = None
+        self._history_has_more = False
+        self._history_loading = False
+        self._history_pagination_ready = False
+        self._history_load_generation = 0
+        self._history_prepend_generation = 0
 
         self._user_name = self._cfg.get("user_name", "").strip() if self._cfg else ""
         self._user_avatar_color = self._cfg.get("user_avatar_color", _TELEGRAM_ACCENT) if self._cfg else _TELEGRAM_ACCENT
@@ -916,6 +890,11 @@ class ChatWindow(QWidget):
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setWidget(self._msg_area)
+        message_scrollbar = self._scroll.verticalScrollBar()
+        message_scrollbar.rangeChanged.connect(self._on_message_scroll_range_changed)
+        message_scrollbar.actionTriggered.connect(self._cancel_pending_scroll_to_bottom)
+        message_scrollbar.valueChanged.connect(self._on_message_scroll_value_changed)
+        self._scroll.viewport().installEventFilter(self)
         content_layout.addWidget(self._scroll, 1)
 
         content_layout.addWidget(self._build_input_area())
@@ -1953,6 +1932,13 @@ class ChatWindow(QWidget):
         return area
 
     def eventFilter(self, obj, event):
+        message_viewport = getattr(getattr(self, "_scroll", None), "viewport", lambda: None)()
+        if obj == message_viewport and event.type() == QEvent.Type.Wheel:
+            scrollbar = self._scroll.verticalScrollBar()
+            if event.angleDelta().y() > 0 and scrollbar.value() <= scrollbar.minimum():
+                if self._load_older_messages():
+                    event.accept()
+                    return True
         input_widget = getattr(self, "_input", None)
         input_viewport = input_widget.viewport() if input_widget is not None else None
         drag_targets = {
@@ -2257,6 +2243,13 @@ class ChatWindow(QWidget):
 
     def _clear_message_widgets(self):
         self._reset_tts_stream()
+        self._cancel_pending_scroll_to_bottom()
+        self._history_load_generation += 1
+        self._history_prepend_generation += 1
+        self._history_oldest_message_id = None
+        self._history_has_more = False
+        self._history_loading = False
+        self._history_pagination_ready = False
         self._last_message_layout_width = -1
         self._last_message_layout_count = -1
         if self._msg_layout.count() > 0:
@@ -3166,47 +3159,164 @@ class ChatWindow(QWidget):
         self._conv_id = None
 
     def _load_messages(self):
+        self._history_load_generation += 1
+        load_generation = self._history_load_generation
+        self._history_loading = True
+        self._history_pagination_ready = False
+        page_limit = _MESSAGE_HISTORY_PAGE_SIZE + 1
         if self._is_group_chat:
             if not self._group_conv_id:
+                self._history_loading = False
                 return
-            messages = self._db.get_group_messages(self._conversation_key, self._group_conv_id, user_key=self._chat_user_key)
+            messages = self._db.get_group_messages(
+                self._conversation_key,
+                self._group_conv_id,
+                limit=page_limit,
+                user_key=self._chat_user_key,
+            )
         elif self._conv_id is None:
+            self._history_loading = False
             return
         else:
-            messages = self._db.get_messages(self._conv_id)
+            messages = self._db.get_messages(self._conv_id, limit=page_limit)
+        self._history_has_more = len(messages) > _MESSAGE_HISTORY_PAGE_SIZE
+        if self._history_has_more:
+            messages = messages[-_MESSAGE_HISTORY_PAGE_SIZE:]
+        self._history_oldest_message_id = int(messages[0]["id"]) if messages else None
         self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for m in messages:
-            author = self._user_name if m["role"] == "user" and self._user_name else _tr("ChatWindow.you") if m["role"] == "user" else self._message_author(m["content"])
-            avatar = self._user_avatar_color if m["role"] == "user" else ""
-            avatar_path = ""
-            avatar_data = b""
-            avatar_focus = "center"
-            if m["role"] == "user":
-                avatar_path = self._user_avatar_path
-            message_character = self._message_character(m["content"], m["role"])
-            if m["role"] == "assistant":
-                avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(message_character)
-            bubble = MessageBubble(
-                self._message_content(m["content"], m["role"]),
-                m["role"],
-                author,
-                m.get("created_at", ""),
-                avatar_color=avatar,
-                avatar_path=avatar_path,
-                avatar_data=avatar_data,
-                avatar_focus=avatar_focus,
-                reasoning=m.get("reasoning_content", ""),
-                show_reasoning=self._show_reasoning,
-                search_sources=self._message_search_sources(m.get("tool_trace_json")),
-                attachments=self._normalize_attachments(m.get("attachments_json")) if m["role"] == "user" else None,
-                avatar_character=message_character,
-            )
-            self._connect_message_bubble(bubble)
-            self._msg_layout.addWidget(bubble)
+            self._msg_layout.addWidget(self._message_bubble_from_record(m))
         self._msg_layout.addStretch()
+        self._history_loading = False
         self._relayout_message_bubbles()
         self._schedule_visible_message_relayout()
         self._schedule_scroll_to_bottom_after_load()
+        QTimer.singleShot(
+            250,
+            lambda generation=load_generation: self._enable_history_pagination(generation),
+        )
+
+    def _message_bubble_from_record(self, message: dict) -> MessageBubble:
+        role = message["role"]
+        author = (
+            self._user_name
+            if role == "user" and self._user_name
+            else _tr("ChatWindow.you")
+            if role == "user"
+            else self._message_author(message["content"])
+        )
+        avatar = self._user_avatar_color if role == "user" else ""
+        avatar_path = self._user_avatar_path if role == "user" else ""
+        avatar_data = b""
+        avatar_focus = "center"
+        message_character = self._message_character(message["content"], role)
+        if role == "assistant":
+            avatar_path, avatar_data, avatar_focus = self._avatar_info_for_character(message_character)
+        bubble = MessageBubble(
+            self._message_content(message["content"], role),
+            role,
+            author,
+            message.get("created_at", ""),
+            avatar_color=avatar,
+            avatar_path=avatar_path,
+            avatar_data=avatar_data,
+            avatar_focus=avatar_focus,
+            reasoning=message.get("reasoning_content", ""),
+            show_reasoning=self._show_reasoning,
+            search_sources=self._message_search_sources(message.get("tool_trace_json")),
+            attachments=self._normalize_attachments(message.get("attachments_json")) if role == "user" else None,
+            avatar_character=message_character,
+        )
+        self._connect_message_bubble(bubble)
+        return bubble
+
+    def _enable_history_pagination(self, generation: int):
+        if generation != self._history_load_generation:
+            return
+        self._history_pagination_ready = True
+
+    def _load_older_messages(self) -> bool:
+        if (
+            not self._history_pagination_ready
+            or self._history_loading
+            or not self._history_has_more
+            or self._history_oldest_message_id is None
+        ):
+            return False
+
+        self._cancel_pending_scroll_to_bottom()
+        self._history_loading = True
+        before_id = self._history_oldest_message_id
+        page_limit = _MESSAGE_HISTORY_PAGE_SIZE + 1
+        if self._is_group_chat:
+            messages = self._db.get_group_messages(
+                self._conversation_key,
+                self._group_conv_id,
+                limit=page_limit,
+                user_key=self._chat_user_key,
+                before_id=before_id,
+            )
+        else:
+            messages = self._db.get_messages(
+                self._conv_id,
+                limit=page_limit,
+                before_id=before_id,
+            )
+
+        self._history_has_more = len(messages) > _MESSAGE_HISTORY_PAGE_SIZE
+        if self._history_has_more:
+            messages = messages[-_MESSAGE_HISTORY_PAGE_SIZE:]
+        if not messages:
+            self._history_loading = False
+            return False
+
+        scrollbar = self._scroll.verticalScrollBar()
+        old_value = scrollbar.value()
+        old_maximum = scrollbar.maximum()
+        for index, message in enumerate(messages):
+            self._msg_layout.insertWidget(index, self._message_bubble_from_record(message))
+        self._history_oldest_message_id = int(messages[0]["id"])
+        self._last_message_layout_width = -1
+        self._last_message_layout_count = -1
+        self._history_prepend_generation += 1
+        generation = self._history_prepend_generation
+        for delay in (0, 30, 80, 160, 300, 500):
+            QTimer.singleShot(
+                delay,
+                lambda generation=generation, value=old_value, maximum=old_maximum:
+                    self._restore_scroll_after_history_prepend(generation, value, maximum),
+            )
+        QTimer.singleShot(
+            700,
+            lambda generation=generation, value=old_value, maximum=old_maximum:
+                self._finish_history_prepend(generation, value, maximum),
+        )
+        return True
+
+    def _restore_scroll_after_history_prepend(
+        self,
+        generation: int,
+        old_value: int,
+        old_maximum: int,
+    ):
+        if generation != self._history_prepend_generation:
+            return
+        if self._msg_area.layout():
+            self._msg_area.layout().activate()
+        self._relayout_message_bubbles(force=True)
+        scrollbar = self._scroll.verticalScrollBar()
+        scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
+
+    def _finish_history_prepend(
+        self,
+        generation: int,
+        old_value: int,
+        old_maximum: int,
+    ):
+        if generation != self._history_prepend_generation:
+            return
+        self._restore_scroll_after_history_prepend(generation, old_value, old_maximum)
+        self._history_loading = False
 
     def _message_author(self, content: str) -> str:
         if self._is_group_chat:
@@ -4475,9 +4585,6 @@ class ChatWindow(QWidget):
             for item in items
         )
 
-    def _supports_openai_responses_api(self, api_url: str) -> bool:
-        return supports_openai_responses_api(api_url)
-
     def _use_responses_api(self, api_url: str = "") -> bool:
         return use_responses_api(self._cfg, api_url)
 
@@ -4649,9 +4756,6 @@ class ChatWindow(QWidget):
             external_context = self._db.external_chat_context_text()
             if external_context:
                 dynamic_context += "\n\n" + external_context
-        desktop_context = desktop_state_context(self._cfg)
-        if desktop_context:
-            dynamic_context += "\n\n" + desktop_context
         if self._pending_interaction_context:
             dynamic_context += "\n\n【当前互动事件】\n" + self._pending_interaction_context
         if self._auto_active:
@@ -5349,7 +5453,7 @@ class ChatWindow(QWidget):
 
     def _finalize_current_response_segment(self, full_text: str, reasoning_text: str, actions: list) -> str:
         self._merge_search_sources(actions)
-        acts = self._merged_action_tags(
+        acts = merged_action_tags(
             self._current_response_actions,
             parse_action_tags(self._action_tag_stream_buffer + full_text),
         )
@@ -5482,20 +5586,6 @@ class ChatWindow(QWidget):
             self._seen_actions.add(key)
             self.action_triggered.emit(self._pending_action_character, action)
         self._pending_actions.clear()
-
-    @staticmethod
-    def _merged_action_tags(*groups: list[str]) -> list[str]:
-        seen = set()
-        result = []
-        for group in groups:
-            for action in group or []:
-                key = str(action or "").strip()
-                dedupe_key = key.lower()
-                if not key or dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                result.append(key)
-        return result
 
     def _tts_enabled(self) -> bool:
         return bool(_TTS_AVAILABLE and self._cfg and self._cfg.get("tts_enabled", False))
@@ -5750,15 +5840,41 @@ class ChatWindow(QWidget):
     def _schedule_scroll_to_bottom_after_load(self):
         self._scroll_to_bottom_generation += 1
         generation = self._scroll_to_bottom_generation
-        delays = (0, 30, 80, 160, 300, 500, 800)
+        self._pending_scroll_to_bottom_generation = generation
+        delays = (0, 30, 80, 160, 300, 500, 800, 1200)
         for delay in delays:
             QTimer.singleShot(
                 delay,
                 lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
             )
+        QTimer.singleShot(
+            2000,
+            lambda generation=generation: self._finish_scroll_to_bottom_for_generation(generation),
+        )
+
+    def _on_message_scroll_range_changed(self, _minimum: int, _maximum: int):
+        generation = self._pending_scroll_to_bottom_generation
+        if generation:
+            QTimer.singleShot(
+                0,
+                lambda generation=generation: self._scroll_to_bottom_for_generation(generation),
+            )
+
+    def _on_message_scroll_value_changed(self, value: int):
+        if not self._history_pagination_ready or self._history_loading:
+            return
+        scrollbar = self._scroll.verticalScrollBar()
+        if value <= scrollbar.minimum() + 48:
+            self._load_older_messages()
+
+    def _cancel_pending_scroll_to_bottom(self, _action: int = 0):
+        self._pending_scroll_to_bottom_generation = 0
 
     def _scroll_to_bottom_for_generation(self, generation: int):
-        if generation != self._scroll_to_bottom_generation:
+        if (
+            generation != self._scroll_to_bottom_generation
+            or generation != self._pending_scroll_to_bottom_generation
+        ):
             return
         if self._scroll is None or self._msg_area is None:
             return
@@ -5768,6 +5884,12 @@ class ChatWindow(QWidget):
             self._msg_area.layout().activate()
         self._relayout_message_bubbles(force=True)
         self._scroll_to_bottom()
+
+    def _finish_scroll_to_bottom_for_generation(self, generation: int):
+        if generation != self._pending_scroll_to_bottom_generation:
+            return
+        self._scroll_to_bottom_for_generation(generation)
+        self._pending_scroll_to_bottom_generation = 0
 
     def position_next_to_pet(self, pet_window: QWidget):
         pet_geo = pet_window if isinstance(pet_window, QRect) else pet_window.geometry()

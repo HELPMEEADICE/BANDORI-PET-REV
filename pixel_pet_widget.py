@@ -233,9 +233,15 @@ class PixelPetWidget(QWidget):
 
     def is_sprite_opaque_at_global(self, global_pos: QPoint) -> bool:
         local = self.mapFromGlobal(global_pos)
-        if not self.rect().contains(local) or self._sheet_image.isNull():
+        return self.is_sprite_opaque_at_local(local.x(), local.y())
+
+    def is_sprite_hit_at_local(self, local_x: int, local_y: int) -> bool:
+        return self.is_sprite_opaque_at_local(local_x, local_y)
+
+    def is_sprite_opaque_at_local(self, local_x: int, local_y: int) -> bool:
+        if not self.rect().contains(QPoint(int(local_x), int(local_y))) or self._sheet_image.isNull():
             return False
-        return self._sprite_alpha_at(local.x(), local.y()) > self._hit_alpha_threshold
+        return self._sprite_alpha_at(int(local_x), int(local_y)) > self._hit_alpha_threshold
 
     def _sprite_alpha_at(self, local_x: int, local_y: int) -> int:
         anim = self._frames.get(self._animation, {})

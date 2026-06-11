@@ -12,7 +12,6 @@ _log = logging.getLogger(__name__)
 from action_bus import publish_lip_sync
 from chat_config_snapshots import memory_extraction_api_config, tts_config_snapshot
 from database_manager import DatabaseManager
-from desktop_state import desktop_state_payload
 from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
@@ -25,6 +24,7 @@ from reminder_core import (
     POMODORO_CONFIG_KEY,
     PROACTIVE_COMPANION_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
+    SCREEN_AWARENESS_DISPLAY_MODE_KEY,
     SHORT_BREAK_SECONDS,
     compute_next_alarm_at,
     compute_next_proactive_at,
@@ -41,22 +41,8 @@ from reminder_core import (
 )
 from screen_awareness import ScreenAwarenessVisionWorker, clamp_screen_awareness_interval
 from tts_common import SingleShotTTSCallbacksMixin, strip_tts_action_tags
-
-try:
-    from tts_manager import TTSPlayer, TTSRequestWorker
-    _TTS_AVAILABLE = True
-except (ImportError, OSError):
-    _TTS_AVAILABLE = False
-
-    class TTSPlayer(QObject):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-
-        def stop(self): pass
-        def enqueue(self, audio, media_type): pass
-        def prepare_lip_sync_text(self, text, language=""): pass
-
-    TTSRequestWorker = None
+from tts_manager import TTSPlayer, TTSRequestWorker
+_TTS_AVAILABLE = True
 
 
 class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
@@ -87,17 +73,19 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(15_000)
         self._timer.timeout.connect(self._tick)
-        self.reload()
+        self.reload(skip_overdue_proactive=True)
         self._timer.start()
         QTimer.singleShot(1200, self._tick)
 
-    def reload(self):
+    def reload(self, skip_overdue_proactive: bool = False):
         if not self._cfg:
             return
         now = local_now()
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []), now)
         pomodoros = normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, []), now)
         proactive = normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {}), now)
+        if skip_overdue_proactive and proactive.get("enabled"):
+            self._defer_overdue_proactive_items(proactive, now)
         if (
             alarms != self._cfg.get(ALARM_CONFIG_KEY, [])
             or pomodoros != self._cfg.get(POMODORO_CONFIG_KEY, [])
@@ -108,6 +96,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
             self._cfg.save()
         self._schedule_next_screen_awareness()
+
+    def _defer_overdue_proactive_items(self, proactive: dict, now):
+        for item in proactive.get("items", []):
+            if not isinstance(item, dict) or not item.get("enabled"):
+                continue
+            next_at = parse_iso_datetime(item.get("next_at"))
+            if next_at is None or next_at > now:
+                continue
+            item["next_at"] = isoformat(compute_next_proactive_at(item, now))
 
     def trigger_screen_awareness_now(self) -> bool:
         if not self._screen_awareness_enabled():
@@ -238,8 +235,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         worker = ScreenAwarenessVisionWorker(dict(getattr(self._cfg, "_data", {}) or {}), self)
         self._screen_awareness_worker = worker
         worker.finished.connect(
-            lambda summary, metrics, worker=worker, character=character, trigger_now=trigger_now:
-                self._on_screen_awareness_finished(worker, character, trigger_now, summary, metrics)
+            lambda result, worker=worker, character=character, trigger_now=trigger_now:
+                self._on_screen_awareness_finished(worker, character, trigger_now, result)
         )
         worker.error.connect(
             lambda message, worker=worker:
@@ -247,13 +244,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         )
         worker.start()
 
-    def _on_screen_awareness_finished(self, worker: ScreenAwarenessVisionWorker, character: str, trigger_now, summary: str, metrics: dict):
+    def _on_screen_awareness_finished(self, worker: ScreenAwarenessVisionWorker, character: str, trigger_now, result: dict):
         if worker is not self._screen_awareness_worker:
             return
         self._screen_awareness_worker = None
         worker.deleteLater()
-        summary = str(summary or "").strip()
-        if not summary:
+        result = result if isinstance(result, dict) else {}
+        summary = str(result.get("screen_observation", "") or "").strip()
+        image_data_url = str(result.get("screen_image_data_url", "") or "").strip()
+        if not summary and not image_data_url:
             return
         self._start_text_generation({
             "kind": "screen_awareness",
@@ -262,7 +261,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             "character": character,
             "description": _tr("Reminder.screen_awareness_description", default="根据当前屏幕内容判断是否主动搭话。"),
             "screen_observation": summary,
-            "screen_metrics": metrics if isinstance(metrics, dict) else {},
+            "screen_image_data_url": image_data_url,
+            "screen_metrics": result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {},
+            "desktop_state": result.get("desktop_state", {}) if isinstance(result.get("desktop_state"), dict) else {},
             "triggered_at": isoformat(trigger_now),
         })
 
@@ -439,6 +440,15 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             chat_completions_api_url,
         )
 
+    def _main_api_config(self) -> tuple[str, str, str]:
+        if not self._cfg:
+            return "", "", ""
+        return (
+            str(self._cfg.get("llm_api_url", "") or "").strip(),
+            str(self._cfg.get("llm_api_key", "") or "").strip(),
+            str(self._cfg.get("llm_model_id", "") or "").strip(),
+        )
+
     def _start_text_generation(self, context: dict):
         self._pending_contexts.append(dict(context))
         self._drain_pending_contexts()
@@ -449,7 +459,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._text_generation_busy = True
         context = self._pending_contexts.pop(0)
         character = context.get("character", "")
-        api_url, api_key, model_id = self._api_config()
+        is_screen_awareness = context.get("kind") == "screen_awareness"
+        api_url, api_key, model_id = self._main_api_config() if is_screen_awareness else self._api_config()
         if not api_url or not api_key or not model_id:
             if context.get("kind") == "screen_awareness":
                 self._text_generation_busy = False
@@ -480,27 +491,40 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             instruction += _tr(
                 "Reminder.screen_awareness_llm_instruction",
                 default=(
-                    "\n如果这是 screen_awareness，请根据 screen_observation 判断是否值得主动开口。"
+                    "\n如果这是 screen_awareness，请根据附带的桌面截图或 screen_observation 判断是否值得主动开口。"
                     "只有在用户可能卡住、专注太久、切换任务、看起来需要鼓励或有自然搭话点时才说话；"
                     "如果不需要打扰，只输出 NO_SPEAK。不要说自己在截图或监控屏幕。"
                 ),
             )
+        reminder_payload = {
+            key: value
+            for key, value in context.items()
+            if key != "screen_image_data_url"
+        }
         payload = {
-            "reminder": context,
+            "reminder": reminder_payload,
             "character_display_name": display_name,
             "relationship_context": relationship,
         }
         if context.get("screen_observation"):
             payload["screen_observation"] = context.get("screen_observation", "")
             payload["screen_metrics"] = context.get("screen_metrics", {})
-        desktop_state = desktop_state_payload(self._cfg)
+        desktop_state = context.get("desktop_state", {}) if is_screen_awareness else {}
         if desktop_state:
             payload["desktop_state"] = desktop_state
+        user_content = json.dumps(payload, ensure_ascii=False)
+        image_data_url = str(context.get("screen_image_data_url", "") or "").strip()
+        if image_data_url:
+            user_content = [
+                {"type": "text", "text": user_content},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]
         messages = [
             {"role": "system", "content": (system_prompt + "\n\n" + instruction).strip()},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            {"role": "user", "content": user_content},
         ]
-        worker = NonStreamWorker(api_url, api_key, model_id, messages, self._cfg.get("llm_aux_enable_thinking", None), self)
+        enable_thinking = None if is_screen_awareness else self._cfg.get("llm_aux_enable_thinking", None)
+        worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking, self)
         self._workers.append(worker)
         worker.finished.connect(
             lambda text, _reasoning, _actions, worker=worker, context=dict(context):
@@ -608,8 +632,6 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return _tr("Reminder.fallback_done", default="{name}：{purpose}完成了，辛苦啦。", name=display_name, purpose=purpose)
         if kind == "proactive_companion":
             proactive_kind = str(context.get("proactive_kind") or "")
-            if proactive_kind == "desktop_state":
-                return self._desktop_state_fallback(context, display_name)
             fallback_key = f"Reminder.fallback_proactive_{proactive_kind}"
             defaults = {
                 "morning": "{name}：早上好，今天也慢慢进入状态吧。要不要先想想最重要的一件事？",
@@ -617,38 +639,22 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
                 "sedentary": "{name}：坐了有一会儿了，起来伸展一下肩颈和手腕吧。",
                 "evening_review": "{name}：今天快收尾了，要不要简单复盘一下完成了什么？",
                 "bedtime": "{name}：时间不早了，差不多该把事情放一放准备休息啦。",
-                "desktop_state": "{name}：我在旁边留意着，你先按自己的节奏来，需要整理一下当前任务也可以叫我。",
             }
             return _tr(fallback_key, default=defaults.get(proactive_kind, "{name}：来照顾一下现在的生活节奏吧。"), name=display_name)
         if kind == "screen_awareness":
             return "NO_SPEAK"
         return _tr("Reminder.fallback_default", default="{name}：提醒时间到了。", name=display_name)
 
-    def _desktop_state_fallback(self, context: dict, display_name: str) -> str:
-        state = desktop_state_payload(self._cfg)
-        state_key = str(state.get("state") or "unknown")
-        defaults = {
-            "coding": "{name}：还在写代码呢。先别急，遇到卡住的地方就停一下整理思路。",
-            "web": "{name}：你在看网页呀，别被标签页带跑太远，记得回到原本想查的事。",
-            "gaming": "{name}：在打游戏的话就好好享受，不过这一局结束后要不要休息一下眼睛？",
-            "idle": "{name}：你安静了一会儿。没关系，发会儿呆也算是在充电。",
-            "media": "{name}：在看视频或听音乐的话，放松一下也很好，不过别忘了现在的节奏。",
-            "writing": "{name}：还在写东西呢。慢慢来，先把最想表达的那一句放下来。",
-        }
-        return _tr(
-            f"Reminder.fallback_desktop_state_{state_key}",
-            default=defaults.get(
-                state_key,
-                "{name}：我在旁边留意着，你先按自己的节奏来，需要整理一下当前任务也可以叫我。",
-            ),
-            name=display_name,
-        )
-
     def _show_reminder(self, context: dict, text: str, action: str):
         title = str(context.get("title", "") or "提醒")
         character = str(context.get("character", "") or "").strip()
         display_name = self._display_name(character)
-        mode = normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, "floating"))
+        display_mode_key = (
+            SCREEN_AWARENESS_DISPLAY_MODE_KEY
+            if context.get("kind") == "screen_awareness"
+            else REMINDER_DISPLAY_MODE_KEY
+        )
+        mode = normalize_display_mode(self._cfg.get(display_mode_key, "floating"))
         if mode == DISPLAY_MODE_SYSTEM:
             notification_title = str(context.get("notification_title", "") or title)
             self._system_notify(notification_title, display_name, text)

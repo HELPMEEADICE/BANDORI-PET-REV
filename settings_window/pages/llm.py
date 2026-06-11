@@ -918,12 +918,12 @@ class LLMPageMixin:
             else:
                 self._llm_api_url_hint.setText(_tr(
                     'SettingsWindow.llm_api_url_hint_responses',
-                    default='Responses 模式可填写 https://api.openai.com/v1/responses；OpenAI 官方可用原生工具，MCP/Computer 相关选项在\u201c工具与电脑控制\u201d页配置。',
+                    default='Responses 模式可填写 https://api.openai.com/v1/responses；OpenAI 官方可用原生工具，MCP/Computer 相关选项在\u201c屏幕感知与工具控制\u201d页配置。',
                 ))
         else:
             self._llm_api_url_hint.setText(_tr(
                 'SettingsWindow.llm_api_url_hint_chat_tools',
-                default='别忘记在 API 地址末尾写 /v1/chat/completions。Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在\u201c工具与电脑控制\u201d页。',
+                default='别忘记在 API 地址末尾写 /v1/chat/completions。Chat Completions 兼容接口也可以通过 tool_calls/function calling 使用工具；联网搜索、本地 MCP 代理和 Computer Use 的开关在\u201c屏幕感知与工具控制\u201d页。',
             ))
 
     def _on_llm_web_search_enabled_changed(self, enabled: bool):

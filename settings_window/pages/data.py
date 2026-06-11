@@ -507,6 +507,8 @@ class DataManagementPageMixin:
             self._save_mcp_computer_config(show_info=False)
         if hasattr(self, "_reminder_display_mode"):
             self._save_reminder_config(show_info=False, emit_update=False)
+        if hasattr(self, "_screen_awareness_enabled"):
+            self._save_screen_awareness_config(show_info=False, emit_update=False)
         if hasattr(self, "_opacity_slider"):
             self._cfg.set("fps", self._current_fps_setting())
             self._cfg.set("opacity", self._opacity_slider.value() / 100.0)
@@ -876,6 +878,8 @@ class DataManagementPageMixin:
             self._load_mcp_computer_config()
         if hasattr(self, "_reminder_display_mode"):
             self._load_reminder_config()
+        if hasattr(self, "_screen_awareness_enabled"):
+            self._load_screen_awareness_controls()
         if self._memory_page_ready() and DATA_CATEGORY_RELATIONSHIP in imported_sections:
             self._refresh_memory_page()
         self._refresh_side_and_quality_widgets()

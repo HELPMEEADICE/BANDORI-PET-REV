@@ -1034,8 +1034,22 @@ def consume_stream_action_tags(buffer: str, chunk: str) -> tuple[list[str], str]
 
 
 def strip_action_tags(text: str) -> str:
-    text = text.replace("[DONE]", "")
-    return ACTION_PATTERN.sub("", text).strip()
+    from tts_common import strip_tts_action_tags
+    return strip_tts_action_tags(text)
+
+
+def merged_action_tags(*groups: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for group in groups:
+        for action in group or []:
+            key = str(action or "").strip()
+            dedupe_key = key.lower()
+            if not key or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            result.append(key)
+    return result
 
 
 def _extract_reasoning(data: dict) -> str:

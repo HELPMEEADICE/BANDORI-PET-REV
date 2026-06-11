@@ -11,7 +11,16 @@ from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
 from process_utils import app_base_dir
 from reminder_core import normalize_alarms, normalize_display_mode, normalize_pomodoros, normalize_proactive_companion
-from screen_awareness import clamp_screen_awareness_interval, clamp_screen_awareness_screenshot_width
+from screen_awareness import (
+    SCREEN_AWARENESS_MODEL_MODE_MAIN,
+    clamp_screen_awareness_interval,
+    clamp_screen_awareness_screenshot_width,
+    normalize_screen_awareness_model_mode,
+)
+
+
+CONFIG_FILE_LOCK_TIMEOUT_SECONDS = 10.0
+CONFIG_FILE_LOCK_RETRY_SECONDS = 0.05
 
 
 def _try_replace_file(src, dst) -> OSError | None:
@@ -27,15 +36,18 @@ def _config_file_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "a+b") as lock_file:
+        deadline = time.monotonic() + CONFIG_FILE_LOCK_TIMEOUT_SECONDS
         if os.name == "nt":
             import msvcrt
             while True:
                 try:
                     lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                     break
                 except OSError:
-                    time.sleep(0.05)
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
             try:
                 yield
             finally:
@@ -43,7 +55,14 @@ def _config_file_lock(path: Path):
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
             try:
                 yield
             finally:
@@ -54,6 +73,30 @@ BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
 DEFAULT_USER_PROFILE_KEY = "__default__"
 ROLE_USER_KEY_PREFIX = "__role__:"
+CONFIG_TMP_CLEANUP_AGE_SECONDS = 24 * 60 * 60
+
+
+def cleanup_stale_config_temp_files(path: Path, max_age_seconds: int = CONFIG_TMP_CLEANUP_AGE_SECONDS) -> int:
+    path = Path(path)
+    cutoff = time.time() - max(0, int(max_age_seconds))
+    removed = 0
+    try:
+        candidates = list(path.parent.glob(f"{path.name}.*.tmp"))
+    except OSError:
+        return 0
+    for candidate in candidates:
+        try:
+            if not candidate.is_file():
+                continue
+            if candidate.name == path.name or candidate.name == f"{path.name}.lock":
+                continue
+            if candidate.stat().st_mtime > cutoff:
+                continue
+            candidate.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 BUILTIN_LLM_API_PROFILES = [
     {
@@ -246,9 +289,6 @@ DEFAULTS = {
     "computer_use_allow_keyboard": False,
     "computer_use_allow_clipboard": False,
     "computer_use_allow_wait": True,
-    "desktop_state_awareness_enabled": False,
-    "desktop_state_idle_seconds": 180,
-    "desktop_state_include_window_title": True,
     "llm_api_profiles": BUILTIN_LLM_API_PROFILES,
     "llm_active_api_profile": "",
     "user_name": "",
@@ -314,10 +354,8 @@ DEFAULTS = {
     "screen_awareness_character_mode": "random_visible",
     "screen_awareness_character": "",
     "screen_awareness_max_screenshot_width": 1920,
-    "screen_awareness_vision_api_url": "",
-    "screen_awareness_vision_api_key": "",
-    "screen_awareness_vision_model_id": "",
-    "screen_awareness_vision_enable_thinking": None,
+    "screen_awareness_model_mode": SCREEN_AWARENESS_MODEL_MODE_MAIN,
+    "screen_awareness_display_mode": "floating",
     "click_motion_profiles": [],
     "click_motion_active_profile": "",
     "reminder_display_mode": "floating",
@@ -500,6 +538,7 @@ class ConfigManager:
         self._path = Path(path)
         self._data = dict(DEFAULTS)
         self._loaded_data = copy.deepcopy(self._data)
+        cleanup_stale_config_temp_files(self._path)
         self.load()
 
     def load(self):
@@ -517,6 +556,12 @@ class ConfigManager:
                 for k in DEFAULTS:
                     if k in loaded:
                         next_data[k] = loaded[k]
+                if bool(loaded.get("desktop_state_awareness_enabled", False)):
+                    next_data["screen_awareness_enabled"] = True
+                if "screen_awareness_display_mode" not in loaded:
+                    next_data["screen_awareness_display_mode"] = normalize_display_mode(
+                        loaded.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
+                    )
             except (json.JSONDecodeError, OSError, ValueError):
                 self._backup_corrupt_config()
                 loaded = None
@@ -718,10 +763,6 @@ class ConfigManager:
             640,
             min(1920, _int_value(self._data.get("computer_use_max_screenshot_width", 1280), 1280)),
         )
-        self._data["desktop_state_idle_seconds"] = max(
-            30,
-            min(1800, _int_value(self._data.get("desktop_state_idle_seconds", 180), 180)),
-        )
         for key in (
             "llm_hide_tool_call_details",
             "llm_custom_system_prompt_enabled",
@@ -735,8 +776,6 @@ class ConfigManager:
             "computer_use_allow_keyboard",
             "computer_use_allow_clipboard",
             "computer_use_allow_wait",
-            "desktop_state_awareness_enabled",
-            "desktop_state_include_window_title",
         ):
             self._data[key] = bool(self._data.get(key, DEFAULTS.get(key, False)))
 
@@ -751,14 +790,19 @@ class ConfigManager:
         self._data["screen_awareness_max_screenshot_width"] = clamp_screen_awareness_screenshot_width(
             self._data.get("screen_awareness_max_screenshot_width", 1920)
         )
-        for key in (
+        self._data["screen_awareness_model_mode"] = normalize_screen_awareness_model_mode(
+            self._data.get("screen_awareness_model_mode", SCREEN_AWARENESS_MODEL_MODE_MAIN)
+        )
+        self._data["screen_awareness_display_mode"] = normalize_display_mode(
+            self._data.get("screen_awareness_display_mode", DEFAULTS["screen_awareness_display_mode"])
+        )
+        for legacy_key in (
             "screen_awareness_vision_api_url",
             "screen_awareness_vision_api_key",
             "screen_awareness_vision_model_id",
+            "screen_awareness_vision_enable_thinking",
         ):
-            self._data[key] = str(self._data.get(key, "") or "").strip()
-        thinking = self._data.get("screen_awareness_vision_enable_thinking", None)
-        self._data["screen_awareness_vision_enable_thinking"] = thinking if thinking in (True, False, None) else None
+            self._data.pop(legacy_key, None)
 
     def _normalize_model_action_settings(self):
         profiles = self._data.get("model_action_settings", {})
@@ -868,6 +912,12 @@ class ConfigManager:
             value = self._data.get(key, DEFAULTS[key])
             loaded_value = self._loaded_data.get(key, DEFAULTS[key])
             current_value = current.get(key, DEFAULTS[key])
+            if key == "screen_awareness_enabled" and bool(current.get("desktop_state_awareness_enabled", False)):
+                merged[key] = bool(value)
+                continue
+            if key == "screen_awareness_display_mode" and key not in current:
+                merged[key] = value
+                continue
             merged[key] = current_value if value == loaded_value and current_value != loaded_value else value
         return merged
 
@@ -1011,9 +1061,6 @@ class ConfigManager:
     def get_click_motion_profiles(self) -> list[dict]:
         self._normalize_click_motion_profiles()
         return list(self._data.get("click_motion_profiles", []))
-
-    def get_click_motion_active_profile(self) -> str:
-        return str(self._data.get("click_motion_active_profile", "")).strip()
 
     def set_click_motion_active_profile(self, name: str):
         name = str(name or "").strip()

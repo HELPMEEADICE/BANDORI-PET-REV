@@ -4,30 +4,26 @@ import urllib.error
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QRect, QRectF, QSize,
+    Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve,
+    QRectF, QSize,
 )
 from PySide6.QtGui import (
-    QFont, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QImage, QRegion,
-    QTextCursor, QKeyEvent,
+    QFont, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QRegion,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QScrollArea, QSizePolicy, QToolButton, QMenu,
-    QApplication, QGraphicsOpacityEffect, QWidgetAction,
-    QGraphicsColorizeEffect, QFrame, QFileDialog, QMessageBox,
+    QScrollArea, QSizePolicy, QToolButton,
+    QApplication,
+    QGraphicsColorizeEffect, QFrame,
     QSplitter, QSplitterHandle, QCheckBox,
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, TransparentToolButton, isDarkTheme
-from qfluentwidgets.common.config import qconfig
+from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, isDarkTheme
 
 from app_theme import (
-    BANDORI_PRIMARY,
     BANDORI_PRIMARY_HOVER,
     BANDORI_PRIMARY_PRESSED,
-    BANDORI_PRIMARY_DARK,
     BANDORI_PRIMARY_DARK_HOVER,
     BANDORI_PRIMARY_DARK_PRESSED,
     accent_color,

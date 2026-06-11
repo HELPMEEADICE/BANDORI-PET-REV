@@ -2,8 +2,8 @@ import json
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, QRectF, QSize, Signal, QPoint, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, Signal, QPoint, QParallelAnimationGroup
+from PySide6.QtGui import QFont, QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QGraphicsOpacityEffect, QFrame, QToolButton,
@@ -16,7 +16,6 @@ from qfluentwidgets import isDarkTheme
 from app_theme import (
     BANDORI_PRIMARY,
     BANDORI_PRIMARY_DARK,
-    accent_color,
 )
 
 from .constants import (

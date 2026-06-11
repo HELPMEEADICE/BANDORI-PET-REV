@@ -1,3 +1,4 @@
+from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -115,7 +116,6 @@ class SettingsWindow(
         self._memory_album_page = None
         self._relationship_guide_page = None
         self._reminder_page = None
-        self._screen_awareness_page = None
         self._memory_db = None
         self._memory_items: list[dict] = []
         self._selected_memory_id = 0
@@ -180,6 +180,7 @@ class SettingsWindow(
         self._loading_user_profile = False
         self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
+        self._pet_positions_reset_pending = False
 
         icon_path = _app_icon_path()
         if icon_path:
@@ -1279,9 +1280,6 @@ class SettingsWindow(
         if key == "reminders":
             self._reminder_page = self._add_lazy_page("reminders", self._build_reminder_page())
             return self._reminder_page
-        if key == "screen_awareness":
-            self._screen_awareness_page = self._add_lazy_page("screen_awareness", self._build_screen_awareness_page())
-            return self._screen_awareness_page
         if key == "behavior":
             self._behavior_page = self._add_lazy_page("behavior", self._build_behavior_page())
             return self._behavior_page
@@ -1491,16 +1489,16 @@ class SettingsWindow(
         self._nav_buttons["quality"] = btn_quality
         nav_layout.addWidget(btn_quality)
 
-        btn_screen_awareness = NavButton(
-            "screen_awareness",
-            FluentIcon.VIEW,
-            _tr("SettingsWindow.nav_screen_awareness", default="屏幕感知"),
+        btn_mcp_computer = NavButton(
+            "mcp_computer",
+            FluentIcon.DEVELOPER_TOOLS,
+            _tr("SettingsWindow.nav_mcp_computer", default="屏幕感知与工具控制"),
             nav_content,
-            "#0ea5e9",
+            "#64748b",
         )
-        btn_screen_awareness.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["screen_awareness"] = btn_screen_awareness
-        nav_layout.addWidget(btn_screen_awareness)
+        btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["mcp_computer"] = btn_mcp_computer
+        nav_layout.addWidget(btn_mcp_computer)
 
         btn_tts = NavButton("tts", FluentIcon.MICROPHONE, _tr("SettingsWindow.nav_tts", "TTS 配置"), nav_content, "#f59e0b")
         btn_tts.nav_activated.connect(self._on_nav_selected)
@@ -1527,17 +1525,6 @@ class SettingsWindow(
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
         nav_layout.addWidget(btn_chat_integration)
-
-        btn_mcp_computer = NavButton(
-            "mcp_computer",
-            FluentIcon.DEVELOPER_TOOLS,
-            _tr("SettingsWindow.nav_mcp_computer", default="工具与电脑控制"),
-            nav_content,
-            "#64748b",
-        )
-        btn_mcp_computer.nav_activated.connect(self._on_nav_selected)
-        self._nav_buttons["mcp_computer"] = btn_mcp_computer
-        nav_layout.addWidget(btn_mcp_computer)
 
         btn_data_management = NavButton(
             "data_management",
@@ -1610,8 +1597,7 @@ class SettingsWindow(
             elif nav_key == "memory_album":
                 self._refresh_memory_album_page()
             elif nav_key == "chat_history":
-                self._populate_chat_history_filters()
-                self._refresh_chat_history()
+                QTimer.singleShot(0, self._activate_chat_history_page)
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 
@@ -1788,10 +1774,15 @@ class SettingsWindow(
         self._detail_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._detail_costume = SubtitleLabel("", self._detail_card)
         self._detail_costume.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_composite_badge = QLabel(_tr("SettingsWindow.webgal_composite_badge"), self._detail_card)
+        self._detail_composite_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_composite_badge.setToolTip(_tr("SettingsWindow.webgal_composite_tooltip"))
+        self._detail_composite_badge.setVisible(False)
         self._detail_band = BodyLabel("", self._detail_card)
         self._detail_band.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self._detail_name)
         card_layout.addWidget(self._detail_costume)
+        card_layout.addWidget(self._detail_composite_badge, 0, Qt.AlignmentFlag.AlignHCenter)
         card_layout.addWidget(self._detail_band)
 
         action_scroll = ScrollArea(self._model_detail_widget)
@@ -1983,11 +1974,25 @@ class SettingsWindow(
         card_bg = "#252525" if dark else "#ffffff"
         card_border = "#3a3a3a" if dark else "#e5e7eb"
         hint_color = "#a7b0bf" if dark else "#687385"
+        badge_bg = "#4a3540" if dark else "#fff1f5"
+        badge_fg = "#ffb4c8" if dark else "#b4234a"
+        badge_border = "#77505d" if dark else "#ffc2d1"
         self._detail_card.setStyleSheet(f"""
             CardWidget {{
                 background: {card_bg};
                 border: 1px solid {card_border};
                 border-radius: 18px;
+            }}
+        """)
+        self._detail_composite_badge.setStyleSheet(f"""
+            QLabel {{
+                color: {badge_fg};
+                background: {badge_bg};
+                border: 1px solid {badge_border};
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: 600;
             }}
         """)
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
@@ -2051,6 +2056,7 @@ class SettingsWindow(
         band_name = self._model_manager.get_band_display_name(self._selected_band) if self._selected_band else ""
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
+        self._detail_composite_badge.setVisible(self._model_manager.is_composite_costume(character, costume))
         self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
         self._populate_default_motion_combo(item)
         self._populate_default_expression_combo(item)
@@ -2431,6 +2437,26 @@ class SettingsWindow(
         self._costume_page.show()
         self._current_page = "costumes"
 
+    def show_costume_picker(self, char_key: str = ""):
+        char_key = (char_key or self._current_char or "").strip()
+        if char_key not in self._model_manager.characters:
+            char_key = self._current_char if self._current_char in self._model_manager.characters else ""
+        if not char_key and self._model_manager.characters:
+            char_key = self._model_manager.characters[0]
+        if not char_key:
+            return
+        self._ensure_page("characters")
+        self._hide_costume_preview()
+        for stacked_page in self._pages.values():
+            stacked_page.hide()
+        for key, btn in self._nav_buttons.items():
+            btn.setChecked(key == "characters")
+        self._on_char_selected(char_key)
+        self._animate_indicator("characters")
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _on_band_selected(self, band_id: str):
         self._populate_characters(band_id)
 
@@ -2495,6 +2521,7 @@ class SettingsWindow(
                 cname,
                 self._costume_list_widget,
                 favorite=self._is_favorite_costume(char_key, cid),
+                is_composite=self._model_manager.is_composite_costume(char_key, cid),
             )
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
             btn.preview_requested.connect(self._show_costume_preview)
@@ -2730,12 +2757,12 @@ class SettingsWindow(
             "compact_ai_window_text_color": self._cfg.get("compact_ai_window_text_color", "#24242a") if self._cfg else "#24242a",
             "ai_event_overlay_enabled": self._cfg.get("ai_event_overlay_enabled", False) if self._cfg else False,
             "ai_status_port_enabled": self._cfg.get("ai_status_port_enabled", False) if self._cfg else False,
-            "ai_status_port": self._clamp_ai_status_port(self._cfg.get("ai_status_port", 38472)) if self._cfg else 38472,
+            "ai_status_port": clamp_int(self._cfg.get("ai_status_port", 38472), 1024, 65535, 38472) if self._cfg else 38472,
             "ai_status_token": self._cfg.get("ai_status_token", "") if self._cfg else "",
             "chat_integration_enabled": self._cfg.get("chat_integration_enabled", False) if self._cfg else False,
             "chat_integration_overlay_enabled": self._cfg.get("chat_integration_overlay_enabled", True) if self._cfg else True,
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True) if self._cfg else True,
-            "chat_integration_port": self._clamp_chat_integration_port(self._cfg.get("chat_integration_port", 38473)) if self._cfg else 38473,
+            "chat_integration_port": clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473) if self._cfg else 38473,
             "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
             "napcat_enabled": self._cfg.get("napcat_enabled", False) if self._cfg else False,
             "napcat_ws_url": self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001") if self._cfg else "ws://127.0.0.1:3001",
@@ -2759,6 +2786,8 @@ class SettingsWindow(
         settings.update(self._screen_awareness_settings_data())
         if compact_reset_pending:
             settings["compact_ai_window_reset_position"] = True
+        if self._pet_positions_reset_pending:
+            settings["reset_pet_positions"] = True
         if self._cfg:
             self._cfg.set("language", settings["language"])
             self._cfg.set("fps", settings["fps"])
@@ -2981,7 +3010,14 @@ class SettingsWindow(
             costume = item["costume"]
             title = self._model_manager.get_display_name(character)
             subtitle = self._model_manager.get_costume_display_name(character, costume)
-            row = ModelListItem(character, title, subtitle, character == self._selected_list_character, self._model_list_widget)
+            row = ModelListItem(
+                character,
+                title,
+                subtitle,
+                character == self._selected_list_character,
+                self._model_list_widget,
+                is_composite=self._model_manager.is_composite_costume(character, costume),
+            )
             row.selected.connect(self._select_model_list_item)
             row.remove_requested.connect(self._remove_model_list_item)
             self._model_list_layout.addWidget(row)

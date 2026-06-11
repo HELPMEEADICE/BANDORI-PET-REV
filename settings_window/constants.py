@@ -86,6 +86,7 @@ from reminder_core import (
     DISPLAY_MODE_SYSTEM,
     POMODORO_CONFIG_KEY,
     REMINDER_DISPLAY_MODE_KEY,
+    SCREEN_AWARENESS_DISPLAY_MODE_KEY,
     create_alarm,
     create_pomodoro,
     default_reminder_character,
@@ -204,7 +205,6 @@ SECRET_CONFIG_KEYS = {
     "ai_status_token",
     "chat_integration_token",
     "napcat_access_token",
-    "screen_awareness_vision_api_key",
 }
 
 DATA_CONFIG_KEYS = {
@@ -287,9 +287,8 @@ DATA_CONFIG_KEYS = {
         "screen_awareness_character_mode",
         "screen_awareness_character",
         "screen_awareness_max_screenshot_width",
-        "screen_awareness_vision_api_url",
-        "screen_awareness_vision_model_id",
-        "screen_awareness_vision_enable_thinking",
+        "screen_awareness_model_mode",
+        "screen_awareness_display_mode",
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",
@@ -336,9 +335,6 @@ DATA_CONFIG_KEYS = {
         "computer_use_allow_keyboard",
         "computer_use_allow_clipboard",
         "computer_use_allow_wait",
-        "desktop_state_awareness_enabled",
-        "desktop_state_idle_seconds",
-        "desktop_state_include_window_title",
     ),
     DATA_CATEGORY_MISC: (
         "language",

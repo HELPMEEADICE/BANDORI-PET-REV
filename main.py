@@ -7,6 +7,7 @@ import uuid
 
 from process_utils import (
     app_base_dir,
+    clamp_int,
     configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     ipc_server_name,
@@ -15,11 +16,16 @@ from process_utils import (
 )
 from config_manager import ConfigManager
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
+from startup_manager import repair_startup_command
 
 configure_debug_logging()
 BASE_DIR = str(app_base_dir())
 APP_AUMID = "BandoriPet"
 _STARTUP_CONFIG = ConfigManager()
+try:
+    repair_startup_command()
+except OSError:
+    pass
 configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
@@ -45,14 +51,6 @@ from event_db_manager import SpecialEvent
 
 class AiEventBridge(QObject):
     line_received = Signal(str)
-
-
-def _clamp_ai_status_port(value) -> int:
-    try:
-        port = int(value)
-    except (TypeError, ValueError):
-        port = 38472
-    return max(1024, min(65535, port))
 
 
 def main():
@@ -140,20 +138,18 @@ def main():
         if quit_ref["running"]:
             return
         quit_ref["running"] = True
-        notify_chat_processes_shutdown()
-        stop_ipc_server()
-        stop_special_event_manager()
-        stop_ai_status_server()
-        stop_chat_integration_server()
-        stop_napcat_adapter(force=True)
-        stop_reminder_scheduler()
-        close_chat_integration_db()
-        close_pet_processes(force=True)
-        close_settings_process(force=True)
-        close_chat_process(force=True)
         if tray_icon is not None:
             tray_icon.hide()
         app.quit()
+
+        # Safety net: if the aboutToQuit handlers block or the event loop
+        # stalls, force-terminate after a short delay so the process never
+        # hangs on exit.
+        def _force_exit():
+            import os as _os
+            _os._exit(0)
+
+        QTimer.singleShot(10_000, _force_exit)
 
     def init_ipc_server():
         name = ipc_server_name()
@@ -323,7 +319,7 @@ def main():
         stop_ai_status_server()
         if not cfg.get("ai_status_port_enabled", False):
             return
-        port = _clamp_ai_status_port(cfg.get("ai_status_port", 38472))
+        port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
         token = cfg.get("ai_status_token") or ""
 
         def on_ai_event(event: dict):
@@ -415,7 +411,7 @@ def main():
         stop_chat_integration_server()
         if not cfg.get("chat_integration_enabled", False):
             return
-        port = _clamp_ai_status_port(cfg.get("chat_integration_port", 38473))
+        port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
         token = cfg.get("chat_integration_token") or ""
         try:
             server = ChatIntegrationHttpServer(
@@ -687,6 +683,8 @@ def main():
             broadcast_ipc_line(line)
         elif line == "FOCUS_CHAT":
             broadcast_ipc_line(line, exclude_socket=source_socket)
+        elif line.startswith("OPEN_SETTINGS"):
+            handle_open_settings_request(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
             if line.startswith("SETTINGS\t"):
@@ -795,15 +793,15 @@ def main():
             _close_qprocess(process, force, wait=wait)
         pet_window_ref["processes"] = []
 
-    def close_settings_process(force=False):
+    def close_settings_process(force=False, wait=True):
         process = settings_process_ref.get("process")
-        _close_qprocess(process, force)
+        _close_qprocess(process, force, wait=wait)
         settings_process_ref.pop("process", None)
         settings_process_ref.pop("show_launch", None)
 
-    def close_chat_process(force=False):
+    def close_chat_process(force=False, wait=True):
         process = chat_process_ref.get("process")
-        _close_qprocess(process, force)
+        _close_qprocess(process, force, wait=wait)
         chat_process_ref.pop("process", None)
 
     def on_model_selected(selected_char, selected_costume, relaunch=False):
@@ -864,18 +862,13 @@ def main():
             ("napcat_group_retention_days", "napcat_group_retention_days", 7),
             ("napcat_private_retention_mode", "napcat_private_retention_mode", "manual"),
             ("napcat_private_retention_days", "napcat_private_retention_days", 30),
-            ("desktop_state_awareness_enabled", "desktop_state_awareness_enabled", False),
-            ("desktop_state_idle_seconds", "desktop_state_idle_seconds", 180),
-            ("desktop_state_include_window_title", "desktop_state_include_window_title", True),
             ("screen_awareness_enabled", "screen_awareness_enabled", False),
             ("screen_awareness_interval_minutes", "screen_awareness_interval_minutes", 30),
             ("screen_awareness_character_mode", "screen_awareness_character_mode", "random_visible"),
             ("screen_awareness_character", "screen_awareness_character", ""),
             ("screen_awareness_max_screenshot_width", "screen_awareness_max_screenshot_width", 1920),
-            ("screen_awareness_vision_api_url", "screen_awareness_vision_api_url", ""),
-            ("screen_awareness_vision_api_key", "screen_awareness_vision_api_key", ""),
-            ("screen_awareness_vision_model_id", "screen_awareness_vision_model_id", ""),
-            ("screen_awareness_vision_enable_thinking", "screen_awareness_vision_enable_thinking", None),
+            ("screen_awareness_model_mode", "screen_awareness_model_mode", "main"),
+            ("screen_awareness_display_mode", "screen_awareness_display_mode", "floating"),
         )
         language = data.get("language")
         if language:
@@ -884,7 +877,7 @@ def main():
         for cfg_key, ref_key, default in _SETTINGS_MAP:
             value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
             if cfg_key in ("ai_status_port", "chat_integration_port"):
-                value = _clamp_ai_status_port(value)
+                value = clamp_int(value, 1024, 65535, default)
             pet_window_ref[ref_key] = value
         cfg.load()
         if language:
@@ -948,8 +941,6 @@ def main():
             "chat_integration_enabled", "chat_integration_overlay_enabled",
             "chat_integration_include_context", "chat_integration_port",
             "chat_integration_token",
-            "desktop_state_awareness_enabled", "desktop_state_idle_seconds",
-            "desktop_state_include_window_title",
         )
         for key in _pet_window_keys:
             value = pet_window_ref.get(key, _sentinel)
@@ -1129,14 +1120,26 @@ def main():
         if should_quit:
             quit_all()
 
-    def launch_settings_process(show_launch=True):
+    def handle_open_settings_request(line: str):
+        parts = line.split("\t")
+        target = parts[1].strip() if len(parts) >= 2 else "main"
+        character = parts[2].strip() if len(parts) >= 3 else ""
+        launch_settings_process(
+            show_launch=False,
+            start_on_costumes=target == "costumes",
+            costume_character=character,
+        )
+
+    def launch_settings_process(show_launch=True, start_on_costumes=False, costume_character=""):
         nonlocal mgr
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
+            if start_on_costumes:
+                broadcast_ipc_line(f"SHOW_COSTUMES\t{costume_character}")
             return
         cfg.load()
         mgr = ModelManager()
-        current_char = cfg.get("character", char)
+        current_char = costume_character if start_on_costumes and costume_character else cfg.get("character", char)
         current_costume = cfg.get("costume", costume)
         current_model_valid = bool(
             current_char and current_costume
@@ -1152,7 +1155,7 @@ def main():
             "--opacity", str(cfg.get("opacity", 1.0)),
             "--vsync", "1" if cfg.get("vsync", True) else "0",
             "--show-launch", "1" if show_launch else "0",
-            "--start-on-costumes", "0",
+            "--start-on-costumes", "1" if start_on_costumes else "0",
             "--first-run-wizard", "1" if first_run_wizard else "0",
         ])
         process.setProgram(program)
@@ -1230,7 +1233,6 @@ def main():
     def usage_db():
         db = usage_session_ref.get("db")
         if db is None:
-            from database_manager import DatabaseManager
             db = DatabaseManager()
             usage_session_ref["db"] = db
         return db
@@ -1255,6 +1257,7 @@ def main():
     usage_heartbeat.start()
 
     app.aboutToQuit.connect(save_config)
+    app.aboutToQuit.connect(notify_chat_processes_shutdown)
     app.aboutToQuit.connect(stop_ipc_server)
     app.aboutToQuit.connect(stop_ai_status_server)
     app.aboutToQuit.connect(stop_chat_integration_server)
@@ -1262,9 +1265,9 @@ def main():
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(end_usage_session)
-    app.aboutToQuit.connect(lambda: close_settings_process(force=True))
-    app.aboutToQuit.connect(lambda: close_chat_process(force=True))
-    app.aboutToQuit.connect(lambda: close_pet_processes(force=True))
+    app.aboutToQuit.connect(lambda: close_settings_process(force=True, wait=False))
+    app.aboutToQuit.connect(lambda: close_chat_process(force=True, wait=False))
+    app.aboutToQuit.connect(lambda: close_pet_processes(force=True, wait=False))
 
     if has_configured_models or model_valid:
         pet_window_ref["char"] = char

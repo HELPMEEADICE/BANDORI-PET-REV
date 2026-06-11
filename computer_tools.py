@@ -2,7 +2,6 @@ import ctypes
 import json
 import time
 
-from desktop_state import current_desktop_state_json, desktop_state_enabled
 from screen_capture import _int, capture_screenshot_data_url, desktop_bounds
 from vision_fallback import analyze_images_with_aux_model
 
@@ -12,17 +11,9 @@ _LAST_SCREENSHOT_METRICS: dict[str, int] = {}
 
 
 def computer_tools(config: dict) -> list[dict]:
-    if not bool(config.get("computer_use_enabled", False)) and not desktop_state_enabled(config):
+    if not bool(config.get("computer_use_enabled", False)):
         return []
     tools = []
-    if desktop_state_enabled(config):
-        tools.append(_tool(
-            "computer_desktop_state",
-            "Read the current foreground app/window category and keyboard/mouse idle time without taking a screenshot.",
-            {},
-        ))
-    if not bool(config.get("computer_use_enabled", False)):
-        return tools
     if bool(config.get("computer_use_allow_screenshot", True)):
         tools.append(_tool(
             "computer_screenshot",
@@ -114,10 +105,6 @@ def run_computer_tool(name: str, arguments, config: dict) -> dict:
             arguments = {}
     if not isinstance(arguments, dict):
         arguments = {}
-    if name == "computer_desktop_state":
-        if not desktop_state_enabled(config):
-            return _result("Desktop state awareness is disabled in settings.")
-        return _result(current_desktop_state_json(config))
     if not bool(config.get("computer_use_enabled", False)):
         return _result("Computer Use is disabled in settings.")
 
@@ -349,7 +336,7 @@ def _type_text(text: str):
 
 def _press_keys(keys: str):
     pg = _pyautogui()
-    parts = [part.strip().lower() for part in re_split_keys(keys) if part.strip()]
+    parts = [part.strip().lower() for part in _re_split_keys(keys) if part.strip()]
     if not parts:
         return
     if len(parts) == 1:
@@ -358,7 +345,7 @@ def _press_keys(keys: str):
         pg.hotkey(*parts)
 
 
-def re_split_keys(keys: str) -> list[str]:
+def _re_split_keys(keys: str) -> list[str]:
     return str(keys or "").replace("+", " ").split()
 
 

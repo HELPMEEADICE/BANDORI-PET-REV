@@ -1224,40 +1224,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return int(cur.rowcount or 0)
 
-    def add_mood_event(
-        self,
-        character: str,
-        user_key: str,
-        *,
-        event_type: str = "interaction",
-        affection_delta: int = 0,
-        trust_delta: int = 0,
-        familiarity_delta: int = 0,
-        mood: str = "",
-        mood_intensity: int = 0,
-        reason: str = "",
-    ) -> int:
-        user_key = self._normalize_user_key(user_key)
-        cur = self._conn.execute(
-            "INSERT INTO mood_events "
-            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, mood, mood_intensity, reason, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                character,
-                user_key,
-                event_type or "interaction",
-                _clamp_int(affection_delta, -100, 100, 0),
-                _clamp_int(trust_delta, -100, 100, 0),
-                _clamp_int(familiarity_delta, -100, 100, 0),
-                mood or "",
-                _clamp_int(mood_intensity, 0, 100, 0),
-                reason or "",
-                _now_text(),
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
-
     def create_conversation(self, character: str, title: str = "", user_key: str = "") -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_key = self._normalize_user_key(user_key)
@@ -1365,18 +1331,28 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
-    def get_messages(self, conversation_id: int, limit: int | None = None) -> list[dict]:
+    def get_messages(
+        self,
+        conversation_id: int,
+        limit: int | None = None,
+        before_id: int | None = None,
+    ) -> list[dict]:
+        where = "WHERE conversation_id=?"
         params: tuple = (conversation_id,)
+        before_id = _db_int(before_id)
+        if before_id is not None and before_id > 0:
+            where += " AND id<?"
+            params = (*params, before_id)
         order = "ASC"
         limit_sql = ""
         if limit is not None:
             limit = _clamp_int(limit, 1, 1000, 1000)
-            params = (conversation_id, limit)
+            params = (*params, limit)
             order = "DESC"
             limit_sql = " LIMIT ?"
         rows = self._conn.execute(
             "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
-            f"WHERE conversation_id=? ORDER BY id {order}{limit_sql}",
+            f"{where} ORDER BY id {order}{limit_sql}",
             params,
         ).fetchall()
         if limit is not None:
@@ -1428,6 +1404,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         source: str = "",
         limit: int = 300,
         offset: int = 0,
+        skip_count: bool = False,
     ) -> dict:
         keyword = str(keyword or "").strip()[:500]
         date_from = str(date_from or "").strip()[:10]
@@ -1500,17 +1477,24 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             params.append(source)
 
         where_sql = f" WHERE {' AND '.join(where)}" if where else ""
-        total = self._conn.execute(
-            f"SELECT COUNT(*) FROM ({history_sql}) history{where_sql}",
-            tuple(params),
-        ).fetchone()[0]
+        if skip_count:
+            total = -1
+        else:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) FROM ({history_sql}) history{where_sql}",
+                tuple(params),
+            ).fetchone()[0]
+        probe = limit + 1 if skip_count else limit
         rows = self._conn.execute(
             "SELECT source, source_id, conversation_id, character, group_key, "
             "chat_title, user_key, role, content, created_at "
             f"FROM ({history_sql}) history{where_sql} "
             "ORDER BY created_at DESC, source_id DESC LIMIT ? OFFSET ?",
-            (*params, limit, offset),
+            (*params, probe, offset),
         ).fetchall()
+        has_more = skip_count and len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
         records = []
         for row in rows:
             records.append({
@@ -1527,6 +1511,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             })
         return {
             "total": int(total or 0),
+            "has_more": has_more,
             "records": records,
             "limit": limit,
             "offset": offset,
@@ -1553,7 +1538,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
-    def get_group_messages(self, group_key: str, conversation_id: str, limit: int | None = None, user_key: str | None = None) -> list[dict]:
+    def get_group_messages(
+        self,
+        group_key: str,
+        conversation_id: str,
+        limit: int | None = None,
+        user_key: str | None = None,
+        before_id: int | None = None,
+    ) -> list[dict]:
         conversation_id = conversation_id or "default"
         user_filter = self._normalize_user_key(user_key) if user_key is not None else None
         where = "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
@@ -1561,6 +1553,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         if user_filter is not None:
             where += " AND user_key=?"
             params = (group_key, conversation_id, conversation_id, user_filter)
+        before_id = _db_int(before_id)
+        if before_id is not None and before_id > 0:
+            where += " AND id<?"
+            params = (*params, before_id)
         order = "ASC"
         limit_sql = ""
         if limit is not None:
