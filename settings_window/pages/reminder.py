@@ -45,7 +45,7 @@ class ReminderPageMixin:
         alarm_layout.addWidget(StrongBodyLabel(_tr("SettingsWindow.alarm_section_title", default="闹钟"), alarm_panel))
         alarm_command_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.alarm_command_hint",
-            default="对话中输入 @clock 0730 [描述]（四位数时间，0730 表示早上 7:30）可快速添加 24 小时内的时钟，默认由当前 Live2D 展示位的第一个角色生成个性化提醒。",
+            default="对话中输入 @clock 0730 [描述]（四位数时间，0730 表示早上 7:30）可快速添加 24 小时内的时钟，默认由当前显示的第一个 Live2D 角色生成个性化提醒。",
         ), alarm_panel))
         alarm_command_hint.setObjectName("reminderHint")
         alarm_layout.addWidget(alarm_command_hint)
@@ -125,7 +125,7 @@ class ReminderPageMixin:
         pomodoro_layout.addWidget(StrongBodyLabel(_tr("SettingsWindow.pomodoro_section_title", default="番茄钟"), pomodoro_panel))
         pomodoro_command_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.pomodoro_command_hint",
-            default="对话中输入 @pomodoro [循环次数] [描述] 可快速启动番茄钟，默认由当前 Live2D 展示位的第一个角色生成个性化提醒。",
+            default="对话中输入 @pomodoro [循环次数] [描述] 可快速启动番茄钟，默认由当前显示的第一个 Live2D 角色生成个性化提醒。",
         ), pomodoro_panel))
         pomodoro_command_hint.setObjectName("reminderHint")
         pomodoro_layout.addWidget(pomodoro_command_hint)
@@ -244,7 +244,9 @@ class ReminderPageMixin:
         title_col.addWidget(StrongBodyLabel(_tr("SettingsWindow.care_policy_title", default="主动关怀策略"), panel))
         hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.care_policy_hint",
-            default="按当前桌面状态控制主动搭话，减少打扰。",
+            default="这里是桌宠「主动开口」的总闸门：根据你此刻在做什么（打游戏、写代码、看视频……）来决定要不要打扰你。"
+                    "它统一管两类主动消息——「屏幕感知」搭话（功能本身在「屏幕感知与工具控制」页开启）和下方「主动陪伴」的生活提醒。"
+                    "判断依据是你当前在做的事，而不是固定时间表。",
         ), panel))
         hint.setObjectName("reminderHint")
         title_col.addWidget(hint)
@@ -265,6 +267,12 @@ class ReminderPageMixin:
         self._care_policy_cooldown.setFixedHeight(34)
         self._care_policy_cooldown.valueChanged.connect(lambda _value: self._schedule_proactive_save())
         form.addWidget(self._care_policy_cooldown, 0, 1)
+        cooldown_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.care_policy_cooldown_hint",
+            default="两次主动开口之间至少间隔这么久；下方各状态的「关怀强度」会在此基础上按倍率放大或缩短。",
+        ), panel))
+        cooldown_hint.setObjectName("reminderHint")
+        form.addWidget(cooldown_hint, 0, 2, 1, 2)
 
         form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_quiet_hours", default="勿扰时段"), panel), 1, 0)
         self._care_policy_quiet_enabled = SwitchButton(panel)
@@ -281,24 +289,45 @@ class ReminderPageMixin:
         self._care_policy_quiet_end.timeChanged.connect(lambda _value: self._schedule_proactive_save())
         form.addWidget(self._care_policy_quiet_end, 1, 3)
 
-        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_screen_respect", default="屏幕感知遵守策略"), panel), 2, 0)
+        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_screen_respect", default="屏幕感知服从本闸门"), panel), 2, 0)
         self._care_policy_screen_respect = SwitchButton(panel)
         self._care_policy_screen_respect.checkedChanged.connect(lambda _checked: self._schedule_proactive_save())
         form.addWidget(self._care_policy_screen_respect, 2, 1)
+        screen_respect_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.care_policy_screen_respect_hint",
+            default="开启后「屏幕感知」搭话也走这套规则；关闭则屏幕感知完全自行判断，不受这里限制。",
+        ), panel))
+        screen_respect_hint.setObjectName("reminderHint")
+        form.addWidget(screen_respect_hint, 3, 0, 1, 4)
         save_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), panel)
         save_btn.setFixedHeight(34)
         save_btn.clicked.connect(lambda: self._save_reminder_config(show_info=True, emit_update=True))
         form.addWidget(save_btn, 2, 3)
         layout.addLayout(form)
 
+        columns_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.care_policy_columns_hint",
+            default="按你当下在做的事分别设置（两个维度互相独立）：\n"
+                    "· 语气模式 = 开口时的口吻（轻声=更克制不打扰、增强关怀=更主动温暖、静默=只在重要提醒时才出声）；\n"
+                    "· 频率倍率 = 在「全局冷却」基础上调整开口的疏密（倍率越大间隔越长、越少打扰，1x 即不变）；\n"
+                    "· 屏幕搭话 / 生活提醒 = 两个开关，分别控制这两类主动消息在该状态下是否允许出现。",
+        ), panel))
+        columns_hint.setObjectName("reminderHint")
+        layout.addWidget(columns_hint)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
+        # 让语气/倍率两列吸收多余宽度，复选框列保持内容宽度，并在最右留出固定边距，
+        # 避免最外侧复选框紧贴面板右边框被裁切。
+        grid.setColumnStretch(1, 2)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnMinimumWidth(5, 16)
         headers = (
             _tr("SettingsWindow.care_policy_state", default="状态"),
-            _tr("SettingsWindow.care_policy_mode", default="模式"),
-            _tr("SettingsWindow.care_policy_multiplier", default="冷却倍率"),
-            _tr("SettingsWindow.care_policy_allow_screen", default="屏幕感知"),
+            _tr("SettingsWindow.care_policy_mode", default="语气模式"),
+            _tr("SettingsWindow.care_policy_multiplier", default="频率倍率"),
+            _tr("SettingsWindow.care_policy_allow_screen", default="屏幕搭话"),
             _tr("SettingsWindow.care_policy_allow_lifestyle", default="生活提醒"),
         )
         for column, text in enumerate(headers):
@@ -311,6 +340,7 @@ class ReminderPageMixin:
             grid.addWidget(BodyLabel(self._care_policy_state_label(state), panel), row, 0)
             mode_combo = OpaqueDropDownComboBox(panel)
             mode_combo.setFixedHeight(32)
+            mode_combo.setMinimumWidth(120)
             for mode in ("normal", "quiet", "silent", "encourage"):
                 mode_combo.addItem(self._care_policy_mode_label(mode), userData=mode)
             mode_combo.currentIndexChanged.connect(lambda _index: self._schedule_proactive_save())
@@ -318,6 +348,7 @@ class ReminderPageMixin:
 
             multiplier_combo = OpaqueDropDownComboBox(panel)
             multiplier_combo.setFixedHeight(32)
+            multiplier_combo.setMinimumWidth(96)
             for value in (0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0):
                 multiplier_combo.addItem(f"{value:g}x", userData=value)
             multiplier_combo.currentIndexChanged.connect(lambda _index: self._schedule_proactive_save())
@@ -325,10 +356,10 @@ class ReminderPageMixin:
 
             allow_screen = CheckBox("", panel)
             allow_screen.stateChanged.connect(lambda _state: self._schedule_proactive_save())
-            grid.addWidget(allow_screen, row, 3)
+            grid.addWidget(allow_screen, row, 3, Qt.AlignmentFlag.AlignLeft)
             allow_lifestyle = CheckBox("", panel)
             allow_lifestyle.stateChanged.connect(lambda _state: self._schedule_proactive_save())
-            grid.addWidget(allow_lifestyle, row, 4)
+            grid.addWidget(allow_lifestyle, row, 4, Qt.AlignmentFlag.AlignLeft)
             self._care_policy_rule_widgets[state] = {
                 "mode": mode_combo,
                 "cooldown_multiplier": multiplier_combo,
@@ -352,9 +383,11 @@ class ReminderPageMixin:
         }.get(state, state))
 
     def _care_policy_mode_label(self, mode: str) -> str:
+        # 语气模式只影响开口的口吻（silent 还会拦截非重要提醒），与频率无关——
+        # 频率由相邻的「频率倍率」单独控制。
         return _tr(f"SettingsWindow.care_policy_mode_{mode}", default={
             "normal": "正常",
-            "quiet": "降低频率",
+            "quiet": "轻声",
             "silent": "静默",
             "encourage": "增强关怀",
         }.get(mode, mode))
