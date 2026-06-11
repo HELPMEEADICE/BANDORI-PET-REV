@@ -718,6 +718,8 @@
   "MainTray.chat": "聊天",
   "MainTray.settings": "設定",
   "MainTray.exit": "離開",
+  "MainTray.ipc_error_title": "行程通訊啟動失敗",
+  "MainTray.ipc_error_text": "桌寵各視窗間通訊未能建立，聊天喚起／設定同步可能失效。請重新啟動程式，若仍出現請重新啟動電腦。",
   "ModelResources.missing_title": "缺少模型資源",
   "ModelResources.missing_content": "未找到 models 資料夾，請先下載並解壓縮模型資源。\n點擊確定後將使用預設瀏覽器開啟下載連結。",
   "ModelManager.others_band": "其他角色",

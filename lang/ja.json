@@ -718,6 +718,8 @@
   "MainTray.chat": "チャット",
   "MainTray.settings": "設定",
   "MainTray.exit": "終了",
+  "MainTray.ipc_error_title": "プロセス間通信の起動に失敗しました",
+  "MainTray.ipc_error_text": "ペットの各ウィンドウ間の通信を確立できませんでした。チャットの起動や設定の同期が動作しない可能性があります。アプリを再起動してください。改善しない場合はパソコンを再起動してください。",
   "ModelResources.missing_title": "モデルリソース不足",
   "ModelResources.missing_content": "models フォルダが見つかりません。先にモデルリソースをダウンロードして解凍してください。\nOK をクリックするとデフォルトブラウザでダウンロードリンクを開きます。",
   "ModelManager.others_band": "その他のキャラクター",

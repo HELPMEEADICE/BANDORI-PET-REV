@@ -290,6 +290,63 @@ def ipc_server_name() -> str:
     return f"BandoriPet-{digest}"
 
 
+RUNTIME_LOCK_MIN_AGE_SECONDS = 60
+
+
+def cleanup_stale_runtime_locks(
+    base_dir: Path | None = None,
+    min_age_seconds: int = RUNTIME_LOCK_MIN_AGE_SECONDS,
+) -> int:
+    """Remove leftover ``.runtime/*-chat.lock`` files from dead sessions.
+
+    Each app session creates a uniquely named chat lock (the IPC server name
+    embeds the parent PID + a uuid), so old files pile up after crashes or hard
+    kills. ``QLockFile`` knows whether the owning process is still alive, so we
+    only delete locks that are free or stale and never touch one held by a live
+    instance. A short minimum age avoids racing a concurrently launching peer.
+    """
+    runtime_dir = (Path(base_dir) if base_dir is not None else app_base_dir()) / ".runtime"
+    if not runtime_dir.is_dir():
+        return 0
+    try:
+        from PySide6.QtCore import QLockFile
+    except Exception:
+        QLockFile = None
+    cutoff = time.time() - max(0, int(min_age_seconds))
+    removed = 0
+    try:
+        candidates = list(runtime_dir.glob("*-chat.lock"))
+    except OSError:
+        return 0
+    for lock_path in candidates:
+        try:
+            if not lock_path.is_file():
+                continue
+            if lock_path.stat().st_mtime > cutoff:
+                continue
+            if QLockFile is not None:
+                lock = QLockFile(str(lock_path))
+                # tryLock(0) succeeds when the lock is free or stale (owner
+                # dead); QLockFile then reclaims it and unlock() deletes the
+                # file. A live owner makes tryLock fail, so we leave it alone.
+                if lock.tryLock(0):
+                    lock.unlock()
+                    if lock_path.exists():
+                        try:
+                            lock_path.unlink()
+                        except OSError:
+                            continue
+                    removed += 1
+                else:
+                    lock.removeStaleLockFile()
+            else:
+                lock_path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def clamp_int(value: object, minimum: int, maximum: int, default: int | None = None) -> int:
     if default is None:
         default = minimum

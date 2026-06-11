@@ -718,6 +718,8 @@
   "MainTray.chat": "Chat",
   "MainTray.settings": "Settings",
   "MainTray.exit": "Exit",
+  "MainTray.ipc_error_title": "Inter-process communication failed",
+  "MainTray.ipc_error_text": "The pet's windows could not establish their communication channel; opening chat or syncing settings may not work. Please restart the app, or restart your computer if it persists.",
   "ModelResources.missing_title": "Missing model resources",
   "ModelResources.missing_content": "The models folder was not found. Please download and extract the model resources first.\nClick OK to open the download link in your default browser.",
   "ModelManager.others_band": "Other Characters",

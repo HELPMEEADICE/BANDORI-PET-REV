@@ -8,6 +8,7 @@ import uuid
 from process_utils import (
     app_base_dir,
     clamp_int,
+    cleanup_stale_runtime_locks,
     configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     ipc_server_name,
@@ -170,6 +171,29 @@ def main():
         server.newConnection.connect(accept_clients)
         if server.listen(name):
             ipc_ref["server"] = server
+            return
+        # A stale endpoint (previous crash, leftover socket file) can keep the
+        # name busy; clear it once and retry before giving up.
+        QLocalServer.removeServer(name)
+        if server.listen(name):
+            ipc_ref["server"] = server
+            return
+        error = server.errorString()
+        server.deleteLater()
+        message = (
+            f"IPC server failed to listen on '{name}': {error}. "
+            "Cross-process features (chat launch, action broadcast, settings "
+            "sync) will not work."
+        )
+        print(message)
+        show_system_notification(
+            APP_NAME,
+            _tr("MainTray.ipc_error_title", default="进程通信启动失败"),
+            _tr(
+                "MainTray.ipc_error_text",
+                default="桌宠各窗口间通信未能建立，聊天唤起/设置同步可能失效。请重启程序，若仍出现请重启电脑。",
+            ),
+        )
 
     def stop_ipc_server():
         with ipc_ref["lock"]:
@@ -1180,6 +1204,11 @@ def main():
         and mgr.get_model_json_path(char, costume)
     )
     has_configured_models = bool(configured_models())
+
+    try:
+        cleanup_stale_runtime_locks(BASE_DIR)
+    except Exception as exc:
+        print(f"Stale runtime lock cleanup failed: {exc}")
 
     init_tray()
     init_ipc_server()
