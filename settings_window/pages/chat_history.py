@@ -583,6 +583,7 @@ class ChatHistoryPageMixin:
 
         self._history_db = None
         self._history_worker = None
+        self._history_filter_worker = None
         self._history_filter_cache = None
         self._history_loading_widget = None
         self._history_search_generation = 0
@@ -650,7 +651,7 @@ class ChatHistoryPageMixin:
         if not force and self._history_filter_cache is not None:
             self._apply_filter_options(self._history_filter_cache)
             return
-        self._start_history_worker(
+        self._start_history_filter_worker(
             {"action": "filters"},
             on_result=self._on_filter_options_loaded,
         )
@@ -814,6 +815,19 @@ class ChatHistoryPageMixin:
         worker.finished.connect(on_result)
         worker.error.connect(on_error or self._on_history_query_error)
         self._history_worker = worker
+        worker.start()
+
+    def _start_history_filter_worker(self, params: dict, *, on_result, on_error=None):
+        if self._history_filter_worker is not None and self._history_filter_worker.isRunning():
+            return
+        worker = _ChatHistoryWorker(
+            db_factory=lambda: DatabaseManager(),
+            query_params=params,
+            parent=self._history_list_view,
+        )
+        worker.finished.connect(on_result)
+        worker.error.connect(on_error or self._on_history_query_error)
+        self._history_filter_worker = worker
         worker.start()
 
     def _on_history_query_error(self, msg: str):
