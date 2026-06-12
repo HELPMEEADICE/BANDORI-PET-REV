@@ -230,11 +230,14 @@ class BehaviorPageMixin:
         self._send_preview_motion("", expression)
 
     def _populate_default_motion_combo(self, item: dict):
+        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
+        self._populate_default_motion_combo_with_names(item, motions)
+
+    def _populate_default_motion_combo_with_names(self, item: dict, motions: list[str]):
         combo = self._default_motion_combo
         combo.blockSignals(True)
         combo.clear()
         combo.addItem(_tr("SettingsWindow.follow_model_default"), userData="")
-        motions = self._model_manager.get_motion_names(item["character"], item["costume"])
         for motion in motions:
             combo.addItem(motion, userData=motion)
         current = item.get("default_motion", "")
@@ -264,11 +267,14 @@ class BehaviorPageMixin:
         self._save_configured_models()
 
     def _populate_default_expression_combo(self, item: dict):
+        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        self._populate_default_expression_combo_with_names(item, expressions)
+
+    def _populate_default_expression_combo_with_names(self, item: dict, expressions: list[str]):
         combo = self._default_expression_combo
         combo.blockSignals(True)
         combo.clear()
         combo.addItem(_tr("SettingsWindow.follow_model_default"), userData="")
-        expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
         for expression in expressions:
             combo.addItem(expression, userData=expression)
         current = item.get("default_expression", "")
@@ -300,6 +306,9 @@ class BehaviorPageMixin:
     def _populate_click_motion_combos(self, item: dict):
         motions = self._model_manager.get_motion_names(item["character"], item["costume"])
         expressions = self._model_manager.get_expression_names(item["character"], item["costume"])
+        self._populate_click_motion_combos_with_names(item, motions, expressions)
+
+    def _populate_click_motion_combos_with_names(self, item: dict, motions: list[str], expressions: list[str]):
         actions = normalize_click_motion_actions(
             item.get("click_motion_actions", {}),
             motions,

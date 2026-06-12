@@ -92,6 +92,7 @@ class SettingsWindow(
         self._preview_pinned_key = ""
         self._preview_pinned_anchor = None
         self._preview_hover_key = ""
+        self._detail_image_pixmap_cache = {}
         self._owns_live2d = False
         self._live2d_error_shown = False
         self._show_launch = show_launch
@@ -100,6 +101,12 @@ class SettingsWindow(
         self._wizard_step = 0
         self._wizard_step_labels: list[BodyLabel] = []
         self._model_download_worker = None
+        self._model_detail_metadata_worker = None
+        self._model_detail_metadata_request_id = 0
+        self._pending_model_detail_metadata_item = None
+        self._model_detail_metadata_timer = QTimer(self)
+        self._model_detail_metadata_timer.setSingleShot(True)
+        self._model_detail_metadata_timer.timeout.connect(self._flush_queued_model_detail_metadata_load)
         self._model_download_running = False
         self._wizard_pages: dict[str, QWidget] = {}
         self._theme_widgets: list[QWidget] = []
@@ -335,22 +342,24 @@ class SettingsWindow(
         })
         self._cfg.save()
 
-    def _remember_character(self, character: str):
+    def _remember_character(self, character: str, save: bool = True):
         if not character:
             return
         recent = [item for item in self._picker_state.get("recent_characters", []) if item != character]
         recent.insert(0, character)
         self._picker_state["recent_characters"] = recent[:MODEL_PICKER_RECENT_LIMIT]
-        self._save_model_picker_state()
+        if save:
+            self._save_model_picker_state()
 
-    def _remember_costume(self, character: str, costume: str):
+    def _remember_costume(self, character: str, costume: str, save: bool = True):
         if not character or not costume:
             return
         key = self._costume_key(character, costume)
         recent = [item for item in self._picker_state.get("recent_costumes", []) if item != key]
         recent.insert(0, key)
         self._picker_state["recent_costumes"] = recent[:MODEL_PICKER_RECENT_LIMIT]
-        self._save_model_picker_state()
+        if save:
+            self._save_model_picker_state()
 
     def _is_favorite_character(self, character: str) -> bool:
         return character in self._picker_state.get("favorite_characters", [])
@@ -549,7 +558,7 @@ class SettingsWindow(
         anim.start()
 
     def _cleanup_workers(self):
-        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker', '_model_download_worker'):
+        for attr in ('_test_worker', '_fetch_worker', '_mcp_test_worker', '_update_check_worker', '_update_apply_worker', '_tts_test_worker', '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker', '_model_download_worker', '_model_detail_metadata_worker'):
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
@@ -2039,18 +2048,11 @@ class SettingsWindow(
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
         self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
-        self._populate_default_motion_combo(item)
-        self._populate_default_expression_combo(item)
-        self._populate_click_motion_combos(item)
-        self._reload_click_motion_profiles(
-            select_name=self._matching_click_motion_profile_name(item)
-        )
+        self._set_model_detail_metadata_loading()
+        self._queue_model_detail_metadata_load(item)
 
-        pixmap = QPixmap(self._model_manager.get_character_image_path(character))
-        image_data = self._model_manager.get_character_image_data(character)
-        if pixmap.isNull() and image_data:
-            pixmap.loadFromData(image_data)
-        if not pixmap.isNull():
+        pixmap = self._load_detail_character_pixmap(character)
+        if pixmap is not None and not pixmap.isNull():
             self._detail_image.setPixmap(pixmap.scaled(
                 self._detail_image.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
@@ -2058,6 +2060,103 @@ class SettingsWindow(
             ))
         else:
             self._detail_image.setText(display)
+
+    def _load_detail_character_pixmap(self, character: str):
+        cache = getattr(self, "_detail_image_pixmap_cache", None)
+        if cache is None:
+            cache = {}
+            self._detail_image_pixmap_cache = cache
+        if character in cache:
+            return cache[character]
+
+        pixmap = QPixmap(self._model_manager.get_character_image_path(character))
+        image_data = self._model_manager.get_character_image_data(character)
+        if pixmap.isNull() and image_data:
+            pixmap.loadFromData(image_data)
+        result = pixmap if not pixmap.isNull() else None
+        cache[character] = result
+        return result
+
+    def _set_model_detail_metadata_loading(self):
+        loading_text = _tr("SettingsWindow.loading", default="加载中...")
+        for combo in (
+            self._default_motion_combo,
+            self._default_expression_combo,
+            self._click_motion_profile_combo,
+            *self._click_motion_combos.values(),
+            *self._click_expression_combos.values(),
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(loading_text, userData="")
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        if hasattr(self, "_click_motion_profile_name"):
+            self._click_motion_profile_name.clear()
+
+    def _queue_model_detail_metadata_load(self, item: dict):
+        self._model_detail_metadata_request_id += 1
+        self._pending_model_detail_metadata_item = dict(item)
+        timer = getattr(self, "_model_detail_metadata_timer", None)
+        if timer is not None:
+            timer.start(120)
+
+    def _flush_queued_model_detail_metadata_load(self):
+        item = getattr(self, "_pending_model_detail_metadata_item", None)
+        if not item:
+            return
+        self._pending_model_detail_metadata_item = None
+        self._start_model_detail_metadata_load(item)
+
+    def _start_model_detail_metadata_load(self, item: dict):
+        request_id = getattr(self, "_model_detail_metadata_request_id", 0)
+        previous_worker = getattr(self, "_model_detail_metadata_worker", None)
+        if previous_worker is not None and previous_worker.isRunning():
+            previous_worker.requestInterruption()
+        custom_profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
+        worker = ModelDetailMetadataWorker(
+            self._model_manager,
+            dict(item),
+            custom_profiles,
+            parent=self,
+        )
+        self._model_detail_metadata_worker = worker
+        worker.finished.connect(
+            lambda metadata, rid=request_id, w=worker: self._on_model_detail_metadata_loaded(rid, w, metadata)
+        )
+        worker.error.connect(
+            lambda error, rid=request_id, w=worker: self._on_model_detail_metadata_failed(rid, w, error)
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_model_detail_metadata_loaded(self, request_id: int, worker, metadata: dict):
+        if getattr(self, "_model_detail_metadata_worker", None) is worker:
+            self._model_detail_metadata_worker = None
+        if request_id != self._model_detail_metadata_request_id:
+            return
+        item = self._selected_model_item()
+        if not item:
+            return
+        if item.get("character") != metadata.get("character") or item.get("costume") != metadata.get("costume"):
+            return
+        motions = list(metadata.get("motions", []))
+        expressions = list(metadata.get("expressions", []))
+        item["click_motion_actions"] = metadata.get("click_motion_actions", {})
+        self._populate_default_motion_combo_with_names(item, motions)
+        self._populate_default_expression_combo_with_names(item, expressions)
+        self._populate_click_motion_combos_with_names(item, motions, expressions)
+        self._reload_click_motion_profiles(
+            select_name=str(metadata.get("click_motion_profile_name", "") or "")
+        )
+
+    def _on_model_detail_metadata_failed(self, request_id: int, worker, error: str):
+        if getattr(self, "_model_detail_metadata_worker", None) is worker:
+            self._model_detail_metadata_worker = None
+        if request_id != self._model_detail_metadata_request_id:
+            return
+        print(f"Failed to load model detail metadata: {error}")
 
     def _selected_model_item(self):
         for item in self._configured_models:
@@ -3006,6 +3105,16 @@ class SettingsWindow(
         add_row.add_requested.connect(self._add_model_from_list)
         self._model_list_layout.addWidget(add_row)
 
+    def _update_model_list_selection(self):
+        layout = getattr(self, "_model_list_layout", None)
+        if layout is None:
+            return
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            widget = item.widget() if item else None
+            if isinstance(widget, ModelListItem):
+                widget.set_current(widget._character == self._selected_list_character)
+
     def _select_model_list_item(self, character: str):
         for item in self._configured_models:
             if item["character"] == character:
@@ -3018,9 +3127,10 @@ class SettingsWindow(
                 self._current_costume = item["costume"]
                 self._selected_costume = item["costume"]
                 self._selected_band = self._model_manager.get_character_band(character)
-                self._remember_character(character)
-                self._remember_costume(character, item["costume"])
-                self._refresh_model_list()
+                self._remember_character(character, save=False)
+                self._remember_costume(character, item["costume"], save=False)
+                self._save_model_picker_state()
+                self._update_model_list_selection()
                 self._show_model_detail()
                 return
 

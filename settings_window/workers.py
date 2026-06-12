@@ -162,6 +162,100 @@ class ModelPackageDownloadWorker(QThread):
         })
 
 
+class ModelDetailMetadataWorker(QThread):
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, model_manager, item: dict, custom_profiles: list[dict] | None = None, parent=None):
+        super().__init__(parent)
+        self._model_manager = model_manager
+        self._item = dict(item or {})
+        self._custom_profiles = [dict(profile) for profile in (custom_profiles or [])]
+
+    def run(self):
+        try:
+            character = self._item.get("character", "")
+            costume = self._item.get("costume", "")
+            motions = self._model_manager.get_motion_names(character, costume)
+            if self.isInterruptionRequested():
+                return
+            expressions = self._model_manager.get_expression_names(character, costume)
+            if self.isInterruptionRequested():
+                return
+            actions = normalize_click_motion_actions(
+                self._item.get("click_motion_actions", {}),
+                motions,
+                expressions,
+            )
+            profile_name = self._matching_click_motion_profile_name(
+                motions,
+                expressions,
+                actions,
+            )
+            if self.isInterruptionRequested():
+                return
+            self.finished.emit({
+                "character": character,
+                "costume": costume,
+                "motions": motions,
+                "expressions": expressions,
+                "click_motion_actions": actions,
+                "click_motion_profile_name": profile_name,
+            })
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    def _profile_actions(self, name: str, motions: list[str], expressions: list[str]) -> dict | None:
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+
+        name = str(name or "").strip()
+        if not name:
+            return None
+        character = self._item.get("character", "")
+        if name in BUILTIN_PROFILE_NAMES:
+            preset = next((p for p in BUILTIN_CLICK_MOTION_PROFILES if p["name"] == name), None)
+            if not preset:
+                return None
+            return normalize_click_motion_actions(
+                resolve_preset_to_actions(preset, motions, expressions, character),
+                motions,
+                expressions,
+            )
+        profile = next((p for p in self._custom_profiles if p.get("name") == name), None)
+        if not profile:
+            return None
+        return normalize_click_motion_actions(
+            profile.get("click_motion_actions", {}),
+            motions,
+            expressions,
+        )
+
+    def _profile_matches(self, name: str, motions: list[str], expressions: list[str], actions: dict) -> bool:
+        profile_actions = self._profile_actions(name, motions, expressions)
+        return profile_actions is not None and profile_actions == actions
+
+    def _matching_click_motion_profile_name(self, motions: list[str], expressions: list[str], actions: dict) -> str:
+        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
+
+        stored_name = str(self._item.get("click_motion_profile_name", "") or "").strip()
+        if stored_name:
+            if stored_name in BUILTIN_PROFILE_NAMES:
+                return stored_name
+            if self._profile_matches(stored_name, motions, expressions, actions):
+                return stored_name
+
+        for preset in BUILTIN_CLICK_MOTION_PROFILES:
+            name = preset.get("name", "")
+            if name and self._profile_matches(name, motions, expressions, actions):
+                return name
+
+        for profile in self._custom_profiles:
+            name = str(profile.get("name", "") or "").strip()
+            if name and name not in BUILTIN_PROFILE_NAMES and self._profile_matches(name, motions, expressions, actions):
+                return name
+        return ""
+
+
 class TestConnectionWorker(QThread):
     finished = Signal()
     error = Signal(str)

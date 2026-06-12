@@ -525,6 +525,16 @@ class ModelListItem(QWidget):
         if self._current:
             QTimer.singleShot(0, self._play_selected_animation)
 
+    def set_current(self, current: bool, animate: bool = False):
+        current = bool(current)
+        if self._current == current:
+            return
+        self._current = current
+        self._animated_bg = None
+        self._apply_theme()
+        if current and animate:
+            self._play_selected_animation()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.selected.emit(self._character)
