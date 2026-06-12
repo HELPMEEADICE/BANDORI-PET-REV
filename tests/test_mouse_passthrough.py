@@ -56,7 +56,7 @@ class PassthroughHarness:
     def _mouse_interaction_in_progress(self):
         return self.interacting
 
-    def _is_pet_hit_at_global(self, _global_pos):
+    def _is_pet_opaque_at_global(self, _global_pos):
         return self.hit
 
 
@@ -82,6 +82,13 @@ class MousePassthroughTest(unittest.TestCase):
 
         with patch("pet_window.time.monotonic", return_value=10.0):
             self.assertFalse(harness._should_passthrough_at(QPoint(50, 50)))
+
+    def test_transparent_pixel_passes_through_without_geometry_fallback(self):
+        harness = PassthroughHarness()
+        harness.hit = False
+
+        with patch("pet_window.time.monotonic", return_value=10.0):
+            self.assertTrue(harness._should_passthrough_at(QPoint(50, 50)))
 
     def test_pressed_mouse_button_keeps_window_interactive(self):
         harness = PassthroughHarness()

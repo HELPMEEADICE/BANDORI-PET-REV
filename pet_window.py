@@ -1063,10 +1063,10 @@ class PetWindow(QWidget):
             max(geometry.top(), min(global_pos.y(), geometry.top() + self.height() - 1)),
         )
 
-    def _is_pet_hit_at_global(self, global_pos: QPoint) -> bool:
+    def _is_pet_opaque_at_global(self, global_pos: QPoint) -> bool:
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
-        return self._live2d_widget.is_model_hit_at_global(global_pos, sync=True)
+        return self._live2d_widget.is_model_opaque_at_global(global_pos, sync=True)
 
     @staticmethod
     def _mouse_interaction_in_progress() -> bool:
@@ -1091,7 +1091,7 @@ class PetWindow(QWidget):
         if sample_pos is None:
             return False
         try:
-            hit = self._is_pet_hit_at_global(sample_pos)
+            hit = self._is_pet_opaque_at_global(sample_pos)
         except Exception:
             return False
         now = time.monotonic()
@@ -2493,6 +2493,12 @@ class PetWindow(QWidget):
 
     def _on_right_click(self, gx: int, gy: int):
         self._note_user_interaction()
+        # Keep the NSWindow interactive through the rest of macOS's right-click
+        # sequence. The menu hit test may use Live2D geometry as a fallback, but
+        # transparent-area passthrough itself must remain alpha-only.
+        self._mouse_passthrough_last_hit_at = time.monotonic()
+        self._mouse_passthrough_last_hit_pos = (int(gx), int(gy))
+        self._set_mouse_passthrough(False)
         self._radial_menu_shutting_down = False
         self._begin_radial_menu_opening()
         interaction_trace(
