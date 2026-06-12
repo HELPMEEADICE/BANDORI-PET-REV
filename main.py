@@ -1335,7 +1335,7 @@ def main():
     app.aboutToQuit.connect(stop_reminder_scheduler)
     app.aboutToQuit.connect(close_chat_integration_db)
     app.aboutToQuit.connect(end_usage_session)
-    app.aboutToQuit.connect(lambda: close_settings_process(force=False, wait=True))
+    app.aboutToQuit.connect(lambda: close_settings_process(force=False, wait=False))
     app.aboutToQuit.connect(lambda: close_chat_process(force=True, wait=False))
     app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=False))
     app.aboutToQuit.connect(stop_ipc_server)
