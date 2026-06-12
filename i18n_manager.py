@@ -90,6 +90,17 @@ def tr(key: str, default: str = None, **kwargs) -> str:
     return _i18n.get_translation(key, default, **kwargs)
 
 
+def date_picker_months() -> list[str]:
+    defaults = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ]
+    return [
+        tr(f"SettingsWindow.date_picker_month_{index}", default=default)
+        for index, default in enumerate(defaults, start=1)
+    ]
+
+
 def set_language(lang: str):
     _i18n.set_language(lang)
 

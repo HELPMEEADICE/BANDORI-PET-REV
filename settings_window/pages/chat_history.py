@@ -18,9 +18,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import DatePicker, ListView, ProgressRing
+from qfluentwidgets.components.date_time.picker_base import PickerColumnFormatter
 
+from i18n_manager import date_picker_months
 from settings_window.constants import *
 from settings_window.widgets import *
+
+
+class _I18nMonthFormatter(PickerColumnFormatter):
+    def __init__(self):
+        super().__init__()
+        self.months = date_picker_months()
+
+    def encode(self, month):
+        return self.months[int(month) - 1]
+
+    def decode(self, value):
+        return self.months.index(value) + 1
 
 
 class _ChatHistoryWorker(QThread):
@@ -624,8 +638,10 @@ class ChatHistoryPageMixin:
     @staticmethod
     def _make_history_date_edit(parent):
         edit = DatePicker(parent, format=DatePicker.YYYY_MM_DD)
+        edit.setMonthFormatter(_I18nMonthFormatter())
+        edit.setDateFormat(DatePicker.YYYY_MM_DD)
         edit.setColumnWidth(0, 66)
-        edit.setColumnWidth(1, 52)
+        edit.setColumnWidth(1, max(52, edit._monthColumnWidth()))
         edit.setColumnWidth(2, 52)
         edit.setFixedHeight(36)
         edit.setMinimumWidth(170)
