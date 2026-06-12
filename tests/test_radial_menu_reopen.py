@@ -149,6 +149,32 @@ class RadialMenuReopenTest(unittest.TestCase):
         final_item_center = QPoint(menu.width() // 2, menu.height() // 2 - menu._radius)
         self.assertTrue(masks[0].contains(final_item_center))
 
+    def test_linux_x11_menu_mask_includes_item_animation_path(self):
+        class App:
+            @staticmethod
+            def platformName():
+                return "xcb"
+
+        menu = RadialMenu()
+        menu.add_item("", "Chat", QColor(80, 80, 80), lambda: None)
+        masks = []
+
+        with (
+            patch("radial_menu.sys.platform", "linux"),
+            patch("radial_menu.QGuiApplication", App),
+            patch.object(menu, "setMask", side_effect=masks.append),
+            patch.object(menu, "show"),
+            patch.object(menu, "raise_"),
+            patch.object(menu, "activateWindow"),
+            patch.object(menu, "_play_show_animation"),
+            patch.object(menu._outside_click_timer, "start"),
+            patch.object(RadialMenu, "_mouse_buttons_pressed", return_value=False),
+        ):
+            menu.show_at(QPoint(300, 300))
+
+        mid_animation_center = QPoint(menu.width() // 2, menu.height() // 2 - menu._radius // 2)
+        self.assertTrue(masks[0].contains(mid_animation_center))
+
     def test_pending_show_survives_child_process_exit(self):
         process = _FakeProcess()
         harness = _RecoveryHarness(process)
