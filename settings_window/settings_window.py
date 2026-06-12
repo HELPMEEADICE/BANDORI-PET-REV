@@ -181,6 +181,7 @@ class SettingsWindow(
         self._loading_llm_profile = False
         self._compact_window_reset_position_pending = False
         self._pet_positions_reset_pending = False
+        self._defer_config_save = False
 
         icon_path = _app_icon_path()
         if icon_path:
@@ -2651,6 +2652,9 @@ class SettingsWindow(
             )
             return False
 
+    def _config_save_deferred(self) -> bool:
+        return bool(getattr(self, "_defer_config_save", False))
+
     def _current_fps_setting(self) -> int:
         if hasattr(self, "_fps_slider"):
             return int(self._fps_slider.value())
@@ -2698,15 +2702,19 @@ class SettingsWindow(
             self._launched = False
             return
         compact_reset_pending = bool(getattr(self, "_compact_window_reset_position_pending", False))
-        self._save_llm_config(show_info=False)
-        self._save_tts_config(show_info=False)
-        self._save_asr_config(show_info=False)
-        self._save_compact_window_config(show_info=False, emit_update=False)
-        self._save_chat_integration_config(show_info=False, emit_update=False)
-        self._save_mcp_computer_config(show_info=False)
-        self._save_reminder_config(show_info=False, emit_update=False)
-        self._save_screen_awareness_config(show_info=False, emit_update=False)
-        self._save_configured_models(emit_update=False)
+        self._defer_config_save = True
+        try:
+            self._save_llm_config(show_info=False)
+            self._save_tts_config(show_info=False)
+            self._save_asr_config(show_info=False)
+            self._save_compact_window_config(show_info=False, emit_update=False)
+            self._save_chat_integration_config(show_info=False, emit_update=False)
+            self._save_mcp_computer_config(show_info=False)
+            self._save_reminder_config(show_info=False, emit_update=False)
+            self._save_screen_awareness_config(show_info=False, emit_update=False)
+            self._save_configured_models(emit_update=False)
+        finally:
+            self._defer_config_save = False
         settings = {
             "language": current_language(),
             "fps": self._current_fps_setting(),
@@ -2967,11 +2975,12 @@ class SettingsWindow(
             self._cfg.set("character", "")
             self._cfg.set("costume", "")
         self._cfg.set("models", [dict(item) for item in self._configured_models])
-        try:
-            self._cfg.save()
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        if not self._config_save_deferred():
+            try:
+                self._cfg.save()
+            except Exception:
+                import traceback
+                traceback.print_exc()
         if emit_update:
             self.settings_changed.emit({
                 "models": [dict(item) for item in self._configured_models],

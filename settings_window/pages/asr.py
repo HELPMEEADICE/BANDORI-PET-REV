@@ -299,7 +299,8 @@ class ASRPageMixin:
             for key, value in config.items():
                 self._cfg.set(key, value)
             try:
-                self._cfg.save()
+                if not self._config_save_deferred():
+                    self._cfg.save()
                 if show_info:
                     InfoBar.success(
                         _tr("SettingsWindow.asr_saved_title", default="ASR 配置已保存"),

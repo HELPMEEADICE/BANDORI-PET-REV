@@ -342,7 +342,8 @@ class CompactPageMixin:
         self._cfg.set("ai_status_port", clamp_int(self._ai_status_port_input.text(), 1024, 65535, 38472))
         self._cfg.set("ai_status_token", ai_status_token)
         try:
-            self._cfg.save()
+            if not self._config_save_deferred():
+                self._cfg.save()
             if emit_update:
                 self.settings_changed.emit(self._compact_window_settings_data())
             self._compact_window_reset_position_pending = False

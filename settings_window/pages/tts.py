@@ -229,7 +229,8 @@ class TTSPageMixin:
             for key, value in config.items():
                 self._cfg.set(key, value)
             try:
-                self._cfg.save()
+                if not self._config_save_deferred():
+                    self._cfg.save()
                 if show_info:
                     InfoBar.success(
                         _tr("SettingsWindow.tts_saved_title"),

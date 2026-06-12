@@ -528,7 +528,8 @@ class ChatIntegrationPageMixin:
         self._cfg.set("chat_integration_token", token)
         self._save_napcat_into_cfg()
         try:
-            self._cfg.save()
+            if not self._config_save_deferred():
+                self._cfg.save()
             if emit_update:
                 self.settings_changed.emit(self._chat_integration_settings_data())
             if show_info:

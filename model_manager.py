@@ -49,6 +49,7 @@ class ModelManager:
         self._costume_names: dict[str, dict[str, str]] = {}
         self._bands: list[dict] = []
         self._advanced_roleplay_cache: dict[str, bool] | None = None
+        self._model_json_cache: dict[str, dict] = {}
         if scan_models:
             self._scan()
         else:
@@ -66,6 +67,7 @@ class ModelManager:
         self._costume_names = {}
         self._bands = []
         self._advanced_roleplay_cache = None
+        self._model_json_cache = {}
         self._scan()
         self._parse_outfit_json()
         self._parse_band_json()
@@ -375,11 +377,16 @@ class ModelManager:
             return str(path.resolve())
         return ""
 
-    @staticmethod
-    def _read_model_json(path: str) -> dict:
+    def _read_model_json(self, path: str) -> dict:
+        cached = self._model_json_cache.get(path)
+        if cached is not None:
+            return cached
         if is_virtual_path(path):
-            return load_virtual_json(path)
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+            data = load_virtual_json(path)
+        else:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        self._model_json_cache[path] = data
+        return data
 
     def get_motion_names(self, character: str, costume: str) -> list[str]:
         path = self.get_model_json_path(character, costume)

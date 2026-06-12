@@ -305,7 +305,8 @@ class ScreenAwarenessPageMixin:
             return False
         self._sync_screen_awareness_config_from_ui()
         try:
-            self._cfg.save()
+            if not self._config_save_deferred():
+                self._cfg.save()
             if emit_update:
                 self.settings_changed.emit(self._screen_awareness_settings_data())
             if show_info:

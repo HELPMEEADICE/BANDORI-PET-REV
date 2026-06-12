@@ -1236,11 +1236,12 @@ class LLMPageMixin:
             active_profile = self._matching_llm_api_profile_name()
             self._cfg.set("llm_active_api_profile", active_profile)
             try:
-                self._cfg.save()
-                self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
-                self._refresh_memory_page()
-                self._reload_llm_api_profiles(active_profile)
-                self._update_current_llm_api_profile_label()
+                if not self._config_save_deferred():
+                    self._cfg.save()
+                    self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+                    self._refresh_memory_page()
+                    self._reload_llm_api_profiles(active_profile)
+                    self._update_current_llm_api_profile_label()
                 if show_info and hasattr(self, "_user_profile_settings_data"):
                     self.settings_changed.emit(self._user_profile_settings_data())
                 if show_info:

@@ -401,7 +401,8 @@ class MCPPageMixin:
         self._cfg.set("computer_use_allow_keyboard", self._computer_use_allow_keyboard.isChecked())
         self._cfg.set("computer_use_allow_clipboard", self._computer_use_allow_clipboard.isChecked())
         self._cfg.set("computer_use_allow_wait", self._computer_use_allow_wait.isChecked())
-        self._cfg.save()
+        if not self._config_save_deferred():
+            self._cfg.save()
         if show_info:
             InfoBar.success(
                 _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),

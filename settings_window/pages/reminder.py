@@ -547,7 +547,8 @@ class ReminderPageMixin:
         self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, normalize_proactive_companion(self._cfg.get(PROACTIVE_COMPANION_CONFIG_KEY, {})))
         self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})))
         try:
-            self._cfg.save()
+            if not self._config_save_deferred():
+                self._cfg.save()
             if emit_update:
                 self.settings_changed.emit(self._reminder_settings_data())
             if show_info:

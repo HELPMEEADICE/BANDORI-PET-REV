@@ -1337,7 +1337,7 @@ def main():
     app.aboutToQuit.connect(end_usage_session)
     app.aboutToQuit.connect(lambda: close_settings_process(force=False, wait=True))
     app.aboutToQuit.connect(lambda: close_chat_process(force=True, wait=False))
-    app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=True))
+    app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=False))
     app.aboutToQuit.connect(stop_ipc_server)
 
     if has_configured_models or model_valid:
