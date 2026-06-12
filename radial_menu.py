@@ -331,9 +331,16 @@ class RadialMenu(QWidget):
             QRegion.RegionType.Ellipse,
         )
         for item in self._items:
-            if not item.widget.isVisible():
+            if item.widget.isHidden():
                 continue
             region = region.united(QRegion(item.widget.geometry(), QRegion.RegionType.Ellipse))
+            target_geometry = item.widget.geometry()
+            if not item.end_offset.isNull():
+                target_geometry.moveTo(
+                    self.width() // 2 - item.widget.width() // 2 + item.end_offset.x(),
+                    self.height() // 2 - item.widget.height() // 2 + item.end_offset.y(),
+                )
+                region = region.united(QRegion(target_geometry, QRegion.RegionType.Ellipse))
         if not region.isEmpty():
             self.setMask(region)
 
