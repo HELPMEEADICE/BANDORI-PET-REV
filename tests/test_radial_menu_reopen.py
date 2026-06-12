@@ -100,6 +100,29 @@ class RadialMenuReopenTest(unittest.TestCase):
             native_button_state.call_args_list,
         )
 
+    def test_linux_x11_menu_applies_interactive_mask(self):
+        class App:
+            @staticmethod
+            def platformName():
+                return "xcb"
+
+        menu = RadialMenu()
+        menu.add_item("", "Chat", QColor(80, 80, 80), lambda: None)
+        menu.setGeometry(0, 0, 300, 300)
+        menu._items[0].widget.move(150, 40)
+        menu._items[0].widget.show()
+
+        masks = []
+        with (
+            patch("radial_menu.sys.platform", "linux"),
+            patch("radial_menu.QGuiApplication", App),
+            patch.object(menu, "setMask", side_effect=masks.append),
+        ):
+            menu._apply_x11_interactive_mask()
+
+        self.assertEqual(1, len(masks))
+        self.assertFalse(masks[0].isEmpty())
+
     def test_pending_show_survives_child_process_exit(self):
         process = _FakeProcess()
         harness = _RecoveryHarness(process)

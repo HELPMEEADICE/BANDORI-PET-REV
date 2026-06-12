@@ -14,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QMouseEvent,
-    QRadialGradient, QFontMetrics, QPixmap, QCursor, QGuiApplication,
+    QRadialGradient, QFontMetrics, QPixmap, QCursor, QGuiApplication, QRegion,
 )
 from PySide6.QtWidgets import (
     QWidget, QGraphicsOpacityEffect,
@@ -306,9 +306,36 @@ class RadialMenu(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_11_border_fix()
+        self._apply_x11_interactive_mask()
         QTimer.singleShot(0, self._apply_windows_11_border_fix)
         if macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_popup_window_polish(self))
+
+    @staticmethod
+    def _is_x11_qt_platform() -> bool:
+        if not sys.platform.startswith("linux"):
+            return False
+        try:
+            return "xcb" in QGuiApplication.platformName().lower()
+        except Exception:
+            return False
+
+    def _apply_x11_interactive_mask(self):
+        if not self._is_x11_qt_platform():
+            return
+        region = QRegion(
+            self.width() // 2 - 40,
+            self.height() // 2 - 40,
+            80,
+            80,
+            QRegion.RegionType.Ellipse,
+        )
+        for item in self._items:
+            if not item.widget.isVisible():
+                continue
+            region = region.united(QRegion(item.widget.geometry(), QRegion.RegionType.Ellipse))
+        if not region.isEmpty():
+            self.setMask(region)
 
     def prepare_for_show(self):
         # Force native window creation during idle time so first popup stays responsive.
@@ -483,6 +510,7 @@ class RadialMenu(QWidget):
             )
             item.widget.show()
 
+        self._apply_x11_interactive_mask()
         self.show()
         if os.name == "nt":
             self._raise_windows_topmost()

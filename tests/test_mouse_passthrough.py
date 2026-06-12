@@ -145,6 +145,46 @@ class MousePassthroughTest(unittest.TestCase):
         self.assertEqual([False], MacPatch.set_calls)
         self.assertFalse(harness._mouse_passthrough_enabled)
 
+    def test_linux_xcb_supports_mouse_passthrough(self):
+        class App:
+            @staticmethod
+            def platformName():
+                return "xcb"
+
+        with (
+            patch("pet_window.os.name", "posix"),
+            patch("pet_window.sys.platform", "linux"),
+            patch("pet_window.QGuiApplication", App),
+            patch("pet_window._xfixes", object(), create=True),
+            patch("pet_window._x11", object()),
+        ):
+            self.assertTrue(PetWindow._mouse_passthrough_supported())
+
+    def test_linux_x11_passthrough_uses_input_shape(self):
+        harness = PassthroughHarness()
+        calls = []
+
+        class App:
+            @staticmethod
+            def platformName():
+                return "xcb"
+
+        def set_shape(_window, enabled):
+            calls.append(enabled)
+            return True
+
+        with (
+            patch("pet_window.os.name", "posix"),
+            patch("pet_window.sys.platform", "linux"),
+            patch("pet_window.QGuiApplication", App),
+            patch("pet_window._set_x11_input_passthrough", set_shape, create=True),
+        ):
+            harness._set_mouse_passthrough(True)
+            harness._set_mouse_passthrough(False)
+
+        self.assertEqual([True, False], calls)
+        self.assertFalse(harness._mouse_passthrough_enabled)
+
     def test_live2d_hit_survives_one_transient_miss(self):
         harness = HitHarness()
         harness.hit = True

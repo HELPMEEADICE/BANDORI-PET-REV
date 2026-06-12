@@ -98,6 +98,8 @@ else:
     _get_cursor_pos = None
 
 _x11 = None
+_xfixes = None
+_XFIXES_SHAPE_INPUT = 2
 
 if sys.platform.startswith("linux"):
     try:
@@ -112,6 +114,63 @@ if sys.platform.startswith("linux"):
         _x11.XMoveWindow.restype = ctypes.c_int
     except Exception:
         _x11 = None
+    try:
+        _xfixes = ctypes.cdll.LoadLibrary(ctypes.util.find_library("Xfixes") or "libXfixes.so.3")
+        _xfixes.XFixesCreateRegion.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+        _xfixes.XFixesCreateRegion.restype = ctypes.c_ulong
+        _xfixes.XFixesSetWindowShapeRegion.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_ulong,
+        ]
+        _xfixes.XFixesSetWindowShapeRegion.restype = None
+        _xfixes.XFixesDestroyRegion.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        _xfixes.XFixesDestroyRegion.restype = None
+    except Exception:
+        _xfixes = None
+
+
+def _is_x11_qt_platform() -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        return "xcb" in QGuiApplication.platformName().lower()
+    except Exception:
+        return False
+
+
+def _set_x11_input_passthrough(window, enabled: bool) -> bool:
+    if _x11 is None or _xfixes is None:
+        return False
+    xid = int(window.winId())
+    if not xid:
+        return False
+    display = _x11.XOpenDisplay(None)
+    if not display:
+        return False
+    region = ctypes.c_ulong(0)
+    try:
+        if enabled:
+            region = ctypes.c_ulong(_xfixes.XFixesCreateRegion(display, None, 0))
+            if not region.value:
+                return False
+        _xfixes.XFixesSetWindowShapeRegion(
+            display,
+            ctypes.c_ulong(xid),
+            _XFIXES_SHAPE_INPUT,
+            0,
+            0,
+            region,
+        )
+        _x11.XFlush(display)
+        return True
+    finally:
+        if region.value:
+            _xfixes.XFixesDestroyRegion(display, region)
+        _x11.XCloseDisplay(display)
 
 
 LIVE2D_BASE_WIDTH = 400
@@ -443,12 +502,7 @@ class PetWindow(QWidget):
 
     @staticmethod
     def _should_bypass_x11_window_manager() -> bool:
-        if not sys.platform.startswith("linux"):
-            return False
-        try:
-            return "xcb" in QGuiApplication.platformName().lower()
-        except Exception:
-            return False
+        return _is_x11_qt_platform()
 
     def _all_screens(self):
         screens = QGuiApplication.screens()
@@ -1021,7 +1075,11 @@ class PetWindow(QWidget):
         # Windows still needs WS_EX_TRANSPARENT polling so transparent regions
         # can pass clicks to pet windows owned by other processes. WM_NCHITTEST
         # remains a same-window safety net for stale cursor samples.
-        return os.name == "nt" or (sys.platform == "darwin" and macos_patch is not None)
+        return (
+            os.name == "nt"
+            or (sys.platform == "darwin" and macos_patch is not None)
+            or (_is_x11_qt_platform() and _x11 is not None and _xfixes is not None)
+        )
 
     def _sync_mouse_passthrough_timer(self):
         if not self._mouse_passthrough_supported():
@@ -1149,6 +1207,22 @@ class PetWindow(QWidget):
             self._mouse_passthrough_enabled = (
                 enabled if actual_enabled is None else bool(actual_enabled)
             )
+            return
+        if _is_x11_qt_platform():
+            if self._mouse_passthrough_enabled == enabled:
+                return
+            interaction_trace(
+                "pet",
+                "passthrough_change",
+                requested=enabled,
+                cached=self._mouse_passthrough_enabled,
+                platform="x11",
+                cursor=[QCursor.pos().x(), QCursor.pos().y()],
+            )
+            if not _set_x11_input_passthrough(self, enabled):
+                interaction_trace("pet", "passthrough_change_failed", requested=enabled, platform="x11")
+                return
+            self._mouse_passthrough_enabled = bool(enabled)
             return
         if self._mouse_passthrough_enabled == enabled:
             return
