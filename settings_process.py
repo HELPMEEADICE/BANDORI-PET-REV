@@ -8,7 +8,6 @@ from process_utils import (
     configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     install_parent_death_watch,
-    ipc_server_name,
     set_windows_app_user_model_id,
 )
 from config_manager import ConfigManager
@@ -22,7 +21,6 @@ configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from i18n_manager import detect_system_language, set_language
@@ -32,6 +30,13 @@ from app_theme import apply_app_theme
 from app_info import APP_NAME
 from live2d_widget import Live2DWidget
 from gpu_acceleration import configure_qt_gpu_acceleration
+from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key
+from shared_memory_ipc import (
+    SharedMemoryLineQueue,
+    decode_ipc_envelope,
+    encode_ipc_envelope,
+    make_peer_id,
+)
 
 
 def _parse_args():
@@ -108,25 +113,38 @@ def main():
 
     apply_app_theme(cfg.get("dark_theme", False))
 
-    ipc_socket = QLocalSocket(app)
+    ipc_peer_id = make_peer_id("settings")
+    ipc = {"inbound": None, "broadcast": None}
     ipc_queue = []
-    ipc_socket.connectToServer(ipc_server_name())
+
+    def attach_ipc_queues() -> bool:
+        try:
+            if ipc["inbound"] is None or not ipc["inbound"].is_attached():
+                ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
+            if ipc["broadcast"] is None or not ipc["broadcast"].is_attached():
+                ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+            return True
+        except Exception:
+            for key in ("inbound", "broadcast"):
+                queue = ipc.get(key)
+                if queue is not None:
+                    queue.close()
+                ipc[key] = None
+            return False
 
     def flush_ipc_queue():
-        if ipc_socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+        if not attach_ipc_queues():
             return
         while ipc_queue:
-            ipc_socket.write((ipc_queue.pop(0) + "\n").encode("utf-8"))
-        ipc_socket.flush()
-
-    ipc_socket.connected.connect(flush_ipc_queue)
+            line = ipc_queue.pop(0)
+            if not ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line)):
+                ipc_queue.insert(0, line)
+                break
 
     def send_ipc_line(line: str):
         if line.startswith("MODEL\t") and args.show_launch == "0":
             line += "\tRELAUNCH"
         ipc_queue.append(line)
-        if ipc_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
-            ipc_socket.connectToServer(ipc_server_name())
         flush_ipc_queue()
 
     mgr = ModelManager()
@@ -145,16 +163,15 @@ def main():
     )
     window.connect_ipc_output(send_ipc_line)
 
-    ipc_inbound = {"buffer": ""}
-
-    def on_ipc_ready():
-        try:
-            ipc_inbound["buffer"] += bytes(ipc_socket.readAll()).decode("utf-8", "ignore")
-        except Exception:
+    def poll_ipc_messages():
+        if not attach_ipc_queues():
             return
-        while "\n" in ipc_inbound["buffer"]:
-            line, ipc_inbound["buffer"] = ipc_inbound["buffer"].split("\n", 1)
-            line = line.rstrip("\r")
+        flush_ipc_queue()
+        for raw_line in ipc["broadcast"].read_available(max_messages=200):
+            envelope = decode_ipc_envelope(raw_line)
+            if envelope.exclude_peer_id == ipc_peer_id:
+                continue
+            line = envelope.line
             if line.startswith("SETTINGS\t"):
                 try:
                     payload = json.loads(line.split("\t", 1)[1])
@@ -168,7 +185,19 @@ def main():
             elif line == "SHUTDOWN":
                 QTimer.singleShot(0, window.close)
 
-    ipc_socket.readyRead.connect(on_ipc_ready)
+    def send_ipc_heartbeat():
+        send_ipc_line("REGISTER\tSETTINGS")
+
+    ipc_timer = QTimer(app)
+    ipc_timer.setInterval(30)
+    ipc_timer.timeout.connect(poll_ipc_messages)
+    ipc_timer.start()
+    ipc_heartbeat_timer = QTimer(app)
+    ipc_heartbeat_timer.setInterval(3000)
+    ipc_heartbeat_timer.timeout.connect(send_ipc_heartbeat)
+    ipc_heartbeat_timer.start()
+    QTimer.singleShot(0, send_ipc_heartbeat)
+    app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
     screen = app.primaryScreen()

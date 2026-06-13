@@ -11,23 +11,26 @@ BASE_DIR = str(app_base_dir())
 
 from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
-from shiboken6 import isValid
 
 from app_info import APP_NAME
+from ipc_bus import radial_command_queue_key, radial_event_queue_key
 from radial_menu import RadialMenu
+from shared_memory_ipc import SharedMemoryLineQueue
+
+
+_EVENT_QUEUE = None
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Show radial menu in a separate process.")
-    parser.add_argument("--server-name", required=True)
+    parser.add_argument("--channel-name", required=True)
     return parser.parse_args()
 
 
 def _emit(line: str):
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+    if _EVENT_QUEUE is not None:
+        _EVENT_QUEUE.publish(line)
 
 
 def _payload_items(payload: dict) -> list[dict]:
@@ -97,12 +100,13 @@ def _update_menu(menu: RadialMenu, payload: dict, actions: list[str]) -> bool:
 
 
 def main():
+    global _EVENT_QUEUE
     ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
 
-    server_name = str(args.server_name or "").strip()
-    if not server_name:
+    channel_name = str(args.channel_name or "").strip()
+    if not channel_name:
         return 2
 
     set_windows_app_user_model_id(f"{APP_NAME}.RadialMenu")
@@ -117,15 +121,18 @@ def main():
 
         macos_patch.hide_dock_icon()
 
-    QLocalServer.removeServer(server_name)
-    server = QLocalServer(app)
-    if not server.listen(server_name):
+    try:
+        command_queue = SharedMemoryLineQueue.attach(
+            radial_command_queue_key(channel_name),
+            start_at_tail=False,
+        )
+        _EVENT_QUEUE = SharedMemoryLineQueue.attach(radial_event_queue_key(channel_name))
+    except RuntimeError as exc:
+        print(f"Radial menu shared-memory IPC attach failed: {exc}", file=sys.stderr)
         return 3
 
     menu = None
     menu_actions: list[str] = []
-    clients: list[QLocalSocket] = []
-    buffers: dict[QLocalSocket, str] = {}
 
     def on_menu_closed():
         interaction_trace("radial_process", "menu_closed")
@@ -193,35 +200,16 @@ def main():
             close_menu()
             app.quit()
 
-    def remove_client(socket: QLocalSocket):
-        if socket in clients:
-            clients.remove(socket)
-        buffers.pop(socket, None)
-        if isValid(socket):
-            socket.deleteLater()
+    def read_commands():
+        for line in command_queue.read_available(max_messages=100):
+            handle_line(line)
 
-    def read_client(socket: QLocalSocket):
-        if not isValid(socket):
-            return
-        data = bytes(socket.readAll()).decode("utf-8", errors="replace")
-        buffer = buffers.get(socket, "") + data
-        lines = buffer.splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            buffers[socket] = lines.pop()
-        else:
-            buffers[socket] = ""
-        for raw_line in lines:
-            handle_line(raw_line.rstrip("\r\n"))
-
-    def accept_clients():
-        while server.hasPendingConnections():
-            socket = server.nextPendingConnection()
-            clients.append(socket)
-            buffers[socket] = ""
-            socket.readyRead.connect(lambda s=socket: read_client(s))
-            socket.disconnected.connect(lambda s=socket: remove_client(s))
-
-    server.newConnection.connect(accept_clients)
+    command_timer = QTimer(app)
+    command_timer.setInterval(15)
+    command_timer.timeout.connect(read_commands)
+    command_timer.start()
+    app.aboutToQuit.connect(command_queue.close)
+    app.aboutToQuit.connect(lambda: _EVENT_QUEUE.close() if _EVENT_QUEUE is not None else None)
     _emit("READY")
     return app.exec()
 

@@ -13,7 +13,6 @@ if os.name == "nt":
     import ctypes.wintypes
 
 from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QCoreApplication, QParallelAnimationGroup
-from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtGui import QCursor, QGuiApplication, QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
 from shiboken6 import isValid
@@ -26,6 +25,18 @@ from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN
 from model_manager import ModelManager
 from process_utils import app_base_dir, interaction_trace, ipc_server_name, process_program_and_args
 from process_utils import clamp_float as _clamp_float, clamp_int as _clamp_int
+from ipc_bus import (
+    ipc_broadcast_queue_key,
+    ipc_inbound_queue_key,
+    radial_command_queue_key,
+    radial_event_queue_key,
+)
+from shared_memory_ipc import (
+    SharedMemoryLineQueue,
+    decode_ipc_envelope,
+    encode_ipc_envelope,
+    make_peer_id,
+)
 from win32_dwm import (
     SWP_FRAMECHANGED,
     SWP_NOACTIVATE,
@@ -346,9 +357,9 @@ class PetWindow(QWidget):
                 DEFAULT_LIP_SYNC_MAX_OPEN,
             )
         self._radial_menu_process = None
-        self._radial_menu_buffer = ""
-        self._radial_menu_socket = QLocalSocket(self)
         self._radial_menu_server_name = ""
+        self._radial_menu_command_ipc = None
+        self._radial_menu_event_ipc = None
         self._radial_menu_command_queue = []
         self._radial_menu_process_ready = False
         self._radial_menu_shutting_down = False
@@ -360,9 +371,9 @@ class PetWindow(QWidget):
         self._radial_menu_prewarm_timer.setSingleShot(True)
         self._radial_menu_prewarm_timer.setInterval(1200)
         self._radial_menu_prewarm_timer.timeout.connect(self._ensure_radial_menu_process)
-        self._radial_menu_socket.connected.connect(self._flush_radial_menu_commands)
-        self._radial_menu_socket.disconnected.connect(self._on_radial_menu_socket_disconnected)
-        self._radial_menu_socket.errorOccurred.connect(self._on_radial_menu_socket_error)
+        self._radial_menu_event_timer = QTimer(self)
+        self._radial_menu_event_timer.setInterval(15)
+        self._radial_menu_event_timer.timeout.connect(self._read_radial_menu_events)
         self._compact_ai_window = None
         self._compact_ai_bounds_cache = None
         self._compact_ai_drag_bounds = None
@@ -416,15 +427,19 @@ class PetWindow(QWidget):
         self._context_idle_timer = QTimer(self)
         self._context_idle_timer.setInterval(LIVE2D_CONTEXT_IDLE_INTERVAL_MS)
         self._context_idle_timer.timeout.connect(self._tick_context_idle_behavior)
-        self._ipc_socket = QLocalSocket(self)
-        self._ipc_buffer = ""
+        self._ipc_peer_id = make_peer_id("pet")
+        self._ipc_inbound_queue = None
+        self._ipc_broadcast_queue = None
+        self._ipc_registered = False
         self._ipc_reconnect_timer = QTimer(self)
         self._ipc_reconnect_timer.setInterval(1000)
-        self._ipc_reconnect_timer.timeout.connect(self._connect_ipc_socket)
-        self._ipc_socket.connected.connect(self._on_ipc_connected)
-        self._ipc_socket.readyRead.connect(self._read_ipc_messages)
-        self._ipc_socket.disconnected.connect(self._schedule_ipc_reconnect)
-        self._ipc_socket.errorOccurred.connect(lambda _error: self._schedule_ipc_reconnect())
+        self._ipc_reconnect_timer.timeout.connect(self._connect_ipc_bus)
+        self._ipc_poll_timer = QTimer(self)
+        self._ipc_poll_timer.setInterval(30)
+        self._ipc_poll_timer.timeout.connect(self._read_ipc_messages)
+        self._ipc_heartbeat_timer = QTimer(self)
+        self._ipc_heartbeat_timer.setInterval(3000)
+        self._ipc_heartbeat_timer.timeout.connect(self._send_ipc_registration)
         self._position_save_timer = QTimer(self)
         self._position_save_timer.setSingleShot(True)
         self._position_save_timer.setInterval(250)
@@ -446,7 +461,9 @@ class PetWindow(QWidget):
         self._load_initial_model()
         self._context_idle_timer.start()
         self._apply_game_topmost_state()
-        self._connect_ipc_socket()
+        self._connect_ipc_bus()
+        self._ipc_poll_timer.start()
+        self._ipc_heartbeat_timer.start()
         self._radial_menu_prewarm_timer.start()
 
         self.setWindowOpacity(self._opacity)
@@ -1491,6 +1508,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._close_ipc_bus()
         self._save_config()
         super().closeEvent(event)
 
@@ -2583,7 +2601,7 @@ class PetWindow(QWidget):
             gy=gy,
             menu_visible=self._radial_menu_visible,
             process_ready=self._radial_menu_process_ready,
-            socket_state=self._radial_menu_socket.state().name,
+            ipc_ready=bool(self._radial_menu_command_ipc and self._radial_menu_command_ipc.is_attached()),
         )
         # Always SHOW on right-click. The child dismisses on outside-click
         # already, and toggling here races with the child's hide animation
@@ -2641,35 +2659,44 @@ class PetWindow(QWidget):
             return
         process = self._radial_menu_process
         if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            if (
-                self._radial_menu_process_ready
-                and self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState
-            ):
-                self._radial_menu_socket.connectToServer(self._radial_menu_server_name)
+            self._flush_radial_menu_commands()
             return
 
         base_dir = str(app_base_dir())
         process = QProcess(self)
-        # Keep the suffix short: macOS limits Unix-domain socket paths to 104
-        # bytes (sun_path), and Qt prepends a long runtime-folder prefix.
         self._radial_menu_server_name = f"{ipc_server_name()}-radial-{uuid.uuid4().hex[:8]}"
+        self._close_radial_menu_ipc()
+        try:
+            self._radial_menu_command_ipc = SharedMemoryLineQueue.create(
+                radial_command_queue_key(self._radial_menu_server_name),
+                slot_count=128,
+                slot_size=8192,
+            )
+            self._radial_menu_event_ipc = SharedMemoryLineQueue.create(
+                radial_event_queue_key(self._radial_menu_server_name),
+                slot_count=128,
+                slot_size=4096,
+            )
+        except RuntimeError as exc:
+            self._close_radial_menu_ipc()
+            print(f"Radial menu shared-memory IPC error: {exc}", file=sys.stderr)
+            return
         program, arguments = process_program_and_args(
             base_dir,
             "radial_menu_process.py",
-            ["--server-name", self._radial_menu_server_name],
+            ["--channel-name", self._radial_menu_server_name],
         )
         process.setProgram(program)
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-        process.readyReadStandardOutput.connect(lambda p=process: self._read_radial_menu_process_output(p))
         process.readyReadStandardError.connect(lambda p=process: self._read_radial_menu_process_error(p))
         process.finished.connect(lambda *_args, p=process: self._on_radial_menu_process_finished(p))
         process.errorOccurred.connect(lambda _error, p=process: self._on_radial_menu_process_finished(p))
-        self._radial_menu_buffer = ""
         self._radial_menu_process_ready = False
         self._radial_menu_visible = False
         self._radial_menu_process = process
         process.setWorkingDirectory(base_dir)
+        self._radial_menu_event_timer.start()
         process.start()
 
     def _is_radial_menu_visible(self) -> bool:
@@ -2705,7 +2732,8 @@ class PetWindow(QWidget):
         self._flush_radial_menu_commands()
 
     def _flush_radial_menu_commands(self):
-        if self._radial_menu_socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+        queue = self._radial_menu_command_ipc
+        if queue is None or not queue.is_attached():
             return
         while self._radial_menu_command_queue:
             line = self._radial_menu_command_queue.pop(0)
@@ -2714,30 +2742,9 @@ class PetWindow(QWidget):
                 "radial_send",
                 command=line.split("\t", 1)[0],
             )
-            self._radial_menu_socket.write((line + "\n").encode("utf-8"))
-        self._radial_menu_socket.flush()
-
-    def _on_radial_menu_socket_disconnected(self):
-        was_visible = self._radial_menu_visible
-        self._radial_menu_opening = False
-        self._radial_menu_visible = False
-        self._tick_mouse_passthrough()
-        if was_visible:
-            self._broadcast_radial_menu_state(open=False)
-
-    def _on_radial_menu_socket_error(self, error):
-        if (
-            error == QLocalSocket.LocalSocketError.ServerNotFoundError
-            and self._radial_menu_process is not None
-            and self._radial_menu_process.state() != QProcess.ProcessState.NotRunning
-            and not self._radial_menu_process_ready
-        ):
-            return
-        self._radial_menu_opening = False
-        self._radial_menu_visible = False
-        self._tick_mouse_passthrough()
-        self._broadcast_radial_menu_state(open=False)
-        print(f"Radial menu socket error: {error}", file=sys.stderr)
+            if not queue.publish(line):
+                self._radial_menu_command_queue.insert(0, line)
+                break
 
     def _close_radial_menu_process(self, force: bool = False):
         self._radial_menu_prewarm_timer.stop()
@@ -2746,11 +2753,8 @@ class PetWindow(QWidget):
         was_visible = self._radial_menu_visible
         if was_visible:
             self._radial_menu_visible = False
-        if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
-            self._radial_menu_socket.write(b"EXIT\n")
-            self._radial_menu_socket.flush()
-        if self._radial_menu_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
-            self._radial_menu_socket.abort()
+        if self._radial_menu_command_ipc is not None:
+            self._radial_menu_command_ipc.publish("EXIT")
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
         process = self._radial_menu_process
@@ -2758,12 +2762,12 @@ class PetWindow(QWidget):
             return
         if self._radial_menu_process is process:
             self._radial_menu_process = None
-            self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_command_queue.clear()
             self._radial_menu_process_ready = False
             self._radial_menu_opening = False
             self._radial_menu_visible = False
+            self._close_radial_menu_ipc()
         self._terminate_process_async(process, kill_delay_ms=300 if force else 1000)
 
     def _terminate_process_async(self, process: QProcess, *, kill_delay_ms: int = 1000):
@@ -2789,18 +2793,20 @@ class PetWindow(QWidget):
             kill_if_still_running,
         )
 
-    def _read_radial_menu_process_output(self, process: QProcess):
-        if not isValid(process):
+    def _read_radial_menu_events(self):
+        queue = self._radial_menu_event_ipc
+        if queue is None or not queue.is_attached():
             return
-        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        buffer = self._radial_menu_buffer + data
-        lines = buffer.splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            self._radial_menu_buffer = lines.pop()
-        else:
-            self._radial_menu_buffer = ""
-        for raw_line in lines:
-            self._handle_radial_menu_process_line(raw_line.rstrip("\r\n"))
+        for line in queue.read_available(max_messages=100):
+            self._handle_radial_menu_process_line(line)
+
+    def _close_radial_menu_ipc(self):
+        self._radial_menu_event_timer.stop()
+        for attr in ("_radial_menu_command_ipc", "_radial_menu_event_ipc"):
+            queue = getattr(self, attr, None)
+            if queue is not None:
+                queue.close()
+            setattr(self, attr, None)
 
     def _read_radial_menu_process_error(self, process: QProcess):
         if not isValid(process):
@@ -2813,8 +2819,7 @@ class PetWindow(QWidget):
         interaction_trace("pet", "radial_receive", line=line)
         if line == "READY":
             self._radial_menu_process_ready = True
-            if self._radial_menu_socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
-                self._radial_menu_socket.connectToServer(self._radial_menu_server_name)
+            self._flush_radial_menu_commands()
         elif line == "STATE\tOPEN":
             self._radial_menu_opening = False
             self._radial_menu_visible = True
@@ -2846,7 +2851,6 @@ class PetWindow(QWidget):
         should_restart = False
         if self._radial_menu_process is process:
             self._radial_menu_process = None
-            self._radial_menu_buffer = ""
             self._radial_menu_server_name = ""
             self._radial_menu_process_ready = False
             self._radial_menu_opening = False
@@ -2857,8 +2861,7 @@ class PetWindow(QWidget):
             )
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
-        if isValid(self._radial_menu_socket) and self._radial_menu_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
-            self._radial_menu_socket.abort()
+        self._close_radial_menu_ipc()
         process.deleteLater()
         if should_restart:
             QTimer.singleShot(0, self._ensure_radial_menu_process)
@@ -2891,34 +2894,52 @@ class PetWindow(QWidget):
         process.setWorkingDirectory(base_dir)
         process.start()
 
-    def _send_ipc(self, msg: str):
-        if self._ipc_socket and self._ipc_socket.isOpen():
-            self._ipc_socket.write((msg + "\n").encode("utf-8"))
-            self._ipc_socket.flush()
+    def _send_ipc(self, msg: str) -> bool:
+        self._connect_ipc_bus()
+        queue = self._ipc_inbound_queue
+        if queue is None or not queue.is_attached():
+            return False
+        return queue.publish(encode_ipc_envelope(self._ipc_peer_id, msg))
 
-    def _connect_ipc_socket(self):
-        if self._ipc_socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
-            return
-        self._ipc_socket.connectToServer(ipc_server_name())
+    def _connect_ipc_bus(self):
+        try:
+            if self._ipc_inbound_queue is None or not self._ipc_inbound_queue.is_attached():
+                self._ipc_inbound_queue = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
+            if self._ipc_broadcast_queue is None or not self._ipc_broadcast_queue.is_attached():
+                self._ipc_broadcast_queue = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+            self._ipc_reconnect_timer.stop()
+            if not self._ipc_registered:
+                self._ipc_registered = True
+                self._send_ipc_registration()
+        except Exception:
+            self._close_ipc_bus()
+            self._schedule_ipc_reconnect()
+
+    def _close_ipc_bus(self):
+        for attr in ("_ipc_inbound_queue", "_ipc_broadcast_queue"):
+            queue = getattr(self, attr, None)
+            if queue is not None:
+                queue.close()
+            setattr(self, attr, None)
+        self._ipc_registered = False
 
     def _schedule_ipc_reconnect(self):
         if not self._ipc_reconnect_timer.isActive():
             self._ipc_reconnect_timer.start()
 
-    def _on_ipc_connected(self):
-        self._ipc_reconnect_timer.stop()
+    def _send_ipc_registration(self):
         self._send_ipc(f"REGISTER\tPET\t{self._current_char}")
 
     def _read_ipc_messages(self):
-        data = bytes(self._ipc_socket.readAll()).decode("utf-8", errors="replace")
-        buffer = self._ipc_buffer + data
-        lines = buffer.splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            self._ipc_buffer = lines.pop()
-        else:
-            self._ipc_buffer = ""
-        for raw_line in lines:
-            self._handle_ipc_line(raw_line.rstrip("\r\n"))
+        self._connect_ipc_bus()
+        queue = self._ipc_broadcast_queue
+        if queue is None or not queue.is_attached():
+            return
+        for raw_line in queue.read_available(max_messages=200):
+            envelope = decode_ipc_envelope(raw_line)
+            if envelope.exclude_peer_id == self._ipc_peer_id:
+                continue
+            self._handle_ipc_line(envelope.line)
 
     def _handle_ipc_line(self, line: str):
         if line.startswith("ACTION\t"):
@@ -4023,13 +4044,12 @@ class PetWindow(QWidget):
             self.show()
 
     def _open_settings(self, start_on_costumes=False):
-        if self._ipc_socket and self._ipc_socket.isOpen():
-            parts = [
-                "OPEN_SETTINGS",
-                "costumes" if start_on_costumes else "main",
-                self._current_char,
-            ]
-            self._send_ipc("\t".join(parts))
+        parts = [
+            "OPEN_SETTINGS",
+            "costumes" if start_on_costumes else "main",
+            self._current_char,
+        ]
+        if self._send_ipc("\t".join(parts)):
             return
 
         if self._settings_process is not None and self._settings_process.state() != QProcess.ProcessState.NotRunning:
@@ -4204,6 +4224,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._close_ipc_bus()
         if self._tray_icon is not None:
             self._tray_icon.hide()
         QCoreApplication.quit()

@@ -4,6 +4,7 @@ import secrets
 import signal
 import threading
 import os
+import time
 import uuid
 
 from process_utils import (
@@ -32,7 +33,6 @@ except OSError:
 configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
-from PySide6.QtNetwork import QLocalServer
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
@@ -50,6 +50,13 @@ from alarm_manager import ReminderScheduler
 from gpu_acceleration import configure_qt_gpu_acceleration
 from special_event_manager import SpecialEventManager
 from event_db_manager import SpecialEvent
+from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key
+from shared_memory_ipc import (
+    SharedMemoryLineQueue,
+    decode_ipc_envelope,
+    encode_ipc_envelope,
+    make_peer_id,
+)
 
 
 class AiEventBridge(QObject):
@@ -57,10 +64,14 @@ class AiEventBridge(QObject):
 
 
 def main():
-    if not os.environ.get("BANDORI_PET_IPC_SERVER_NAME", "").strip():
+    def refresh_ipc_session_name():
+        os.environ.pop("BANDORI_PET_IPC_SERVER_NAME", None)
         os.environ["BANDORI_PET_IPC_SERVER_NAME"] = (
             f"{ipc_server_name()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         )
+
+    if not os.environ.get("BANDORI_PET_IPC_SERVER_NAME", "").strip():
+        refresh_ipc_session_name()
 
     cfg = _STARTUP_CONFIG
 
@@ -90,7 +101,8 @@ def main():
 
     mgr = ModelManager()
     pet_window_ref = {"processes": [], "closing_processes": []}
-    ipc_ref = {"clients": [], "buffers": {}, "lock": threading.RLock()}
+    ipc_ref = {"lock": threading.RLock(), "peers": {}}
+    main_peer_id = make_peer_id("main")
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
@@ -159,96 +171,80 @@ def main():
         QTimer.singleShot(50, app.quit)
 
     def init_ipc_server():
-        name = ipc_server_name()
-        QLocalServer.removeServer(name)
-        server = QLocalServer(app)
+        def create_ipc_queues():
+            inbound = SharedMemoryLineQueue.create(ipc_inbound_queue_key())
+            try:
+                outbound = SharedMemoryLineQueue.create(ipc_broadcast_queue_key())
+            except RuntimeError:
+                inbound.close()
+                raise
+            return inbound, outbound
 
-        def accept_clients():
-            while server.hasPendingConnections():
-                socket = server.nextPendingConnection()
-                with ipc_ref["lock"]:
-                    ipc_ref["clients"].append(socket)
-                    ipc_ref["buffers"][socket] = ""
-                socket.readyRead.connect(lambda s=socket: read_ipc_client(s))
-                socket.disconnected.connect(lambda s=socket: remove_ipc_client(s))
-                socket.errorOccurred.connect(lambda _error, s=socket: remove_ipc_client(s))
+        def start_ipc_polling(inbound, outbound):
+            with ipc_ref["lock"]:
+                ipc_ref["inbound"] = inbound
+                ipc_ref["outbound"] = outbound
+            poll_timer = QTimer(app)
+            poll_timer.setInterval(15)
+            poll_timer.timeout.connect(read_ipc_messages)
+            poll_timer.start()
+            cleanup_timer = QTimer(app)
+            cleanup_timer.setInterval(3000)
+            cleanup_timer.timeout.connect(prune_ipc_peers)
+            cleanup_timer.start()
+            ipc_ref["poll_timer"] = poll_timer
+            ipc_ref["cleanup_timer"] = cleanup_timer
 
-        server.newConnection.connect(accept_clients)
-        if server.listen(name):
-            ipc_ref["server"] = server
+        try:
+            inbound, outbound = create_ipc_queues()
+        except RuntimeError as exc:
+            first_error = str(exc)
+            refresh_ipc_session_name()
+            try:
+                inbound, outbound = create_ipc_queues()
+            except RuntimeError as retry_exc:
+                exc = retry_exc
+            else:
+                print(f"Shared-memory IPC recovered with a fresh session name after: {first_error}")
+                start_ipc_polling(inbound, outbound)
+                return
+            error = str(exc)
+            message = (
+                f"Shared-memory IPC failed to initialize: {error}. "
+                "Cross-process features (chat launch, action broadcast, settings "
+                "sync) will not work."
+            )
+            print(message)
+            show_system_notification(
+                APP_NAME,
+                _tr("MainTray.ipc_error_title", default="进程通信启动失败"),
+                _tr(
+                    "MainTray.ipc_error_text",
+                    default="桌宠各窗口间通信未能建立，聊天唤起/设置同步可能失效。请重启程序，若仍出现请重启电脑。",
+                ),
+            )
             return
-        # A stale endpoint (previous crash, leftover socket file) can keep the
-        # name busy; clear it once and retry before giving up.
-        QLocalServer.removeServer(name)
-        if server.listen(name):
-            ipc_ref["server"] = server
-            return
-        error = server.errorString()
-        server.deleteLater()
-        message = (
-            f"IPC server failed to listen on '{name}': {error}. "
-            "Cross-process features (chat launch, action broadcast, settings "
-            "sync) will not work."
-        )
-        print(message)
-        show_system_notification(
-            APP_NAME,
-            _tr("MainTray.ipc_error_title", default="进程通信启动失败"),
-            _tr(
-                "MainTray.ipc_error_text",
-                default="桌宠各窗口间通信未能建立，聊天唤起/设置同步可能失效。请重启程序，若仍出现请重启电脑。",
-            ),
-        )
+        start_ipc_polling(inbound, outbound)
 
     def stop_ipc_server():
         with ipc_ref["lock"]:
-            sockets = list(ipc_ref.get("clients", []))
-            ipc_ref["clients"] = []
-            ipc_ref["buffers"] = {}
-            server = ipc_ref.pop("server", None)
-        for socket in sockets:
-            if not isValid(socket):
-                continue
-            try:
-                socket.disconnectFromServer()
-                socket.close()
-            except RuntimeError:
-                pass
-            socket.deleteLater()
-        if server is not None and isValid(server):
-            try:
-                server.close()
-                QLocalServer.removeServer(ipc_server_name())
-            except RuntimeError:
-                pass
-            server.deleteLater()
+            queues = [ipc_ref.pop("inbound", None), ipc_ref.pop("outbound", None)]
+            timers = [ipc_ref.pop("poll_timer", None), ipc_ref.pop("cleanup_timer", None)]
+            ipc_ref["peers"] = {}
+        for timer in timers:
+            if timer is not None and isValid(timer):
+                timer.stop()
+                timer.deleteLater()
+        for queue in queues:
+            if queue is not None:
+                queue.close()
 
-    def remove_ipc_client(socket):
+    def broadcast_ipc_line(line: str, exclude_peer_id: str = ""):
         with ipc_ref["lock"]:
-            clients = ipc_ref.get("clients", [])
-            if socket in clients:
-                clients.remove(socket)
-            ipc_ref.get("buffers", {}).pop(socket, None)
-        if isValid(socket):
-            socket.deleteLater()
-
-    def write_ipc_line(socket, line: str):
-        if not isValid(socket) or not socket.isOpen():
-            remove_ipc_client(socket)
+            queue = ipc_ref.get("outbound")
+        if queue is None:
             return
-        try:
-            socket.write((line + "\n").encode("utf-8"))
-            socket.flush()
-        except RuntimeError:
-            remove_ipc_client(socket)
-
-    def broadcast_ipc_line(line: str, exclude_socket=None):
-        with ipc_ref["lock"]:
-            sockets = list(ipc_ref.get("clients", []))
-        for socket in sockets:
-            if exclude_socket is not None and socket is exclude_socket:
-                continue
-            write_ipc_line(socket, line)
+        queue.publish(encode_ipc_envelope(main_peer_id, line, exclude_peer_id=exclude_peer_id))
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
 
@@ -706,22 +702,77 @@ def main():
         worker.start()
         timeout_timer.start()
 
-    def read_ipc_client(socket):
-        if not isValid(socket):
-            return
-        data = bytes(socket.readAll()).decode("utf-8", errors="replace")
+    def read_ipc_messages():
         with ipc_ref["lock"]:
-            buffers = ipc_ref.setdefault("buffers", {})
-            buffer = buffers.get(socket, "") + data
-            lines = buffer.splitlines(keepends=True)
-            if lines and not lines[-1].endswith(("\n", "\r")):
-                buffers[socket] = lines.pop()
-            else:
-                buffers[socket] = ""
-        for raw_line in lines:
-            handle_ipc_line(raw_line.rstrip("\r\n"), source_socket=socket)
+            queue = ipc_ref.get("inbound")
+        if queue is None:
+            return
+        for raw_line in queue.read_available(max_messages=200):
+            envelope = decode_ipc_envelope(raw_line)
+            if not envelope.line:
+                continue
+            touch_ipc_peer(envelope.sender_id)
+            handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
 
-    def handle_ipc_line(line: str, source_socket=None):
+    def touch_ipc_peer(peer_id: str):
+        if not peer_id:
+            return
+        with ipc_ref["lock"]:
+            peer = ipc_ref.setdefault("peers", {}).setdefault(peer_id, {})
+            peer["last_seen"] = time.monotonic()
+
+    def register_ipc_peer(line: str, peer_id: str):
+        if not peer_id:
+            return
+        parts = line.split("\t")
+        kind = parts[1].strip().upper() if len(parts) >= 2 else "UNKNOWN"
+        character = parts[2].strip() if len(parts) >= 3 else ""
+        with ipc_ref["lock"]:
+            ipc_ref.setdefault("peers", {})[peer_id] = {
+                "kind": kind,
+                "character": character,
+                "last_seen": time.monotonic(),
+            }
+
+    def prune_ipc_peers(max_age_seconds: float = 8.0):
+        now = time.monotonic()
+        with ipc_ref["lock"]:
+            peers = ipc_ref.setdefault("peers", {})
+            stale = [
+                peer_id
+                for peer_id, peer in peers.items()
+                if now - float(peer.get("last_seen", 0.0)) > max_age_seconds
+            ]
+            for peer_id in stale:
+                peers.pop(peer_id, None)
+
+    def clear_ipc_peers(kind: str = ""):
+        normalized = str(kind or "").upper()
+        with ipc_ref["lock"]:
+            peers = ipc_ref.setdefault("peers", {})
+            if not normalized:
+                peers.clear()
+                return
+            stale = [
+                peer_id
+                for peer_id, peer in peers.items()
+                if str(peer.get("kind", "") or "").upper() == normalized
+            ]
+            for peer_id in stale:
+                peers.pop(peer_id, None)
+
+    def has_registered_pet_clients() -> bool:
+        prune_ipc_peers()
+        with ipc_ref["lock"]:
+            return any(
+                peer.get("kind") == "PET"
+                for peer in ipc_ref.get("peers", {}).values()
+            )
+
+    def handle_ipc_line(line: str, source_peer_id: str = ""):
+        if line.startswith("REGISTER\t"):
+            register_ipc_peer(line, source_peer_id)
+            return
         if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
         elif line.startswith("POKE_USER\t"):
@@ -745,22 +796,16 @@ def main():
         elif line.startswith("RADIAL_MENU_CLOSED\t"):
             broadcast_ipc_line(line)
         elif line == "FOCUS_CHAT":
-            broadcast_ipc_line(line, exclude_socket=source_socket)
+            broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line.startswith("OPEN_SETTINGS"):
             handle_open_settings_request(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line)
             if line.startswith("SETTINGS\t"):
-                broadcast_ipc_line(line, exclude_socket=source_socket)
+                broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
 
     def notify_child_processes_shutdown():
-        with ipc_ref["lock"]:
-            sockets = list(ipc_ref.get("clients", []))
-        for socket in sockets:
-            if not isValid(socket) or not socket.isOpen():
-                continue
-            socket.write(b"SHUTDOWN\n")
-            socket.flush()
+        broadcast_ipc_line("SHUTDOWN")
 
     def configured_models():
         models = cfg.get("models", [])
@@ -827,6 +872,7 @@ def main():
         process.deleteLater()
 
     def close_pet_processes(force=False, wait=True):
+        clear_ipc_peers("PET")
         processes = [
             process
             for process in list(pet_window_ref.get("processes", []))
@@ -1099,9 +1145,7 @@ def main():
             launch_settings_process(show_launch=False)
             return
 
-        with ipc_ref["lock"]:
-            has_ipc_clients = bool(ipc_ref.get("clients"))
-        if pet_window_ref.get("processes") and has_ipc_clients:
+        if pet_window_ref.get("processes") and has_registered_pet_clients():
             broadcast_ipc_line(f"OPEN_CHAT\t{current_char}")
             return
 

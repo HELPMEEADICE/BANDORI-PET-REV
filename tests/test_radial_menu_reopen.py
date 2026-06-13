@@ -6,7 +6,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QColor
-from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 import radial_menu as radial_menu_module
@@ -22,27 +21,18 @@ class _FakeProcess:
         self.deleted = True
 
 
-class _FakeSocket:
-    def state(self):
-        return QLocalSocket.LocalSocketState.UnconnectedState
-
-    def abort(self):
-        raise AssertionError("unconnected socket should not be aborted")
-
-
 class _RecoveryHarness:
     _on_radial_menu_process_finished = PetWindow._on_radial_menu_process_finished
 
     def __init__(self, process):
         self._radial_menu_process = process
-        self._radial_menu_buffer = "partial"
         self._radial_menu_server_name = "old-server"
         self._radial_menu_command_queue = ["SHOW\t{}"]
         self._radial_menu_process_ready = True
         self._radial_menu_shutting_down = False
         self._radial_menu_opening = True
         self._radial_menu_visible = True
-        self._radial_menu_socket = _FakeSocket()
+        self.ipc_closed = False
         self.restart_count = 0
         self.broadcasts = []
 
@@ -51,6 +41,9 @@ class _RecoveryHarness:
 
     def _ensure_radial_menu_process(self):
         self.restart_count += 1
+
+    def _close_radial_menu_ipc(self):
+        self.ipc_closed = True
 
 
 class RadialMenuReopenTest(unittest.TestCase):
@@ -185,6 +178,7 @@ class RadialMenuReopenTest(unittest.TestCase):
         self.assertEqual(["SHOW\t{}"], harness._radial_menu_command_queue)
         self.assertEqual(1, harness.restart_count)
         self.assertEqual([False], harness.broadcasts)
+        self.assertTrue(harness.ipc_closed)
         self.assertTrue(process.deleted)
 
 

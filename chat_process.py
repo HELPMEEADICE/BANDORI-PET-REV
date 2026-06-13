@@ -18,17 +18,23 @@ BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
-from PySide6.QtCore import QLockFile, QRect, Qt
+from PySide6.QtCore import QLockFile, QRect, Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtNetwork import QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
 from chat_window import ChatWindow
 from config_manager import ConfigManager
+from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key, send_ipc_message
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from shared_memory_ipc import (
+    SharedMemoryLineQueue,
+    decode_ipc_envelope,
+    encode_ipc_envelope,
+    make_peer_id,
+)
 
 
 def _parse_args():
@@ -77,15 +83,7 @@ def _chat_lock_path() -> str:
 
 
 def _send_ipc_line(line: str, timeout_ms: int = 300):
-    socket = QLocalSocket()
-    socket.connectToServer(ipc_server_name())
-    if socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
-        socket.waitForConnected(timeout_ms)
-    if socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
-        socket.write((line + "\n").encode("utf-8"))
-        socket.flush()
-        socket.waitForBytesWritten(timeout_ms)
-        socket.disconnectFromServer()
+    send_ipc_message(line + "\n", timeout_ms)
 
 
 def _app_icon_path() -> str:
@@ -188,8 +186,8 @@ def main():
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     window.closed.connect(app.quit)
 
-    shutdown_socket = QLocalSocket(app)
-    shutdown_buffer = {"text": ""}
+    ipc_peer_id = make_peer_id("chat")
+    ipc = {"inbound": None, "broadcast": None}
 
     def focus_window():
         if window.isMinimized():
@@ -199,14 +197,33 @@ def main():
         window.raise_()
         window.activateWindow()
 
+    def attach_ipc_queues() -> bool:
+        try:
+            if ipc["inbound"] is None or not ipc["inbound"].is_attached():
+                ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
+            if ipc["broadcast"] is None or not ipc["broadcast"].is_attached():
+                ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+            return True
+        except Exception:
+            for key in ("inbound", "broadcast"):
+                queue = ipc.get(key)
+                if queue is not None:
+                    queue.close()
+                ipc[key] = None
+            return False
+
+    def send_ipc_line(line: str):
+        if attach_ipc_queues():
+            ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line))
+
     def read_shutdown_messages():
-        shutdown_buffer["text"] += bytes(shutdown_socket.readAll()).decode("utf-8", errors="ignore")
-        lines = shutdown_buffer["text"].splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            shutdown_buffer["text"] = lines.pop()
-        else:
-            shutdown_buffer["text"] = ""
-        for line in (item.rstrip("\r\n") for item in lines):
+        if not attach_ipc_queues():
+            return
+        for raw_line in ipc["broadcast"].read_available(max_messages=200):
+            envelope = decode_ipc_envelope(raw_line)
+            if envelope.exclude_peer_id == ipc_peer_id:
+                continue
+            line = envelope.line
             if line == "SHUTDOWN":
                 window.request_immediate_shutdown()
                 break
@@ -219,12 +236,18 @@ def main():
                     window.handle_external_user_poke({})
 
     def register_chat_window():
-        shutdown_socket.write(f"REGISTER\tCHAT\t{args.character}\n".encode("utf-8"))
-        shutdown_socket.flush()
+        send_ipc_line(f"REGISTER\tCHAT\t{args.character}")
 
-    shutdown_socket.connected.connect(register_chat_window)
-    shutdown_socket.readyRead.connect(read_shutdown_messages)
-    shutdown_socket.connectToServer(ipc_server_name())
+    ipc_timer = QTimer(app)
+    ipc_timer.setInterval(30)
+    ipc_timer.timeout.connect(read_shutdown_messages)
+    ipc_timer.start()
+    ipc_heartbeat_timer = QTimer(app)
+    ipc_heartbeat_timer.setInterval(3000)
+    ipc_heartbeat_timer.timeout.connect(register_chat_window)
+    ipc_heartbeat_timer.start()
+    QTimer.singleShot(0, register_chat_window)
+    app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
 
     window.show()
     saved_x = cfg.get("chat_window_x")

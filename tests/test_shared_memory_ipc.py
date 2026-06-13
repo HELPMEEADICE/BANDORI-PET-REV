@@ -1,0 +1,122 @@
+import uuid
+
+
+def _unique_key(prefix: str) -> str:
+    return f"test-{prefix}-{uuid.uuid4().hex}"
+
+
+def test_shared_memory_queue_delivers_lines_in_order():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("order")
+    writer = SharedMemoryLineQueue.create(key, slot_count=4, slot_size=256)
+    reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    try:
+        assert writer.publish("ACTION\tkasumi\twave\n")
+        assert writer.publish("SETTINGS\t{}")
+
+        assert reader.read_available() == ["ACTION\tkasumi\twave", "SETTINGS\t{}"]
+        assert reader.read_available() == []
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_shared_memory_queue_readers_have_independent_cursors():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("cursors")
+    writer = SharedMemoryLineQueue.create(key, slot_count=4, slot_size=256)
+    first_reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    second_reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    try:
+        writer.publish("PEER_POS\t{\"x\":1}")
+
+        assert first_reader.read_available() == ["PEER_POS\t{\"x\":1}"]
+        assert second_reader.read_available() == ["PEER_POS\t{\"x\":1}"]
+    finally:
+        second_reader.close()
+        first_reader.close()
+        writer.close()
+
+
+def test_shared_memory_queue_overflow_returns_recent_complete_messages():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("overflow")
+    writer = SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)
+    reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    try:
+        writer.publish("one")
+        writer.publish("two")
+        writer.publish("three")
+
+        assert reader.read_available() == ["two", "three"]
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_default_shared_memory_queue_accepts_large_settings_payloads():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("large")
+    writer = SharedMemoryLineQueue.create(key)
+    reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    large_line = "SETTINGS\t" + ("x" * 32768)
+    try:
+        assert writer.publish(large_line)
+        assert reader.read_available() == [large_line]
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_ipc_envelope_round_trips_sender_and_exclusion():
+    from shared_memory_ipc import decode_ipc_envelope, encode_ipc_envelope
+
+    encoded = encode_ipc_envelope(
+        "peer-1",
+        "SETTINGS\t{\"dark_theme\":true}\n",
+        exclude_peer_id="peer-2",
+    )
+
+    decoded = decode_ipc_envelope(encoded)
+
+    assert decoded.sender_id == "peer-1"
+    assert decoded.exclude_peer_id == "peer-2"
+    assert decoded.line == 'SETTINGS\t{"dark_theme":true}'
+
+
+def test_internal_process_ipc_no_longer_uses_qt_local_sockets():
+    from pathlib import Path
+
+    internal_ipc_files = [
+        "ipc_bus.py",
+        "main.py",
+        "settings_process.py",
+        "chat_process.py",
+        "pet_window.py",
+        "radial_menu_process.py",
+    ]
+
+    for file_name in internal_ipc_files:
+        source = Path(file_name).read_text(encoding="utf-8")
+        assert "QLocalSocket" not in source
+        assert "QLocalServer" not in source
+
+
+def test_main_clears_stale_pet_peers_when_pet_processes_close():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert 'clear_ipc_peers("PET")' in source
+
+
+def test_main_retries_ipc_with_fresh_session_name_on_create_failure():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert "refresh_ipc_session_name()" in source
