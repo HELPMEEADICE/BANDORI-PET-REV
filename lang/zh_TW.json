@@ -60,7 +60,7 @@
   "SettingsWindow.custom_model_import_cancel": "取消",
   "SettingsWindow.custom_model_delete_tooltip": "刪除此自訂模型",
   "SettingsWindow.custom_model_imported_title": "匯入成功",
-  "SettingsWindow.custom_model_imported_content": "已匯入「{name}」，共 {count} 套服裝。可在「其他」分組中找到。",
+  "SettingsWindow.custom_model_imported_content": "已匯入「{name}」，共 {count} 套服裝。可在「自訂模型」分組中找到。",
   "SettingsWindow.custom_model_delete_in_use_title": "無法刪除",
   "SettingsWindow.custom_model_delete_in_use_content": "該角色正在模型列表中使用，請先在列表中切換到其他角色後再刪除。",
   "SettingsWindow.custom_model_delete_confirm_title": "刪除自訂模型",

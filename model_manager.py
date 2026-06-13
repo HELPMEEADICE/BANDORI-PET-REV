@@ -77,24 +77,30 @@ class ModelManager:
         self._character_images = {}
         if not models_dir_exists():
             return
-        for entry in sorted(MODELS_DIR.iterdir()):
-            if entry.name.startswith("_"):
+        entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
+        for entry in entries:
+            if not entry.is_dir():
                 continue
-            if entry.is_dir():
-                character = entry.name
-                image_path = self._find_dir_character_image(entry)
-            elif entry.is_file() and entry.suffix.lower() == ".zst":
-                character = entry.stem
-                try:
-                    files = list_archive_files(entry)
-                    image_path = self._find_archive_character_image(entry, files, character)
-                except Exception:
-                    image_path = ""
-            else:
-                continue
+            character = entry.name
+            image_path = self._find_dir_character_image(entry)
             if image_path:
                 self._character_images[character] = image_path
-            self._characters.setdefault(character, {"costumes": [{"id": "default", "path": ""}]})
+            self._merge_character_costumes(character, [{"id": "default", "path": ""}])
+
+        for entry in entries:
+            if entry.name.startswith("_"):
+                continue
+            if not (entry.is_file() and entry.suffix.lower() == ".zst"):
+                continue
+            character = entry.stem
+            try:
+                files = list_archive_files(entry)
+                image_path = self._find_archive_character_image(entry, files, character)
+            except Exception:
+                image_path = ""
+            if image_path:
+                self._character_images[character] = image_path
+            self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=True)
 
     def _scan_advanced_roleplay_support(self) -> dict[str, bool]:
         support = {character: False for character in self.characters}
@@ -128,20 +134,26 @@ class ModelManager:
             if entry.is_dir():
                 self._scan_model_dir(entry)
 
-        archive_paths = []
         for entry in entries:
             if entry.is_file() and entry.suffix.lower() == ".zst":
-                if entry.stem in self._characters:
-                    continue
-                archive_paths.append(entry)
+                result = self._read_model_archive(entry)
+                if result is not None:
+                    self._apply_archive_scan_result(result)
 
-        if not archive_paths:
-            return
-
-        for archive_path in archive_paths:
-            result = self._read_model_archive(archive_path)
-            if result is not None:
-                self._apply_archive_scan_result(result)
+    def _merge_character_costumes(self, character: str, costumes: list[dict], override: bool = False):
+        existing = self._characters.setdefault(character, {})
+        by_id = {
+            item.get("id", ""): dict(item)
+            for item in existing.get("costumes", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        for costume in costumes:
+            costume_id = costume.get("id", "") if isinstance(costume, dict) else ""
+            if not costume_id:
+                continue
+            if override or costume_id not in by_id:
+                by_id[costume_id] = dict(costume)
+        existing["costumes"] = sorted(by_id.values(), key=lambda item: item["id"])
 
     def _scan_model_dir(self, entry: Path):
         char_name = entry.name
@@ -161,9 +173,7 @@ class ModelManager:
         if image_path:
             self._character_images[char_name] = image_path
         if costumes:
-            self._characters[char_name] = {
-                "costumes": costumes,
-            }
+            self._merge_character_costumes(char_name, costumes)
 
     def _read_model_archive(self, archive_path: Path):
         char_name = archive_path.stem
@@ -204,9 +214,7 @@ class ModelManager:
         image_path = result["image_path"]
         if image_path:
             self._character_images[result["character"]] = image_path
-        self._characters[result["character"]] = {
-            "costumes": result["costumes"],
-        }
+        self._merge_character_costumes(result["character"], result["costumes"], override=True)
 
     def _parse_outfit_json(self):
         if not OUTFIT_JSON.exists():
@@ -236,8 +244,13 @@ class ModelManager:
         else:
             configured_bands = []
 
+        configured_character_keys = set()
         seen = set()
         for band in configured_bands:
+            configured_character_keys.update(
+                c for c in band.get("characters", [])
+                if isinstance(c, str) and c
+            )
             characters = [
                 c for c in band.get("characters", [])
                 if c in self._characters and self.get_costumes(c)
@@ -254,12 +267,12 @@ class ModelManager:
 
         ungrouped = [
             c for c in self.characters
-            if c not in seen and self.get_costumes(c)
+            if c not in configured_character_keys and c not in seen and self.get_costumes(c)
         ]
         if ungrouped:
             self._bands.append({
-                "id": "others",
-                "display": _tr("ModelManager.others_band"),
+                "id": "custom_models",
+                "display": _tr("ModelManager.custom_models_band"),
                 "characters": ungrouped,
             })
 

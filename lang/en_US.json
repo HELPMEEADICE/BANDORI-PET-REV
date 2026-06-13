@@ -60,7 +60,7 @@
   "SettingsWindow.custom_model_import_cancel": "Cancel",
   "SettingsWindow.custom_model_delete_tooltip": "Delete this custom model",
   "SettingsWindow.custom_model_imported_title": "Import successful",
-  "SettingsWindow.custom_model_imported_content": "Imported \"{name}\" with {count} costume(s). Find it in the \"Others\" group.",
+  "SettingsWindow.custom_model_imported_content": "Imported \"{name}\" with {count} costume(s). Find it in the \"Custom Models\" group.",
   "SettingsWindow.custom_model_delete_in_use_title": "Cannot delete",
   "SettingsWindow.custom_model_delete_in_use_content": "This character is currently used in the model list. Switch to another character there first, then delete it.",
   "SettingsWindow.custom_model_delete_confirm_title": "Delete custom model",

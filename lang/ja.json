@@ -60,7 +60,7 @@
   "SettingsWindow.custom_model_import_cancel": "キャンセル",
   "SettingsWindow.custom_model_delete_tooltip": "このカスタムモデルを削除",
   "SettingsWindow.custom_model_imported_title": "取り込み成功",
-  "SettingsWindow.custom_model_imported_content": "「{name}」を取り込みました（衣装 {count} 着）。「その他」グループから選べます。",
+  "SettingsWindow.custom_model_imported_content": "「{name}」を取り込みました（衣装 {count} 着）。「カスタムモデル」グループから選べます。",
   "SettingsWindow.custom_model_delete_in_use_title": "削除できません",
   "SettingsWindow.custom_model_delete_in_use_content": "このキャラクターはモデル一覧で使用中です。先に一覧で別のキャラクターに切り替えてから削除してください。",
   "SettingsWindow.custom_model_delete_confirm_title": "カスタムモデルの削除",
