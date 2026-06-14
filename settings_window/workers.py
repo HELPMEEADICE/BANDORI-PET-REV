@@ -257,7 +257,7 @@ class ModelDetailMetadataWorker(QThread):
 
 
 class TestConnectionWorker(QThread):
-    finished = Signal()
+    succeeded = Signal()
     error = Signal(str)
 
     def __init__(self, api_url: str, api_key: str, model_id: str, api_mode: str = "chat_completions", parent=None):
@@ -281,11 +281,11 @@ class TestConnectionWorker(QThread):
                     self._test_responses_request(urllib.request, json, headers, ctx)
                 else:
                     self._test_chat_completions_request(urllib.request, json, headers, ctx)
-                self.finished.emit()
+                self.succeeded.emit()
             except urllib.error.HTTPError as e:
                 if self._api_mode == "responses" and e.code in (400, 403, 404, 422):
                     self._test_chat_completions_request(urllib.request, json, headers, ctx)
-                    self.finished.emit()
+                    self.succeeded.emit()
                     return
                 raise
         except urllib.error.HTTPError as e:

@@ -468,10 +468,23 @@ class LLMPageMixin:
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        test_btn = PushButton(FluentIcon.WIFI, _tr("SettingsWindow.llm_test"), page)
+        test_btn = PushButton(
+            FluentIcon.WIFI,
+            _tr("SettingsWindow.llm_test_primary", default="测试主模型"),
+            page,
+        )
         test_btn.setFixedHeight(36)
         test_btn.clicked.connect(self._test_connection)
         btn_row.addWidget(test_btn)
+
+        aux_test_btn = PushButton(
+            FluentIcon.WIFI,
+            _tr("SettingsWindow.llm_aux_test", default="测试辅助模型"),
+            page,
+        )
+        aux_test_btn.setFixedHeight(36)
+        aux_test_btn.clicked.connect(self._test_aux_connection)
+        btn_row.addWidget(aux_test_btn)
 
         save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.llm_apply_current", default="应用当前配置"), page)
         save_btn.setFixedHeight(36)
@@ -1261,7 +1274,15 @@ class LLMPageMixin:
         api_url = self._llm_api_url.text().strip()
         api_key = self._llm_api_key.text().strip()
         model_id = self._llm_model_id.text().strip()
+        self._start_llm_connection_test(api_url, api_key, model_id, "main")
 
+    def _test_aux_connection(self):
+        api_url = self._llm_aux_api_url.text().strip() or self._llm_api_url.text().strip()
+        api_key = self._llm_aux_api_key.text().strip() or self._llm_api_key.text().strip()
+        model_id = self._llm_aux_model_id.text().strip() or self._llm_model_id.text().strip()
+        self._start_llm_connection_test(api_url, api_key, model_id, "aux")
+
+    def _start_llm_connection_test(self, api_url: str, api_key: str, model_id: str, target: str = "main"):
         if not api_url or not api_key or not model_id:
             InfoBar.warning(
                 _tr("SettingsWindow.llm_missing_config_title"),
@@ -1278,21 +1299,36 @@ class LLMPageMixin:
                 self._test_worker.wait(2000)
 
         api_mode = self._effective_llm_api_mode() if hasattr(self, "_llm_api_mode") else "chat_completions"
+        self._test_connection_target = target
         self._test_worker = TestConnectionWorker(api_url, api_key, model_id, api_mode, parent=self)
-        self._test_worker.finished.connect(self._on_test_finished)
+        self._test_worker.succeeded.connect(self._on_test_finished)
         self._test_worker.error.connect(self._on_test_error)
         self._test_worker.start()
 
     def _on_test_finished(self):
+        target = getattr(self, "_test_connection_target", "main")
+        if target == "aux":
+            content = _tr(
+                "SettingsWindow.llm_aux_connected_content",
+                default="辅助模型连接测试成功。",
+            )
+        else:
+            content = _tr("SettingsWindow.llm_connected_content")
         InfoBar.success(
             _tr("SettingsWindow.llm_connected_title"),
-            _tr("SettingsWindow.llm_connected_content"),
+            content,
             duration=2000,
             position=InfoBarPosition.TOP,
             parent=self,
         )
 
     def _on_test_error(self, msg: str):
+        target = getattr(self, "_test_connection_target", "main")
+        if target == "aux":
+            msg = _tr(
+                "SettingsWindow.llm_aux_connection_failed_prefix",
+                default="辅助模型连接失败：",
+            ) + msg
         InfoBar.error(
             _tr("SettingsWindow.llm_connection_failed_title"),
             msg,
