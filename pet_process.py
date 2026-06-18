@@ -3,7 +3,13 @@ import json
 import os
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch
+from process_utils import (
+    app_base_dir,
+    configure_debug_logging,
+    ensure_xwayland,
+    install_parent_death_watch,
+    set_windows_app_user_model_id,
+)
 from config_manager import ConfigManager
 from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
@@ -24,6 +30,7 @@ from live2d_lua_adapter import live2d
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 from pet_window import PetWindow
 from gpu_acceleration import configure_qt_gpu_acceleration
+from tray_utils import load_tray_icon
 
 
 def _parse_args():
@@ -99,8 +106,10 @@ def main():
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
     Live2DWidget.configure_default_surface_format()
+    set_windows_app_user_model_id(APP_NAME)
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(load_tray_icon())
     install_parent_death_watch(app)
 
     if sys.platform == "darwin":

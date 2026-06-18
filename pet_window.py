@@ -66,6 +66,8 @@ WTS_SESSION_UNLOCK = 0x0008
 GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
 WS_EX_NOACTIVATE = 0x08000000
 
 if os.name == "nt":
@@ -300,6 +302,9 @@ class PetWindow(QWidget):
         self._opacity = opacity
         self._vsync = True
         self._game_topmost = bool(config_manager.get("game_topmost", False))
+        self._obs_window_capture_compatible = bool(
+            config_manager.get("obs_window_capture_compatible", False)
+        )
         self._hide_live2d_model = bool(config_manager.get("hide_live2d_model", False))
         self._live2d_idle_actions_enabled = (
             bool(config_manager.get("live2d_idle_actions_enabled", True))
@@ -888,8 +893,33 @@ class PetWindow(QWidget):
             return
         apply_no_rounding(hwnd, windows_11_only=True)
         frame_changed(hwnd)
+        self._apply_obs_window_capture_style(hwnd)
         self._apply_no_activate_to_hwnd(hwnd)
         self._enforce_windows_z_order()
+
+    def _apply_obs_window_capture_style(self, hwnd: int | None = None):
+        if os.name != "nt":
+            return
+        hwnd = int(hwnd or self.winId())
+        if not hwnd:
+            return
+        style = _get_window_long(hwnd, GWL_EXSTYLE)
+        if self._obs_window_capture_compatible:
+            next_style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+        else:
+            next_style = (style & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
+        if next_style == style:
+            return
+        _set_window_long(hwnd, GWL_EXSTYLE, next_style)
+        _set_window_pos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
 
     def _apply_no_activate_to_hwnd(self, hwnd: int):
         if os.name != "nt" or not hwnd:
@@ -1315,6 +1345,13 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
         self._apply_game_topmost_state()
+
+    def set_obs_window_capture_compatible(self, enabled: bool):
+        enabled = bool(enabled)
+        if self._obs_window_capture_compatible == enabled:
+            return
+        self._obs_window_capture_compatible = enabled
+        self._apply_obs_window_capture_style()
 
     def set_hide_live2d_model(self, enabled: bool):
         was_config_hidden = self._hide_live2d_model
@@ -2096,6 +2133,7 @@ class PetWindow(QWidget):
             "user_avatar_path",
             "language",
             "chat_window_normal_window",
+            "obs_window_capture_compatible",
             "hide_live2d_model",
             "live2d_idle_actions_enabled",
             "live2d_random_actions_enabled",
@@ -2133,6 +2171,11 @@ class PetWindow(QWidget):
                 self._cfg.set("chat_integration_token", data["chat_integration_token"])
             if "chat_window_normal_window" in data:
                 self._cfg.set("chat_window_normal_window", bool(data["chat_window_normal_window"]))
+            if "obs_window_capture_compatible" in data:
+                self._cfg.set(
+                    "obs_window_capture_compatible",
+                    bool(data["obs_window_capture_compatible"]),
+                )
             if "hide_live2d_model" in data:
                 self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
             if "live2d_idle_actions_enabled" in data:
@@ -2179,6 +2222,8 @@ class PetWindow(QWidget):
             self._live2d_widget.set_vsync(data["vsync"])
         if "game_topmost" in data:
             self.set_game_topmost(data["game_topmost"])
+        if "obs_window_capture_compatible" in data:
+            self.set_obs_window_capture_compatible(data["obs_window_capture_compatible"])
         if "hide_live2d_model" in data:
             self.set_hide_live2d_model(data["hide_live2d_model"])
         if "live2d_idle_actions_enabled" in data:

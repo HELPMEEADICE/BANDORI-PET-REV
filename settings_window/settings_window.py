@@ -145,6 +145,9 @@ class SettingsWindow(
             bool(self._cfg.get("gpu_acceleration", True)) if self._cfg else True
         )
         self._game_topmost = bool(self._cfg.get("game_topmost", False)) if self._cfg else False
+        self._obs_window_capture_compatible = (
+            bool(self._cfg.get("obs_window_capture_compatible", False)) if self._cfg else False
+        )
         self._chat_window_normal_window = (
             bool(self._cfg.get("chat_window_normal_window", False)) if self._cfg else False
         )
@@ -2849,6 +2852,7 @@ class SettingsWindow(
             "vsync": self._current_vsync_setting(),
             "gpu_acceleration": self._current_gpu_acceleration_setting(),
             "game_topmost": self._game_topmost_switch.isChecked(),
+            "obs_window_capture_compatible": self._obs_window_capture_compatible_switch.isChecked(),
             "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
             "hide_live2d_model": self._hide_live2d_model_switch.isChecked(),
             "live2d_idle_actions_enabled": self._live2d_idle_actions_enabled,
@@ -2909,6 +2913,10 @@ class SettingsWindow(
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("gpu_acceleration", settings["gpu_acceleration"])
             self._cfg.set("game_topmost", settings["game_topmost"])
+            self._cfg.set(
+                "obs_window_capture_compatible",
+                settings["obs_window_capture_compatible"],
+            )
             self._cfg.set("chat_window_normal_window", settings["chat_window_normal_window"])
             self._cfg.set("hide_live2d_model", settings["hide_live2d_model"])
             self._cfg.set("live2d_idle_actions_enabled", settings["live2d_idle_actions_enabled"])
@@ -2968,6 +2976,20 @@ class SettingsWindow(
         game_topmost_row.addStretch()
         game_topmost_row.addWidget(self._game_topmost_switch)
         layout.addLayout(game_topmost_row)
+
+        obs_capture_label = BodyLabel(_tr("SettingsWindow.side_obs_window_capture"), panel)
+        obs_capture_hint = _tr("SettingsWindow.side_obs_window_capture_tip")
+        obs_capture_label.setToolTip(obs_capture_hint)
+        self._obs_window_capture_compatible_switch = SwitchButton(panel)
+        self._obs_window_capture_compatible_switch.setChecked(self._obs_window_capture_compatible)
+        self._obs_window_capture_compatible_switch.setToolTip(obs_capture_hint)
+        obs_capture_row = QHBoxLayout()
+        obs_capture_row.setContentsMargins(0, 0, 0, 0)
+        obs_capture_row.setSpacing(8)
+        obs_capture_row.addWidget(obs_capture_label)
+        obs_capture_row.addStretch()
+        obs_capture_row.addWidget(self._obs_window_capture_compatible_switch)
+        layout.addLayout(obs_capture_row)
 
         chat_window_label = BodyLabel(_tr("SettingsWindow.side_chat_window_normal"), panel)
         chat_window_hint = _tr("SettingsWindow.side_chat_window_normal_tip")

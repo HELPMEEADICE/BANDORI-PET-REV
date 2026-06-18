@@ -241,6 +241,7 @@ DEFAULTS = {
     "vsync": True,
     "gpu_acceleration": True,
     "game_topmost": False,
+    "obs_window_capture_compatible": False,
     "hide_live2d_model": False,
     "live2d_idle_actions_enabled": True,
     "live2d_random_actions_enabled": True,

@@ -668,6 +668,8 @@
   "SettingsWindow.opacity_value": "{v}%",
   "SettingsWindow.side_vsync": "垂直同步",
   "SettingsWindow.side_game_topmost": "遊戲置頂相容",
+  "SettingsWindow.side_obs_window_capture": "OBS視窗擷取相容",
+  "SettingsWindow.side_obs_window_capture_tip": "開啟後桌寵會作為一般應用程式視窗供OBS等軟體擷取，並可能顯示於工作列或Alt+Tab中。請在OBS中使用「遊戲擷取」，選擇對應的桌寵視窗，並勾選「允許透明度」以保留透明背景。",
   "SettingsWindow.side_chat_window_normal": "聊天視窗化",
   "SettingsWindow.side_chat_window_normal_tip": "開啟後聊天介面會使用系統普通視窗，顯示在工作列，並使用系統最小化、最大化和關閉控制項。",
   "SettingsWindow.side_hide_live2d_model": "隱藏Live2D形象",

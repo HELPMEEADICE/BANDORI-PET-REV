@@ -930,6 +930,7 @@ def main():
             ("vsync", "vsync", True),
             ("gpu_acceleration", "gpu_acceleration", True),
             ("game_topmost", "game_topmost", False),
+            ("obs_window_capture_compatible", "obs_window_capture_compatible", False),
             ("chat_window_normal_window", "chat_window_normal_window", False),
             ("chat_attachment_auto_cleanup_enabled", "chat_attachment_auto_cleanup_enabled", False),
             ("chat_attachment_retention_days", "chat_attachment_retention_days", 30),
@@ -1045,7 +1046,8 @@ def main():
             apply_app_theme(dark)
             cfg.set("dark_theme", dark)
         _pet_window_keys = (
-            "fps", "opacity", "vsync", "game_topmost", "chat_window_normal_window", "hide_live2d_model",
+            "fps", "opacity", "vsync", "game_topmost", "obs_window_capture_compatible",
+            "chat_window_normal_window", "hide_live2d_model",
             "live2d_idle_actions_enabled", "live2d_random_actions_enabled", "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled", "move_all_roles_together",
             "birthday_tray_notifications_enabled",

@@ -356,6 +356,7 @@ DATA_CONFIG_KEYS = {
         "vsync",
         "gpu_acceleration",
         "game_topmost",
+        "obs_window_capture_compatible",
         "chat_window_normal_window",
         "chat_attachment_auto_cleanup_enabled",
         "chat_attachment_retention_days",

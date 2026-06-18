@@ -521,6 +521,10 @@ class DataManagementPageMixin:
             self._cfg.set("vsync", self._current_vsync_setting())
             self._cfg.set("gpu_acceleration", self._current_gpu_acceleration_setting())
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
+            self._cfg.set(
+                "obs_window_capture_compatible",
+                self._obs_window_capture_compatible_switch.isChecked(),
+            )
             self._cfg.set("chat_window_normal_window", self._chat_window_normal_window_switch.isChecked())
             self._cfg.set("hide_live2d_model", self._hide_live2d_model_switch.isChecked())
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
@@ -858,6 +862,12 @@ class DataManagementPageMixin:
         self._vsync = bool(self._cfg.get("vsync", self._vsync))
         self._gpu_acceleration = bool(self._cfg.get("gpu_acceleration", self._gpu_acceleration))
         self._game_topmost = bool(self._cfg.get("game_topmost", self._game_topmost))
+        self._obs_window_capture_compatible = bool(
+            self._cfg.get(
+                "obs_window_capture_compatible",
+                self._obs_window_capture_compatible,
+            )
+        )
         self._chat_window_normal_window = bool(
             self._cfg.get("chat_window_normal_window", self._chat_window_normal_window)
         )
@@ -927,6 +937,9 @@ class DataManagementPageMixin:
         if hasattr(self, "_opacity_slider"):
             self._opacity_slider.setValue(max(20, min(100, int(self._opacity * 100))))
             self._game_topmost_switch.setChecked(self._game_topmost)
+            self._obs_window_capture_compatible_switch.setChecked(
+                self._obs_window_capture_compatible
+            )
             self._chat_window_normal_window_switch.setChecked(self._chat_window_normal_window)
             self._hide_live2d_model_switch.setChecked(self._hide_live2d_model)
             self._auto_start_switch.setChecked(bool(self._cfg.get("auto_start", False)) if self._cfg else False)
