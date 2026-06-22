@@ -89,7 +89,7 @@ class AboutPageMixin:
         btn_row.addStretch()
         info_layout.addLayout(btn_row)
 
-        qq_group = "1046229865"
+        qq_group = "1033517952"
         qq_row = QHBoxLayout()
         qq_row.setContentsMargins(0, 2, 0, 0)
         qq_row.setSpacing(10)
