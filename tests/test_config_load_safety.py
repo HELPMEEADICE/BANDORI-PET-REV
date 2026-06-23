@@ -34,6 +34,35 @@ class ConfigLoadSafetyTests(unittest.TestCase):
             self.assertEqual(DEFAULTS["language"], config.get("language"))
             self.assertEqual(1, len(list(path.parent.glob("config.json.corrupt-*.bak"))))
 
+    def test_load_flushes_pending_save_before_reading_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            old_data = {
+                "character": "kasumi",
+                "costume": "old_costume",
+                "models": [{"character": "kasumi", "costume": "old_costume"}],
+            }
+            new_data = {
+                "character": "kasumi",
+                "costume": "new_costume",
+                "models": [{"character": "kasumi", "costume": "new_costume"}],
+            }
+            path.write_text(json.dumps(old_data), encoding="utf-8")
+            config = ConfigManager(path)
+            called = []
+
+            def flush_pending_save():
+                called.append(True)
+                path.write_text(json.dumps(new_data), encoding="utf-8")
+
+            config._flush_pending_save = flush_pending_save
+
+            config.load()
+
+            self.assertEqual([True], called)
+            self.assertEqual("new_costume", config.get("costume"))
+            self.assertEqual("new_costume", config.get("models")[0]["costume"])
+
 
 if __name__ == "__main__":
     unittest.main()

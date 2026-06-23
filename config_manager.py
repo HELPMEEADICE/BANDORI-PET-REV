@@ -576,6 +576,7 @@ class ConfigManager:
         self.load()
 
     def load(self):
+        self._flush_pending_save()
         loaded = None
         has_action_settings = False
         next_data = dict(DEFAULTS)
