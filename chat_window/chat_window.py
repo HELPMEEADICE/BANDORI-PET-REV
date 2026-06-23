@@ -5956,6 +5956,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_message_scroll_value_changed(self, value: int):
         scrollbar = self._scroll.verticalScrollBar()
         self._follow_stream_output = value >= scrollbar.maximum()
+        self._relayout_message_bubbles(force=True)
         if not self._history_pagination_ready or self._history_loading:
             return
         if value <= scrollbar.minimum() + 48:

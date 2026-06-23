@@ -29,6 +29,7 @@ class ChatScrollHarness(QWidget):
         self._current_bubble = object()
         self._history_pagination_ready = False
         self._history_loading = False
+        self._relayout_force_values = []
 
         layout = QVBoxLayout(self)
         self._scroll = QScrollArea(self)
@@ -45,7 +46,7 @@ class ChatScrollHarness(QWidget):
         scrollbar.sliderPressed.connect(self._pause_stream_output_follow)
 
     def _relayout_message_bubbles(self, force=False):
-        pass
+        self._relayout_force_values.append(force)
 
     def _load_older_messages(self):
         return False
@@ -128,6 +129,21 @@ class ChatScrollPositionTest(unittest.TestCase):
         QTest.qWait(100)
 
         self.assertEqual(scrollbar.maximum(), scrollbar.value())
+
+        harness.close()
+
+    def test_user_scroll_forces_message_bubble_refresh(self):
+        harness = ChatScrollHarness()
+        harness.show()
+        QTest.qWait(50)
+
+        harness._relayout_force_values.clear()
+        scrollbar = harness._scroll.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0)
+        scrollbar.setValue(scrollbar.maximum() // 2)
+        QTest.qWait(20)
+
+        self.assertIn(True, harness._relayout_force_values)
 
         harness.close()
 

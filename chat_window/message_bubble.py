@@ -421,6 +421,11 @@ class MessageBubble(QWidget):
             self.layout().invalidate()
         if self._container.layout():
             self._container.layout().invalidate()
+        for label in (self._label, self._reasoning_title, self._reasoning_label, self._stream_label):
+            label.updateGeometry()
+            label.update()
+        self._container.update()
+        self.update()
         self._container.updateGeometry()
         self.updateGeometry()
 
