@@ -1,5 +1,6 @@
 import ctypes
 import json
+import os
 import time
 
 from screen_capture import _int, capture_screenshot_data_url, desktop_bounds

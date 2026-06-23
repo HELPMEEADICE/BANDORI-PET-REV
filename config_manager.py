@@ -967,6 +967,10 @@ class ConfigManager:
                         time.sleep(min(0.02 * (attempt + 1), 0.2))
                     if last_error is not None:
                         logging.warning("Config save failed after retries: %s", last_error)
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
                 except Exception as exc:
                     logging.warning("Config save failed: %s", exc)
                     try:
