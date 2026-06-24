@@ -1,3 +1,4 @@
+import hashlib
 import io
 import tempfile
 import unittest
@@ -184,11 +185,62 @@ class AppUpdateTests(unittest.TestCase):
                     "https://example.invalid/update.msi",
                     "BandoriPet-update.msi",
                     expected_size=10,
+                    expected_sha256=hashlib.sha256(b"short").hexdigest(),
                 )
 
             download_dir = temp_path / "BandoriPetUpdate"
             self.assertFalse((download_dir / "BandoriPet-update.msi").exists())
             self.assertFalse((download_dir / "BandoriPet-update.msi.part").exists())
+
+    def test_download_rejects_sha256_mismatch_and_removes_partial_file(self):
+        response = io.BytesIO(b"update")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(app_update.tempfile, "gettempdir", return_value=temp_dir),
+                patch.object(app_update, "_open_url", return_value=response),
+                self.assertRaisesRegex(RuntimeError, "SHA-256 verification"),
+            ):
+                app_update._download_asset(
+                    "https://example.invalid/update.msi",
+                    "BandoriPet-update.msi",
+                    expected_size=6,
+                    expected_sha256="0" * 64,
+                )
+
+            download_dir = Path(temp_dir) / "BandoriPetUpdate"
+            self.assertFalse((download_dir / "BandoriPet-update.msi").exists())
+            self.assertFalse((download_dir / "BandoriPet-update.msi.part").exists())
+
+    def test_release_digest_enables_verified_update(self):
+        asset = _asset("BandoriPet-3.1.0-win64.zip")
+        asset["digest"] = "sha256:" + "a" * 64
+        release = {
+            "tag_name": "99.0.0",
+            "name": "99.0.0",
+            "assets": [asset],
+        }
+        with (
+            patch.object(app_update, "_fetch_latest_release", return_value=release),
+            patch.object(app_update.sys, "platform", "win32"),
+            patch.object(app_update.platform, "machine", return_value="amd64"),
+        ):
+            info = app_update._check_release_update("portable")
+
+        self.assertTrue(info.can_update)
+        self.assertEqual("a" * 64, info.asset_sha256)
+
+    def test_checksum_manifest_matches_selected_asset(self):
+        content = (
+            f"{'b' * 64}  BandoriPet-3.1.0-win64.zip\n"
+            f"{'c' * 64}  BandoriPet-3.1.0-macos.zip\n"
+        )
+        self.assertEqual(
+            "b" * 64,
+            app_update._parse_checksum_file(
+                content,
+                "BandoriPet-3.1.0-win64.zip",
+            ),
+        )
 
     def test_registry_display_icon_path_matches_install_directory(self):
         base = str(Path("C:/Program Files/BandoriPet").resolve()).lower()

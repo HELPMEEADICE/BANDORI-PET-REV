@@ -4,14 +4,11 @@ import re
 from PySide6.QtCore import QDate, QModelIndex, QRect, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QTextDocument
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QListView,
     QPushButton,
-    QSizePolicy,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QVBoxLayout,
@@ -640,9 +637,9 @@ class ChatHistoryPageMixin:
         edit = DatePicker(parent, format=DatePicker.YYYY_MM_DD)
         edit.setMonthFormatter(_I18nMonthFormatter())
         edit.setDateFormat(DatePicker.YYYY_MM_DD)
-        edit.setColumnWidth(0, 66)
-        edit.setColumnWidth(1, max(52, edit._monthColumnWidth()))
-        edit.setColumnWidth(2, 52)
+        edit.setColumnWidth(0, 56)
+        edit.setColumnWidth(1, 68)
+        edit.setColumnWidth(2, 56)
         edit.setFixedHeight(36)
         edit.setMinimumWidth(170)
         edit.setDate(QDate.currentDate())

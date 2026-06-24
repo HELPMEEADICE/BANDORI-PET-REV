@@ -5,7 +5,7 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, QObject, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -2080,11 +2080,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
         """)
 
         if self._group_splitter is not None:
-            self._group_splitter.setStyleSheet(f"""
-                QSplitter#GroupChatSplitter {{
+            self._group_splitter.setStyleSheet("""
+                QSplitter#GroupChatSplitter {
                     background: transparent;
                     border: none;
-                }}
+                }
             """)
 
         if self._group_sidebar is not None:
