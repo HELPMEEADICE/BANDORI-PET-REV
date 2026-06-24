@@ -24,6 +24,7 @@ EXPECTED_NAV_ORDER = [
     "tts",
     "asr",
     "pov",
+    "character_persona",
     "chat_integration",
     "data_management",
 ]

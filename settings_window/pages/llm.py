@@ -333,10 +333,15 @@ class LLMPageMixin:
         chat_history_limit_row = QHBoxLayout()
         chat_history_limit_row.setContentsMargins(0, 0, 0, 0)
         chat_history_limit_row.setSpacing(10)
-        chat_history_limit_label = BodyLabel(_tr(
+        chat_history_limit_label = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.llm_chat_history_message_limit",
             default="群聊 / 私聊完整对话窗上下文消息数",
-        ), page)
+        ), page))
+        chat_history_limit_label.setMinimumWidth(0)
+        chat_history_limit_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         self._llm_chat_history_message_limit = Slider(Qt.Orientation.Horizontal, page)
         self._llm_chat_history_message_limit.setRange(2, HISTORY_MESSAGE_LIMIT_SLIDER_MAX)
         self._llm_chat_history_message_limit.setSingleStep(1)
@@ -357,10 +362,15 @@ class LLMPageMixin:
         compact_history_limit_row = QHBoxLayout()
         compact_history_limit_row.setContentsMargins(0, 0, 0, 0)
         compact_history_limit_row.setSpacing(10)
-        compact_history_limit_label = BodyLabel(_tr(
+        compact_history_limit_label = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.llm_compact_history_message_limit",
             default="悬浮窗上下文消息数",
-        ), page)
+        ), page))
+        compact_history_limit_label.setMinimumWidth(0)
+        compact_history_limit_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         self._llm_compact_history_message_limit = Slider(Qt.Orientation.Horizontal, page)
         self._llm_compact_history_message_limit.setRange(2, HISTORY_MESSAGE_LIMIT_SLIDER_MAX)
         self._llm_compact_history_message_limit.setSingleStep(1)
@@ -465,8 +475,10 @@ class LLMPageMixin:
 
         layout.addStretch()
 
-        btn_row = QHBoxLayout()
+        btn_row = QGridLayout()
         btn_row.setSpacing(8)
+        btn_row.setColumnStretch(0, 1)
+        btn_row.setColumnStretch(1, 1)
 
         test_btn = PushButton(
             FluentIcon.WIFI,
@@ -475,7 +487,7 @@ class LLMPageMixin:
         )
         test_btn.setFixedHeight(36)
         test_btn.clicked.connect(self._test_connection)
-        btn_row.addWidget(test_btn)
+        btn_row.addWidget(test_btn, 0, 0)
 
         aux_test_btn = PushButton(
             FluentIcon.WIFI,
@@ -484,14 +496,12 @@ class LLMPageMixin:
         )
         aux_test_btn.setFixedHeight(36)
         aux_test_btn.clicked.connect(self._test_aux_connection)
-        btn_row.addWidget(aux_test_btn)
+        btn_row.addWidget(aux_test_btn, 0, 1)
 
         save_btn = PrimaryPushButton(FluentIcon.ACCEPT, _tr("SettingsWindow.llm_apply_current", default="应用当前配置"), page)
         save_btn.setFixedHeight(36)
         save_btn.clicked.connect(self._save_llm_config)
-        btn_row.addWidget(save_btn)
-
-        btn_row.addStretch()
+        btn_row.addWidget(save_btn, 1, 0, 1, 2)
         layout.addLayout(btn_row)
 
         self._load_llm_config()

@@ -88,15 +88,6 @@ class SingleModelManager:
         return costume_id
 
 
-def _model_entry(cfg: ConfigManager, character: str) -> dict:
-    models = cfg.get("models", [])
-    if isinstance(models, list):
-        for item in models:
-            if isinstance(item, dict) and item.get("character") == character:
-                return item
-    return {}
-
-
 def main():
     ensure_xwayland()
     os.chdir(BASE_DIR)

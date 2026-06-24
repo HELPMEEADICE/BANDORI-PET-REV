@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from reminder_core import isoformat, normalize_time, parse_iso_datetime
 

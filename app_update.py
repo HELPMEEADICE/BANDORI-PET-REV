@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import platform
@@ -51,6 +52,7 @@ class UpdateInfo:
     download_url: str = ""
     asset_name: str = ""
     asset_size: int = 0
+    asset_sha256: str = ""
     commits_behind: int = 0
     commits_ahead: int = 0
 
@@ -93,7 +95,12 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
     if info.action == "git_pull":
         return _apply_git_update(app_base_dir())
     if info.action == "portable_zip":
-        archive_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
+        archive_path = _download_asset(
+            info.download_url,
+            info.asset_name,
+            info.asset_size,
+            info.asset_sha256,
+        )
         _launch_portable_zip_updater(archive_path)
         return UpdateResult(
             True,
@@ -102,7 +109,12 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
             exits_app=True,
         )
     if info.action == "install_msi":
-        installer_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
+        installer_path = _download_asset(
+            info.download_url,
+            info.asset_name,
+            info.asset_size,
+            info.asset_sha256,
+        )
         _launch_msi_updater(installer_path)
         return UpdateResult(
             True,
@@ -111,7 +123,12 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
             exits_app=True,
         )
     if info.action == "install_inno":
-        installer_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
+        installer_path = _download_asset(
+            info.download_url,
+            info.asset_name,
+            info.asset_size,
+            info.asset_sha256,
+        )
         _launch_inno_updater(installer_path)
         return UpdateResult(
             True,
@@ -120,7 +137,12 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
             exits_app=True,
         )
     if info.action == "install_macos":
-        package_path = _download_asset(info.download_url, info.asset_name, info.asset_size)
+        package_path = _download_asset(
+            info.download_url,
+            info.asset_name,
+            info.asset_size,
+            info.asset_sha256,
+        )
         _launch_macos_updater(package_path)
         return UpdateResult(
             True,
@@ -355,7 +377,19 @@ def _check_release_update(channel: str) -> UpdateInfo:
     info.asset_size = int(asset.get("size") or 0)
     info.download_url = str(asset.get("browser_download_url") or "")
     info.action = _asset_action(info.asset_name, channel)
-    info.can_update = bool(info.download_url and info.action)
+    info.asset_sha256 = _release_asset_sha256(asset, release.get("assets", []))
+    info.can_update = bool(
+        info.download_url
+        and info.action
+        and info.asset_sha256
+    )
+    if info.download_url and info.action and not info.asset_sha256:
+        info.detail = (
+            (info.detail + "\n\n") if info.detail else ""
+        ) + (
+            "Automatic update is disabled because this release does not provide "
+            "a SHA-256 digest or checksum file for the selected asset."
+        )
     return info
 
 
@@ -451,10 +485,6 @@ def _platform_token() -> str:
     if sys.platform.startswith("linux"):
         return "linux"
     return sys.platform.lower()
-
-
-def _arch_token() -> str:
-    return _current_arch()
 
 
 def _current_arch() -> str:
@@ -560,9 +590,89 @@ def _open_url(req: urllib.request.Request, timeout: int, purpose: str):
     )
 
 
-def _download_asset(url: str, asset_name: str, expected_size: int = 0) -> Path:
+def _normalize_sha256(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("sha256:"):
+        text = text.split(":", 1)[1].strip()
+    return text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
+
+
+def _release_asset_sha256(asset: dict, assets: list[dict]) -> str:
+    digest = _normalize_sha256(asset.get("digest", ""))
+    if digest:
+        return digest
+
+    asset_name = str(asset.get("name") or "")
+    checksum_asset = _select_checksum_asset(asset_name, assets)
+    if checksum_asset is None:
+        return ""
+    url = str(checksum_asset.get("browser_download_url") or "")
+    if not url:
+        return ""
+    req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+    try:
+        with _open_url(req, timeout=20, purpose="downloading the update checksum") as resp:
+            content = resp.read(1024 * 1024 + 1)
+    except (RuntimeError, urllib.error.URLError, urllib.error.HTTPError, OSError):
+        return ""
+    if len(content) > 1024 * 1024:
+        return ""
+    return _parse_checksum_file(content.decode("utf-8", errors="replace"), asset_name)
+
+
+def _select_checksum_asset(asset_name: str, assets: list[dict]) -> dict | None:
+    exact_names = {
+        f"{asset_name}.sha256".lower(),
+        f"{asset_name}.sha256sum".lower(),
+    }
+    manifest_names = {
+        "sha256sums",
+        "sha256sums.txt",
+        "checksums.txt",
+        "checksum.txt",
+    }
+    fallback = None
+    for candidate in assets:
+        name = str(candidate.get("name") or "").strip().lower()
+        if not candidate.get("browser_download_url"):
+            continue
+        if name in exact_names:
+            return candidate
+        if name in manifest_names:
+            fallback = candidate
+    return fallback
+
+
+def _parse_checksum_file(content: str, asset_name: str) -> str:
+    target_name = Path(asset_name).name
+    single_digest = ""
+    for raw_line in str(content or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = re.match(r"^([0-9a-fA-F]{64})(?:\s+[*]?(.+?))?\s*$", line)
+        if not match:
+            continue
+        digest = match.group(1).lower()
+        listed_name = (match.group(2) or "").strip()
+        if listed_name and Path(listed_name).name == target_name:
+            return digest
+        if not listed_name:
+            single_digest = digest
+    return single_digest
+
+
+def _download_asset(
+    url: str,
+    asset_name: str,
+    expected_size: int = 0,
+    expected_sha256: str = "",
+) -> Path:
     if not url:
         raise RuntimeError("Release asset URL is empty.")
+    expected_digest = _normalize_sha256(expected_sha256)
+    if not expected_digest:
+        raise RuntimeError("Release asset SHA-256 checksum is missing or invalid.")
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", asset_name or "BandoriPet-update")
     download_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -574,12 +684,21 @@ def _download_asset(url: str, asset_name: str, expected_size: int = 0) -> Path:
             _open_url(req, timeout=30, purpose="downloading the update") as resp,
             open(partial, "wb") as f,
         ):
-            shutil.copyfileobj(resp, f, length=1024 * 1024)
+            digest = hashlib.sha256()
+            while chunk := resp.read(1024 * 1024):
+                f.write(chunk)
+                digest.update(chunk)
         actual_size = partial.stat().st_size
         if expected_size > 0 and actual_size != expected_size:
             raise RuntimeError(
                 f"The update download is incomplete: expected {expected_size} bytes, "
                 f"received {actual_size} bytes."
+            )
+        actual_digest = digest.hexdigest()
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                "The update download failed SHA-256 verification: "
+                f"expected {expected_digest}, received {actual_digest}."
             )
         os.replace(partial, target)
     except Exception:
