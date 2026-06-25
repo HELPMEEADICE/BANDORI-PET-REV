@@ -6,7 +6,7 @@ from screen_capture import capture_screenshot_data_url
 from vision_fallback import analyze_images_with_aux_model
 
 
-SCREEN_AWARENESS_MIN_INTERVAL_MINUTES = 1
+SCREEN_AWARENESS_MIN_INTERVAL_MINUTES = 5
 SCREEN_AWARENESS_MAX_INTERVAL_MINUTES = 120
 SCREEN_AWARENESS_MODEL_MODE_MAIN = "main"
 SCREEN_AWARENESS_MODEL_MODE_AUX = "aux"

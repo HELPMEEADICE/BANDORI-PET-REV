@@ -76,9 +76,12 @@ class ProactiveCarePolicyTest(unittest.TestCase):
         self.assertFalse(decision["allow"])
         self.assertEqual("cooldown", decision["reason"])
 
-    def test_screen_awareness_can_ignore_policy(self):
+    def test_legacy_screen_awareness_bypass_is_ignored(self):
         policy = normalize_proactive_care_policy({
             "screen_awareness_respect_policy": False,
+            "quiet_hours_enabled": True,
+            "quiet_start": "00:00",
+            "quiet_end": "23:59",
         })
 
         decision = evaluate_proactive_care(
@@ -88,7 +91,9 @@ class ProactiveCarePolicyTest(unittest.TestCase):
             now=datetime(2026, 6, 9, 12, 0, 0),
         )
 
-        self.assertTrue(decision["allow"])
+        self.assertFalse(decision["allow"])
+        self.assertEqual("quiet_hours", decision["reason"])
+        self.assertNotIn("screen_awareness_respect_policy", policy)
 
 
 if __name__ == "__main__":

@@ -88,7 +88,6 @@ def default_proactive_care_policy() -> dict:
         "quiet_hours_enabled": False,
         "quiet_start": "23:30",
         "quiet_end": "08:00",
-        "screen_awareness_respect_policy": True,
         "last_care_at": "",
         "last_screen_awareness_at": "",
         "last_skip_reason": "",
@@ -160,14 +159,10 @@ def normalize_proactive_care_policy(value) -> dict:
 
     return {
         "enabled": _bool_value(raw.get("enabled", defaults["enabled"]), defaults["enabled"]),
-        "global_cooldown_minutes": _int_value(raw.get("global_cooldown_minutes", 30), 30, 5, 240),
+        "global_cooldown_minutes": _int_value(raw.get("global_cooldown_minutes", 30), 30, 5, 120),
         "quiet_hours_enabled": _bool_value(raw.get("quiet_hours_enabled", False), False),
         "quiet_start": normalize_time(raw.get("quiet_start", defaults["quiet_start"])) or defaults["quiet_start"],
         "quiet_end": normalize_time(raw.get("quiet_end", defaults["quiet_end"])) or defaults["quiet_end"],
-        "screen_awareness_respect_policy": _bool_value(
-            raw.get("screen_awareness_respect_policy", True),
-            True,
-        ),
         "last_care_at": str(raw.get("last_care_at", "") or ""),
         "last_screen_awareness_at": str(raw.get("last_screen_awareness_at", "") or ""),
         "last_skip_reason": str(raw.get("last_skip_reason", "") or "")[:160],
@@ -243,9 +238,6 @@ def evaluate_proactive_care(
     proactive_kind = str(proactive_kind or "").strip()
     if bypass or not policy.get("enabled"):
         return _result(True, tone_hint="自然、简短，不要解释触发机制。")
-    if kind == "screen_awareness" and not policy.get("screen_awareness_respect_policy", True):
-        return _result(True, tone_hint="根据屏幕上下文判断是否值得开口。")
-
     state = _state_from_desktop(desktop_state)
     rule = policy["state_rules"].get(state) or policy["state_rules"]["unknown"]
     mode = str(rule.get("mode", "normal") or "normal")

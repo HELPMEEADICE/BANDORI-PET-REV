@@ -180,6 +180,29 @@ class ScreenAwarenessTest(unittest.TestCase):
 
         self.assertEqual("system", reloaded.get("screen_awareness_display_mode"))
 
+    def test_care_policy_interval_is_the_shared_canonical_value(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({
+                "screen_awareness_interval_minutes": 30,
+                "proactive_care_policy": {"global_cooldown_minutes": 18},
+            }), encoding="utf-8")
+            config = ConfigManager(path)
+
+        self.assertEqual(18, config.get("screen_awareness_interval_minutes"))
+        self.assertEqual(18, config.get("proactive_care_policy")["global_cooldown_minutes"])
+
+    def test_legacy_screen_interval_migrates_to_shared_interval(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({
+                "screen_awareness_interval_minutes": 45,
+            }), encoding="utf-8")
+            config = ConfigManager(path)
+
+        self.assertEqual(45, config.get("screen_awareness_interval_minutes"))
+        self.assertEqual(45, config.get("proactive_care_policy")["global_cooldown_minutes"])
+
     def test_legacy_desktop_state_setting_migrates_to_screenshot_awareness(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.json"

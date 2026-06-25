@@ -33,6 +33,8 @@ RECENT_SETTINGS_KEYS = {
     "SettingsWindow.screen_awareness_test_disabled_content",
     "SettingsWindow.screen_awareness_test_sent_title",
     "SettingsWindow.screen_awareness_test_sent_content",
+    "SettingsWindow.care_policy_saved_title",
+    "SettingsWindow.care_policy_saved_content",
 }
 
 DATE_PICKER_MONTH_KEYS = [

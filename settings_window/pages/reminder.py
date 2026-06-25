@@ -217,9 +217,6 @@ class ReminderPageMixin:
         self._proactive_save_timer.setSingleShot(True)
         self._proactive_save_timer.timeout.connect(self._save_proactive_controls_now)
 
-        care_policy_panel = self._build_care_policy_panel(page)
-        layout.addWidget(care_policy_panel)
-
         layout.addStretch()
         self._load_reminder_config()
         self._proactive_enabled_switch.checkedChanged.connect(self._on_proactive_global_enabled_changed)
@@ -230,10 +227,10 @@ class ReminderPageMixin:
 
     def _build_care_policy_panel(self, parent: QWidget) -> QWidget:
         panel = QWidget(parent)
-        panel.setObjectName("reminderPanel")
+        panel.setObjectName("carePolicySection")
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setContentsMargins(0, 14, 0, 0)
         layout.setSpacing(10)
 
         header = QHBoxLayout()
@@ -245,10 +242,10 @@ class ReminderPageMixin:
         hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.care_policy_hint",
             default="这里是桌宠「主动开口」的总闸门：根据你此刻在做什么（打游戏、写代码、看视频……）来决定要不要打扰你。"
-                    "它统一管两类主动消息——「屏幕感知」搭话（功能本身在「屏幕感知与工具控制」页开启）和下方「主动陪伴」的生活提醒。"
+                    "它与上方屏幕感知设置共同决定是否主动搭话，也统一管理「主动陪伴」的生活提醒。"
                     "判断依据是你当前在做的事，而不是固定时间表。",
         ), panel))
-        hint.setObjectName("reminderHint")
+        hint.setObjectName("carePolicyHint")
         title_col.addWidget(hint)
         header.addLayout(title_col, 1)
         self._care_policy_enabled = SwitchButton(panel)
@@ -259,60 +256,30 @@ class ReminderPageMixin:
         form = QGridLayout()
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(8)
-        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_cooldown", default="全局冷却"), panel), 0, 0)
-        self._care_policy_cooldown = SpinBox(panel)
-        self._care_policy_cooldown.setRange(5, 240)
-        self._care_policy_cooldown.setValue(30)
-        self._care_policy_cooldown.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
-        self._care_policy_cooldown.setFixedHeight(34)
-        self._care_policy_cooldown.valueChanged.connect(lambda _value: self._schedule_proactive_save())
-        form.addWidget(self._care_policy_cooldown, 0, 1)
-        cooldown_hint = _wrap_label(BodyLabel(_tr(
-            "SettingsWindow.care_policy_cooldown_hint",
-            default="两次主动开口之间至少间隔这么久；下方各状态的「关怀强度」会在此基础上按倍率放大或缩短。",
-        ), panel))
-        cooldown_hint.setObjectName("reminderHint")
-        form.addWidget(cooldown_hint, 0, 2, 1, 2)
-
-        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_quiet_hours", default="勿扰时段"), panel), 1, 0)
+        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_quiet_hours", default="勿扰时段"), panel), 0, 0)
         self._care_policy_quiet_enabled = SwitchButton(panel)
         self._care_policy_quiet_enabled.checkedChanged.connect(lambda _checked: self._schedule_proactive_save())
-        form.addWidget(self._care_policy_quiet_enabled, 1, 1)
+        form.addWidget(self._care_policy_quiet_enabled, 0, 1)
         self._care_policy_quiet_start = TimeEdit(panel)
         self._care_policy_quiet_start.setDisplayFormat("HH:mm")
         self._care_policy_quiet_start.setFixedHeight(34)
         self._care_policy_quiet_start.timeChanged.connect(lambda _value: self._schedule_proactive_save())
-        form.addWidget(self._care_policy_quiet_start, 1, 2)
+        form.addWidget(self._care_policy_quiet_start, 0, 2)
         self._care_policy_quiet_end = TimeEdit(panel)
         self._care_policy_quiet_end.setDisplayFormat("HH:mm")
         self._care_policy_quiet_end.setFixedHeight(34)
         self._care_policy_quiet_end.timeChanged.connect(lambda _value: self._schedule_proactive_save())
-        form.addWidget(self._care_policy_quiet_end, 1, 3)
-
-        form.addWidget(BodyLabel(_tr("SettingsWindow.care_policy_screen_respect", default="屏幕感知服从本闸门"), panel), 2, 0)
-        self._care_policy_screen_respect = SwitchButton(panel)
-        self._care_policy_screen_respect.checkedChanged.connect(lambda _checked: self._schedule_proactive_save())
-        form.addWidget(self._care_policy_screen_respect, 2, 1)
-        screen_respect_hint = _wrap_label(BodyLabel(_tr(
-            "SettingsWindow.care_policy_screen_respect_hint",
-            default="开启后「屏幕感知」搭话也走这套规则；关闭则屏幕感知完全自行判断，不受这里限制。",
-        ), panel))
-        screen_respect_hint.setObjectName("reminderHint")
-        form.addWidget(screen_respect_hint, 3, 0, 1, 4)
-        save_btn = PushButton(FluentIcon.SAVE, _tr("SettingsWindow.llm_save"), panel)
-        save_btn.setFixedHeight(34)
-        save_btn.clicked.connect(lambda: self._save_reminder_config(show_info=True, emit_update=True))
-        form.addWidget(save_btn, 2, 3)
+        form.addWidget(self._care_policy_quiet_end, 0, 3)
         layout.addLayout(form)
 
         columns_hint = _wrap_label(BodyLabel(_tr(
             "SettingsWindow.care_policy_columns_hint",
             default="按你当下在做的事分别设置（两个维度互相独立）：\n"
                     "· 语气模式 = 开口时的口吻（轻声=更克制不打扰、增强关怀=更主动温暖、静默=只在重要提醒时才出声）；\n"
-                    "· 频率倍率 = 在「全局冷却」基础上调整开口的疏密（倍率越大间隔越长、越少打扰，1x 即不变）；\n"
+                    "· 频率倍率 = 在上方「主动开口间隔」基础上调整疏密（倍率越大间隔越长、越少打扰，1x 即不变）；\n"
                     "· 屏幕搭话 / 生活提醒 = 两个开关，分别控制这两类主动消息在该状态下是否允许出现。",
         ), panel))
-        columns_hint.setObjectName("reminderHint")
+        columns_hint.setObjectName("carePolicyHint")
         layout.addWidget(columns_hint)
 
         grid = QGridLayout()
@@ -332,7 +299,7 @@ class ReminderPageMixin:
         )
         for column, text in enumerate(headers):
             label = BodyLabel(text, panel)
-            label.setObjectName("reminderHint")
+            label.setObjectName("carePolicyHint")
             grid.addWidget(label, 0, column)
 
         self._care_policy_rule_widgets = {}
@@ -367,6 +334,7 @@ class ReminderPageMixin:
                 "allow_lifestyle_reminders": allow_lifestyle,
             }
         layout.addLayout(grid)
+        self._load_care_policy_controls()
         return panel
 
     def _care_policy_state_label(self, state: str) -> str:
@@ -504,6 +472,8 @@ class ReminderPageMixin:
             policy = normalize_proactive_care_policy(data.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}))
             self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, policy)
             self._load_care_policy_controls()
+            if hasattr(self, "_screen_awareness_interval"):
+                self._load_screen_awareness_controls()
         if REMINDER_DISPLAY_MODE_KEY in data:
             mode = normalize_display_mode(data.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING))
             self._cfg.set(REMINDER_DISPLAY_MODE_KEY, mode)
@@ -936,11 +906,9 @@ class ReminderPageMixin:
         self._loading_proactive_controls = True
         try:
             self._care_policy_enabled.setChecked(bool(policy.get("enabled", True)))
-            self._care_policy_cooldown.setValue(int(policy.get("global_cooldown_minutes", 30) or 30))
             self._care_policy_quiet_enabled.setChecked(bool(policy.get("quiet_hours_enabled", False)))
             self._care_policy_quiet_start.setTime(QTime.fromString(str(policy.get("quiet_start") or "23:30"), "HH:mm"))
             self._care_policy_quiet_end.setTime(QTime.fromString(str(policy.get("quiet_end") or "08:00"), "HH:mm"))
-            self._care_policy_screen_respect.setChecked(bool(policy.get("screen_awareness_respect_policy", True)))
             rules = policy.get("state_rules", {}) if isinstance(policy.get("state_rules"), dict) else {}
             for state, widgets in getattr(self, "_care_policy_rule_widgets", {}).items():
                 rule = rules.get(state, {}) if isinstance(rules.get(state, {}), dict) else {}
@@ -955,18 +923,23 @@ class ReminderPageMixin:
         if not self._cfg or not hasattr(self, "_care_policy_enabled"):
             return
         current = normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}))
+        shared_interval = (
+            int(self._screen_awareness_interval.value())
+            if hasattr(self, "_screen_awareness_interval")
+            else int(current.get("global_cooldown_minutes", 30) or 30)
+        )
         policy = {
             "enabled": bool(self._care_policy_enabled.isChecked()),
-            "global_cooldown_minutes": int(self._care_policy_cooldown.value()),
+            "global_cooldown_minutes": shared_interval,
             "quiet_hours_enabled": bool(self._care_policy_quiet_enabled.isChecked()),
             "quiet_start": self._care_policy_quiet_start.time().toString("HH:mm"),
             "quiet_end": self._care_policy_quiet_end.time().toString("HH:mm"),
-            "screen_awareness_respect_policy": bool(self._care_policy_screen_respect.isChecked()),
             "last_care_at": current.get("last_care_at", ""),
             "last_screen_awareness_at": current.get("last_screen_awareness_at", ""),
             "last_skip_reason": current.get("last_skip_reason", ""),
             "state_rules": {},
         }
+        self._cfg.set("screen_awareness_interval_minutes", shared_interval)
         for state, widgets in getattr(self, "_care_policy_rule_widgets", {}).items():
             policy["state_rules"][state] = {
                 "mode": widgets["mode"].itemData(widgets["mode"].currentIndex()) or "normal",
@@ -975,6 +948,41 @@ class ReminderPageMixin:
                 "allow_lifestyle_reminders": bool(widgets["allow_lifestyle_reminders"].isChecked()),
             }
         self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, normalize_proactive_care_policy(policy))
+
+    def _save_care_policy_config(self, show_info: bool = True, emit_update: bool = True) -> bool:
+        if not self._cfg or not hasattr(self, "_care_policy_enabled"):
+            return False
+        save_timer = getattr(self, "_proactive_save_timer", None)
+        if save_timer is not None and save_timer.isActive():
+            save_timer.stop()
+        self._sync_care_policy_config_from_ui()
+        try:
+            if not self._config_save_deferred():
+                self._cfg.save()
+            if emit_update:
+                self.settings_changed.emit({
+                    PROACTIVE_CARE_POLICY_CONFIG_KEY: normalize_proactive_care_policy(
+                        self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})
+                    ),
+                })
+            if show_info:
+                InfoBar.success(
+                    _tr("SettingsWindow.care_policy_saved_title", default="主动关怀策略已保存"),
+                    _tr("SettingsWindow.care_policy_saved_content", default="屏幕搭话和生活提醒规则已更新。"),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.reminder_failed_title", default="提醒设置保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _empty_reminder_label(self, text: str, parent: QWidget) -> QLabel:
         label = BodyLabel(text, parent)

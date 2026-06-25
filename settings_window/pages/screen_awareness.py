@@ -69,14 +69,14 @@ class ScreenAwarenessPageMixin:
             screen_form.addWidget(field, row, column)
 
         self._screen_awareness_interval = SpinBox(screen_panel)
-        self._screen_awareness_interval.setRange(1, 120)
+        self._screen_awareness_interval.setRange(5, 120)
         self._screen_awareness_interval.setValue(30)
         self._screen_awareness_interval.setSuffix(_tr("SettingsWindow.proactive_minutes_suffix", default=" 分钟"))
         self._screen_awareness_interval.setFixedHeight(34)
         add_field(
             0,
             0,
-            _tr("SettingsWindow.screen_awareness_interval", default="触发频率"),
+            _tr("SettingsWindow.screen_awareness_interval", default="主动开口间隔"),
             self._screen_awareness_interval,
         )
 
@@ -167,6 +167,7 @@ class ScreenAwarenessPageMixin:
         action_layout.addWidget(save_screen_btn, 1)
         screen_form.addWidget(action_field, 2, 1)
         screen_layout.addLayout(screen_form)
+        screen_layout.addWidget(self._build_care_policy_panel(screen_panel))
 
         self._load_screen_awareness_controls()
         return screen_panel
@@ -179,6 +180,18 @@ class ScreenAwarenessPageMixin:
         for key in SCREEN_AWARENESS_CONFIG_KEYS:
             if key in data:
                 self._cfg.set(key, data.get(key))
+        if (
+            "screen_awareness_interval_minutes" in data
+            and PROACTIVE_CARE_POLICY_CONFIG_KEY not in data
+        ):
+            policy = normalize_proactive_care_policy(
+                self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})
+            )
+            policy["global_cooldown_minutes"] = max(
+                5,
+                min(120, int(data.get("screen_awareness_interval_minutes", 30) or 30)),
+            )
+            self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, policy)
         self._load_screen_awareness_controls()
 
     def _fill_screen_awareness_character_combo(self, mode: str = "random_visible", selected: str = ""):
@@ -231,7 +244,12 @@ class ScreenAwarenessPageMixin:
         if not self._screen_awareness_ready():
             return
         self._screen_awareness_enabled.setChecked(bool(self._cfg.get("screen_awareness_enabled", False)))
-        self._screen_awareness_interval.setValue(max(1, min(120, int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30))))
+        policy = normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}))
+        shared_interval = int(policy.get(
+            "global_cooldown_minutes",
+            self._cfg.get("screen_awareness_interval_minutes", 30),
+        ) or 30)
+        self._screen_awareness_interval.setValue(max(5, min(120, shared_interval)))
         self._fill_screen_awareness_character_combo(
             str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
             self._cfg.get("screen_awareness_character", ""),
@@ -254,7 +272,8 @@ class ScreenAwarenessPageMixin:
         if not self._screen_awareness_ready():
             return
         self._cfg.set("screen_awareness_enabled", bool(self._screen_awareness_enabled.isChecked()))
-        self._cfg.set("screen_awareness_interval_minutes", int(self._screen_awareness_interval.value()))
+        shared_interval = int(self._screen_awareness_interval.value())
+        self._cfg.set("screen_awareness_interval_minutes", shared_interval)
         mode, character = self._selected_screen_awareness_character()
         self._cfg.set("screen_awareness_character_mode", mode)
         self._cfg.set("screen_awareness_character", character)
@@ -272,6 +291,8 @@ class ScreenAwarenessPageMixin:
                 "screen_awareness_include_window_title",
                 bool(self._screen_awareness_include_window_title.isChecked()),
             )
+        if hasattr(self, "_care_policy_enabled"):
+            self._sync_care_policy_config_from_ui()
 
     def _screen_awareness_settings_data(self) -> dict:
         if self._cfg:
@@ -287,6 +308,9 @@ class ScreenAwarenessPageMixin:
                 SCREEN_AWARENESS_DISPLAY_MODE_KEY: normalize_display_mode(
                     self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
                 ),
+                PROACTIVE_CARE_POLICY_CONFIG_KEY: normalize_proactive_care_policy(
+                    self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})
+                ),
             }
         return {
             "screen_awareness_enabled": False,
@@ -298,6 +322,7 @@ class ScreenAwarenessPageMixin:
             "screen_awareness_include_process_name": True,
             "screen_awareness_include_window_title": False,
             SCREEN_AWARENESS_DISPLAY_MODE_KEY: DISPLAY_MODE_FLOATING,
+            PROACTIVE_CARE_POLICY_CONFIG_KEY: normalize_proactive_care_policy({}),
         }
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):

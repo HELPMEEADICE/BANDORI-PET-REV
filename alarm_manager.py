@@ -17,7 +17,11 @@ from desktop_state import current_desktop_state
 from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
-from proactive_care_policy import evaluate_proactive_care, mark_proactive_care_result
+from proactive_care_policy import (
+    evaluate_proactive_care,
+    mark_proactive_care_result,
+    normalize_proactive_care_policy,
+)
 from relationship_memory import build_relationship_context, user_key_from_config
 from reminder_core import (
     ALARM_CONFIG_KEY,
@@ -217,7 +221,12 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         return bool(self._cfg and self._cfg.get("screen_awareness_enabled", False))
 
     def _screen_awareness_interval(self) -> int:
-        return clamp_screen_awareness_interval(self._cfg.get("screen_awareness_interval_minutes", 30) if self._cfg else 30)
+        if not self._cfg:
+            return 30
+        policy = normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}))
+        return clamp_screen_awareness_interval(
+            policy.get("global_cooldown_minutes", self._cfg.get("screen_awareness_interval_minutes", 30))
+        )
 
     def _schedule_next_screen_awareness(self, now=None) -> bool:
         if not self._screen_awareness_enabled():

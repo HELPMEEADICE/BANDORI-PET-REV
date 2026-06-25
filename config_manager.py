@@ -639,9 +639,17 @@ class ConfigManager:
         self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
         self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
         self._data["proactive_companion"] = normalize_proactive_companion(self._data.get("proactive_companion", {}))
-        self._data["proactive_care_policy"] = normalize_proactive_care_policy(
-            self._data.get("proactive_care_policy", {})
+        raw_care_policy = self._data.get("proactive_care_policy", {})
+        has_shared_interval = isinstance(raw_care_policy, dict) and "global_cooldown_minutes" in raw_care_policy
+        care_policy = normalize_proactive_care_policy(raw_care_policy)
+        shared_interval = clamp_screen_awareness_interval(
+            care_policy.get("global_cooldown_minutes", 30)
+            if has_shared_interval
+            else self._data.get("screen_awareness_interval_minutes", 30)
         )
+        care_policy["global_cooldown_minutes"] = shared_interval
+        self._data["screen_awareness_interval_minutes"] = shared_interval
+        self._data["proactive_care_policy"] = care_policy
         self._normalize_click_motion_profiles()
         self._data["reminder_display_mode"] = normalize_display_mode(
             self._data.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])

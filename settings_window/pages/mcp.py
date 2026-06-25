@@ -175,10 +175,13 @@ class MCPPageMixin:
                 border-radius: 12px;
             }}
             QWidget#screenAwarenessPanel BodyLabel,
-            QWidget#screenAwarenessPanel StrongBodyLabel {{
+            QWidget#screenAwarenessPanel StrongBodyLabel,
+            QWidget#carePolicySection BodyLabel,
+            QWidget#carePolicySection StrongBodyLabel {{
                 color: {text};
             }}
-            BodyLabel#screenAwarenessHint {{
+            BodyLabel#screenAwarenessHint,
+            BodyLabel#carePolicyHint {{
                 color: {muted};
                 font-size: 13px;
             }}
@@ -401,6 +404,7 @@ class MCPPageMixin:
         self._cfg.set("computer_use_allow_keyboard", self._computer_use_allow_keyboard.isChecked())
         self._cfg.set("computer_use_allow_clipboard", self._computer_use_allow_clipboard.isChecked())
         self._cfg.set("computer_use_allow_wait", self._computer_use_allow_wait.isChecked())
+        self._sync_care_policy_config_from_ui()
         if not self._config_save_deferred():
             self._cfg.save()
         if show_info:
