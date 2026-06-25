@@ -20,7 +20,7 @@ def analyze_images_with_aux_model(
     timeout: int = 120,
 ) -> str:
     image_data_urls = [url for url in image_data_urls if url]
-    if not api_url or not api_key or not model_id or not image_data_urls:
+    if not api_url or not model_id or not image_data_urls:
         return ""
 
     prompt = (
@@ -42,10 +42,13 @@ def analyze_images_with_aux_model(
     apply_thinking_options(body, enable_thinking)
     request_url = chat_completions_api_url(api_url)
     sanitize_chat_body_for_url(body, request_url)
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         request_url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:

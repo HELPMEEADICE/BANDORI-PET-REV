@@ -25,6 +25,7 @@ from screen_awareness import (
     clamp_screen_awareness_screenshot_width,
     normalize_screen_awareness_model_mode,
 )
+from outfit_description import OUTFIT_DESCRIPTIONS_KEY, normalize_outfit_descriptions
 
 
 CONFIG_FILE_LOCK_TIMEOUT_SECONDS = 10.0
@@ -232,6 +233,7 @@ BUILTIN_LLM_API_PROFILES = [
 DEFAULTS = {
     "character": "",
     "costume": "",
+    OUTFIT_DESCRIPTIONS_KEY: {},
     "models": [],
     "model_action_settings": {},
     "language": "",
@@ -631,6 +633,9 @@ class ConfigManager:
         self._normalize_mcp_servers()
         self._normalize_computer_use_settings()
         self._normalize_screen_awareness_settings()
+        self._data[OUTFIT_DESCRIPTIONS_KEY] = normalize_outfit_descriptions(
+            self._data.get(OUTFIT_DESCRIPTIONS_KEY, {})
+        )
         self._data["alarms"] = normalize_alarms(self._data.get("alarms", []))
         self._data["pomodoros"] = normalize_pomodoros(self._data.get("pomodoros", []))
         self._data["proactive_companion"] = normalize_proactive_companion(self._data.get("proactive_companion", {}))

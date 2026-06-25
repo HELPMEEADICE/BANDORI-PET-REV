@@ -23,6 +23,15 @@ from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import ModelManager
+from outfit_description import (
+    OUTFIT_DESCRIPTIONS_KEY,
+    OutfitDescriptionWorker,
+    image_to_data_url,
+    make_outfit_description_entry,
+    model_fingerprint,
+    normalize_outfit_descriptions,
+    outfit_description_key,
+)
 from process_utils import app_base_dir, interaction_trace, ipc_server_name, process_program_and_args
 from process_utils import clamp_float as _clamp_float, clamp_int as _clamp_int
 from ipc_bus import (
@@ -340,6 +349,8 @@ class PetWindow(QWidget):
         self._tray_actions = []
         self._enable_tray = enable_tray
         self._cfg = config_manager
+        self._outfit_description_worker = None
+        self._outfit_description_token = 0
         self._restore_layer_order_from_config()
         self._layer_index = self._compute_layer_index()
         if self._cfg:
@@ -1725,6 +1736,133 @@ class PetWindow(QWidget):
         QTimer.singleShot(120, lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=False))
         self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
         QTimer.singleShot(0, lambda: self._sync_compact_ai_window(allow_create=True))
+        self._outfit_description_token += 1
+        QTimer.singleShot(
+            1200,
+            lambda token=self._outfit_description_token: self._start_outfit_description(token, 1),
+        )
+
+    def _start_outfit_description(self, token: int, attempt: int = 1):
+        if token != self._outfit_description_token or not self._cfg or self._pixel_mode:
+            return
+        if self._outfit_description_worker is not None:
+            return
+        character = str(self._current_char or "").strip()
+        costume = str(self._current_costume or "").strip()
+        model_path = str(self._live2d_widget.model_path or "").strip()
+        if not character or not costume or not model_path:
+            return
+        fingerprint = model_fingerprint(model_path)
+        self._cfg.load()
+        descriptions = normalize_outfit_descriptions(
+            self._cfg.get(OUTFIT_DESCRIPTIONS_KEY, {})
+        )
+        cached = descriptions.get(outfit_description_key(character, costume), {})
+        if cached.get("description") and cached.get("model_fingerprint") == fingerprint:
+            return
+        try:
+            image_data_url = image_to_data_url(self._live2d_widget.grabFramebuffer())
+        except Exception as exc:
+            print(f"Outfit description capture failed (attempt {attempt}): {exc}", file=sys.stderr)
+            image_data_url = ""
+        if not image_data_url:
+            self._retry_outfit_description(token, attempt, "empty Live2D framebuffer")
+            return
+        costume_name = self._model_manager.get_costume_display_name(character, costume)
+        character_name = self._model_manager.get_display_name(character)
+        worker = OutfitDescriptionWorker(
+            dict(getattr(self._cfg, "_data", {}) or {}),
+            image_data_url,
+            character_name,
+            costume,
+            costume_name,
+            self,
+        )
+        self._outfit_description_worker = worker
+        worker.finished.connect(
+            lambda description, source, current=worker, expected_token=token,
+            expected_character=character, expected_costume=costume,
+            expected_costume_name=costume_name, expected_fingerprint=fingerprint:
+                self._on_outfit_description_finished(
+                    current,
+                    expected_token,
+                    expected_character,
+                    expected_costume,
+                    expected_costume_name,
+                    expected_fingerprint,
+                    description,
+                    source,
+                )
+        )
+        worker.error.connect(
+            lambda message, current=worker, expected_token=token, current_attempt=attempt:
+                self._on_outfit_description_error(
+                    current,
+                    expected_token,
+                    current_attempt,
+                    message,
+                )
+        )
+        worker.start()
+
+    def _on_outfit_description_finished(
+        self,
+        worker,
+        token: int,
+        character: str,
+        costume: str,
+        costume_name: str,
+        fingerprint: str,
+        description: str,
+        source: str,
+    ):
+        self._clear_outfit_description_worker(worker)
+        if (
+            token != self._outfit_description_token
+            or character != self._current_char
+            or costume != self._current_costume
+            or not self._cfg
+        ):
+            return
+        self._cfg.load()
+        descriptions = normalize_outfit_descriptions(
+            self._cfg.get(OUTFIT_DESCRIPTIONS_KEY, {})
+        )
+        entry = make_outfit_description_entry(
+            character,
+            costume,
+            costume_name,
+            description,
+            fingerprint,
+            source,
+        )
+        descriptions[outfit_description_key(character, costume)] = entry
+        self._cfg.set(OUTFIT_DESCRIPTIONS_KEY, descriptions)
+        payload = json.dumps(entry, ensure_ascii=False)
+        if not self._send_ipc(f"OUTFIT_DESCRIPTION\t{payload}"):
+            self._cfg.save()
+
+    def _on_outfit_description_error(self, worker, token: int, attempt: int, message: str):
+        self._clear_outfit_description_worker(worker)
+        print(
+            f"Outfit description generation failed (attempt {attempt}): {message}",
+            file=sys.stderr,
+        )
+        self._retry_outfit_description(token, attempt, message)
+
+    def _retry_outfit_description(self, token: int, attempt: int, _reason: str):
+        if token != self._outfit_description_token or attempt >= 3:
+            return
+        QTimer.singleShot(
+            2500 * attempt,
+            lambda expected_token=token, next_attempt=attempt + 1:
+                self._start_outfit_description(expected_token, next_attempt),
+        )
+
+    def _clear_outfit_description_worker(self, worker):
+        if self._outfit_description_worker is worker:
+            self._outfit_description_worker = None
+        worker.deleteLater()
 
     def _schedule_live2d_action_prewarm(self, token: int):
         self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()

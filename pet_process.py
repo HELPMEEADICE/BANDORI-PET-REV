@@ -82,10 +82,14 @@ class SingleModelManager:
         return self._fallback_manager.get_model_json_path(character, costume)
 
     def get_display_name(self, character: str) -> str:
-        return character.title()
+        if self._fallback_manager is None:
+            self._fallback_manager = ModelManager()
+        return self._fallback_manager.get_display_name(character)
 
     def get_costume_display_name(self, character: str, costume_id: str) -> str:
-        return costume_id
+        if self._fallback_manager is None:
+            self._fallback_manager = ModelManager()
+        return self._fallback_manager.get_costume_display_name(character, costume_id)
 
 
 def main():

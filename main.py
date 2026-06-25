@@ -38,6 +38,11 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from live2d_widget import Live2DWidget
 from model_manager import ModelManager
+from outfit_description import (
+    OUTFIT_DESCRIPTIONS_KEY,
+    normalize_outfit_descriptions,
+    outfit_description_key,
+)
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
@@ -795,6 +800,27 @@ def main():
             broadcast_ipc_line(line)
         elif line.startswith("RADIAL_MENU_CLOSED\t"):
             broadcast_ipc_line(line)
+        elif line.startswith("OUTFIT_DESCRIPTION\t"):
+            try:
+                entry = json.loads(line.split("\t", 1)[1])
+            except (json.JSONDecodeError, IndexError):
+                return
+            if not isinstance(entry, dict):
+                return
+            character = str(entry.get("character", "") or "").strip()
+            costume = str(entry.get("costume", "") or "").strip()
+            normalized = normalize_outfit_descriptions({
+                outfit_description_key(character, costume): entry,
+            })
+            if not normalized:
+                return
+            cfg.load()
+            descriptions = normalize_outfit_descriptions(
+                cfg.get(OUTFIT_DESCRIPTIONS_KEY, {})
+            )
+            descriptions.update(normalized)
+            cfg.set(OUTFIT_DESCRIPTIONS_KEY, descriptions)
+            cfg.save()
         elif line == "FOCUS_CHAT":
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line.startswith("OPEN_SETTINGS"):
