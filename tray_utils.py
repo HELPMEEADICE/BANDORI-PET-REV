@@ -36,6 +36,12 @@ def keep_tray_icon_visible(tray_icon, attempts: int = 8, interval_ms: int = 350)
             QTimer.singleShot(interval_ms, lambda: reshow(remaining - 1))
 
     reshow(max(0, attempts))
+    if sys.platform.startswith("win") and getattr(tray_icon, "_bandori_visibility_timer", None) is None:
+        timer = QTimer(tray_icon)
+        timer.setInterval(5000)
+        timer.timeout.connect(lambda: reshow(0))
+        timer.start()
+        tray_icon._bandori_visibility_timer = timer
 
 
 def _icon_from_image(path: str) -> QIcon:
