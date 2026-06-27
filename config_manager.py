@@ -25,7 +25,11 @@ from screen_awareness import (
     clamp_screen_awareness_screenshot_width,
     normalize_screen_awareness_model_mode,
 )
-from outfit_description import OUTFIT_DESCRIPTIONS_KEY, normalize_outfit_descriptions
+from outfit_description import (
+    OUTFIT_DESCRIPTIONS_KEY,
+    OUTFIT_RECOGNITION_ENABLED_KEY,
+    normalize_outfit_descriptions,
+)
 
 
 CONFIG_FILE_LOCK_TIMEOUT_SECONDS = 10.0
@@ -118,6 +122,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "deepseek-v4-flash",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",
@@ -138,6 +143,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "x-ai/grok-4.3",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": True,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",
@@ -158,6 +164,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "anthropic/claude-haiku-4.5",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",
@@ -178,6 +185,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "gpt-5.4-mini",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "responses",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",
@@ -198,6 +206,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "gemini-3.5-flash-lite",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": True,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": False,
         "llm_web_search_engine": "bing_cn",
@@ -218,6 +227,7 @@ BUILTIN_LLM_API_PROFILES = [
         "llm_aux_model_id": "grok-4-1-fast",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": False,
+        OUTFIT_RECOGNITION_ENABLED_KEY: False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",
@@ -277,6 +287,7 @@ DEFAULTS = {
     "llm_aux_model_id": "",
     "llm_aux_enable_thinking": None,
     "llm_aux_vision_fallback_enabled": False,
+    OUTFIT_RECOGNITION_ENABLED_KEY: False,
     "llm_api_mode": "chat_completions",
     "llm_web_search_enabled": False,
     "llm_web_search_engine": "bing_cn",
@@ -478,6 +489,7 @@ def _normalize_llm_api_profile(profile) -> dict | None:
         "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking")
         if isinstance(profile.get("llm_aux_enable_thinking"), (bool, type(None))) else None,
         "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
+        OUTFIT_RECOGNITION_ENABLED_KEY: bool(profile.get(OUTFIT_RECOGNITION_ENABLED_KEY, False)),
         "llm_api_mode": api_mode,
         "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
         "llm_web_search_engine": _normalize_web_search_engine(

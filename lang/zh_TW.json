@@ -215,6 +215,8 @@
   "SettingsWindow.llm_web_search_engine": "搜尋引擎",
   "SettingsWindow.llm_web_fetch_enabled": "WebFetch 存取連結",
   "SettingsWindow.llm_web_fetch_hint": "開啟後，模型可以讀取使用者提供的網頁連結；同時開啟聯網搜尋時，也能進一步讀取搜尋結果中的網頁。",
+  "SettingsWindow.llm_live2d_outfit_recognition_enabled": "識別 Live2D 服裝",
+  "SettingsWindow.llm_live2d_outfit_recognition_hint": "開啟後，會用目前主/輔助視覺模型識別 Live2D 當前服裝，並在自然涉及穿著時提供給角色參考。",
   "SettingsWindow.llm_auto_continue_enabled": "單人對話自動接話",
   "SettingsWindow.llm_auto_continue_max_turns": "接話次數上限",
   "SettingsWindow.llm_auto_continue_hint": "開啟後，單人聊天中的模型可以透過 continue_conversation 工具主動續說；達到上限後的呼叫會被忽略。",

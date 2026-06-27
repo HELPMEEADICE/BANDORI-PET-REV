@@ -215,6 +215,8 @@
   "SettingsWindow.llm_web_search_engine": "検索エンジン",
   "SettingsWindow.llm_web_fetch_enabled": "WebFetch リンクへのアクセス",
   "SettingsWindow.llm_web_fetch_hint": "有効にすると、モデルはユーザーが提示した Web リンクを読み取れます。Web 検索も有効な場合は、検索結果のページも読み取れます。",
+  "SettingsWindow.llm_live2d_outfit_recognition_enabled": "Live2D 衣装を認識",
+  "SettingsWindow.llm_live2d_outfit_recognition_hint": "有効にすると、現在のメイン/補助視覚モデルで Live2D の現在の衣装を認識し、服装に自然に触れる場面でキャラクターの参考情報として使います。",
   "SettingsWindow.llm_auto_continue_enabled": "1対1チャットで自動的に話し続ける",
   "SettingsWindow.llm_auto_continue_max_turns": "自動継続の上限回数",
   "SettingsWindow.llm_auto_continue_hint": "有効にすると、1対1チャットのモデルは continue_conversation ツールで自発的に話し続けられます。上限後の呼び出しは無視されます。",

@@ -215,6 +215,8 @@
   "SettingsWindow.llm_web_search_engine": "Search Engine",
   "SettingsWindow.llm_web_fetch_enabled": "Allow WebFetch links",
   "SettingsWindow.llm_web_fetch_hint": "Lets the model read web links provided by the user. When web search is also enabled, it can open pages from search results.",
+  "SettingsWindow.llm_live2d_outfit_recognition_enabled": "Recognize Live2D outfit",
+  "SettingsWindow.llm_live2d_outfit_recognition_hint": "Uses the current main/auxiliary vision model to identify the active Live2D outfit and provide it as character context when clothing naturally comes up.",
   "SettingsWindow.llm_auto_continue_enabled": "Automatic follow-up in one-on-one chats",
   "SettingsWindow.llm_auto_continue_max_turns": "Maximum follow-up turns",
   "SettingsWindow.llm_auto_continue_hint": "Lets the model continue speaking through the continue_conversation tool in one-on-one chats. Further calls are ignored after this limit.",

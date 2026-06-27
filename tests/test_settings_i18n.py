@@ -13,6 +13,8 @@ RECENT_SETTINGS_KEYS = {
     "SettingsWindow.poke_expression_follow_head",
     "SettingsWindow.llm_web_fetch_enabled",
     "SettingsWindow.llm_web_fetch_hint",
+    "SettingsWindow.llm_live2d_outfit_recognition_enabled",
+    "SettingsWindow.llm_live2d_outfit_recognition_hint",
     "SettingsWindow.llm_auto_continue_enabled",
     "SettingsWindow.llm_auto_continue_max_turns",
     "SettingsWindow.llm_auto_continue_hint",

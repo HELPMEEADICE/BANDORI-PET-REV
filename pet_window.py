@@ -27,6 +27,7 @@ from outfit_description import (
     OUTFIT_DESCRIPTIONS_KEY,
     OutfitDescriptionWorker,
     image_to_data_url,
+    is_outfit_recognition_enabled,
     make_outfit_description_entry,
     model_fingerprint,
     normalize_outfit_descriptions,
@@ -1744,6 +1745,8 @@ class PetWindow(QWidget):
 
     def _start_outfit_description(self, token: int, attempt: int = 1):
         if token != self._outfit_description_token or not self._cfg or self._pixel_mode:
+            return
+        if not is_outfit_recognition_enabled(self._cfg):
             return
         if self._outfit_description_worker is not None:
             return

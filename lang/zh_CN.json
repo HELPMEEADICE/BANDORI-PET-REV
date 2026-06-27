@@ -215,6 +215,8 @@
   "SettingsWindow.llm_web_search_engine": "搜索引擎",
   "SettingsWindow.llm_web_fetch_enabled": "WebFetch 访问链接",
   "SettingsWindow.llm_web_fetch_hint": "开启后，模型可以读取用户提供的网页链接；同时开启联网搜索时，也可以进一步读取搜索结果里的网页。",
+  "SettingsWindow.llm_live2d_outfit_recognition_enabled": "识别 Live2D 服装",
+  "SettingsWindow.llm_live2d_outfit_recognition_hint": "开启后，会用当前主/辅助视觉模型识别 Live2D 当前服装，并在自然涉及穿着时提供给角色参考。",
   "SettingsWindow.llm_auto_continue_enabled": "单人对话自动接话",
   "SettingsWindow.llm_auto_continue_max_turns": "接话硬上限",
   "SettingsWindow.llm_auto_continue_hint": "开启后，单人聊天里的模型可以通过 continue_conversation 工具主动续说；达到上限后继续调用会被忽略。",

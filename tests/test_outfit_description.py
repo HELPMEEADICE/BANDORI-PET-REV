@@ -4,6 +4,7 @@ from unittest.mock import patch
 from outfit_description import (
     OutfitDescriptionWorker,
     build_outfit_prompt_context,
+    is_outfit_recognition_enabled,
     make_outfit_description_entry,
     normalize_outfit_descriptions,
     outfit_description_key,
@@ -19,6 +20,27 @@ class FakeConfig:
 
 
 class OutfitDescriptionTest(unittest.TestCase):
+    def test_outfit_recognition_defaults_off(self):
+        self.assertFalse(is_outfit_recognition_enabled(FakeConfig({})))
+
+    def test_prompt_context_is_disabled_when_recognition_is_off(self):
+        entry = make_outfit_description_entry(
+            "kasumi",
+            "casual",
+            "常服",
+            "白色上衣搭配红色短裙和深色鞋袜。",
+            "fingerprint",
+            "main",
+        )
+        config = FakeConfig({
+            "models": [{"character": "kasumi", "costume": "casual"}],
+            "outfit_descriptions": {
+                outfit_description_key("kasumi", "casual"): entry,
+            },
+        })
+
+        self.assertEqual("", build_outfit_prompt_context(config, "kasumi"))
+
     def test_normalization_rejects_incomplete_entries(self):
         valid_key = outfit_description_key("kasumi", "casual")
         normalized = normalize_outfit_descriptions({
@@ -42,6 +64,7 @@ class OutfitDescriptionTest(unittest.TestCase):
             "main",
         )
         config = FakeConfig({
+            "llm_live2d_outfit_recognition_enabled": True,
             "models": [{"character": "kasumi", "costume": "casual"}],
             "outfit_descriptions": {
                 outfit_description_key("kasumi", "casual"): entry,
@@ -57,6 +80,7 @@ class OutfitDescriptionTest(unittest.TestCase):
 
     def test_prompt_context_prevents_guessing_before_generation(self):
         config = FakeConfig({
+            "llm_live2d_outfit_recognition_enabled": True,
             "models": [{"character": "kasumi", "costume": "casual"}],
             "outfit_descriptions": {},
         })

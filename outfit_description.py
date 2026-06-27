@@ -9,6 +9,7 @@ from vision_fallback import analyze_images_with_aux_model
 
 
 OUTFIT_DESCRIPTIONS_KEY = "outfit_descriptions"
+OUTFIT_RECOGNITION_ENABLED_KEY = "llm_live2d_outfit_recognition_enabled"
 OUTFIT_DESCRIPTION_MAX_LENGTH = 1200
 
 
@@ -39,6 +40,12 @@ def normalize_outfit_descriptions(value) -> dict[str, dict]:
             "updated_at": str(raw_entry.get("updated_at", "") or "").strip()[:40],
         }
     return result
+
+
+def is_outfit_recognition_enabled(config_manager) -> bool:
+    if not config_manager:
+        return False
+    return bool(config_manager.get(OUTFIT_RECOGNITION_ENABLED_KEY, False))
 
 
 def model_fingerprint(model_path: str) -> str:
@@ -105,6 +112,8 @@ def current_outfit_costume(config_manager, character: str) -> str:
 
 
 def build_outfit_prompt_context(config_manager, character: str) -> str:
+    if not is_outfit_recognition_enabled(config_manager):
+        return ""
     entry = current_outfit_description(config_manager, character)
     if not entry:
         costume = current_outfit_costume(config_manager, character)

@@ -18,6 +18,7 @@ LLM_API_PROFILE_KEYS = (
     "llm_aux_model_id",
     "llm_aux_enable_thinking",
     "llm_aux_vision_fallback_enabled",
+    "llm_live2d_outfit_recognition_enabled",
     "llm_api_mode",
     "llm_web_search_enabled",
     "llm_web_search_engine",
@@ -242,6 +243,24 @@ class LLMPageMixin:
         aux_vision_row.addStretch()
         aux_vision_row.addWidget(self._llm_aux_vision_fallback_enabled)
         layout.addLayout(aux_vision_row)
+
+        outfit_recognition_row = QHBoxLayout()
+        outfit_recognition_row.setContentsMargins(0, 0, 0, 0)
+        outfit_recognition_label = BodyLabel(_tr(
+            "SettingsWindow.llm_live2d_outfit_recognition_enabled",
+            default="识别 Live2D 服装",
+        ), page)
+        self._llm_live2d_outfit_recognition_enabled = SwitchButton(page)
+        outfit_recognition_row.addWidget(outfit_recognition_label)
+        outfit_recognition_row.addStretch()
+        outfit_recognition_row.addWidget(self._llm_live2d_outfit_recognition_enabled)
+        layout.addLayout(outfit_recognition_row)
+        outfit_recognition_hint = _wrap_label(BodyLabel(_tr(
+            "SettingsWindow.llm_live2d_outfit_recognition_hint",
+            default="开启后，会用当前主/辅助视觉模型识别 Live2D 当前服装，并在自然涉及穿着时提供给角色参考。",
+        ), page))
+        outfit_recognition_hint.setObjectName("llmHint")
+        layout.addWidget(outfit_recognition_hint)
 
         api_mode_label = BodyLabel(_tr("SettingsWindow.llm_api_mode", default="API 模式"), page)
         layout.addWidget(api_mode_label)
@@ -550,6 +569,7 @@ class LLMPageMixin:
         for widget in (
             self._llm_show_reasoning,
             self._llm_aux_vision_fallback_enabled,
+            self._llm_live2d_outfit_recognition_enabled,
             self._llm_web_search_enabled,
             self._llm_web_search_show_sources,
             self._llm_web_fetch_enabled,
@@ -583,6 +603,7 @@ class LLMPageMixin:
                 "_llm_aux_model_id",
                 "_llm_aux_enable_thinking",
                 "_llm_aux_vision_fallback_enabled",
+                "_llm_live2d_outfit_recognition_enabled",
                 "_llm_api_mode",
                 "_llm_web_search_enabled",
                 "_llm_web_search_engine",
@@ -611,6 +632,7 @@ class LLMPageMixin:
                 "_llm_aux_model_id",
                 "_llm_aux_enable_thinking",
                 "_llm_aux_vision_fallback_enabled",
+                "_llm_live2d_outfit_recognition_enabled",
                 "_llm_api_profile_combo",
                 "_llm_api_profile_name",
                 "_llm_api_mode",
@@ -707,6 +729,7 @@ class LLMPageMixin:
             else:
                 self._llm_aux_enable_thinking.setCurrentIndex(0)
             self._llm_aux_vision_fallback_enabled.setChecked(bool(self._cfg.get("llm_aux_vision_fallback_enabled", False)))
+            self._llm_live2d_outfit_recognition_enabled.setChecked(bool(self._cfg.get("llm_live2d_outfit_recognition_enabled", False)))
             api_mode = self._cfg.get("llm_api_mode", "chat_completions")
             for i in range(self._llm_api_mode.count()):
                 if self._llm_api_mode.itemData(i) == api_mode:
@@ -813,6 +836,7 @@ class LLMPageMixin:
                 "llm_aux_enable_thinking": profile.get("llm_aux_enable_thinking", None)
                 if profile.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
                 "llm_aux_vision_fallback_enabled": bool(profile.get("llm_aux_vision_fallback_enabled", False)),
+                "llm_live2d_outfit_recognition_enabled": bool(profile.get("llm_live2d_outfit_recognition_enabled", False)),
                 "llm_api_mode": api_mode,
                 "llm_web_search_enabled": bool(profile.get("llm_web_search_enabled", False)),
                 "llm_web_search_engine": str(profile.get("llm_web_search_engine", "bing_cn") or "bing_cn"),
@@ -851,6 +875,7 @@ class LLMPageMixin:
             "llm_aux_model_id": self._llm_aux_model_id.text().strip(),
             "llm_aux_enable_thinking": aux_thinking,
             "llm_aux_vision_fallback_enabled": self._llm_aux_vision_fallback_enabled.isChecked(),
+            "llm_live2d_outfit_recognition_enabled": self._llm_live2d_outfit_recognition_enabled.isChecked(),
             "llm_api_mode": self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions",
             "llm_web_search_enabled": self._llm_web_search_enabled.isChecked(),
             "llm_web_search_engine": self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn",
@@ -883,6 +908,7 @@ class LLMPageMixin:
             "llm_aux_enable_thinking": self._cfg.get("llm_aux_enable_thinking", None)
             if self._cfg.get("llm_aux_enable_thinking", None) in (True, False, None) else None,
             "llm_aux_vision_fallback_enabled": bool(self._cfg.get("llm_aux_vision_fallback_enabled", False)),
+            "llm_live2d_outfit_recognition_enabled": bool(self._cfg.get("llm_live2d_outfit_recognition_enabled", False)),
             "llm_api_mode": self._cfg.get("llm_api_mode", "chat_completions") or "chat_completions",
             "llm_web_search_enabled": bool(self._cfg.get("llm_web_search_enabled", False)),
             "llm_web_search_engine": self._cfg.get("llm_web_search_engine", "bing_cn") or "bing_cn",
@@ -1028,6 +1054,7 @@ class LLMPageMixin:
         aux_thinking = profile.get("llm_aux_enable_thinking", None)
         self._llm_aux_enable_thinking.setCurrentIndex(1 if aux_thinking is True else 2 if aux_thinking is False else 0)
         self._llm_aux_vision_fallback_enabled.setChecked(bool(profile.get("llm_aux_vision_fallback_enabled", False)))
+        self._llm_live2d_outfit_recognition_enabled.setChecked(bool(profile.get("llm_live2d_outfit_recognition_enabled", False)))
         api_mode = profile.get("llm_api_mode", "chat_completions")
         for i in range(self._llm_api_mode.count()):
             if self._llm_api_mode.itemData(i) == api_mode:
@@ -1209,6 +1236,7 @@ class LLMPageMixin:
             else:
                 self._cfg.set("llm_aux_enable_thinking", None)
             self._cfg.set("llm_aux_vision_fallback_enabled", self._llm_aux_vision_fallback_enabled.isChecked())
+            self._cfg.set("llm_live2d_outfit_recognition_enabled", self._llm_live2d_outfit_recognition_enabled.isChecked())
             self._cfg.set("llm_api_mode", self._llm_api_mode.itemData(self._llm_api_mode.currentIndex()) or "chat_completions")
             self._cfg.set("llm_web_search_enabled", self._llm_web_search_enabled.isChecked())
             self._cfg.set("llm_web_search_engine", self._llm_web_search_engine.itemData(self._llm_web_search_engine.currentIndex()) or "bing_cn")
