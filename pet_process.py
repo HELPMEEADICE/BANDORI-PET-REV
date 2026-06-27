@@ -1,13 +1,17 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
+import threading
 
 from process_utils import (
     app_base_dir,
     configure_debug_logging,
     ensure_xwayland,
+    hidden_subprocess_kwargs,
     install_parent_death_watch,
+    process_program_and_args,
     set_windows_app_user_model_id,
 )
 from config_manager import ConfigManager
@@ -60,6 +64,33 @@ def _parse_group_characters(value: str) -> list[str]:
     return result
 
 
+def _make_main_relauncher(index: int, normal_shutdown_requested: threading.Event):
+    restarted = threading.Event()
+
+    def _relaunch_main_if_abnormal_parent_exit():
+        if index != 0 or normal_shutdown_requested.is_set() or restarted.is_set():
+            return
+        restarted.set()
+        env = os.environ.copy()
+        env.pop("BANDORI_PET_IPC_SERVER_NAME", None)
+        env["BANDORI_PET_RESTARTED_FROM_CHILD"] = "1"
+        program, arguments = process_program_and_args(BASE_DIR, "main.py", [])
+        try:
+            subprocess.Popen(
+                [program, *arguments],
+                cwd=BASE_DIR,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **hidden_subprocess_kwargs(),
+            )
+        except OSError as exc:
+            print(f"Failed to restart main process after parent exit: {exc}", file=sys.stderr)
+
+    return _relaunch_main_if_abnormal_parent_exit
+
+
 class SingleModelManager:
     def __init__(self, character: str, costume: str, model_path: str):
         self._character = character
@@ -105,7 +136,11 @@ def main():
 
     app = QApplication(sys.argv)
     app.setWindowIcon(load_tray_icon())
-    install_parent_death_watch(app)
+    normal_shutdown_requested = threading.Event()
+    install_parent_death_watch(
+        app,
+        on_parent_death=_make_main_relauncher(args.index, normal_shutdown_requested),
+    )
 
     if sys.platform == "darwin":
         import macos_patch
@@ -136,6 +171,7 @@ def main():
         config_manager=cfg,
         enable_tray=False,
         group_characters=group_characters,
+        on_shutdown_requested=normal_shutdown_requested.set,
     )
 
     offset_x = args.index * (28 if pet._pixel_mode else 36)

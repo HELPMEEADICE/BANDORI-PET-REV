@@ -399,23 +399,84 @@ def token_matches(expected: str, candidate: str) -> bool:
     return hmac.compare_digest(str(expected or ""), str(candidate or ""))
 
 
-def install_parent_death_watch(app, interval_ms: int = 2000):
-    # When the parent process dies (SIGKILL, terminal closed, etc.) the OS
-    # reparents this process to init/launchd, so getppid() changes. Poll for
-    # that and call app.quit() so a graceful Qt shutdown still runs.
-    from PySide6.QtCore import QTimer
+def install_parent_death_watch(app, interval_ms: int = 2000, on_parent_death=None):
+    # When the parent process dies (SIGKILL, terminal closed, etc.) Unix-like
+    # systems reparent this process to init/launchd, so getppid() changes.
+    # Windows keeps orphaned child processes alive; waiting on a handle to the
+    # original parent detects that case reliably across sleep/resume.
+    from PySide6.QtCore import QMetaObject, Qt, QTimer
+
+    def _request_quit():
+        try:
+            QMetaObject.invokeMethod(app, "quit", Qt.ConnectionType.QueuedConnection)
+        except Exception:
+            app.quit()
 
     initial_ppid = os.getppid()
+    if os.name == "nt":
+        _install_windows_parent_handle_watch(app, initial_ppid, on_parent_death, _request_quit)
 
     def _check():
         if os.getppid() != initial_ppid:
-            app.quit()
+            if callable(on_parent_death):
+                on_parent_death()
+            _request_quit()
 
     timer = QTimer(app)
     timer.setInterval(int(interval_ms))
     timer.timeout.connect(_check)
     timer.start()
     return timer
+
+
+def _install_windows_parent_handle_watch(
+    app,
+    parent_pid: int,
+    on_parent_death=None,
+    request_quit=None,
+) -> bool:
+    if os.name != "nt" or parent_pid <= 0:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return False
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    synchronize = 0x00100000
+    wait_object_0 = 0x00000000
+    infinite = 0xFFFFFFFF
+
+    handle = kernel32.OpenProcess(synchronize, False, int(parent_pid))
+    if not handle:
+        return False
+
+    def _watch_parent_handle():
+        try:
+            result = kernel32.WaitForSingleObject(handle, infinite)
+            if result == wait_object_0:
+                if callable(on_parent_death):
+                    on_parent_death()
+                if callable(request_quit):
+                    request_quit()
+                else:
+                    app.quit()
+        finally:
+            kernel32.CloseHandle(handle)
+
+    threading.Thread(
+        target=_watch_parent_handle,
+        name="BandoriPetParentDeathWatch",
+        daemon=True,
+    ).start()
+    return True
 
 
 def hidden_subprocess_kwargs() -> dict:

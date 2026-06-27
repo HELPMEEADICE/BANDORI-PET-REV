@@ -288,7 +288,8 @@ def _compact_ai_window_class():
 class PetWindow(QWidget):
     def __init__(self, live2d_module, model_manager=None,
                  character="", costume="", fps=120, opacity=1.0,
-                 config_manager=None, enable_tray=True, group_characters=None):
+                 config_manager=None, enable_tray=True, group_characters=None,
+                 on_shutdown_requested=None):
         super().__init__()
         icon_path = os.path.join(app_base_dir(), "logo.ico")
         if os.path.exists(icon_path):
@@ -299,6 +300,7 @@ class PetWindow(QWidget):
         self._model_manager = model_manager or ModelManager()
         self._current_char = character
         self._current_costume = costume
+        self._on_shutdown_requested = on_shutdown_requested
         if group_characters is None:
             group_characters = self._chat_group_characters_from_models(
                 config_manager.get("models", []) if config_manager else []
@@ -3191,6 +3193,8 @@ class PetWindow(QWidget):
             if len(parts) == 1 or not parts[1] or parts[1] == self._current_char:
                 self._open_chat()
         elif line == "SHUTDOWN":
+            if callable(self._on_shutdown_requested):
+                self._on_shutdown_requested()
             self._quit()
         elif line.startswith("PREVIEW_MOTION\t"):
             parts = line.split("\t", 4)
