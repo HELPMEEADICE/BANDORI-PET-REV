@@ -160,7 +160,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self.update()
 
     def resizeGL(self, w: int, h: int):
-        gl.glViewport(0, 0, w, h)
+        scale = max(1.0, float(self.devicePixelRatioF()))
+        gl.glViewport(0, 0, int(w * scale), int(h * scale))
         if self._model:
             self._model.Resize(w, h)
             self._static_render_done = False
