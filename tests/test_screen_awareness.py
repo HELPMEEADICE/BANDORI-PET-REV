@@ -136,6 +136,31 @@ class ScreenAwarenessTest(unittest.TestCase):
         self.assertEqual("用户正在查看代码。", results[0]["screen_observation"])
         self.assertIsNone(analyze.call_args.args[5])
 
+    def test_aux_mode_falls_back_to_main_image_when_aux_fails(self):
+        results = []
+        errors = []
+        worker = ScreenAwarenessVisionWorker({
+            "screen_awareness_model_mode": "aux",
+            "llm_api_url": "http://localhost:8000/v1",
+            "llm_api_key": "key",
+            "llm_aux_model_id": "qwen-vl",
+        })
+        worker.finished.connect(results.append)
+        worker.error.connect(errors.append)
+
+        with (
+            patch("screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
+            patch("screen_awareness.current_desktop_state", return_value={}),
+            patch("screen_awareness.analyze_images_with_aux_model", side_effect=RuntimeError("aux unavailable")),
+        ):
+            worker.run()
+
+        self.assertEqual([], errors)
+        self.assertEqual(SCREEN_AWARENESS_MODEL_MODE_MAIN, results[0]["mode"])
+        self.assertEqual("data:image/png;base64,abc", results[0]["screen_image_data_url"])
+        self.assertEqual("", results[0]["screen_observation"])
+        self.assertEqual("aux unavailable", results[0]["aux_fallback_error"])
+
     def test_legacy_vision_fields_are_not_kept_in_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.json"

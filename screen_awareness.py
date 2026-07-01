@@ -103,36 +103,41 @@ class ScreenAwarenessVisionWorker(QThread):
             if mode == SCREEN_AWARENESS_MODEL_MODE_MAIN:
                 result["screen_image_data_url"] = data_url
             else:
-                api_url, api_key, model_id = screen_awareness_aux_config(self._config)
-                if not api_url or not api_key or not model_id:
-                    raise RuntimeError(_tr(
-                        "ScreenAwareness.aux_not_configured",
-                        default="屏幕感知已选择辅助模型，但辅助模型未配置完整。",
-                    ))
-                prompt = _tr(
-                    "ScreenAwareness.vision_prompt",
-                    default=(
-                        "请观察这张桌面截图，客观概括用户当前可能正在做什么。"
-                        "重点包括应用/网页/代码/错误信息/文档/游戏/聊天等可见线索。"
-                        "不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；"
-                        "不要角色扮演，不要建议用户做事，只输出 2 到 5 条紧凑观察，用用户当前界面语言回复。"
-                    ),
-                )
-                summary = analyze_images_with_aux_model(
-                    api_url,
-                    api_key,
-                    model_id,
-                    [data_url],
-                    prompt,
-                    None,
-                    timeout=120,
-                )
-                result["screen_observation"] = str(summary or "").strip()
-                if not result["screen_observation"]:
-                    raise RuntimeError(_tr(
-                        "ScreenAwareness.empty_observation",
-                        default="辅助模型没有返回屏幕观察结果。",
-                    ))
+                try:
+                    api_url, api_key, model_id = screen_awareness_aux_config(self._config)
+                    if not api_url or not api_key or not model_id:
+                        raise RuntimeError(_tr(
+                            "ScreenAwareness.aux_not_configured",
+                            default="屏幕感知已选择辅助模型，但辅助模型未配置完整。",
+                        ))
+                    prompt = _tr(
+                        "ScreenAwareness.vision_prompt",
+                        default=(
+                            "请观察这张桌面截图，客观概括用户当前可能正在做什么。"
+                            "重点包括应用/网页/代码/错误信息/文档/游戏/聊天等可见线索。"
+                            "不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；"
+                            "不要角色扮演，不要建议用户做事，只输出 2 到 5 条紧凑观察，用用户当前界面语言回复。"
+                        ),
+                    )
+                    summary = analyze_images_with_aux_model(
+                        api_url,
+                        api_key,
+                        model_id,
+                        [data_url],
+                        prompt,
+                        None,
+                        timeout=120,
+                    )
+                    result["screen_observation"] = str(summary or "").strip()
+                    if not result["screen_observation"]:
+                        raise RuntimeError(_tr(
+                            "ScreenAwareness.empty_observation",
+                            default="辅助模型没有返回屏幕观察结果。",
+                        ))
+                except Exception as exc:
+                    result["mode"] = SCREEN_AWARENESS_MODEL_MODE_MAIN
+                    result["screen_image_data_url"] = data_url
+                    result["aux_fallback_error"] = str(exc)
             self.finished.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))

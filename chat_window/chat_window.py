@@ -4535,7 +4535,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return any(
             item.get("type") == "image"
             and not str(item.get("vision_summary", "") or "").strip()
-            and not str(item.get("vision_error", "") or "").strip()
             for item in self._normalize_attachments(attachments)
         )
 
@@ -5168,16 +5167,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
             ]
         else:
             empty_note = _tr("ChatWindow.vision_fallback_empty", default="快速视觉模型没有返回图片观察结果。")
-            attachments = [
-                dict(item, vision_error=empty_note)
-                if isinstance(item, dict) and item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
-                else item
-                for item in attachments
-            ]
             self._composer_hint.setText(empty_note)
-            self._commit_user_message(text, attachments, start_response=False)
-            self._set_busy(False)
-            self._input.setFocus()
+            self._commit_user_message(text, attachments)
             return
         self._commit_user_message(text, attachments)
 
@@ -5193,16 +5184,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         text, attachments = pending
         error_note = _tr("ChatWindow.vision_fallback_failed", default="快速视觉模型看图失败：{error}", error=error_msg)
-        attachments = [
-            dict(item, vision_error=error_note)
-            if isinstance(item, dict) and item.get("type") == "image" and not str(item.get("vision_summary", "") or "").strip()
-            else item
-            for item in attachments
-        ]
         self._composer_hint.setText(error_note)
-        self._commit_user_message(text, attachments, start_response=False)
-        self._set_busy(False)
-        self._input.setFocus()
+        self._commit_user_message(text, attachments)
 
     def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
         favorite_phrase, favorite_source_message, favorite_source_character = self._favorite_request_target(text)
