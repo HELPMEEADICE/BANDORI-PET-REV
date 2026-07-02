@@ -72,6 +72,30 @@ def test_default_shared_memory_queue_accepts_large_settings_payloads():
         writer.close()
 
 
+def test_default_shared_memory_queue_stays_below_macos_shared_memory_budget():
+    from shared_memory_ipc import (
+        _DEFAULT_SLOT_COUNT,
+        _DEFAULT_SLOT_SIZE,
+        _queue_memory_size,
+    )
+
+    assert _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE) < 4 * 1024 * 1024
+    assert _DEFAULT_SLOT_SIZE >= 32768
+
+
+def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
+    from shared_memory_ipc import (
+        _DEFAULT_SLOT_COUNT,
+        _DEFAULT_SLOT_SIZE,
+        _queue_memory_size,
+    )
+
+    main_ipc_bytes = 2 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
+    radial_ipc_bytes = _queue_memory_size(128, 8192) + _queue_memory_size(128, 4096)
+
+    assert main_ipc_bytes + radial_ipc_bytes < 4 * 1024 * 1024
+
+
 def test_ipc_envelope_round_trips_sender_and_exclusion():
     from shared_memory_ipc import decode_ipc_envelope, encode_ipc_envelope
 
@@ -120,3 +144,12 @@ def test_main_retries_ipc_with_fresh_session_name_on_create_failure():
     source = Path("main.py").read_text(encoding="utf-8")
 
     assert "refresh_ipc_session_name()" in source
+
+
+def test_main_relaunches_active_pet_when_model_message_changes_selection():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert "def has_active_pet_processes()" in source
+    assert "model_changed and has_active_pet_processes()" in source

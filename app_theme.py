@@ -92,6 +92,27 @@ def _default_ui_font_family() -> str:
 BANDORI_UI_FONT_FAMILY = _default_ui_font_family()
 
 
+def platform_ui_font_families() -> list[str]:
+    if sys.platform == "darwin":
+        return ["PingFang SC", "Helvetica Neue", "Arial Unicode MS"]
+    if sys.platform.startswith("linux"):
+        return ["Noto Sans CJK SC", "Noto Sans", "DejaVu Sans"]
+    return ["Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei"]
+
+
+def apply_application_font(app) -> None:
+    if app is None:
+        return
+    try:
+        from PySide6.QtGui import QFont
+
+        font = QFont()
+        font.setFamilies(platform_ui_font_families())
+        app.setFont(font)
+    except Exception:
+        pass
+
+
 def accent_color(dark: bool = False) -> str:
     return BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
 
@@ -102,5 +123,13 @@ def apply_app_theme(theme_value):
         "qfluentwidgets", fromlist=["Theme", "setTheme", "setThemeColor"]
     ))
     assert_pyside6_fluent_widgets()
+    if hasattr(qfluent, "setFontFamilies"):
+        qfluent.setFontFamilies(platform_ui_font_families(), save=False)
+    try:
+        from PySide6.QtWidgets import QApplication
+
+        apply_application_font(QApplication.instance())
+    except Exception:
+        pass
     qfluent.setTheme(qfluent.Theme.DARK if dark else qfluent.Theme.LIGHT)
     qfluent.setThemeColor(accent_color(dark))

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from outfit_description import (
@@ -126,6 +127,12 @@ class OutfitDescriptionTest(unittest.TestCase):
         self.assertEqual(["aux-vision", "main-vision"], [
             call.args[2] for call in analyze.call_args_list
         ])
+
+    def test_pet_window_does_not_retry_outfit_description_auth_failures(self):
+        source = Path("pet_window.py").read_text(encoding="utf-8")
+
+        self.assertIn("def _outfit_description_auth_failed", source)
+        self.assertIn("if _outfit_description_auth_failed(message):", source)
 
 
 if __name__ == "__main__":
