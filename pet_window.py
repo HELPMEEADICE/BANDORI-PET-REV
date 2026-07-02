@@ -63,6 +63,19 @@ else:
     macos_patch = None
 
 
+_OUTFIT_DESCRIPTION_AUTH_FAILURE_MARKERS = (
+    "http error 401",
+    "http 401",
+    "authorization required",
+    "unauthorized",
+)
+
+
+def _outfit_description_auth_failed(message: str) -> bool:
+    normalized = str(message or "").lower()
+    return any(marker in normalized for marker in _OUTFIT_DESCRIPTION_AUTH_FAILURE_MARKERS)
+
+
 WM_NCHITTEST = 0x0084
 WM_NCCALCSIZE = 0x0083
 HTTRANSPARENT = -1
@@ -1853,6 +1866,8 @@ class PetWindow(QWidget):
             f"Outfit description generation failed (attempt {attempt}): {message}",
             file=sys.stderr,
         )
+        if _outfit_description_auth_failed(message):
+            return
         self._retry_outfit_description(token, attempt, message)
 
     def _retry_outfit_description(self, token: int, attempt: int, _reason: str):

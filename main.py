@@ -939,13 +939,25 @@ def main():
         _close_qprocess(process, force, wait=wait)
         chat_process_ref.pop("process", None)
 
+    def has_active_pet_processes() -> bool:
+        return any(
+            process
+            and isValid(process)
+            and process.state() != QProcess.ProcessState.NotRunning
+            for process in pet_window_ref.get("processes", [])
+        )
+
     def on_model_selected(selected_char, selected_costume, relaunch=False):
         nonlocal char, costume
+        model_changed = (
+            selected_char != pet_window_ref.get("char", char)
+            or selected_costume != pet_window_ref.get("costume", costume)
+        )
         char = selected_char
         costume = selected_costume
         pet_window_ref["char"] = selected_char
         pet_window_ref["costume"] = selected_costume
-        if relaunch:
+        if relaunch or (model_changed and has_active_pet_processes()):
             launch_pet()
 
     def on_settings_changed(data):

@@ -14,8 +14,15 @@ _MAGIC = b"BDIPC01!"
 _VERSION = 1
 _HEADER = struct.Struct("<8sIIIQ")
 _SLOT_HEADER = struct.Struct("<QI")
-_DEFAULT_SLOT_COUNT = 512
+# Keep the default queues small enough for macOS's conservative System V shared
+# memory budget while still allowing large SETTINGS payloads in a single slot.
+_DEFAULT_SLOT_COUNT = 16
 _DEFAULT_SLOT_SIZE = 65536
+_DEFAULT_FALLBACK_SLOT_COUNTS = (16, 12, 8, 4)
+
+
+def _queue_memory_size(slot_count: int, slot_size: int) -> int:
+    return _HEADER.size + int(slot_count) * (_SLOT_HEADER.size + int(slot_size))
 
 
 @dataclass(frozen=True)
@@ -90,18 +97,38 @@ class SharedMemoryLineQueue:
         cls,
         key: str,
         *,
-        slot_count: int = _DEFAULT_SLOT_COUNT,
-        slot_size: int = _DEFAULT_SLOT_SIZE,
+        slot_count: int | None = None,
+        slot_size: int | None = None,
     ) -> "SharedMemoryLineQueue":
+        using_default_slot_count = slot_count is None
+        slot_count = _DEFAULT_SLOT_COUNT if slot_count is None else slot_count
+        slot_size = _DEFAULT_SLOT_SIZE if slot_size is None else slot_size
         slot_count = max(1, int(slot_count))
         slot_size = max(64, int(slot_size))
-        memory = QSharedMemory(key)
-        size = _HEADER.size + slot_count * (_SLOT_HEADER.size + slot_size)
-        if not memory.create(size):
-            raise RuntimeError(f"Failed to create shared memory '{key}': {memory.errorString()}")
-        queue = cls(key, memory, slot_count=slot_count, slot_size=slot_size, cursor=0, owner=True)
-        queue._initialize()
-        return queue
+        candidates = [slot_count]
+        if using_default_slot_count:
+            candidates = [count for count in _DEFAULT_FALLBACK_SLOT_COUNTS if count <= slot_count]
+            if slot_count not in candidates:
+                candidates.insert(0, slot_count)
+
+        errors = []
+        for candidate_count in candidates:
+            memory = QSharedMemory(key)
+            size = _queue_memory_size(candidate_count, slot_size)
+            if memory.create(size):
+                queue = cls(
+                    key,
+                    memory,
+                    slot_count=candidate_count,
+                    slot_size=slot_size,
+                    cursor=0,
+                    owner=True,
+                )
+                queue._initialize()
+                return queue
+            errors.append(f"{size} bytes: {memory.errorString()}")
+        detail = "; ".join(errors) if errors else "no attempts made"
+        raise RuntimeError(f"Failed to create shared memory '{key}': {detail}")
 
     @classmethod
     def attach(
