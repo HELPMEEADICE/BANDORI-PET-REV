@@ -31,11 +31,14 @@ class _FakeGL:
 
 
 class _FakeModel:
-    def __init__(self):
+    def __init__(self, fake_gl=None):
+        self._gl = fake_gl
         self.resizes = []
 
     def Resize(self, width, height):
         self.resizes.append((width, height))
+        if self._gl is not None:
+            self._gl.glViewport(0, 0, width, height)
 
 
 class Live2DPreviewDpiTest(unittest.TestCase):
@@ -43,10 +46,10 @@ class Live2DPreviewDpiTest(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_resize_gl_uses_physical_viewport_for_high_dpi_preview(self):
+    def test_resize_gl_uses_physical_size_for_high_dpi_preview(self):
         widget = _ScaledPreviewWidget()
         fake_gl = _FakeGL()
-        fake_model = _FakeModel()
+        fake_model = _FakeModel(fake_gl)
         original_gl = widgets.gl
         widgets.gl = fake_gl
         widget._model = fake_model
@@ -55,8 +58,8 @@ class Live2DPreviewDpiTest(unittest.TestCase):
         finally:
             widgets.gl = original_gl
 
-        self.assertEqual([(0, 0, 450, 540)], fake_gl.viewports)
-        self.assertEqual([(300, 360)], fake_model.resizes)
+        self.assertEqual((0, 0, 450, 540), fake_gl.viewports[-1])
+        self.assertEqual([(450, 540)], fake_model.resizes)
 
 
 if __name__ == "__main__":

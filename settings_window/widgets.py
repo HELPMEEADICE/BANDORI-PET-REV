@@ -69,6 +69,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._clear_color = (1.0, 1.0, 1.0, 1.0)
         self._initialized_gl = False
         self._static_render_done = False
+        self._render_w = 1
+        self._render_h = 1
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAutoFillBackground(False)
 
@@ -135,9 +137,9 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             finally:
                 if virtual:
                     clear_virtual_byte_cache()
-            model.Resize(self.width(), self.height())
             self._model = model
             self._model_path = model_json_path
+            self._sync_render_size(force=True)
         except Exception as e:
             print(f"Failed to load Live2D preview model: {e}", file=sys.stderr)
             self._model = None
@@ -160,11 +162,24 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self.update()
 
     def resizeGL(self, w: int, h: int):
+        self._sync_render_size(w, h, force=True)
+
+    def _physical_render_size(self, w: int | None = None, h: int | None = None) -> tuple[int, int]:
+        if w is None:
+            w = self.width()
+        if h is None:
+            h = self.height()
         scale = max(1.0, float(self.devicePixelRatioF()))
-        gl.glViewport(0, 0, int(w * scale), int(h * scale))
-        if self._model:
-            self._model.Resize(w, h)
+        return max(1, int(w * scale)), max(1, int(h * scale))
+
+    def _sync_render_size(self, w: int | None = None, h: int | None = None, *, force: bool = False):
+        render_w, render_h = self._physical_render_size(w, h)
+        changed = force or render_w != self._render_w or render_h != self._render_h
+        if self._model and changed:
+            self._model.Resize(render_w, render_h)
             self._static_render_done = False
+        self._render_w, self._render_h = render_w, render_h
+        gl.glViewport(0, 0, render_w, render_h)
 
     def paintGL(self):
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
@@ -172,7 +187,10 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
         gl.glClearColor(*self._clear_color)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        if self._static_render_done or not self._model:
+        if not self._model:
+            return
+        self._sync_render_size()
+        if self._static_render_done:
             return
         self._model.Draw()
         self._static_render_done = True

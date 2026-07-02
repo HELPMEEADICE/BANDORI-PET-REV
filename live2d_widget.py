@@ -354,6 +354,7 @@ class Live2DWidget(QOpenGLWidget):
                 self._model.LoadModelJson(model_json_path)
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
+            self._apply_physical_viewport(self._cache_w, self._cache_h)
             self._update_custom_hit_area_projection()
             
             self._model_path = model_json_path
@@ -683,10 +684,10 @@ class Live2DWidget(QOpenGLWidget):
         self._cache_w, self._cache_h = w, h
         self._cache_w_half, self._cache_h_half = w * 0.5, h * 0.5
         self._clear_hit_framebuffer_cache()
-        gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
         if self._model:
             self._model.Resize(w, h)
             self._update_custom_hit_area_projection()
+        self._apply_physical_viewport(w, h)
 
     def refresh_screen_scale(self):
         scale = self._current_device_pixel_ratio()
@@ -697,11 +698,14 @@ class Live2DWidget(QOpenGLWidget):
         if not self._initialized_gl:
             return
         self._safe_make_current()
-        gl.glViewport(0, 0, int(self._cache_w * scale), int(self._cache_h * scale))
         if self._model:
             self._model.Resize(self._cache_w, self._cache_h)
             self._update_custom_hit_area_projection()
+        self._apply_physical_viewport(self._cache_w, self._cache_h)
         self.update()
+
+    def _apply_physical_viewport(self, w: int, h: int):
+        gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
 
     def _current_device_pixel_ratio(self) -> float:
         screen = None
