@@ -12,6 +12,7 @@ from qt_gl import gl, uses_qt_software_opengl
 
 DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
+DEFAULT_MOC3_RENDER_SCALE = 1.35
 HIT_STABILITY_GRACE_MS = 120
 HIT_STABILITY_DISTANCE = 12
 
@@ -352,6 +353,8 @@ class Live2DWidget(QOpenGLWidget):
                     clear_virtual_byte_cache()
             else:
                 self._model.LoadModelJson(model_json_path)
+            if getattr(self._model, "renderer_format", "") == "moc3":
+                self._model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
             self._apply_physical_viewport(self._cache_w, self._cache_h)

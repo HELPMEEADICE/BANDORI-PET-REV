@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication, QWidget
 
+from model_manager import MODEL_FORMAT_MOC3
 from pet_window import PetWindow
 
 
@@ -29,6 +30,7 @@ class ScaleHarness(QWidget):
         super().__init__()
         self._pixel_mode = False
         self._live2d_scale = 100
+        self._live2d_model_format = ""
 
     def _sync_compact_ai_window(self):
         pass
@@ -145,6 +147,12 @@ class PetWindowPositioningTest(unittest.TestCase):
 
         self.assertEqual((800, 1000), (harness.width(), harness.height()))
         self.assertEqual((1700, 900), (harness.x(), harness.y()))
+
+    def test_moc3_size_uses_taller_window(self):
+        harness = ScaleHarness()
+        harness._live2d_model_format = MODEL_FORMAT_MOC3
+
+        self.assertEqual((400, 720), harness._live2d_size())
 
     def test_save_config_does_not_rewrite_models_after_remote_model_update(self):
         harness = SaveConfigHarness()

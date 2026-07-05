@@ -67,6 +67,15 @@ class ModelManagerMoc3Test(unittest.TestCase):
             self.assertEqual(["mtn_angry01_C", "mtn_smile01_C"], manager.get_motion_names("anon", "live_01"))
             self.assertEqual(["exp_angry01", "exp_smile01"], manager.get_expression_names("anon", "live_01"))
 
+    def test_single_model_manager_exposes_model_format(self):
+        from pet_process import SingleModelManager
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model3_path = _write_model3(Path(temp_dir))
+            manager = SingleModelManager("anon", "live_01", str(model3_path))
+
+            self.assertEqual("moc3", manager.get_model_format("anon", "live_01"))
+
     def test_archive_scan_detects_model3_json_members(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

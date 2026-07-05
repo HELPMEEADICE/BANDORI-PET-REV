@@ -22,7 +22,7 @@ from action_bus import publish_user_poke
 from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
-from model_manager import ModelManager
+from model_manager import MODEL_FORMAT_MOC3, ModelManager
 from outfit_description import (
     OUTFIT_DESCRIPTIONS_KEY,
     OutfitDescriptionWorker,
@@ -211,6 +211,7 @@ def _set_x11_input_passthrough(window, enabled: bool) -> bool:
 
 LIVE2D_BASE_WIDTH = 400
 LIVE2D_BASE_HEIGHT = 500
+LIVE2D_MOC3_BASE_HEIGHT = 720
 LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
 LIVE2D_DAZE_AFTER_SECONDS = 7 * 60
 LIVE2D_SLEEP_AFTER_SECONDS = 18 * 60
@@ -358,6 +359,7 @@ class PetWindow(QWidget):
         self._peer_pos_broadcast_timer.timeout.connect(self._broadcast_window_position)
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
+        self._live2d_model_format = ""
         self._live2d_hit_alpha_threshold = DEFAULT_HIT_ALPHA_THRESHOLD
         self._live2d_lip_sync_max_open = DEFAULT_LIP_SYNC_MAX_OPEN
         self._tray_icon = None
@@ -1644,6 +1646,9 @@ class PetWindow(QWidget):
             self._current_char, self._current_costume
         )
         if path:
+            self._set_live2d_model_format(
+                self._model_manager.get_model_format(self._current_char, self._current_costume)
+            )
             self._live2d_widget.set_model_path(path)
             if self._pixel_mode and not self._enable_pixel_mode(save=False):
                 self._enable_live2d_mode(save=False)
@@ -2453,7 +2458,20 @@ class PetWindow(QWidget):
 
     def _live2d_size(self):
         scale = self._live2d_scale / 100.0
-        return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(LIVE2D_BASE_HEIGHT * scale))
+        base_height = (
+            LIVE2D_MOC3_BASE_HEIGHT
+            if self._live2d_model_format == MODEL_FORMAT_MOC3
+            else LIVE2D_BASE_HEIGHT
+        )
+        return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(base_height * scale))
+
+    def _set_live2d_model_format(self, model_format: str):
+        model_format = str(model_format or "").lower()
+        if model_format == self._live2d_model_format:
+            return
+        self._live2d_model_format = model_format
+        if not self._pixel_mode:
+            self.resize(*self._live2d_size())
 
     def set_live2d_scale(self, value: object):
         self._live2d_scale = clamp_live2d_scale(value)

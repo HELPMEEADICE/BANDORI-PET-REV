@@ -7,6 +7,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from qt_gl import gl
 from settings_window.constants import *
+from live2d_widget import DEFAULT_MOC3_RENDER_SCALE
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -137,6 +138,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             finally:
                 if virtual:
                     clear_virtual_byte_cache()
+            if getattr(model, "renderer_format", "") == "moc3":
+                model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
             self._model = model
             self._model_path = model_json_path
             self._sync_render_size(force=True)

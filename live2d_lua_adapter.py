@@ -403,6 +403,7 @@ class LuaLive2DModule:
         self._hit_test = None
         self._set_parameter = None
         self._set_offset = None
+        self._set_scale = None
         self._apply_texture_quality = None
         self._model_info = None
         self._start_motion = None
@@ -431,6 +432,7 @@ class LuaLive2DModule:
         self._hit_test = None
         self._set_parameter = None
         self._set_offset = None
+        self._set_scale = None
         self._apply_texture_quality = None
         self._model_info = None
         self._start_motion = None
@@ -489,6 +491,7 @@ class LuaLive2DModule:
             b"function(renderer, param_id, value, weight) return renderer:set_parameter(param_id, value, weight) end"
         )
         self._set_offset = lua.eval(b"function(renderer, x, y) return renderer:set_offset(x, y) end")
+        self._set_scale = lua.eval(b"function(renderer, scale) return renderer:set_scale(scale) end")
         self._apply_texture_quality = lua.eval(
             b"(function() "
             b"local gl = require('live2d.core.live2d_gl_wrapper'); "
@@ -660,6 +663,15 @@ class LuaLAppModel:
         self.modelSetting = _ModelSetting(info)
         self.expressions = self._read_expression_names(info)
         self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
+
+    @property
+    def renderer_format(self) -> str:
+        return self._renderer_format
+
+    def SetScale(self, scale: float):
+        if self._renderer is None or self._module._set_scale is None:
+            return
+        self._module._set_scale(self._renderer, float(scale))
 
     def Resize(self, width: int, height: int):
         self._width = max(int(width), 1)

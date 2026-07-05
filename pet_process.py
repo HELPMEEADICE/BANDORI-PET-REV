@@ -112,6 +112,14 @@ class SingleModelManager:
             self._fallback_manager = ModelManager()
         return self._fallback_manager.get_model_json_path(character, costume)
 
+    def get_model_format(self, character: str, costume: str) -> str:
+        path = self.get_model_json_path(character, costume)
+        if not path:
+            return ""
+        if self._fallback_manager is None:
+            self._fallback_manager = ModelManager(scan_models=False)
+        return self._fallback_manager._model_format_from_path(path)
+
     def get_display_name(self, character: str) -> str:
         if self._fallback_manager is None:
             self._fallback_manager = ModelManager()
