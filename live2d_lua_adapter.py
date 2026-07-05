@@ -680,6 +680,10 @@ class LuaLAppModel:
         if self._renderer is not None:
             self._module._resize(self._renderer, self._width, self._height)
 
+    def ResizeRenderer(self, width: int, height: int):
+        if self._renderer is not None:
+            self._module._resize(self._renderer, max(int(width), 1), max(int(height), 1))
+
     def Draw(self):
         if self._renderer is None:
             return

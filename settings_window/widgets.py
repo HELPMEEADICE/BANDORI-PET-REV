@@ -7,7 +7,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from qt_gl import gl
 from settings_window.constants import *
-from live2d_widget import DEFAULT_MOC3_RENDER_SCALE
+from live2d_widget import DEFAULT_MOC3_RENDER_SCALE, Live2DSSAAFramebuffer, MOC3_BALANCED_SSAA_SCALE
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -72,6 +72,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._static_render_done = False
         self._render_w = 1
         self._render_h = 1
+        self._ssaa_fbo = Live2DSSAAFramebuffer()
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAutoFillBackground(False)
 
@@ -91,6 +92,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             self.makeCurrent()
             try:
                 self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+                if self._moc3_ssaa_scale() <= 1:
+                    self._ssaa_fbo.dispose()
             finally:
                 self.doneCurrent()
             self._static_render_done = False
@@ -141,6 +144,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             if getattr(model, "renderer_format", "") == "moc3":
                 model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
             self._model = model
+            if self._moc3_ssaa_scale() <= 1:
+                self._ssaa_fbo.dispose()
             self._model_path = model_json_path
             self._sync_render_size(force=True)
         except Exception as e:
@@ -184,6 +189,11 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._render_w, self._render_h = render_w, render_h
         gl.glViewport(0, 0, render_w, render_h)
 
+    def _moc3_ssaa_scale(self) -> int:
+        if self._quality_profile != "balanced" or not self._model:
+            return 1
+        return MOC3_BALANCED_SSAA_SCALE if getattr(self._model, "renderer_format", "") == "moc3" else 1
+
     def paintGL(self):
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
         gl.glEnable(gl.GL_BLEND)
@@ -195,7 +205,30 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._sync_render_size()
         if self._static_render_done:
             return
-        self._model.Draw()
+        ssaa_scale = self._moc3_ssaa_scale()
+        using_ssaa = ssaa_scale > 1 and self._ssaa_fbo.bind(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
+        if using_ssaa:
+            gl.glViewport(0, 0, self._render_w * ssaa_scale, self._render_h * ssaa_scale)
+            gl.glClearColor(*self._clear_color)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
+            if hasattr(self._model, "ResizeRenderer"):
+                self._model.ResizeRenderer(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
+        try:
+            self._model.Draw()
+        finally:
+            if using_ssaa:
+                if hasattr(self._model, "ResizeRenderer"):
+                    self._model.ResizeRenderer(self._render_w, self._render_h)
+                self._ssaa_fbo.release()
+        if using_ssaa:
+            if not self._ssaa_fbo.blit_to_default(self.defaultFramebufferObject(), self._render_w, self._render_h, self._clear_color):
+                self._ssaa_fbo.draw_direct_to_default(
+                    self._model,
+                    self.defaultFramebufferObject(),
+                    self._render_w,
+                    self._render_h,
+                    self._clear_color,
+                )
         self._static_render_done = True
 
 

@@ -8,6 +8,7 @@ from OpenGL.error import GLError
 _INVALID_PTRS = {0, 1, 2, 3, ctypes.c_void_p(-1).value}
 _PROC_ALIASES = {
     "glBindFramebuffer": ("glBindFramebuffer", "glBindFramebufferEXT"),
+    "glBlitFramebuffer": ("glBlitFramebuffer", "glBlitFramebufferEXT"),
 }
 _FUNC_CACHE = {}
 
@@ -162,6 +163,46 @@ class _QtGLProxy:
 
     def glBindFramebuffer(self, target, framebuffer):
         return _call("glBindFramebuffer", None, [ctypes.c_uint, ctypes.c_uint], target, int(framebuffer))
+
+    def glBlitFramebuffer(
+        self,
+        src_x0,
+        src_y0,
+        src_x1,
+        src_y1,
+        dst_x0,
+        dst_y0,
+        dst_x1,
+        dst_y1,
+        mask,
+        filter_,
+    ):
+        return _call(
+            "glBlitFramebuffer",
+            None,
+            [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint,
+                ctypes.c_uint,
+            ],
+            int(src_x0),
+            int(src_y0),
+            int(src_x1),
+            int(src_y1),
+            int(dst_x0),
+            int(dst_y0),
+            int(dst_x1),
+            int(dst_y1),
+            mask,
+            filter_,
+        )
 
     def glBindBuffer(self, target, buffer):
         return _call("glBindBuffer", None, [ctypes.c_uint, ctypes.c_uint], target, int(buffer))

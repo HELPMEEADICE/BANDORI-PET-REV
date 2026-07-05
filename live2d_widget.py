@@ -5,6 +5,7 @@ import time
 import numpy as np
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from process_utils import interaction_trace
 from qt_gl import gl, uses_qt_software_opengl
@@ -13,8 +14,76 @@ from qt_gl import gl, uses_qt_software_opengl
 DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
 DEFAULT_MOC3_RENDER_SCALE = 1.35
+MOC3_BALANCED_SSAA_SCALE = 2
 HIT_STABILITY_GRACE_MS = 120
 HIT_STABILITY_DISTANCE = 12
+
+
+class Live2DSSAAFramebuffer:
+    def __init__(self):
+        self._fbo = None
+        self._size = (0, 0)
+
+    def dispose(self):
+        self._fbo = None
+        self._size = (0, 0)
+
+    def bind(self, width: int, height: int) -> bool:
+        width = max(int(width), 1)
+        height = max(int(height), 1)
+        if self._fbo is None or self._size != (width, height):
+            fmt = QOpenGLFramebufferObjectFormat()
+            fmt.setAttachment(QOpenGLFramebufferObject.Attachment.CombinedDepthStencil)
+            self._fbo = QOpenGLFramebufferObject(width, height, fmt)
+            self._size = (width, height)
+        if not self._fbo.isValid():
+            self.dispose()
+            return False
+        return self._fbo.bind()
+
+    def release(self):
+        if self._fbo is not None:
+            self._fbo.release()
+
+    def blit_to_default(self, default_fbo: int, width: int, height: int, clear_color) -> bool:
+        if self._fbo is None:
+            return False
+        width = max(int(width), 1)
+        height = max(int(height), 1)
+        source_w, source_h = self._size
+        try:
+            gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, int(self._fbo.handle()))
+            gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, default_fbo)
+            gl.glViewport(0, 0, width, height)
+            gl.glClearColor(*clear_color)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
+            gl.glBlitFramebuffer(
+                0,
+                0,
+                source_w,
+                source_h,
+                0,
+                0,
+                width,
+                height,
+                gl.GL_COLOR_BUFFER_BIT,
+                gl.GL_LINEAR,
+            )
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, default_fbo)
+            return True
+        except Exception as exc:
+            print(f"Live2D SSAA blit failed, falling back: {exc}", file=sys.stderr)
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, default_fbo)
+            self.dispose()
+            return False
+
+    @staticmethod
+    def draw_direct_to_default(model, default_fbo: int, width: int, height: int, clear_color):
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, default_fbo)
+        gl.glViewport(0, 0, max(int(width), 1), max(int(height), 1))
+        gl.glClearColor(*clear_color)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
+        model.Draw()
 
 
 class _Live2DPerfProbe:
@@ -87,6 +156,7 @@ class Live2DWidget(QOpenGLWidget):
         self._model_path = ""
         self._pending_model = ""
         self._quality_profile = "balanced"
+        self._ssaa_fbo = Live2DSSAAFramebuffer()
         self._system_scale = 1.0
         
         self._dragging = False
@@ -224,6 +294,9 @@ class Live2DWidget(QOpenGLWidget):
         set_live2d_texture_quality(profile)
         if self._model:
             self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+            self._clear_hit_framebuffer_cache()
+            if self._moc3_ssaa_scale() <= 1:
+                self._ssaa_fbo.dispose()
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -260,6 +333,7 @@ class Live2DWidget(QOpenGLWidget):
             self._initialized_gl = False
             self._safe_make_current()
             self._delete_hit_pbos()
+            self._ssaa_fbo.dispose()
             self._dispose_model_renderer()
         if self._custom_hit_areas is not None:
             self._custom_hit_areas.dispose()
@@ -355,6 +429,8 @@ class Live2DWidget(QOpenGLWidget):
                 self._model.LoadModelJson(model_json_path)
             if getattr(self._model, "renderer_format", "") == "moc3":
                 self._model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
+            if self._moc3_ssaa_scale() <= 1:
+                self._ssaa_fbo.dispose()
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
             self._apply_physical_viewport(self._cache_w, self._cache_h)
@@ -710,6 +786,11 @@ class Live2DWidget(QOpenGLWidget):
     def _apply_physical_viewport(self, w: int, h: int):
         gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
 
+    def _moc3_ssaa_scale(self) -> int:
+        if self._quality_profile != "balanced" or not self._model:
+            return 1
+        return MOC3_BALANCED_SSAA_SCALE if getattr(self._model, "renderer_format", "") == "moc3" else 1
+
     def _current_device_pixel_ratio(self) -> float:
         screen = None
         try:
@@ -741,14 +822,41 @@ class Live2DWidget(QOpenGLWidget):
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
 
+        target_w = max(1, int(self._cache_w * self._system_scale))
+        target_h = max(1, int(self._cache_h * self._system_scale))
+        ssaa_scale = self._moc3_ssaa_scale()
+        using_ssaa = ssaa_scale > 1 and self._ssaa_fbo.bind(target_w * ssaa_scale, target_h * ssaa_scale)
+        if using_ssaa:
+            gl.glViewport(0, 0, target_w * ssaa_scale, target_h * ssaa_scale)
         gl.glClearColor(*self._clear_color)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
 
         try:
             self._apply_lip_sync()
             draw_start = self._perf_probe.now()
+            if using_ssaa and hasattr(self._model, "ResizeRenderer"):
+                self._model.ResizeRenderer(target_w * ssaa_scale, target_h * ssaa_scale)
             self._model.Draw()
+            if using_ssaa:
+                if hasattr(self._model, "ResizeRenderer"):
+                    self._model.ResizeRenderer(self._cache_w, self._cache_h)
+                self._ssaa_fbo.release()
+                if not self._ssaa_fbo.blit_to_default(self.defaultFramebufferObject(), target_w, target_h, self._clear_color):
+                    self._ssaa_fbo.draw_direct_to_default(
+                        self._model,
+                        self.defaultFramebufferObject(),
+                        target_w,
+                        target_h,
+                        self._clear_color,
+                    )
         except Exception as exc:
+            if using_ssaa:
+                try:
+                    self._ssaa_fbo.release()
+                except Exception:
+                    pass
+                if hasattr(self._model, "ResizeRenderer"):
+                    self._model.ResizeRenderer(self._cache_w, self._cache_h)
             print(f"Live2D draw failed: {exc}", file=sys.stderr)
             gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             gl.glDisable(gl.GL_DEPTH_TEST)
