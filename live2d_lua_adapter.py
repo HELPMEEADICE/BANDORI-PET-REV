@@ -546,7 +546,7 @@ class LuaLive2DModule:
             b"end"
         )
         self._start_motion = lua.eval(
-            b"function(renderer, name, no, priority) return renderer:start_motion(name, no, priority) end"
+            b"function(renderer, name, no, priority, loop) return renderer:start_motion(name, no, priority, loop) end"
         )
         self._clear_motions = lua.eval(b"function(renderer) return renderer:clear_motions() end")
         self._is_motion_finished = lua.eval(
@@ -703,7 +703,7 @@ class LuaLAppModel:
         hits = self._module._hit_test(self._renderer, float(x), float(y))
         return "hit" if len(hits) > 0 else None
 
-    def StartMotion(self, name: str, no: int = 0, priority=MotionPriority.FORCE, **_kwargs):
+    def StartMotion(self, name: str, no: int = 0, priority=MotionPriority.FORCE, loop: bool | None = None, **_kwargs):
         if self._renderer is None:
             return
         resolved = self.modelSetting.resolveMotion(str(name), int(no)) if self.modelSetting else None
@@ -715,9 +715,10 @@ class LuaLAppModel:
             group_name.encode("utf-8"),
             int(motion_no),
             int(priority),
+            loop,
         )
 
-    def StartRandomMotion(self, name: str | None = None, priority=MotionPriority.IDLE, **_kwargs):
+    def StartRandomMotion(self, name: str | None = None, priority=MotionPriority.IDLE, **kwargs):
         if self.modelSetting is None:
             return
         if not name:
@@ -728,7 +729,7 @@ class LuaLAppModel:
         count = self.modelSetting.getMotionNum(name)
         if count <= 0:
             return
-        self.StartMotion(name, random.randrange(count), priority)
+        self.StartMotion(name, random.randrange(count), priority, **kwargs)
 
     def PreloadMotionGroup(self, name: str):
         if self._renderer is None or not name:

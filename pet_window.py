@@ -2104,13 +2104,15 @@ class PetWindow(QWidget):
         if self._start_context_idle_behavior("approach"):
             self._last_mouse_approach_action_at = now
 
-    def _safe_start_motion(self, model, motion_name: str, *, priority=None, on_finish=None) -> bool:
+    def _safe_start_motion(self, model, motion_name: str, *, priority=None, on_finish=None, loop=None) -> bool:
         if not motion_name:
             return False
         priority = priority or self._live2d.MotionPriority.FORCE
         kwargs = {}
         if on_finish:
             kwargs["onFinishMotionHandler"] = on_finish
+        if loop is not None:
+            kwargs["loop"] = bool(loop)
         setting = getattr(model, "modelSetting", None)
         motion_count = 0
         if setting is not None:
@@ -2165,6 +2167,7 @@ class PetWindow(QWidget):
                 model, motion,
                 priority=self._live2d.MotionPriority.FORCE,
                 on_finish=lambda *args, t=token: self._on_motion_finished(t, *args),
+                loop=False,
             )
             if started:
                 QTimer.singleShot(9000, lambda t=token: self._clear_motion_if_current(t))
@@ -2688,14 +2691,14 @@ class PetWindow(QWidget):
         token = self._motion_guard_token
         started = False
         if motion_name:
-            started = self._safe_start_motion(model, motion_name)
+            started = self._safe_start_motion(model, motion_name, loop=False)
         else:
             warmed_motion = self._choose_prewarmed_click_motion()
             if warmed_motion:
-                started = self._safe_start_motion(model, warmed_motion)
+                started = self._safe_start_motion(model, warmed_motion, loop=False)
         if not started and not motion_name:
             try:
-                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE)
+                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE, loop=False)
                 started = True
             except Exception:
                 pass
@@ -3250,10 +3253,10 @@ class PetWindow(QWidget):
         token = self._motion_guard_token
         started = False
         if motion:
-            started = self._safe_start_motion(model, motion)
+            started = self._safe_start_motion(model, motion, loop=False)
         else:
             try:
-                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE)
+                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE, loop=False)
                 started = True
             except Exception:
                 pass
@@ -3558,6 +3561,7 @@ class PetWindow(QWidget):
                     motion,
                     priority=self._live2d.MotionPriority.FORCE,
                     on_finish=lambda *args, t=token: self._on_motion_finished(t, *args),
+                    loop=False,
                 ):
                     hold_ms = 2600 + int(intensity * 54)
                     QTimer.singleShot(hold_ms, lambda t=token: self._clear_motion_if_current(t))
@@ -3988,6 +3992,7 @@ class PetWindow(QWidget):
                 model, motion,
                 priority=self._live2d.MotionPriority.FORCE,
                 on_finish=lambda *args, t=token: self._on_motion_finished(t, *args),
+                loop=False,
             )
             if motion_started:
                 QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
@@ -3998,6 +4003,7 @@ class PetWindow(QWidget):
                     token = self._motion_guard_token
                     model.StartRandomMotion(
                         priority=self._live2d.MotionPriority.FORCE,
+                        loop=False,
                         onFinishMotionHandler=lambda *args, t=token: self._on_motion_finished(t, *args),
                     )
                     motion_started = True
@@ -4030,6 +4036,7 @@ class PetWindow(QWidget):
             token = self._motion_guard_token
             model.StartRandomMotion(
                 priority=self._live2d.MotionPriority.FORCE,
+                loop=False,
                 onFinishMotionHandler=lambda *args, t=token: self._on_motion_finished(t, *args),
             )
             QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
@@ -4098,19 +4105,24 @@ class PetWindow(QWidget):
         motion_names = self._current_motion_names()
         configured_motion = self._current_model_entry().get("default_motion", "")
         if configured_motion:
-            if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE):
+            if self._safe_start_motion(model, configured_motion, priority=self._live2d.MotionPriority.FORCE, loop=True):
                 self._apply_default_expression(model)
                 return
-        idle_names = [name for name in motion_names if str(name).lower().startswith("idle")]
+        idle_names = [name for name in motion_names if self._is_idle_motion_name(name)]
         if idle_names:
             idle_name = random.choice(idle_names) if self._live2d_random_actions_enabled else idle_names[0]
-            self._safe_start_motion(model, idle_name, priority=self._live2d.MotionPriority.FORCE)
+            self._safe_start_motion(model, idle_name, priority=self._live2d.MotionPriority.FORCE, loop=True)
         else:
             try:
                 model.ClearMotions()
             except Exception:
                 pass
         self._apply_default_expression(model)
+
+    @staticmethod
+    def _is_idle_motion_name(name: str) -> bool:
+        lowered = str(name or "").lower()
+        return lowered.startswith("idle") or "_idle" in lowered or "-idle" in lowered
 
     def _schedule_default_expression_restore(self, delay_ms: int = 3000):
         self._expression_guard_token += 1
