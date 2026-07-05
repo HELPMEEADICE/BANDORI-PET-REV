@@ -30,6 +30,39 @@ class Moc3MotionLoopingTest(unittest.TestCase):
 
         self.assertTrue(finished)
 
+    def test_motion_level_fade_in_blends_inherited_curves(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        root = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()
+        lua.execute(
+            "local root = ...; "
+            "package.path = package.path .. ';' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
+            root,
+        )
+
+        value = lua.execute(
+            "local MotionPlayer = require('live2d.cubism3.motion'); "
+            "local runtime = { value = 30.0 }; "
+            "function runtime:parameter_index_of(id) return id == 'ParamAngleX' and 0 or nil end; "
+            "function runtime:parameter_value_by_index(_index) return self.value end; "
+            "function runtime:set_parameter_by_index(_index, value) self.value = value end; "
+            "local curve = { "
+            "target = 'Parameter', id = 'ParamAngleX', "
+            "fade_in_time = -1.0, fade_out_time = -1.0, "
+            "sample = function(_self, _time) return 0.0 end "
+            "}; "
+            "local motion = { "
+            "meta = { Duration = 1.0, FadeInTime = 1.0, FadeOutTime = 1.0 }, "
+            "curves = { curve } "
+            "}; "
+            "local player = MotionPlayer.new(motion, false); "
+            "player:tick(0.25); "
+            "player:apply(runtime); "
+            "return runtime.value"
+        )
+
+        self.assertGreater(value, 0.0)
+        self.assertLess(value, 30.0)
+
     def test_click_motion_requests_one_shot_playback(self):
         model = _FakeModel(["mtn_smile01_C"])
         harness = _MotionHarness(model)
