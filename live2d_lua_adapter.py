@@ -1,4 +1,5 @@
 import ctypes
+import json
 import os
 import random
 import sys
@@ -16,6 +17,8 @@ BASE_DIR = Path(app_base_dir())
 LIVE2D_LUA_DIR = BASE_DIR / "third_party" / "Live2D-v2-Lua"
 MODELS_DIR = BASE_DIR / "models"
 LIVE2D_PROFILE_ENABLED = os.environ.get("BANDORI_LIVE2D_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
+MODEL_FORMAT_MOC = "moc"
+MODEL_FORMAT_MOC3 = "moc3"
 
 
 def _normalize_lua_path(path) -> str:
@@ -246,6 +249,31 @@ def _load_model_bytes(path: str) -> bytes:
     return fs_path.read_bytes()
 
 
+def _model_manifest_format(path: str) -> str:
+    if _normalize_lua_path(path).lower().endswith(".model3.json"):
+        return MODEL_FORMAT_MOC3
+    try:
+        data = json.loads(_load_model_bytes(path).decode("utf-8"))
+    except Exception:
+        return MODEL_FORMAT_MOC
+    if isinstance(data, dict) and (
+        isinstance(data.get("FileReferences"), dict)
+        or str(data.get("Version", "")).startswith("3")
+    ):
+        return MODEL_FORMAT_MOC3
+    return MODEL_FORMAT_MOC
+
+
+def _decode_texture_rgba(data: bytes) -> tuple[int, int, bytes]:
+    from io import BytesIO
+
+    from PIL import Image
+
+    with Image.open(BytesIO(data)) as image:
+        rgba = image.convert("RGBA")
+        return rgba.width, rgba.height, rgba.tobytes("raw", "RGBA")
+
+
 def _texture_options(profile: str) -> tuple[float, bool, int]:
     options = LIVE2D_QUALITY_PROFILES[normalize_live2d_quality(profile)]
     return (
@@ -366,6 +394,7 @@ class LuaLive2DModule:
     def __init__(self):
         self._lua = None
         self._embed = None
+        self._moc3_embed = None
         self._initialized = False
         self._load_model = None
         self._resize = None
@@ -414,6 +443,7 @@ class LuaLive2DModule:
         self._dispose_renderer = None
         self._lua = None
         self._embed = None
+        self._moc3_embed = None
         self._initialized = False
 
     def LAppModel(self):
@@ -445,7 +475,9 @@ class LuaLive2DModule:
             lua_dir,
         )
         self._embed = lua.execute(b'return require("live2d_embed")')
+        self._moc3_embed = lua.execute(b'return require("live2d_moc3_pet_embed")')
         self._embed.init()
+        self._moc3_embed.init()
         self._load_model = lua.eval(
             b"function(renderer, path, w, h, opts) return renderer:load_model(path, w, h, opts) end"
         )
@@ -463,6 +495,7 @@ class LuaLive2DModule:
             b"local GL_NEAREST = 0x2600; "
             b"local GL_LINEAR_MIPMAP_LINEAR = 0x2703; "
             b"return function(renderer, profile) "
+            b"if renderer.apply_texture_quality ~= nil then return renderer:apply_texture_quality(profile) end; "
             b"local model = renderer:get_model(); "
             b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
             b"local textures = model.live2DModel.drawParamGL.textures or {}; "
@@ -492,6 +525,7 @@ class LuaLive2DModule:
         self._model_info = lua.eval(
             b"function(renderer) "
             b"local info = { motion_names = {}, motions = {}, expressions = {}, hit_area_count = 0 }; "
+            b"if renderer.model_info ~= nil then return renderer:model_info() end; "
             b"local model = renderer:get_model(); "
             b"local setting = model and model.modelSetting; "
             b"if setting == nil then return info end; "
@@ -517,6 +551,7 @@ class LuaLive2DModule:
         self._clear_motions = lua.eval(b"function(renderer) return renderer:clear_motions() end")
         self._is_motion_finished = lua.eval(
             b"function(renderer) "
+            b"if renderer.is_motion_finished ~= nil then return renderer:is_motion_finished() end; "
             b"local model = renderer:get_model(); "
             b"return model == nil or model.mainMotionManager:isFinished(); "
             b"end"
@@ -535,13 +570,15 @@ class LuaLive2DModule:
         self._lua = lua
         self._initialized = True
 
-    def _new_renderer(self, width: int, height: int):
+    def _new_renderer(self, width: int, height: int, model_format: str = MODEL_FORMAT_MOC):
         self._ensure_runtime()
-        return self._embed.new(width, height)
+        embed = self._moc3_embed if model_format == MODEL_FORMAT_MOC3 else self._embed
+        return embed.new(width, height)
 
-    def _new_options(self, model_path: str):
+    def _new_options(self, model_path: str, model_format: str = MODEL_FORMAT_MOC):
         self._ensure_runtime()
         lua = self._lua
+        decode_textures = model_format == MODEL_FORMAT_MOC3
 
         def resource_loader(path):
             return _load_model_bytes(_normalize_lua_path(path))
@@ -551,13 +588,24 @@ class LuaLive2DModule:
             normalized_path = _normalize_lua_path(path)
             scale, use_mipmap, bleed_passes = _texture_options(profile)
             entry = lua.table()
+            raw_bytes = None
             if is_virtual_path(normalized_path):
                 archive_path, _member_path = split_virtual_path(normalized_path)
                 _safe_model_file_path(archive_path)
                 entry[b"path"] = normalized_path.encode("utf-8")
-                entry[b"bytes"] = load_virtual_bytes(normalized_path)
+                raw_bytes = load_virtual_bytes(normalized_path)
+                entry[b"bytes"] = raw_bytes
             else:
-                entry[b"path"] = _safe_model_file_path(normalized_path).as_posix().encode("utf-8")
+                fs_path = _safe_model_file_path(normalized_path)
+                entry[b"path"] = fs_path.as_posix().encode("utf-8")
+                if decode_textures:
+                    raw_bytes = fs_path.read_bytes()
+                    entry[b"bytes"] = raw_bytes
+            if decode_textures and raw_bytes is not None:
+                width, height, rgba = _decode_texture_rgba(raw_bytes)
+                entry[b"width"] = int(width)
+                entry[b"height"] = int(height)
+                entry[b"data"] = rgba
             entry[b"scale"] = scale
             entry[b"mipmap"] = use_mipmap
             entry[b"bleed_passes"] = bleed_passes
@@ -582,6 +630,7 @@ class LuaLAppModel:
     def __init__(self, module: LuaLive2DModule):
         self._module = module
         self._renderer = None
+        self._renderer_format = MODEL_FORMAT_MOC
         self._width = 1
         self._height = 1
         self.modelSetting = None
@@ -597,8 +646,9 @@ class LuaLAppModel:
 
     def LoadModelJson(self, model_json_path: str):
         self._dispose_renderer()
-        self._renderer = self._module._new_renderer(self._width, self._height)
-        opts = self._module._new_options(model_json_path)
+        self._renderer_format = _model_manifest_format(model_json_path)
+        self._renderer = self._module._new_renderer(self._width, self._height, self._renderer_format)
+        opts = self._module._new_options(model_json_path, self._renderer_format)
         self._module._load_model(
             self._renderer,
             _normalize_lua_path(model_json_path).encode("utf-8"),

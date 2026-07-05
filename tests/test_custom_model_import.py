@@ -22,6 +22,34 @@ def _write_model(root: Path, model_path: str = "model.moc", texture_path: str = 
     )
 
 
+def _write_model3(root: Path) -> None:
+    (root / "textures").mkdir(parents=True, exist_ok=True)
+    (root / "textures" / "texture_00.png").write_bytes(b"png")
+    (root / "motions").mkdir(parents=True, exist_ok=True)
+    (root / "motions" / "mtn_smile01_C.motion3.json").write_text(
+        '{"Version":3,"Meta":{"Duration":1,"Fps":30,"Loop":false,"AreBeziersRestricted":true,"CurveCount":0,"TotalSegmentCount":0,"TotalPointCount":0,"UserDataCount":0,"TotalUserDataSize":0},"Curves":[]}',
+        encoding="utf-8",
+    )
+    (root / "expressions").mkdir(parents=True, exist_ok=True)
+    (root / "expressions" / "exp_smile01.exp3.json").write_text(
+        '{"Type":"Live2D Expression","Parameters":[]}',
+        encoding="utf-8",
+    )
+    (root / "model.moc3").write_bytes(b"moc3")
+    (root / "model.model3.json").write_text(
+        json.dumps({
+            "Version": 3,
+            "FileReferences": {
+                "Moc": "model.moc3",
+                "Textures": ["textures/texture_00.png"],
+                "Motions": {"mtn_smile01_C": [{"File": "motions/mtn_smile01_C.motion3.json"}]},
+                "Expressions": [{"Name": "exp_smile01", "File": "expressions/exp_smile01.exp3.json"}],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+
 class CustomModelImportTest(unittest.TestCase):
     def test_import_accepts_normal_relative_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -76,6 +104,21 @@ class CustomModelImportTest(unittest.TestCase):
                 import_from_folder(str(source), "Absolute Character", "default")
 
             self.assertEqual("unsafe_resource_path", raised.exception.code)
+
+    def test_import_accepts_cubism3_model3_resources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            models = root / "models"
+            source.mkdir()
+            _write_model3(source)
+
+            with patch.object(custom_model_import, "MODELS_DIR", models):
+                character, costumes = import_from_folder(str(source), "Moc3 Character", "live_01")
+
+            self.assertEqual("Moc3 Character", character)
+            self.assertEqual(["live_01"], costumes)
+            self.assertTrue((models / "Moc3 Character" / "live_01" / "model.model3.json").is_file())
 
 if __name__ == "__main__":
     unittest.main()

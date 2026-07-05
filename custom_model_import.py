@@ -2,15 +2,15 @@
 
 A custom model is stored exactly like a built-in one: copied into
 ``models/<character>/<costume>/`` containing a Cubism 2.1 ``model.json``
-plus its resources, so the rest of the app (ModelManager scan, band
+or Cubism 3 ``*.model3.json`` plus its resources, so the rest of the app (ModelManager scan, band
 grouping, costume picker, click-motion config, pet process) reuses it
 without any special casing.
 
 A marker file ``_custom.json`` is written at the character-folder level so
 imported models can be told apart from built-ins and deleted safely.
 
-Only Cubism 2.1 (``model.json`` + ``.moc``) is supported; the bundled Lua
-renderer cannot load Cubism 3/4 (``.model3.json`` / ``.moc3``).
+Both Cubism 2.1 (``model.json`` + ``.moc``) and Cubism 3
+(``*.model3.json`` + ``.moc3``) are supported.
 """
 
 import json
@@ -24,6 +24,7 @@ from model_manager import MODELS_DIR
 
 CUSTOM_MARKER_FILENAME = "_custom.json"
 MODEL_JSON_NAME = "model.json"
+MODEL3_JSON_SUFFIX = ".model3.json"
 _INVALID_NAME_CHARS = '<>:"/\\|?*'
 _MAX_NAME_LENGTH = 64
 
@@ -82,10 +83,20 @@ def _is_model_json(json_path: Path) -> bool:
     """检查 JSON 文件是否是 Live2D 模型配置文件"""
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
-        # 模型配置文件必须包含 model 字段（指向 .moc 文件）
-        return "model" in data and isinstance(data["model"], str)
+        return _is_cubism2_model_data(data) or _is_cubism3_model_data(data)
     except (json.JSONDecodeError, OSError):
         return False
+
+
+def _is_cubism2_model_data(data: dict) -> bool:
+    return isinstance(data, dict) and isinstance(data.get("model"), str)
+
+
+def _is_cubism3_model_data(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    refs = data.get("FileReferences")
+    return isinstance(refs, dict) and isinstance(refs.get("Moc"), str)
 
 
 def _find_model_jsons(root: Path) -> list[Path]:
@@ -94,6 +105,7 @@ def _find_model_jsons(root: Path) -> list[Path]:
     支持：
     - model.json（标准名称）
     - *.model.json（变体文件）
+    - *.model3.json（Cubism 3）
     - 其他包含 model 字段的 JSON 文件
     """
     result = []
@@ -115,8 +127,8 @@ def _find_model_jsons(root: Path) -> list[Path]:
                 seen.add(json_path)
             continue
 
-        # *.model.json 变体文件
-        if json_path.name.endswith(".model.json"):
+        # *.model.json / *.model3.json 变体文件
+        if json_path.name.endswith(".model.json") or json_path.name.endswith(MODEL3_JSON_SUFFIX):
             if json_path not in seen:
                 result.append(json_path)
                 seen.add(json_path)
@@ -129,16 +141,6 @@ def _find_model_jsons(root: Path) -> list[Path]:
                 seen.add(json_path)
 
     return sorted(result)
-
-
-def _has_cubism3_artifacts(root: Path) -> bool:
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        lower = path.name.lower()
-        if lower.endswith(".model3.json") or lower.endswith(".moc3"):
-            return True
-    return False
 
 
 def _resolve_relative_resource(base_dir: Path, resource: str) -> Path:
@@ -165,8 +167,8 @@ def _require_model_resource(model_dir: Path, resource: str) -> Path:
     return target
 
 
-def _validate_cubism2_model(model_json: Path) -> None:
-    """Validate a single model.json describes a loadable Cubism 2.1 model."""
+def _validate_model_manifest(model_json: Path) -> None:
+    """Validate a single Live2D manifest describes a loadable model."""
     try:
         data = json.loads(model_json.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -174,15 +176,18 @@ def _validate_cubism2_model(model_json: Path) -> None:
     if not isinstance(data, dict):
         raise CustomModelImportError("bad_model_json", detail="not an object")
 
-    # Cubism 3/4 manifests use these shapes even if named model.json.
-    if "FileReferences" in data or str(data.get("Version", "")).startswith("3"):
-        raise CustomModelImportError("cubism3_unsupported")
+    if _is_cubism3_model_data(data):
+        _validate_cubism3_model(model_json, data)
+    else:
+        _validate_cubism2_model(model_json, data)
+
+
+def _validate_cubism2_model(model_json: Path, data: dict) -> None:
+    """Validate a single model.json describes a loadable Cubism 2.1 model."""
 
     moc = data.get("model")
     if not moc or not isinstance(moc, str):
         raise CustomModelImportError("missing_moc")
-    if moc.lower().endswith(".moc3"):
-        raise CustomModelImportError("cubism3_unsupported")
     _require_model_resource(model_json.parent, moc)
 
     textures = data.get("textures", [])
@@ -194,6 +199,47 @@ def _validate_cubism2_model(model_json: Path) -> None:
         _require_model_resource(model_json.parent, texture)
 
 
+def _validate_cubism3_model(model_json: Path, data: dict) -> None:
+    refs = data.get("FileReferences", {})
+    moc = refs.get("Moc")
+    if not moc or not isinstance(moc, str):
+        raise CustomModelImportError("missing_moc")
+    _require_model_resource(model_json.parent, moc)
+
+    textures = refs.get("Textures", [])
+    if not isinstance(textures, list) or not textures:
+        raise CustomModelImportError("missing_textures")
+    for texture in textures:
+        if not isinstance(texture, str):
+            raise CustomModelImportError("missing_resource", resource=str(texture))
+        _require_model_resource(model_json.parent, texture)
+
+    for resource in _cubism3_optional_resources(refs):
+        _require_model_resource(model_json.parent, resource)
+
+
+def _cubism3_optional_resources(refs: dict) -> list[str]:
+    resources: list[str] = []
+    for key in ("Physics", "Pose", "DisplayInfo"):
+        value = refs.get(key)
+        if isinstance(value, str) and value.strip():
+            resources.append(value)
+    motions = refs.get("Motions", {})
+    if isinstance(motions, dict):
+        for group in motions.values():
+            if not isinstance(group, list):
+                continue
+            for item in group:
+                if isinstance(item, dict) and isinstance(item.get("File"), str):
+                    resources.append(item["File"])
+    expressions = refs.get("Expressions", [])
+    if isinstance(expressions, list):
+        for item in expressions:
+            if isinstance(item, dict) and isinstance(item.get("File"), str):
+                resources.append(item["File"])
+    return resources
+
+
 def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Path, Path]]:
     """Map a source tree to a list of (costume_id, costume_dir, model_json_path) to copy.
 
@@ -203,8 +249,6 @@ def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Pat
     """
     model_jsons = _find_model_jsons(source_root)
     if not model_jsons:
-        if _has_cubism3_artifacts(source_root):
-            raise CustomModelImportError("cubism3_unsupported")
         raise CustomModelImportError("no_model_json")
 
     costumes: list[tuple[str, Path, Path]] = []
@@ -227,7 +271,7 @@ def _resolve_costumes(source_root: Path, costume_id: str) -> list[tuple[str, Pat
             costumes.append((cid, parent, model_json))
 
     for _cid, _costume_dir, model_json_path in costumes:
-        _validate_cubism2_model(model_json_path)
+        _validate_model_manifest(model_json_path)
     return costumes
 
 

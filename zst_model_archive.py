@@ -204,6 +204,23 @@ def _model_resource_members(model_member: str, model_json: dict, include_express
         if isinstance(path, str) and path:
             members.add(_join_member(base_dir, path))
 
+    file_refs = model_json.get("FileReferences") if isinstance(model_json, dict) else None
+    if isinstance(file_refs, dict):
+        add(file_refs.get("Moc"))
+        textures = file_refs.get("Textures", []) or []
+        if isinstance(textures, list):
+            for texture in textures:
+                add(texture)
+        add(file_refs.get("Physics"))
+        add(file_refs.get("Pose"))
+        add(file_refs.get("DisplayInfo"))
+        expressions = file_refs.get("Expressions", []) or []
+        if include_expressions and isinstance(expressions, list):
+            for expression in expressions:
+                if isinstance(expression, dict):
+                    add(expression.get("File"))
+        return members
+
     add(model_json.get("model"))
     textures = model_json.get("textures", []) or []
     if isinstance(textures, list):
@@ -236,7 +253,13 @@ def _action_resource_members(
             members.add(_join_member(base_dir, path))
 
     wanted_motions = {str(name) for name in motion_groups if name}
-    motions = model_json.get("motions") or {}
+    file_refs = model_json.get("FileReferences") if isinstance(model_json, dict) else None
+    if isinstance(file_refs, dict):
+        motions = file_refs.get("Motions") or {}
+        motion_file_key = "File"
+    else:
+        motions = model_json.get("motions") or {}
+        motion_file_key = "file"
     if isinstance(motions, dict):
         for group_name in wanted_motions:
             group = motions.get(group_name) or []
@@ -244,14 +267,21 @@ def _action_resource_members(
                 continue
             for item in group:
                 if isinstance(item, dict):
-                    add(item.get("file"))
+                    add(item.get(motion_file_key))
 
     wanted_expressions = {str(name) for name in expression_names if name}
-    expressions = model_json.get("expressions") or []
+    if isinstance(file_refs, dict):
+        expressions = file_refs.get("Expressions") or []
+        expression_name_key = "Name"
+        expression_file_key = "File"
+    else:
+        expressions = model_json.get("expressions") or []
+        expression_name_key = "name"
+        expression_file_key = "file"
     if isinstance(expressions, list):
         for item in expressions:
-            if isinstance(item, dict) and str(item.get("name", "")) in wanted_expressions:
-                add(item.get("file"))
+            if isinstance(item, dict) and str(item.get(expression_name_key, "")) in wanted_expressions:
+                add(item.get(expression_file_key))
 
     return members
 

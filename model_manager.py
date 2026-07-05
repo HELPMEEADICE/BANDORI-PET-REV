@@ -22,6 +22,8 @@ OUTFIT_JSON = BASE_DIR / "outfit.json"
 BAND_JSON = BASE_DIR / "band.json"
 CHARACTERS_DIR = BASE_DIR / "characters"
 MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
+MODEL_FORMAT_MOC = "moc"
+MODEL_FORMAT_MOC3 = "moc3"
 
 
 def models_dir_exists() -> bool:
@@ -161,12 +163,13 @@ class ModelManager:
         for costume_dir in sorted(entry.iterdir()):
             if not costume_dir.is_dir():
                 continue
-            model_json = costume_dir / "model.json"
-            if model_json.exists():
+            model_json = self._find_model_manifest(costume_dir)
+            if model_json:
                 model_path = str(model_json.resolve())
                 costumes.append({
                     "id": costume_dir.name,
                     "path": model_path,
+                    "format": self._model_format_from_path(model_path),
                 })
                 self._model_paths[(char_name, costume_dir.name)] = model_path
         image_path = self._find_dir_character_image(entry)
@@ -187,7 +190,7 @@ class ModelManager:
         costumes = []
         model_paths = []
         for member in files:
-            if member != "model.json" and not member.endswith("/model.json"):
+            if not self._is_model_manifest_name(member):
                 continue
             parent = member.rsplit("/", 1)[0] if "/" in member else ""
             costume_id = parent.rsplit("/", 1)[-1] if parent else "default"
@@ -195,6 +198,7 @@ class ModelManager:
             costumes.append({
                 "id": costume_id,
                 "path": model_path,
+                "format": MODEL_FORMAT_MOC3 if member.lower().endswith(".model3.json") else MODEL_FORMAT_MOC,
             })
             model_paths.append((char_name, costume_id, model_path))
 
@@ -364,6 +368,37 @@ class ModelManager:
                 return make_virtual_path(archive_path, candidate)
         return ""
 
+    @staticmethod
+    def _is_model_manifest_name(path: str) -> bool:
+        name = Path(str(path).replace("\\", "/")).name.lower()
+        return name == "model.json" or name.endswith(".model3.json")
+
+    @classmethod
+    def _find_model_manifest(cls, costume_dir: Path) -> Path | None:
+        model_json = costume_dir / "model.json"
+        if model_json.exists():
+            return model_json
+        model3_jsons = sorted(path for path in costume_dir.glob("*.model3.json") if path.is_file())
+        return model3_jsons[0] if model3_jsons else None
+
+    def _model_format_from_path(self, path: str) -> str:
+        if str(path).lower().endswith(".model3.json"):
+            return MODEL_FORMAT_MOC3
+        try:
+            data = self._read_model_json(path)
+        except (json.JSONDecodeError, OSError, ValueError, KeyError, RuntimeError, UnicodeDecodeError):
+            return MODEL_FORMAT_MOC
+        return self._model_format_from_data(data)
+
+    @staticmethod
+    def _model_format_from_data(data: dict) -> str:
+        if isinstance(data, dict) and (
+            isinstance(data.get("FileReferences"), dict)
+            or str(data.get("Version", "")).startswith("3")
+        ):
+            return MODEL_FORMAT_MOC3
+        return MODEL_FORMAT_MOC
+
     def get_costumes(self, character: str) -> list[dict]:
         return self._characters.get(character, {}).get("costumes", [])
 
@@ -385,10 +420,16 @@ class ModelManager:
         model_path = self._model_paths.get((character, costume), "")
         if model_path:
             return model_path
-        path = MODELS_DIR / character / costume / "model.json"
-        if path.exists():
+        path = self._find_model_manifest(MODELS_DIR / character / costume)
+        if path:
             return str(path.resolve())
         return ""
+
+    def get_model_format(self, character: str, costume: str) -> str:
+        path = self.get_model_json_path(character, costume)
+        if not path:
+            return ""
+        return self._model_format_from_path(path)
 
     def _read_model_json(self, path: str) -> dict:
         cached = self._model_json_cache.get(path)
@@ -410,6 +451,8 @@ class ModelManager:
         except (json.JSONDecodeError, OSError, ValueError, KeyError, RuntimeError, UnicodeDecodeError):
             return []
         motions = data.get("motions", {})
+        if not motions and isinstance(data.get("FileReferences"), dict):
+            motions = data.get("FileReferences", {}).get("Motions", {})
         if not isinstance(motions, dict):
             return []
         return sorted(str(name) for name in motions if name)
@@ -423,7 +466,13 @@ class ModelManager:
         except (json.JSONDecodeError, OSError, ValueError, KeyError, RuntimeError, UnicodeDecodeError):
             return []
         expressions = data.get("expressions", [])
+        if not expressions and isinstance(data.get("FileReferences"), dict):
+            expressions = data.get("FileReferences", {}).get("Expressions", [])
         if not isinstance(expressions, list):
             return []
-        names = [str(item["name"]) for item in expressions if isinstance(item, dict) and item.get("name")]
+        names = [
+            str(item.get("name") or item.get("Name"))
+            for item in expressions
+            if isinstance(item, dict) and (item.get("name") or item.get("Name"))
+        ]
         return sorted(names)

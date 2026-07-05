@@ -45,8 +45,64 @@ _CORE_TAGS = (
     "[surprised]、[thinking]、[shame]、[serious]、[wink]、[kime]"
 )
 
+_MOC3_ACTION_TAGS = (
+    "[mtn_angry01_C]、[mtn_cry01_C]、[mtn_bye01_C]、[mtn_kime01_C]、"
+    "[mtn_smile01_C]、[mtn_sad01_C]、[mtn_surprised01_C]、[mtn_thinking01_C]、"
+    "[mtn_serious01_C]、[mtn_wink01_C]、[mtn_nod01_C]、[mtn_look01_C]、[mtn_idle01_C]"
+)
+
+_ACTION_INSTRUCTION_RE = re.compile(r"\n\n【重要指令】：必须在最后加动作标签：.*?(?=\n\n|$)", re.S)
+
 def _make_prompt(intro: str, suffix: str) -> str:
     return f"{intro}\n\n【重要指令】：必须在最后加动作标签：{suffix}"
+
+
+def _moc3_action_instruction() -> str:
+    return (
+        "\n\n【重要指令】：当前桌宠使用 moc3 模型，必须在最后加一个 moc3 专属动作标签："
+        f"{_MOC3_ACTION_TAGS}。仍然只允许携带一个动作标签；动作解析会保留模糊匹配，"
+        "但你应优先输出上述 mtn_* 标签。"
+    )
+
+
+def _is_moc3_model_path(path: str) -> bool:
+    return str(path or "").replace("\\", "/").lower().endswith(".model3.json")
+
+
+def _current_model_entry(config_manager, character: str) -> dict:
+    if not config_manager:
+        return {}
+    models = config_manager.get("models", [])
+    if not isinstance(models, list):
+        return {}
+    character = str(character or "")
+    current_costume = str(config_manager.get("costume", "") or "")
+    fallback = {}
+    for item in models:
+        if not isinstance(item, dict) or str(item.get("character", "")) != character:
+            continue
+        if not fallback:
+            fallback = item
+        if current_costume and str(item.get("costume", "")) == current_costume:
+            return item
+    return fallback
+
+
+def _uses_moc3_model(config_manager, character: str) -> bool:
+    entry = _current_model_entry(config_manager, character)
+    if not entry:
+        return False
+    if str(entry.get("format", "") or "").lower() == "moc3":
+        return True
+    return _is_moc3_model_path(str(entry.get("path", "") or ""))
+
+
+def _apply_moc3_action_prompt(prompt: str) -> str:
+    replacement = _moc3_action_instruction()
+    prompt, count = _ACTION_INSTRUCTION_RE.subn(replacement, prompt, count=1)
+    if count == 0:
+        prompt += replacement
+    return prompt
 
 # key → (intro, suffix)
 # suffix = 原始 prompt 中"【重要指令】：必须在最后加动作标签："之后的部分
@@ -545,6 +601,8 @@ def build_system_prompt(character: str, config_manager=None) -> str:
         prompt += "\n\n" + outfit_context
 
     if config_manager:
+        if _uses_moc3_model(config_manager, character):
+            prompt = _apply_moc3_action_prompt(prompt)
         custom_system_prompt_enabled = bool(config_manager.get("llm_custom_system_prompt_enabled", True))
         custom_system_prompt = str(config_manager.get("llm_custom_system_prompt", "") or "").strip()
         if custom_system_prompt_enabled and custom_system_prompt:
