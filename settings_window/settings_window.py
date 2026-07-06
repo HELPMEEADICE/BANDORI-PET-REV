@@ -1060,6 +1060,7 @@ class SettingsWindow(
             self._wizard_model_detect_label.setText(_tr(
                 "SettingsWindow.wizard_models_detect_detail",
                 default="已检测到 {installed}/{total} 个角色模型包。",
+                count=len(installed_keys),
                 installed=len(installed_keys),
                 total=len(expected_keys),
             ))
