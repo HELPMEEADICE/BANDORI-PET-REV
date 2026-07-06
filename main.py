@@ -1149,6 +1149,20 @@ def main():
                 safe = data.encode("ascii", errors="replace").decode("ascii")
                 print(safe)
 
+    def _read_settings_process_output(process):
+        if not isValid(process):
+            return
+        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        if not data:
+            return
+        buffer = settings_process_ref.get("stdout_buffer", "") + data
+        lines = buffer.split("\n")
+        settings_process_ref["stdout_buffer"] = lines.pop() if lines else ""
+        for line in lines:
+            line = line.rstrip("\r")
+            if line:
+                handle_settings_line(line)
+
     def clear_pet_process(process):
         if not isValid(process):
             return
@@ -1264,6 +1278,7 @@ def main():
             settings_process_ref.pop("show_launch", None)
             settings_process_ref.pop("first_run_wizard", None)
             settings_process_ref.pop("launched", None)
+            settings_process_ref.pop("stdout_buffer", None)
         process.deleteLater()
 
     def on_settings_process_finished(process):
@@ -1318,12 +1333,14 @@ def main():
         process.setProgram(program)
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(lambda p=process: _read_settings_process_output(p))
         process.readyReadStandardError.connect(lambda p=process: _read_process_error(p))
         process.finished.connect(lambda *args, p=process: on_settings_process_finished(p))
         settings_process_ref["process"] = process
         settings_process_ref["show_launch"] = show_launch
         settings_process_ref["first_run_wizard"] = first_run_wizard
         settings_process_ref["launched"] = False
+        settings_process_ref["stdout_buffer"] = ""
         process.setWorkingDirectory(BASE_DIR)
         process.start()
 

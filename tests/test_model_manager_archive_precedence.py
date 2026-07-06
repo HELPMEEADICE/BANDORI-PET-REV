@@ -108,6 +108,28 @@ class ModelManagerArchivePrecedenceTest(unittest.TestCase):
             self.assertEqual(["default"], [item["id"] for item in manager.get_costumes("mutsumi")])
             self.assertEqual(archive_model_path, manager.get_model_json_path("mutsumi", "default"))
 
+    def test_user_models_override_bundled_models(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundled_models = root / "bundled" / "models"
+            user_models = root / "user" / "models"
+            bundled_models.mkdir(parents=True)
+            user_models.mkdir(parents=True)
+
+            self._write_dir_model(bundled_models, "kasumi", "casual")
+            user_model_path = self._write_dir_model(user_models, "kasumi", "casual")
+
+            with (
+                patch.object(model_manager.sys, "frozen", True, create=True),
+                patch.object(model_manager, "BUNDLED_MODELS_DIR", bundled_models),
+                patch.object(model_manager, "MODELS_DIR", user_models),
+                patch.object(model_manager, "OUTFIT_JSON", root / "missing-outfit.json"),
+                patch.object(model_manager, "BAND_JSON", root / "missing-band.json"),
+            ):
+                manager = ModelManager()
+
+            self.assertEqual(user_model_path, manager.get_model_json_path("kasumi", "casual"))
+
     def test_fixed_others_and_custom_models_are_separate_groups(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

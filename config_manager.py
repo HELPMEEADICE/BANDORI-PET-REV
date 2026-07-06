@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import copy
+import shutil
 import tempfile
 import threading
 import time
@@ -11,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from app_theme import BANDORI_PRIMARY
 from live2d_click_actions import normalize_click_motion_actions
-from process_utils import app_base_dir
+from process_utils import app_base_dir, app_data_dir
 from reminder_core import (
     normalize_alarms,
     normalize_display_mode,
@@ -82,11 +83,25 @@ def _config_file_lock(path: Path):
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-BASE_DIR = app_base_dir()
+BASE_DIR = app_data_dir()
+LEGACY_BASE_DIR = app_base_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
 DEFAULT_USER_PROFILE_KEY = "__default__"
 ROLE_USER_KEY_PREFIX = "__role__:"
 CONFIG_TMP_CLEANUP_AGE_SECONDS = 24 * 60 * 60
+
+
+def _migrate_legacy_config(path: Path) -> None:
+    if path != CONFIG_PATH or LEGACY_BASE_DIR == BASE_DIR or path.exists():
+        return
+    legacy_path = LEGACY_BASE_DIR / "config.json"
+    if not legacy_path.is_file():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy_path, path)
+    except OSError:
+        pass
 
 
 def cleanup_stale_config_temp_files(path: Path, max_age_seconds: int = CONFIG_TMP_CLEANUP_AGE_SECONDS) -> int:
@@ -581,6 +596,7 @@ def _normalize_user_profile(profile, fallback_key: str = "") -> dict | None:
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)
+        _migrate_legacy_config(self._path)
         self._data = dict(DEFAULTS)
         self._loaded_data = copy.deepcopy(self._data)
         self._save_generation = 0

@@ -11,10 +11,11 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import FunctionType
-from process_utils import app_base_dir, clamp_int as _clamp_int
+from process_utils import app_base_dir, app_data_dir, clamp_int as _clamp_int
 from config_manager import DEFAULT_USER_PROFILE_KEY
 
-BASE_DIR = app_base_dir()
+BASE_DIR = app_data_dir()
+LEGACY_BASE_DIR = app_base_dir()
 DB_PATH = os.path.join(BASE_DIR, "data.db")
 _DB_LOCKS: dict[str, "_DatabaseFileLock"] = {}
 _DB_LOCKS_GUARD = threading.Lock()
@@ -28,6 +29,24 @@ _REQUIRED_COLUMNS = {
 
 _VALID_MESSAGE_ROLES = {"user", "assistant", "system"}
 _EXTERNAL_GROUP_CHAT_MESSAGE_LIMIT = 50
+
+
+def _migrate_legacy_database(db_path: str) -> None:
+    target = Path(db_path)
+    if target != Path(DB_PATH) or LEGACY_BASE_DIR == BASE_DIR or target.exists():
+        return
+    legacy = LEGACY_BASE_DIR / "data.db"
+    if not legacy.is_file():
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, target)
+        for suffix in ("-wal", "-shm"):
+            legacy_sidecar = Path(str(legacy) + suffix)
+            if legacy_sidecar.is_file():
+                shutil.copy2(legacy_sidecar, Path(str(target) + suffix))
+    except OSError:
+        pass
 
 
 def _db_text(value, default: str = "") -> str:
@@ -683,7 +702,9 @@ class _DatabaseManagerMeta(type):
 
 class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def __init__(self, db_path=DB_PATH):
+        _migrate_legacy_database(db_path)
         self._lock = _shared_database_lock(db_path)
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
             self._conn.execute("PRAGMA busy_timeout=2000")
