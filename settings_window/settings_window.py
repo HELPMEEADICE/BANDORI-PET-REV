@@ -2631,6 +2631,7 @@ class SettingsWindow(
                 cname,
                 self._costume_list_widget,
                 favorite=self._is_favorite_costume(char_key, cid),
+                model_format=costume.get("format") or self._model_manager.get_model_format(char_key, cid),
             )
             btn.clicked.connect(lambda checked, b=btn, c=cid: self._on_costume_clicked(b, c))
             btn.preview_requested.connect(self._show_costume_preview)

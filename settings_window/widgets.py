@@ -952,15 +952,22 @@ class CostumeItem(QPushButton):
     preview_cancelled = Signal(str)
     favorite_toggled = Signal(str, bool)
 
-    def __init__(self, costume_id: str, display_name: str, parent=None, favorite: bool = False):
+    def __init__(self, costume_id: str, display_name: str, parent=None, favorite: bool = False,
+                 model_format: str = ""):
         super().__init__(parent)
         self._costume_id = costume_id
         self._display_name = display_name
         self._favorite = bool(favorite)
+        self._is_moc3 = str(model_format or "").lower() == "moc3"
         self.setText(display_name)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(40)
         self.setCheckable(True)
+        self._format_badge = QLabel("MOC3", self)
+        self._format_badge.setObjectName("Moc3Badge")
+        self._format_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._format_badge.setFixedSize(44, 20)
+        self._format_badge.setVisible(self._is_moc3)
         self._preview_btn = FullHitToolButton(self)
         self._preview_btn.setIcon(FluentIcon.VIEW.icon())
         self._preview_btn.setToolTip(_tr("SettingsWindow.preview_costume_tooltip"))
@@ -974,6 +981,7 @@ class CostumeItem(QPushButton):
         self._favorite_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._favorite_btn.setFixedSize(28, 28)
         self._favorite_btn.clicked.connect(self._on_favorite_clicked)
+        self._format_badge.raise_()
         self._preview_btn.raise_()
         self._favorite_btn.raise_()
         self._update_stylesheet()
@@ -1009,10 +1017,11 @@ class CostumeItem(QPushButton):
         favorite_icon = accent_color(dark) if self._favorite else ("#9aa5bd" if dark else "#7b8494")
         self._preview_btn.setIcon(FluentIcon.VIEW.icon(color=QColor(text_color)))
         self._favorite_btn.setIcon(FluentIcon.HEART.icon(color=QColor(favorite_icon)))
+        right_padding = 136 if self._is_moc3 else 84
         self.setStyleSheet(f"""
             QPushButton {{
                 text-align: left;
-                padding: 8px 84px 8px 16px;
+                padding: 8px {right_padding}px 8px 16px;
                 border: 1px solid {border};
                 border-radius: 6px;
                 background: {bg};
@@ -1036,6 +1045,13 @@ class CostumeItem(QPushButton):
             QToolButton:hover {{
                 background: {tool_hover};
                 border-color: {hover_border};
+            }}
+            QLabel#Moc3Badge {{
+                color: white;
+                background: {accent_color(dark)};
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: 700;
             }}
         """)
 
@@ -1071,6 +1087,10 @@ class CostumeItem(QPushButton):
         y = (self.height() - self._preview_btn.height()) // 2
         self._favorite_btn.move(self.width() - self._favorite_btn.width() - 10, y)
         self._preview_btn.move(self._favorite_btn.x() - self._preview_btn.width() - 8, y)
+        if self._is_moc3:
+            badge_y = (self.height() - self._format_badge.height()) // 2
+            self._format_badge.move(self._preview_btn.x() - self._format_badge.width() - 8, badge_y)
+            self._format_badge.raise_()
         self._preview_btn.raise_()
         self._favorite_btn.raise_()
 

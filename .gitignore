@@ -19,3 +19,4 @@ config.json.*
 *.zip
 *.7z
 *.rar
+*.log
