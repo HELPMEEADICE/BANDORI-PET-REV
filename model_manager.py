@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -6,7 +7,7 @@ from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import QMessageBox
 
 from i18n_manager import tr as _tr
-from process_utils import app_base_dir
+from process_utils import app_base_dir, app_data_dir
 from zst_model_archive import (
     VIRTUAL_SEP,
     is_virtual_path,
@@ -17,7 +18,9 @@ from zst_model_archive import (
 )
 
 BASE_DIR = app_base_dir()
-MODELS_DIR = BASE_DIR / "models"
+DATA_DIR = app_data_dir()
+MODELS_DIR = DATA_DIR / "models"
+BUNDLED_MODELS_DIR = BASE_DIR / "models"
 OUTFIT_JSON = BASE_DIR / "outfit.json"
 BAND_JSON = BASE_DIR / "band.json"
 CHARACTERS_DIR = BASE_DIR / "characters"
@@ -27,7 +30,25 @@ MODEL_FORMAT_MOC3 = "moc3"
 
 
 def models_dir_exists() -> bool:
-    return MODELS_DIR.is_dir() and any(MODELS_DIR.iterdir())
+    return any(path.is_dir() and any(path.iterdir()) for path in model_search_dirs())
+
+
+def model_search_dirs() -> list[Path]:
+    dirs = []
+    candidates = (BUNDLED_MODELS_DIR, MODELS_DIR) if getattr(sys, "frozen", False) else (MODELS_DIR,)
+    for path in candidates:
+        if path not in dirs:
+            dirs.append(path)
+    return dirs
+
+
+def model_lookup_dirs() -> list[Path]:
+    dirs = []
+    candidates = (MODELS_DIR, BUNDLED_MODELS_DIR) if getattr(sys, "frozen", False) else (MODELS_DIR,)
+    for path in candidates:
+        if path not in dirs:
+            dirs.append(path)
+    return dirs
 
 
 def prompt_download_model_resources(parent=None) -> None:
@@ -79,30 +100,34 @@ class ModelManager:
         self._character_images = {}
         if not models_dir_exists():
             return
-        entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
-        for entry in entries:
-            if not entry.is_dir():
+        for root in model_search_dirs():
+            if not root.is_dir():
                 continue
-            character = entry.name
-            image_path = self._find_dir_character_image(entry)
-            if image_path:
-                self._character_images[character] = image_path
-            self._merge_character_costumes(character, [{"id": "default", "path": ""}])
+            entries = [entry for entry in sorted(root.iterdir()) if not entry.name.startswith("_")]
+            override = root == MODELS_DIR and root != BUNDLED_MODELS_DIR
+            for entry in entries:
+                if not entry.is_dir():
+                    continue
+                character = entry.name
+                image_path = self._find_dir_character_image(entry)
+                if image_path:
+                    self._character_images[character] = image_path
+                self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=override)
 
-        for entry in entries:
-            if entry.name.startswith("_"):
-                continue
-            if not (entry.is_file() and entry.suffix.lower() == ".zst"):
-                continue
-            character = entry.stem
-            try:
-                files = list_archive_files(entry)
-                image_path = self._find_archive_character_image(entry, files, character)
-            except Exception:
-                image_path = ""
-            if image_path:
-                self._character_images[character] = image_path
-            self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=True)
+            for entry in entries:
+                if entry.name.startswith("_"):
+                    continue
+                if not (entry.is_file() and entry.suffix.lower() == ".zst"):
+                    continue
+                character = entry.stem
+                try:
+                    files = list_archive_files(entry)
+                    image_path = self._find_archive_character_image(entry, files, character)
+                except Exception:
+                    image_path = ""
+                if image_path:
+                    self._character_images[character] = image_path
+                self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=True)
 
     def _scan_advanced_roleplay_support(self) -> dict[str, bool]:
         support = {character: False for character in self.characters}
@@ -131,16 +156,20 @@ class ModelManager:
         self._character_images = {}
         if not models_dir_exists():
             return
-        entries = [entry for entry in sorted(MODELS_DIR.iterdir()) if not entry.name.startswith("_")]
-        for entry in entries:
-            if entry.is_dir():
-                self._scan_model_dir(entry)
+        for root in model_search_dirs():
+            if not root.is_dir():
+                continue
+            entries = [entry for entry in sorted(root.iterdir()) if not entry.name.startswith("_")]
+            override = root == MODELS_DIR and root != BUNDLED_MODELS_DIR
+            for entry in entries:
+                if entry.is_dir():
+                    self._scan_model_dir(entry, override=override)
 
-        for entry in entries:
-            if entry.is_file() and entry.suffix.lower() == ".zst":
-                result = self._read_model_archive(entry)
-                if result is not None:
-                    self._apply_archive_scan_result(result)
+            for entry in entries:
+                if entry.is_file() and entry.suffix.lower() == ".zst":
+                    result = self._read_model_archive(entry)
+                    if result is not None:
+                        self._apply_archive_scan_result(result)
 
     def _merge_character_costumes(self, character: str, costumes: list[dict], override: bool = False):
         existing = self._characters.setdefault(character, {})
@@ -157,7 +186,7 @@ class ModelManager:
                 by_id[costume_id] = dict(costume)
         existing["costumes"] = sorted(by_id.values(), key=lambda item: item["id"])
 
-    def _scan_model_dir(self, entry: Path):
+    def _scan_model_dir(self, entry: Path, *, override: bool = False):
         char_name = entry.name
         costumes = []
         for costume_dir in sorted(entry.iterdir()):
@@ -176,7 +205,7 @@ class ModelManager:
         if image_path:
             self._character_images[char_name] = image_path
         if costumes:
-            self._merge_character_costumes(char_name, costumes)
+            self._merge_character_costumes(char_name, costumes, override=override)
 
     def _read_model_archive(self, archive_path: Path):
         char_name = archive_path.stem
@@ -333,8 +362,11 @@ class ModelManager:
         image_path = self._character_images.get(character, "")
         if image_path:
             return "" if is_virtual_path(image_path) else image_path
-        char_dir = MODELS_DIR / character
-        return self._find_dir_character_image(char_dir)
+        for root in model_lookup_dirs():
+            image_path = self._find_dir_character_image(root / character)
+            if image_path:
+                return image_path
+        return ""
 
     def get_character_image_data(self, character: str) -> bytes:
         image_path = self._character_images.get(character, "")
@@ -420,9 +452,10 @@ class ModelManager:
         model_path = self._model_paths.get((character, costume), "")
         if model_path:
             return model_path
-        path = self._find_model_manifest(MODELS_DIR / character / costume)
-        if path:
-            return str(path.resolve())
+        for root in model_lookup_dirs():
+            path = self._find_model_manifest(root / character / costume)
+            if path:
+                return str(path.resolve())
         return ""
 
     def get_model_format(self, character: str, costume: str) -> str:

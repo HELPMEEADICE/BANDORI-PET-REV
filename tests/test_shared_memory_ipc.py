@@ -146,6 +146,26 @@ def test_main_retries_ipc_with_fresh_session_name_on_create_failure():
     assert "refresh_ipc_session_name()" in source
 
 
+def test_settings_process_falls_back_to_stdout_for_launch_messages():
+    from pathlib import Path
+
+    source = Path("settings_process.py").read_text(encoding="utf-8")
+
+    assert "def _stdout_fallback_line" in source
+    assert 'line.startswith(("MODEL\\t", "SETTINGS\\t")) or line in {"LAUNCH", "EXIT"}' in source
+    assert "print(line, flush=True)" in source
+
+
+def test_main_reads_settings_process_stdout_fallback():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert "def _read_settings_process_output(process)" in source
+    assert "process.readyReadStandardOutput.connect" in source
+    assert "handle_settings_line(line)" in source
+
+
 def test_main_relaunches_active_pet_when_model_message_changes_selection():
     from pathlib import Path
 

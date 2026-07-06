@@ -224,6 +224,25 @@ def app_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def app_data_dir() -> Path:
+    if not getattr(sys, "frozen", False):
+        return app_base_dir()
+
+    override = os.environ.get("BANDORI_PET_DATA_DIR", "").strip()
+    if override:
+        path = Path(override).expanduser()
+    elif sys.platform == "darwin":
+        path = Path.home() / "Library" / "Application Support" / APP_NAME
+    elif sys.platform == "win32":
+        root = os.environ.get("APPDATA", "").strip()
+        path = (Path(root) if root else Path.home() / "AppData" / "Roaming") / APP_NAME
+    else:
+        root = os.environ.get("XDG_DATA_HOME", "").strip()
+        path = (Path(root).expanduser() if root else Path.home() / ".local" / "share") / APP_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def frozen_executable_name(script_name: str) -> str:
     base, _ext = os.path.splitext(script_name)
     return base + (".exe" if sys.platform == "win32" else "")

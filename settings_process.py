@@ -132,20 +132,30 @@ def main():
                 ipc[key] = None
             return False
 
-    def flush_ipc_queue():
+    def _stdout_fallback_line(line: str):
+        if line.startswith(("MODEL\t", "SETTINGS\t")) or line in {"LAUNCH", "EXIT"}:
+            print(line, flush=True)
+
+    def flush_ipc_queue() -> bool:
         if not attach_ipc_queues():
-            return
+            return False
         while ipc_queue:
             line = ipc_queue.pop(0)
             if not ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line)):
                 ipc_queue.insert(0, line)
-                break
+                return False
+        return True
 
     def send_ipc_line(line: str):
         if line.startswith("MODEL\t") and args.show_launch == "0":
             line += "\tRELAUNCH"
         ipc_queue.append(line)
-        flush_ipc_queue()
+        if not flush_ipc_queue():
+            try:
+                ipc_queue.remove(line)
+            except ValueError:
+                pass
+            _stdout_fallback_line(line)
 
     mgr = ModelManager()
     window = SettingsWindow(
