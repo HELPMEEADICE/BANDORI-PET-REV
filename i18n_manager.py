@@ -1,8 +1,15 @@
 import json
 import locale
+import os
+import re
+import subprocess
+import sys
 from process_utils import app_base_dir
 
 
+_SUPPORTED_LANGUAGES = {"en_US", "ja", "zh_CN", "zh_TW"}
+_POSIX_LOCALE_NAMES = {"c", "posix", "utf8", "utf_8", "utf-8"}
+_APPLE_LANGUAGE_TOKEN_RE = re.compile(r'"([^"]+)"|([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]+)*)')
 _LANGUAGE_ALIASES = {
     "jp": "ja",
     "ja_jp": "ja",
@@ -10,11 +17,13 @@ _LANGUAGE_ALIASES = {
     "cn_tw": "zh_TW",
     "zh_tw": "zh_TW",
     "zh_hk": "zh_TW",
+    "zh_mo": "zh_TW",
     "zh_hant": "zh_TW",
     "tw": "zh_TW",
     "cn": "zh_CN",
     "zh": "zh_CN",
     "zh_cn": "zh_CN",
+    "zh_sg": "zh_CN",
     "zh_hans": "zh_CN",
     "en": "en_US",
     "en_us": "en_US",
@@ -22,10 +31,98 @@ _LANGUAGE_ALIASES = {
 
 
 def normalize_language(lang: str) -> str:
-    key = str(lang or "").strip().replace("-", "_")
+    key = str(lang or "").strip()
     if not key:
         return ""
-    return _LANGUAGE_ALIASES.get(key.lower(), key)
+    key = key.split(".", 1)[0].split("@", 1)[0].replace("-", "_")
+    key = re.sub(r"[^A-Za-z0-9_]", "", key)
+    if not key:
+        return ""
+    lower_key = key.lower()
+    if lower_key in _POSIX_LOCALE_NAMES:
+        return ""
+    alias = _LANGUAGE_ALIASES.get(lower_key)
+    if alias:
+        return alias
+
+    parts = [part for part in lower_key.split("_") if part]
+    primary = parts[0] if parts else ""
+    qualifiers = set(parts[1:])
+    if primary == "zh":
+        if qualifiers & {"tw", "hk", "mo", "hant"}:
+            return "zh_TW"
+        return "zh_CN"
+    if primary == "ja":
+        return "ja"
+    if primary == "en":
+        return "en_US"
+    return key
+
+
+def _first_supported_language(candidates) -> str:
+    for candidate in candidates:
+        lang = normalize_language(candidate)
+        if lang in _SUPPORTED_LANGUAGES:
+            return lang
+    return ""
+
+
+def _environment_language_candidates() -> list[str]:
+    result = []
+    for name in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        raw = os.environ.get(name, "")
+        for part in str(raw or "").split(":"):
+            part = part.strip()
+            if part:
+                result.append(part)
+    return result
+
+
+def _read_macos_global_default(key: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["defaults", "read", "-g", key],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout
+
+
+def _macos_language_candidates() -> list[str]:
+    candidates = []
+    apple_languages = _read_macos_global_default("AppleLanguages")
+    for match in _APPLE_LANGUAGE_TOKEN_RE.finditer(apple_languages):
+        token = match.group(1) or match.group(2)
+        if token:
+            candidates.append(token)
+
+    apple_locale = _read_macos_global_default("AppleLocale").strip()
+    if apple_locale:
+        candidates.append(apple_locale.splitlines()[0].strip())
+    return candidates
+
+
+def _locale_language_candidates() -> list[str]:
+    candidates = []
+    try:
+        lang_code, _ = locale.getlocale()
+        if lang_code:
+            candidates.append(lang_code)
+    except Exception:
+        pass
+    try:
+        lang_code, _ = locale.getdefaultlocale()
+        if lang_code:
+            candidates.append(lang_code)
+    except Exception:
+        pass
+    return candidates
 
 
 class I18nManager:
@@ -114,17 +211,17 @@ def available_languages() -> list[str]:
 
 
 def detect_system_language() -> str:
-    try:
-        lang_code, _ = locale.getdefaultlocale()
-        if lang_code:
-            lang_code = lang_code.replace("-", "_")
-            if lang_code.startswith("zh"):
-                if "tw" in lang_code.lower() or "hk" in lang_code.lower() or "hant" in lang_code.lower():
-                    return "zh_TW"
-                return "zh_CN"
-            if lang_code.startswith("ja"):
-                return "ja"
-            return "en_US"
-    except Exception:
-        pass
+    if sys.platform == "darwin":
+        lang = _first_supported_language(_macos_language_candidates())
+        if lang:
+            return lang
+
+    lang = _first_supported_language(_environment_language_candidates())
+    if lang:
+        return lang
+
+    lang = _first_supported_language(_locale_language_candidates())
+    if lang:
+        return lang
+
     return "en_US"
