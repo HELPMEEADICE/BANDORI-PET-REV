@@ -1800,6 +1800,13 @@ class SettingsWindow(
 
         self._detail_card = CardWidget(self._model_detail_widget)
         self._detail_card.setFixedSize(280, 420)
+        self._detail_format_badge = QLabel("MOC3", self._detail_card)
+        self._detail_format_badge.setObjectName("DetailMoc3Badge")
+        self._detail_format_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_format_badge.setFixedSize(44, 20)
+        self._detail_format_badge.move(12, 10)
+        self._detail_format_badge.hide()
+        self._detail_format_badge.raise_()
         card_layout = QVBoxLayout(self._detail_card)
         card_h_margin = 26
         card_layout.setContentsMargins(card_h_margin, 22, card_h_margin, 22)
@@ -2016,6 +2023,15 @@ class SettingsWindow(
                 border-radius: 18px;
             }}
         """)
+        self._detail_format_badge.setStyleSheet(f"""
+            QLabel#DetailMoc3Badge {{
+                color: white;
+                background: {accent_color(dark)};
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: 700;
+            }}
+        """)
         self._detail_action_hint.setStyleSheet(f"color: {hint_color};")
         self._detail_motion_label.setStyleSheet(f"color: {hint_color};")
         self._detail_expression_label.setStyleSheet(f"color: {hint_color};")
@@ -2075,6 +2091,9 @@ class SettingsWindow(
         display = self._model_manager.get_display_name(character)
         costume_name = self._model_manager.get_costume_display_name(character, costume)
         band_name = self._model_manager.get_band_display_name(self._selected_band) if self._selected_band else ""
+        model_format = item.get("format") or self._model_manager.get_model_format(character, costume)
+        self._detail_format_badge.setVisible(str(model_format or "").lower() == "moc3")
+        self._detail_format_badge.raise_()
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
         self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
