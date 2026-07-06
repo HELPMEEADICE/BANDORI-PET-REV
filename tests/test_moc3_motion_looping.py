@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from lupa import LuaRuntime
 
+from live2d_lua_adapter import _patch_lua_moc3_pet_embed_delta
 from pet_window import PetWindow
 
 
@@ -88,6 +89,38 @@ class Moc3MotionLoopingTest(unittest.TestCase):
         PetWindow._start_idle_motion(harness, smooth=True)
 
         self.assertEqual("mtn_idle01_C", model.random_motion_calls[0]["name"])
+
+    def test_moc3_pet_embed_delta_uses_elapsed_time_not_frame_count(self):
+        source = b"""
+local M = {}
+local GL_COLOR_BUFFER_BIT = 0x00004000
+function M.draw(self, opts)
+    local time_msec = tonumber(opts.time_msec) or 0
+    local delta = 1 / 60
+    if self.last_time_msec ~= nil and time_msec > self.last_time_msec then
+        delta = math.min((time_msec - self.last_time_msec) / 1000.0, 0.1)
+    end
+    self.last_time_msec = time_msec
+    return delta
+end
+"""
+        patched = _patch_lua_moc3_pet_embed_delta(
+            "live2d_moc3_pet_embed",
+            source,
+        )
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        compute_delta = lua.execute(patched.decode("utf-8") + "\nreturn compute_delta_seconds")
+
+        state = lua.table()
+        first = compute_delta(state, 1000.0)
+        same = compute_delta(state, 1000.0)
+        high_fps = compute_delta(state, 1004.0)
+        capped = compute_delta(state, 2000.0)
+
+        self.assertEqual(0, first)
+        self.assertEqual(0, same)
+        self.assertAlmostEqual(0.004, high_fps)
+        self.assertAlmostEqual(0.1, capped)
 
 
 class _MotionHarness:

@@ -96,6 +96,46 @@ def _patch_lua_gl_loader(module_name: str, chunk: bytes) -> bytes:
     return chunk
 
 
+_MOC3_PET_DELTA_HELPER = b'''
+local function compute_delta_seconds(state, time_msec)
+    time_msec = tonumber(time_msec)
+    if time_msec == nil then
+        return 0
+    end
+    local last_time_msec = state.last_time_msec
+    state.last_time_msec = time_msec
+    if last_time_msec == nil or time_msec <= last_time_msec then
+        return 0
+    end
+    return math.min((time_msec - last_time_msec) / 1000.0, 0.1)
+end
+'''
+
+
+def _patch_lua_moc3_pet_embed_delta(module_name: str, chunk: bytes) -> bytes:
+    if module_name != "live2d_moc3_pet_embed" or b"compute_delta_seconds" in chunk:
+        return chunk
+    insert_after = b"local GL_COLOR_BUFFER_BIT = 0x00004000\n"
+    if insert_after in chunk:
+        chunk = chunk.replace(insert_after, insert_after + _MOC3_PET_DELTA_HELPER, 1)
+    old_delta = (
+        b"    local time_msec = tonumber(opts.time_msec) or 0\n"
+        b"    local delta = 1 / 60\n"
+        b"    if self.last_time_msec ~= nil and time_msec > self.last_time_msec then\n"
+        b"        delta = math.min((time_msec - self.last_time_msec) / 1000.0, 0.1)\n"
+        b"    end\n"
+        b"    self.last_time_msec = time_msec\n"
+    )
+    new_delta = b"    local delta = compute_delta_seconds(self, opts.time_msec)\n"
+    return chunk.replace(old_delta, new_delta, 1)
+
+
+def _patch_lua_module(module_name: str, chunk: bytes) -> bytes:
+    chunk = _patch_lua_gl_loader(module_name, chunk)
+    chunk = _patch_lua_moc3_pet_embed_delta(module_name, chunk)
+    return chunk
+
+
 def _read_bundled_lua_module_bytes(module_name: str) -> tuple[bytes, bytes]:
     relative = Path(*module_name.split("."))
     for suffix in (".ljbc", ".lua"):
@@ -140,7 +180,7 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path):
         if module_path is None:
             return None, None
         chunk = module_path.read_bytes()
-        return _patch_lua_gl_loader(module_name, chunk), ("@" + module_path.as_posix()).encode("utf-8")
+        return _patch_lua_module(module_name, chunk), ("@" + module_path.as_posix()).encode("utf-8")
 
     lua.globals()[b"__bandori_lazy_lua_module_source"] = load_module_source
     lua.execute(
