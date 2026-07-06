@@ -122,6 +122,55 @@ end
         self.assertAlmostEqual(0.004, high_fps)
         self.assertAlmostEqual(0.1, capped)
 
+    def test_moc3_resource_loader_receives_virtual_paths(self):
+        from lupa.luajit21 import LuaRuntime as LuaJITRuntime
+
+        lua = LuaJITRuntime(unpack_returned_tuples=True)
+        root = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()
+        lua.execute(
+            "local root = ...; "
+            "package.path = package.path .. ';' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
+            root,
+        )
+
+        data = lua.execute(
+            "local moc3 = require('live2d_moc3_embed'); "
+            "local target = 'X:/models/anon.zst::live/test.moc3'; "
+            "local renderer = moc3.new({ resource_streams = { "
+            "__loader = function(path) if path == target then return 'moc-bytes' end end "
+            "} }); "
+            "return renderer:read_resource(target)"
+        )
+
+        self.assertEqual("moc-bytes", data)
+
+    def test_moc3_texture_loader_accepts_python_callbacks(self):
+        from lupa.luajit21 import LuaRuntime as LuaJITRuntime
+
+        lua = LuaJITRuntime(unpack_returned_tuples=True)
+        root = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()
+        lua.execute(
+            "local root = ...; "
+            "package.path = package.path .. ';' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
+            root,
+        )
+        calls = []
+
+        def loader(texture_index, path):
+            calls.append((texture_index, path))
+            return "texture-bytes"
+
+        data = lua.execute(
+            "local OpenGLRenderer = require('live2d.cubism3.opengl_renderer'); "
+            "local renderer = { texture_streams = { __loader = ... } }; "
+            "setmetatable(renderer, { __index = OpenGLRenderer }); "
+            "return renderer:resolve_texture_stream('X:/models/anon.zst::live/texture.png', 0)",
+            loader,
+        )
+
+        self.assertEqual("texture-bytes", data)
+        self.assertEqual([(0, "X:/models/anon.zst::live/texture.png")], calls)
+
 
 class _MotionHarness:
     _safe_start_motion = PetWindow._safe_start_motion
