@@ -1,6 +1,8 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +97,57 @@ class SettingsI18nTests(unittest.TestCase):
             self.assertEqual(6, formatter.decode("6月"))
         finally:
             set_language(original_language)
+
+    def test_normalize_language_handles_region_and_script_codes(self):
+        from i18n_manager import normalize_language
+
+        cases = {
+            "zh-Hans-CN": "zh_CN",
+            "zh-Hant-TW": "zh_TW",
+            "zh-HK": "zh_TW",
+            "zh_SG.UTF-8": "zh_CN",
+            "ja-JP": "ja",
+            "en-GB": "en_US",
+            "C": "",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(expected, normalize_language(raw))
+
+    def test_detect_system_language_uses_macos_apple_languages(self):
+        from i18n_manager import detect_system_language
+
+        def fake_defaults(args, **kwargs):
+            key = args[-1]
+            if key == "AppleLanguages":
+                stdout = '(\n    "zh-Hant-TW",\n    "en-US"\n)\n'
+                return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+            if key == "AppleLocale":
+                return subprocess.CompletedProcess(args, 0, stdout="en_US\n", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with patch("i18n_manager.sys.platform", "darwin"), \
+             patch("i18n_manager.subprocess.run", side_effect=fake_defaults), \
+             patch("i18n_manager.locale.getlocale", return_value=(None, None)), \
+             patch("i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
+            self.assertEqual("zh_TW", detect_system_language())
+
+    def test_detect_system_language_uses_macos_apple_locale_fallback(self):
+        from i18n_manager import detect_system_language
+
+        def fake_defaults(args, **kwargs):
+            key = args[-1]
+            if key == "AppleLanguages":
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+            if key == "AppleLocale":
+                return subprocess.CompletedProcess(args, 0, stdout="zh_Hans_CN\n", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        with patch("i18n_manager.sys.platform", "darwin"), \
+             patch("i18n_manager.subprocess.run", side_effect=fake_defaults), \
+             patch("i18n_manager.locale.getlocale", return_value=(None, None)), \
+             patch("i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
+            self.assertEqual("zh_CN", detect_system_language())
 
 
 if __name__ == "__main__":
