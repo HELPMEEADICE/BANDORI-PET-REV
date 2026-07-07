@@ -1,4 +1,5 @@
 import os
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -141,6 +142,26 @@ end
         self.assertEqual(0, same)
         self.assertAlmostEqual(0.004, high_fps)
         self.assertAlmostEqual(0.1, capped)
+
+    def test_bundled_moc3_pet_embed_delta_uses_elapsed_time(self):
+        source = Path("third_party/Live2D-v2-Lua/live2d_moc3_pet_embed.lua").read_bytes()
+        patched = _patch_lua_moc3_pet_embed_delta("live2d_moc3_pet_embed", source)
+        helper = re.search(
+            rb"local function compute_delta_seconds\(state, time_msec\).*?\nend\n",
+            patched,
+            re.DOTALL,
+        ).group(0)
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        compute_delta = lua.execute(helper.decode("utf-8") + "\nreturn compute_delta_seconds")
+
+        state = lua.table()
+        first = compute_delta(state, 1000.0)
+        refresh_144hz = compute_delta(state, 1006.944444)
+        refresh_75hz = compute_delta(state, 1020.277777)
+
+        self.assertEqual(0, first)
+        self.assertAlmostEqual(1 / 144, refresh_144hz, places=5)
+        self.assertAlmostEqual(1 / 75, refresh_75hz, places=5)
 
     def test_moc3_resource_loader_receives_virtual_paths(self):
         from lupa.luajit21 import LuaRuntime as LuaJITRuntime

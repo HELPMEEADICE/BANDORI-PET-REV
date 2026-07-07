@@ -115,10 +115,10 @@ end
 
 
 def _patch_lua_moc3_pet_embed_delta(module_name: str, chunk: bytes) -> bytes:
-    if module_name != "live2d_moc3_pet_embed" or b"compute_delta_seconds" in chunk:
+    if module_name != "live2d_moc3_pet_embed":
         return chunk
     insert_after = b"local GL_COLOR_BUFFER_BIT = 0x00004000\n"
-    if insert_after in chunk:
+    if b"compute_delta_seconds" not in chunk and insert_after in chunk:
         chunk = chunk.replace(insert_after, insert_after + _MOC3_PET_DELTA_HELPER, 1)
     old_delta = (
         b"    local time_msec = tonumber(opts.time_msec) or 0\n"
