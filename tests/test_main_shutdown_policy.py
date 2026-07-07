@@ -27,3 +27,13 @@ def test_chat_process_uses_immediate_shutdown_path():
     assert "window.request_immediate_shutdown()" in process_source
     assert "def request_immediate_shutdown(self):" in window_source
     assert "if self._immediate_shutdown:" in window_source
+
+
+def test_settings_apply_does_not_block_on_flush_before_close():
+    settings_source = Path("settings_window/settings_window.py").read_text(encoding="utf-8")
+    apply_source = settings_source.split("    def _on_apply(self):", 1)[1].split("    def connect_ipc_output", 1)[0]
+    main_source = Path("main.py").read_text(encoding="utf-8")
+
+    assert "flush_save()" not in apply_source
+    assert "cfg.save()" in main_source.split("    def on_settings_changed(data):", 1)[1].split("    def launch_pet", 1)[0]
+    assert "launch_pet(persist_config=False)" in main_source.split('        elif line == "LAUNCH":', 1)[1].split('        elif line == "EXIT":', 1)[0]

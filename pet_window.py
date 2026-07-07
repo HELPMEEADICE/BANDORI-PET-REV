@@ -17,7 +17,7 @@ from PySide6.QtGui import QCursor, QGuiApplication, QFont
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
 from shiboken6 import isValid
 
-from app_theme import apply_app_theme, BANDORI_PRIMARY, _THEME_ON, _THEME_OFF, _THEME_FOLLOW_SYSTEM
+from app_theme import apply_app_theme, BANDORI_PRIMARY
 from action_bus import publish_user_poke
 from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
@@ -318,32 +318,34 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = False
         self._fps = fps
         self._opacity = opacity
-        self._vsync = True
-        self._game_topmost = bool(config_manager.get("game_topmost", False))
+        self._vsync = bool(config_manager.get("vsync", True)) if config_manager else True
+        self._game_topmost = bool(config_manager.get("game_topmost", False)) if config_manager else False
         self._obs_window_capture_compatible = bool(
             config_manager.get("obs_window_capture_compatible", False)
-        )
-        self._hide_live2d_model = bool(config_manager.get("hide_live2d_model", False))
+        ) if config_manager else False
+        self._hide_live2d_model = bool(config_manager.get("hide_live2d_model", False)) if config_manager else False
         self._live2d_idle_actions_enabled = (
-            bool(config_manager.get("live2d_idle_actions_enabled", True))
+            bool(config_manager.get("live2d_idle_actions_enabled", True)) if config_manager else True
         )
         self._live2d_random_actions_enabled = (
-            bool(config_manager.get("live2d_random_actions_enabled", True))
+            bool(config_manager.get("live2d_random_actions_enabled", True)) if config_manager else True
         )
         self._live2d_head_tracking_enabled = (
-            bool(config_manager.get("live2d_head_tracking_enabled", True))
+            bool(config_manager.get("live2d_head_tracking_enabled", True)) if config_manager else True
         )
         self._live2d_mutual_gaze_enabled = (
-            bool(config_manager.get("live2d_mutual_gaze_enabled", False))
+            bool(config_manager.get("live2d_mutual_gaze_enabled", False)) if config_manager else False
         )
         self._emotion_behavior_enabled = bool(
             config_manager.get("emotion_behavior_enabled", True)
-        )
-        self._poke_motion = str(config_manager.get("poke_motion", "") or "").strip()
-        self._poke_expression = str(config_manager.get("poke_expression", "") or "").strip()
+        ) if config_manager else True
+        self._poke_motion = str(config_manager.get("poke_motion", "") or "") if config_manager else ""
+        self._poke_motion = self._poke_motion.strip()
+        self._poke_expression = str(config_manager.get("poke_expression", "") or "") if config_manager else ""
+        self._poke_expression = self._poke_expression.strip()
         self._move_all_roles_together = bool(
             config_manager.get("move_all_roles_together", False)
-        )
+        ) if config_manager else False
         self._user_hidden_live2d_model = False
         self._peer_window_positions = {}  # {character: (x, y)}
         self._peer_pos_broadcast_timer = QTimer(self)
@@ -4324,10 +4326,6 @@ class PetWindow(QWidget):
     def _save_config(self):
         if self._cfg:
             from i18n_manager import current_language
-            try:
-                from qfluentwidgets import isDarkTheme
-            except ImportError:
-                isDarkTheme = lambda: False
             self._cfg.load()
             save_position = bool(
                 getattr(self, "_show_pos_set", False)
@@ -4352,15 +4350,6 @@ class PetWindow(QWidget):
                     self._cfg.set("character", self._current_char)
                     self._cfg.set("costume", self._current_costume)
                 self._sync_current_model_entry(path, save=False, include_position=save_position)
-            self._cfg.set("fps", self._fps)
-            self._cfg.set("opacity", self._opacity)
-            current_theme = self._cfg.get("dark_theme", _THEME_FOLLOW_SYSTEM)
-            if isinstance(current_theme, bool) or current_theme in (_THEME_ON, _THEME_OFF):
-                self._cfg.set("dark_theme", _THEME_ON if isDarkTheme() else _THEME_OFF)
-            self._cfg.set("vsync", self._vsync)
-
-            self._cfg.set("live2d_quality", self._live2d_quality)
-            self._cfg.set("live2d_scale", self._live2d_scale)
             self._cfg.set("live2d_hit_alpha_threshold", self._live2d_hit_alpha_threshold)
             self._cfg.set("live2d_lip_sync_max_open", self._live2d_lip_sync_max_open)
             self._cfg.set("drag_locked", self._live2d_widget._drag_locked)

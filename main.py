@@ -1076,6 +1076,7 @@ def main():
         if selected_char and selected_costume:
             cfg.set("character", selected_char)
             cfg.set("costume", selected_costume)
+        cfg.save()
         if pet_relaunch_requested:
             pet_window_ref["suppress_next_model_relaunch"] = (selected_char, selected_costume)
             launch_pet(persist_config=False)
@@ -1305,13 +1306,12 @@ def main():
                 on_model_selected(character, costume, relaunch=relaunch)
         elif line.startswith("SETTINGS\t"):
             try:
-                cfg.load()
                 on_settings_changed(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
         elif line == "LAUNCH":
             settings_process_ref["launched"] = True
-            launch_pet()
+            launch_pet(persist_config=False)
         elif line == "EXIT":
             quit_all()
 

@@ -177,7 +177,7 @@ def main():
     offset_x = args.index * (28 if pet._pixel_mode else 36)
     pet.restore_saved_position(offset_x=offset_x)
 
-    pet._live2d_widget.set_vsync(cfg.get("vsync", True))
+    pet.set_vsync(cfg.get("vsync", True))
     if cfg.get("drag_locked", False):
         pet._live2d_widget.set_drag_locked(True)
         pet._pixel_widget.set_drag_locked(True)

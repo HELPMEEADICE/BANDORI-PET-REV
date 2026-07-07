@@ -1,4 +1,5 @@
 import os
+import inspect
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -167,6 +168,18 @@ class PetWindowPositioningTest(unittest.TestCase):
             }],
             harness._cfg.get("models"),
         )
+
+    def test_pet_window_vsync_initializes_from_config(self):
+        source = inspect.getsource(PetWindow.__init__)
+
+        self.assertIn('config_manager.get("vsync", True)', source)
+        self.assertNotIn("self._vsync = True", source)
+
+    def test_pet_window_save_config_does_not_rewrite_display_settings(self):
+        source = inspect.getsource(PetWindow._save_config)
+
+        for key in ("fps", "opacity", "dark_theme", "vsync", "live2d_quality", "live2d_scale"):
+            self.assertNotIn(f'self._cfg.set("{key}"', source)
 
 
 if __name__ == "__main__":
