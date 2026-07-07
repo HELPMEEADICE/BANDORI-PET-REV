@@ -1038,12 +1038,38 @@ def main():
             costume = selected_costume
             pet_window_ref["char"] = selected_char
             pet_window_ref["costume"] = selected_costume
+        ai_status_keys = ("ai_status_port_enabled", "ai_status_port", "ai_status_token")
+        chat_integration_keys = (
+            "chat_integration_enabled", "chat_integration_port", "chat_integration_token"
+        )
+        napcat_keys = (
+            "napcat_enabled", "napcat_ws_url", "napcat_access_token",
+            "napcat_auto_reply_enabled", "napcat_reply_private", "napcat_reply_group_at_only",
+            "napcat_reply_mention_sender", "napcat_reply_character", "napcat_save_policy",
+            "napcat_group_retention_mode", "napcat_group_retention_days",
+            "napcat_private_retention_mode", "napcat_private_retention_days",
+        )
+        attachment_retention_keys = (
+            "chat_attachment_auto_cleanup_enabled", "chat_attachment_retention_days"
+        )
+        reminder_keys = (
+            "alarms", "pomodoros", "proactive_companion", "proactive_care_policy",
+            "reminder_display_mode", "screen_awareness_enabled",
+            "screen_awareness_interval_minutes", "screen_awareness_character_mode",
+            "screen_awareness_character", "screen_awareness_max_screenshot_width",
+            "screen_awareness_model_mode", "screen_awareness_display_mode",
+            "screen_awareness_include_process_name", "screen_awareness_include_window_title",
+        )
+        old_ai_status = tuple(cfg.get(key) for key in ai_status_keys)
+        old_chat_integration = tuple(cfg.get(key) for key in chat_integration_keys)
+        old_napcat = tuple(cfg.get(key) for key in napcat_keys)
+        old_attachment_retention = tuple(cfg.get(key) for key in attachment_retention_keys)
+        old_reminder = tuple(cfg.get(key) for key in reminder_keys)
         for cfg_key, ref_key, default in _SETTINGS_MAP:
             value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
             if cfg_key in ("ai_status_port", "chat_integration_port"):
                 value = clamp_int(value, 1024, 65535, default)
             pet_window_ref[ref_key] = value
-        cfg.load()
         if language:
             cfg.set("language", language)
         for cfg_key, ref_key, _default in _SETTINGS_MAP:
@@ -1074,23 +1100,33 @@ def main():
         if selected_char and selected_costume:
             cfg.set("character", selected_char)
             cfg.set("costume", selected_costume)
-        cfg.save()
         if pet_relaunch_requested:
             pet_window_ref["suppress_next_model_relaunch"] = (selected_char, selected_costume)
-            launch_pet()
-        init_ai_status_server()
-        init_chat_integration_server()
-        init_napcat_adapter()
-        apply_chat_attachment_retention()
+            launch_pet(persist_config=False)
+        new_ai_status = tuple(cfg.get(key) for key in ai_status_keys)
+        new_chat_integration = tuple(cfg.get(key) for key in chat_integration_keys)
+        new_napcat = tuple(cfg.get(key) for key in napcat_keys)
+        new_attachment_retention = tuple(cfg.get(key) for key in attachment_retention_keys)
+        new_reminder = tuple(cfg.get(key) for key in reminder_keys)
+        if old_ai_status != new_ai_status or (cfg.get("ai_status_port_enabled", False) and ai_status_ref.get("server") is None):
+            init_ai_status_server()
+        if old_chat_integration != new_chat_integration or (cfg.get("chat_integration_enabled", False) and chat_integration_ref.get("server") is None):
+            init_chat_integration_server()
+        if old_napcat != new_napcat or (cfg.get("napcat_enabled", False) and napcat_ref.get("client") is None):
+            init_napcat_adapter()
+        if old_attachment_retention != new_attachment_retention:
+            apply_chat_attachment_retention()
         scheduler = reminder_ref.get("scheduler")
         if scheduler is not None:
-            scheduler.reload()
+            if old_reminder != new_reminder:
+                scheduler.reload()
             if data.get("screen_awareness_test_requested"):
                 scheduler.trigger_screen_awareness_now()
 
-    def launch_pet():
+    def launch_pet(persist_config=True):
         nonlocal mgr
-        cfg.load()
+        if persist_config:
+            cfg.load()
         mgr = ModelManager()
         _sentinel = object()
         language = pet_window_ref.get("language")
@@ -1120,7 +1156,8 @@ def main():
             value = pet_window_ref.get(key, _sentinel)
             if value is not _sentinel:
                 cfg.set(key, value)
-        cfg.save()
+        if persist_config:
+            cfg.save()
         models = configured_models()
         selected_char = pet_window_ref.get("char")
         selected_costume = pet_window_ref.get("costume")
