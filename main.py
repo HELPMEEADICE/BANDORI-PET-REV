@@ -828,27 +828,9 @@ def main():
         broadcast_ipc_line("SHUTDOWN")
 
     def configured_models():
-        models = cfg.get("models", [])
-        result = []
-        seen = set()
-        if isinstance(models, list):
-            for item in models:
-                if not isinstance(item, dict):
-                    continue
-                model_char = item.get("character", "")
-                model_costume = item.get("costume", "")
-                if not model_char or model_char in seen or model_char not in mgr.characters:
-                    continue
-                if not model_costume:
-                    model_costume = mgr.get_default_costume(model_char)
-                if not model_costume:
-                    continue
-                path = mgr.get_model_json_path(model_char, model_costume)
-                if not path:
-                    continue
-                entry = {**item, "character": model_char, "costume": model_costume, "path": path}
-                result.append(entry)
-                seen.add(model_char)
+        from config_manager import load_configured_models
+
+        result = load_configured_models(cfg, mgr)
         if not result and char and costume and mgr.get_model_json_path(char, costume):
             result.append({"character": char, "costume": costume, "path": mgr.get_model_json_path(char, costume)})
         return result

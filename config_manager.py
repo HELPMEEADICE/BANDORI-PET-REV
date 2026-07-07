@@ -604,6 +604,41 @@ def _normalize_user_profile(profile, fallback_key: str = "") -> dict | None:
     }
 
 
+def load_configured_models(cfg, model_manager, *, current_char: str = "", current_costume: str = "", entry_processor=None) -> list[dict]:
+    """Shared model list loading: validates character/costume/path, builds entries.
+
+    Returns a list of dicts, each with ``character``, ``costume``, ``path``
+    plus any extra enrichment applied by the optional ``entry_processor``.
+
+    Callers are responsible for adding their own fallback logic on top of the
+    returned list.
+    """
+    models = cfg.get("models", []) if cfg else []
+    result = []
+    seen: set[str] = set()
+    if isinstance(models, list):
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            character = str(item.get("character", "")).strip()
+            costume = str(item.get("costume", "")).strip()
+            if not character or character in seen or character not in model_manager.characters:
+                continue
+            if not costume:
+                costume = model_manager.get_default_costume(character)
+            if not costume:
+                continue
+            path = model_manager.get_model_json_path(character, costume)
+            if not path:
+                continue
+            entry = {**item, "character": character, "costume": costume, "path": path}
+            if entry_processor is not None:
+                entry = entry_processor(entry)
+            result.append(entry)
+            seen.add(character)
+    return result
+
+
 class ConfigManager:
     def __init__(self, path=CONFIG_PATH):
         self._path = Path(path)

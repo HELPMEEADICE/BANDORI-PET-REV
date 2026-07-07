@@ -234,32 +234,22 @@ class SettingsWindow(
         self._refresh_model_list()
 
     def _load_configured_models(self) -> list[dict]:
-        models = self._cfg.get("models", []) if self._cfg else []
-        result = []
-        seen = set()
-        if isinstance(models, list):
-            for item in models:
-                if not isinstance(item, dict):
-                    continue
-                character = item.get("character", "")
-                costume = item.get("costume", "")
-                if character in seen or character not in self._model_manager.characters:
-                    continue
-                if not costume:
-                    costume = self._model_manager.get_default_costume(character)
-                path = self._model_manager.get_model_json_path(character, costume)
-                if not path:
-                    continue
-                entry = dict(item)
-                entry.update({"character": character, "costume": costume, "path": path})
-                self._restore_model_action_profile(entry, prefer_existing=True)
-                entry["click_motion_actions"] = normalize_click_motion_actions(
-                    entry.get("click_motion_actions", {})
-                )
-                if entry.get("pet_mode") not in {"live2d", "pixel"}:
-                    entry["pet_mode"] = "live2d"
-                result.append(entry)
-                seen.add(character)
+        from config_manager import load_configured_models
+        from live2d_click_actions import normalize_click_motion_actions
+
+        def _enrich(entry: dict) -> dict:
+            self._restore_model_action_profile(entry, prefer_existing=True)
+            entry["click_motion_actions"] = normalize_click_motion_actions(
+                entry.get("click_motion_actions", {})
+            )
+            if entry.get("pet_mode") not in {"live2d", "pixel"}:
+                entry["pet_mode"] = "live2d"
+            return entry
+
+        result = load_configured_models(
+            self._cfg, self._model_manager, entry_processor=_enrich,
+        )
+        seen = {e["character"] for e in result}
         if self._current_char and self._current_char not in seen:
             costume = self._current_costume or self._model_manager.get_default_costume(self._current_char)
             path = self._model_manager.get_model_json_path(self._current_char, costume)
