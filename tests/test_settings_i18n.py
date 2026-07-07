@@ -48,6 +48,15 @@ DATE_PICKER_MONTH_KEYS = [
 
 
 class SettingsI18nTests(unittest.TestCase):
+    def test_language_files_have_consistent_keys(self):
+        base = json.loads((LANG_DIR / "en_US.json").read_text(encoding="utf-8-sig"))
+        base_keys = set(base)
+        for path in sorted(LANG_DIR.glob("*.json")):
+            with self.subTest(language=path.stem):
+                translations = json.loads(path.read_text(encoding="utf-8-sig"))
+                self.assertEqual([], sorted(base_keys - set(translations)))
+                self.assertEqual([], sorted(set(translations) - base_keys))
+
     def test_recent_settings_strings_exist_in_every_language(self):
         for path in sorted(LANG_DIR.glob("*.json")):
             with self.subTest(language=path.stem):
@@ -108,6 +117,12 @@ class SettingsI18nTests(unittest.TestCase):
             "zh_SG.UTF-8": "zh_CN",
             "ja-JP": "ja",
             "en-GB": "en_US",
+            "pt-BR": "pt_PT",
+            "pt_PT.UTF-8": "pt_PT",
+            "es-MX": "es_ES",
+            "fr-CA": "fr_FR",
+            "de-AT": "de_DE",
+            "ru-RU": "ru_RU",
             "C": "",
         }
         for raw, expected in cases.items():

@@ -725,7 +725,7 @@
   "Language.en_US": "English",
   "Language.zh_CN": "中文",
   "Language.ja": "日本語",
-  "Language.zh_TW": "繁体中国語",
+  "Language.zh_TW": "繁體中文",
   "color.blue": "青",
   "color.pink": "ピンク",
   "color.purple": "紫",
@@ -1373,5 +1373,10 @@
   "SettingsWindow.care_policy_state_idle": "離席/アイドル",
   "SettingsWindow.care_policy_state_unknown": "不明",
   "SettingsWindow.screen_awareness_include_process_name": "前面プロセス名を送信",
-  "SettingsWindow.screen_awareness_include_window_title": "ウィンドウタイトルを送信"
+  "SettingsWindow.screen_awareness_include_window_title": "ウィンドウタイトルを送信",
+  "Language.pt_PT": "Português",
+  "Language.es_ES": "Español",
+  "Language.fr_FR": "Français",
+  "Language.de_DE": "Deutsch",
+  "Language.ru_RU": "Русский"
 }
