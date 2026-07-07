@@ -63,6 +63,31 @@ class ConfigLoadSafetyTests(unittest.TestCase):
             self.assertEqual("new_costume", config.get("costume"))
             self.assertEqual("new_costume", config.get("models")[0]["costume"])
 
+    def test_save_does_not_overwrite_existing_file_after_default_startup_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            config = ConfigManager(path)
+            path.write_text(json.dumps({"language": "zh_CN"}), encoding="utf-8")
+
+            with patch("builtins.open", side_effect=OSError("busy")):
+                with self.assertRaises(OSError):
+                    config._merged_data_for_save()
+
+            self.assertEqual({"language": "zh_CN"}, json.loads(path.read_text(encoding="utf-8")))
+
+    def test_save_uses_loaded_snapshot_on_transient_read_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({"language": "zh_CN"}), encoding="utf-8")
+            config = ConfigManager(path)
+            config.set("dark_theme", True)
+
+            with patch("builtins.open", side_effect=OSError("busy")):
+                merged = config._merged_data_for_save()
+
+            self.assertEqual("zh_CN", merged["language"])
+            self.assertTrue(merged["dark_theme"])
+
 
 if __name__ == "__main__":
     unittest.main()

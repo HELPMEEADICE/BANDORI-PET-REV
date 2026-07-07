@@ -645,6 +645,7 @@ class ConfigManager:
         _migrate_legacy_config(self._path)
         self._data = dict(DEFAULTS)
         self._loaded_data = copy.deepcopy(self._data)
+        self._loaded_from_file = False
         self._save_generation = 0
         self._save_pending = threading.Event()
         self._save_data_snapshot = None
@@ -656,6 +657,7 @@ class ConfigManager:
         loaded = None
         has_action_settings = False
         next_data = dict(DEFAULTS)
+        loaded_from_file = False
         if self._path.exists():
             with _config_file_lock(self._path):
                 try:
@@ -674,6 +676,7 @@ class ConfigManager:
                         next_data["screen_awareness_display_mode"] = normalize_display_mode(
                             loaded.get("reminder_display_mode", DEFAULTS["reminder_display_mode"])
                         )
+                    loaded_from_file = True
                 except (json.JSONDecodeError, ValueError):
                     self._backup_corrupt_config()
                     loaded = None
@@ -734,6 +737,7 @@ class ConfigManager:
         if self._data.get("user_avatar_color") == "#2aabee":
             self._data["user_avatar_color"] = BANDORI_PRIMARY
         self._loaded_data = copy.deepcopy(self._data)
+        self._loaded_from_file = loaded_from_file
 
     def _backup_corrupt_config(self):
         if not self._path.exists():
@@ -1003,7 +1007,11 @@ class ConfigManager:
     def save(self):
         self._flush_pending_save()
         with _config_file_lock(self._path):
-            data_to_save = self._merged_data_for_save()
+            try:
+                data_to_save = self._merged_data_for_save()
+            except (OSError, ValueError) as exc:
+                logging.warning("Config save skipped because existing config could not be merged: %s", exc)
+                return
             self._data = copy.deepcopy(data_to_save)
         self._save_generation += 1
         self._save_data_snapshot = copy.deepcopy(data_to_save)
@@ -1075,9 +1083,15 @@ class ConfigManager:
             with open(self._path, "r", encoding="utf-8") as f:
                 current = json.load(f)
             if not isinstance(current, dict):
-                current = {}
-        except (json.JSONDecodeError, OSError, ValueError):
-            current = {}
+                raise ValueError("config root must be a JSON object")
+        except OSError:
+            if self._path.exists() and not self._loaded_from_file:
+                raise
+            current = copy.deepcopy(self._loaded_data)
+        except (json.JSONDecodeError, ValueError):
+            if self._path.exists():
+                raise
+            current = copy.deepcopy(self._loaded_data)
         merged = dict(DEFAULTS)
         for key in DEFAULTS:
             value = self._data.get(key, DEFAULTS[key])
