@@ -225,20 +225,14 @@ def app_base_dir() -> Path:
 
 
 def app_data_dir() -> Path:
-    if not getattr(sys, "frozen", False):
+    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
         return app_base_dir()
 
     override = os.environ.get("BANDORI_PET_DATA_DIR", "").strip()
     if override:
         path = Path(override).expanduser()
-    elif sys.platform == "darwin":
-        path = Path.home() / "Library" / "Application Support" / APP_NAME
-    elif sys.platform == "win32":
-        root = os.environ.get("APPDATA", "").strip()
-        path = (Path(root) if root else Path.home() / "AppData" / "Roaming") / APP_NAME
     else:
-        root = os.environ.get("XDG_DATA_HOME", "").strip()
-        path = (Path(root).expanduser() if root else Path.home() / ".local" / "share") / APP_NAME
+        path = Path.home() / "Library" / "Application Support" / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
 
