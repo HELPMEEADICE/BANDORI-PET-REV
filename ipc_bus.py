@@ -55,3 +55,36 @@ def _send_ipc_message_locked(message: str) -> bool:
             _ipc_inbound_queue.close()
             _ipc_inbound_queue = None
         return False
+
+
+def attach_main_ipc_queues(ipc: dict) -> bool:
+    try:
+        from shared_memory_ipc import SharedMemoryLineQueue
+
+        if ipc.get("inbound") is None or not ipc["inbound"].is_attached():
+            ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
+        if ipc.get("broadcast") is None or not ipc["broadcast"].is_attached():
+            ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+        return True
+    except Exception:
+        for key in ("inbound", "broadcast"):
+            queue = ipc.get(key)
+            if queue is not None:
+                queue.close()
+            ipc[key] = None
+        return False
+
+
+def start_ipc_heartbeat(app, send_heartbeat_fn, poll_fn):
+    from PySide6.QtCore import QTimer
+
+    poll_timer = QTimer(app)
+    poll_timer.setInterval(30)
+    poll_timer.timeout.connect(poll_fn)
+    poll_timer.start()
+    heartbeat_timer = QTimer(app)
+    heartbeat_timer.setInterval(3000)
+    heartbeat_timer.timeout.connect(send_heartbeat_fn)
+    heartbeat_timer.start()
+    QTimer.singleShot(0, send_heartbeat_fn)
+    return poll_timer, heartbeat_timer

@@ -46,7 +46,7 @@ from llm_api_compat import (
     responses_api_url,
     sanitize_chat_body_for_url,
 )
-from process_utils import app_base_dir
+from process_utils import app_base_dir, app_icon_path
 from model_manager import MODELS_DIR, ModelManager
 from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
 from app_update import detect_update_channel
@@ -420,12 +420,7 @@ MODEL_PICKER_FILTER_FAVORITES = "favorites"
 
 
 def _app_icon_path() -> str:
-    base = app_base_dir()
-    for name in ("icon.ico", "logo.ico"):
-        path = os.path.join(base, name)
-        if os.path.exists(path):
-            return path
-    return ""
+    return app_icon_path()
 
 
 def _rounded_avatar_pixmap(path: str, size: int) -> QPixmap:

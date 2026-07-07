@@ -6,22 +6,15 @@ import sys
 import threading
 
 from process_utils import (
-    app_base_dir,
-    configure_debug_logging,
+    bootstrap_app,
     ensure_xwayland,
     hidden_subprocess_kwargs,
     install_parent_death_watch,
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from config_manager import ConfigManager
-from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
-configure_debug_logging()
-
-BASE_DIR = str(app_base_dir())
-_STARTUP_CONFIG = ConfigManager()
-configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
+BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -150,9 +143,8 @@ def main():
         on_parent_death=_make_main_relauncher(args.index, normal_shutdown_requested),
     )
 
-    if sys.platform == "darwin":
-        import macos_patch
-        macos_patch.hide_dock_icon()
+    import macos_patch
+    macos_patch.hide_dock_icon_if_needed()
 
     app.setApplicationName(f"{APP_NAME}-{args.character}")
     app.setOrganizationName(APP_NAME)

@@ -25,6 +25,10 @@ AVATAR_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 INTERRUPT_COMMANDS = {"@stop", "/stop", "@停止", "/停止", "@中断", "/中断", "@interrupt", "/interrupt"}
 
 
+def is_interrupt_command(text: str) -> bool:
+    return text.strip().lower() in INTERRUPT_COMMANDS
+
+
 COMMAND_REGISTRY = [
     ("@auto",     "@auto 或 @自动",            "启动自动聊天（可带话题）"),
     ("@stop",     "@stop 或 @停止",            "停止自动对话 / 中断生成"),

@@ -192,6 +192,12 @@ def apply_popup_window_polish(widget):
     set_window_level_above_menu_bar(widget)
 
 
+def hide_dock_icon_if_needed():
+    if sys.platform != "darwin":
+        return
+    hide_dock_icon()
+
+
 def hide_dock_icon():
     if sys.platform != "darwin":
         return

@@ -8,29 +8,24 @@ import time
 import uuid
 
 from process_utils import (
-    app_base_dir,
+    bootstrap_app,
     clamp_int,
     cleanup_stale_runtime_locks,
-    configure_debug_logging,
     ensure_windows_app_user_model_shortcut,
     ipc_server_name,
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from config_manager import ConfigManager, DEFAULTS
-from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
+from config_manager import DEFAULTS
 from startup_manager import repair_startup_command
 from app_info import APP_NAME
 
-configure_debug_logging()
-BASE_DIR = str(app_base_dir())
+BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 APP_AUMID = APP_NAME
-_STARTUP_CONFIG = ConfigManager()
 try:
     repair_startup_command()
 except OSError:
     pass
-configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
 from shiboken6 import isValid
@@ -93,9 +88,8 @@ def main():
 
     app = QApplication(sys.argv)
 
-    if sys.platform == "darwin":
-        import macos_patch
-        macos_patch.hide_dock_icon()
+    import macos_patch
+    macos_patch.hide_dock_icon_if_needed()
     app.setWindowIcon(load_tray_icon())
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)

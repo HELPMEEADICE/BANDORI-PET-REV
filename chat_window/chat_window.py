@@ -23,7 +23,7 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter, is_interrupt_command
 from win32_dwm import apply_windows_11_border_fix
 
 import base64
@@ -3508,10 +3508,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._refresh_group_list()
         self._start_response_for_character(character, [])
 
-    @staticmethod
-    def _is_interrupt_command(text: str) -> bool:
-        return text.strip().lower() in INTERRUPT_COMMANDS
-
     def _generation_busy(self) -> bool:
         return bool(
             (self._worker is not None and self._worker.isRunning())
@@ -5022,7 +5018,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not text:
             return
 
-        if self._is_interrupt_command(text):
+        if is_interrupt_command(text):
             self._interrupt_generation()
             return
 

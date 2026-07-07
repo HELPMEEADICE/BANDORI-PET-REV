@@ -7,7 +7,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from qt_gl import gl
 from settings_window.constants import *
-from live2d_widget import DEFAULT_MOC3_RENDER_SCALE, Live2DSSAAFramebuffer, MOC3_BALANCED_SSAA_SCALE
+from live2d_widget import DEFAULT_MOC3_RENDER_SCALE, Live2DSSAAFramebuffer, Live2DWidget, MOC3_BALANCED_SSAA_SCALE
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -45,18 +45,7 @@ def connect_theme_changed_weak(widget, method_name: str):
 
 
 def configure_live2d_preview_surface_format():
-    from PySide6.QtGui import QSurfaceFormat
-
-    fmt = QSurfaceFormat()
-    fmt.setAlphaBufferSize(8)
-    fmt.setSamples(0)
-    fmt.setDepthBufferSize(0)
-    fmt.setStencilBufferSize(8)
-    fmt.setSwapInterval(1)
-    fmt.setVersion(2, 1)
-    fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
-    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
-    QSurfaceFormat.setDefaultFormat(fmt)
+    Live2DWidget.configure_default_surface_format()
 
 
 class Live2DPreviewRenderWidget(QOpenGLWidget):

@@ -536,3 +536,49 @@ def run_off_gui_thread(fn):
     if "error" in result:
         raise result["error"]
     return result.get("value")
+
+
+def bootstrap_app() -> tuple[str, object]:
+    """Common startup preamble: debug logging, base dir, GPU config."""
+    configure_debug_logging()
+    base_dir = str(app_base_dir())
+    from config_manager import ConfigManager
+    from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
+
+    startup_config = ConfigManager()
+    configure_qt_opengl_environment(is_gpu_acceleration_enabled(startup_config))
+    return base_dir, startup_config
+
+
+def app_icon_path(base_dir: str | None = None) -> str:
+    if base_dir is None:
+        base_dir = str(app_base_dir())
+    for name in ("icon.ico", "logo.ico"):
+        path = os.path.join(base_dir, name)
+        if os.path.exists(path):
+            return path
+    return ""
+
+
+def ensure_taskbar_icon_identity(app_id: str, display_name: str, base_dir: str | None = None) -> bool:
+    if sys.platform != "win32":
+        return True
+    if base_dir is None:
+        base_dir = str(app_base_dir())
+    icon_path = app_icon_path(base_dir)
+    target_path = sys.executable
+    arguments = ""
+    if getattr(sys, "frozen", False):
+        candidate = os.path.join(base_dir, "BandoriPet.exe")
+        if os.path.exists(candidate):
+            target_path = candidate
+    else:
+        arguments = f'"{os.path.join(base_dir, "main.py")}"'
+    return ensure_windows_app_user_model_shortcut(
+        app_id,
+        display_name,
+        icon_path,
+        target_path=target_path,
+        arguments=arguments,
+        working_dir=base_dir,
+    )

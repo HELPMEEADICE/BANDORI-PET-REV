@@ -63,7 +63,7 @@ from relationship_memory import (
     user_key_from_config,
 )
 from action_bus import publish_emotion_behavior, publish_lip_sync
-from ui_helpers import FluentContextTextEdit, INTERRUPT_COMMANDS
+from ui_helpers import FluentContextTextEdit, INTERRUPT_COMMANDS, is_interrupt_command
 from win32_dwm import apply_windows_11_border_fix
 
 if sys.platform == "darwin":
@@ -739,7 +739,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         text = self._input.toPlainText().strip()
         if not text:
             return
-        if self._is_interrupt_command(text):
+        if is_interrupt_command(text):
             self._interrupt_generation()
             return
         if text.lower() == "@clear":
@@ -1298,10 +1298,6 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             _tr("CompactAIWindow.input_busy_stop", default="正在回复，输入 @stop 或 @停止 中断")
             if busy else _tr("CompactAIWindow.input_placeholder")
         )
-
-    @staticmethod
-    def _is_interrupt_command(text: str) -> bool:
-        return text.strip().lower() in INTERRUPT_COMMANDS
 
     def _interrupt_generation(self):
         worker = self._worker

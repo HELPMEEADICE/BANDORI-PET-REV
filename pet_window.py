@@ -33,8 +33,7 @@ from outfit_description import (
     normalize_outfit_descriptions,
     outfit_description_key,
 )
-from process_utils import app_base_dir, interaction_trace, ipc_server_name, process_program_and_args
-from process_utils import clamp_float as _clamp_float, clamp_int as _clamp_int
+from process_utils import app_base_dir, clamp_float, clamp_int, interaction_trace, ipc_server_name, process_program_and_args
 from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_inbound_queue_key,
@@ -272,13 +271,6 @@ def _screen_signature(screen) -> dict:
     }
 
 
-def _as_int(value, default: int = -1) -> int:
-    try:
-        return int(round(float(value)))
-    except (TypeError, ValueError):
-        return default
-
-
 def _pixel_pet_support():
     global _PIXEL_PET_WIDGET_CLASS, _PIXEL_FRAME_LOADER, _PIXEL_PATH_RESOLVER
     if _PIXEL_PET_WIDGET_CLASS is None:
@@ -378,13 +370,13 @@ class PetWindow(QWidget):
             # 0 is the canonical "unset" sentinel (matches config_manager DEFAULTS);
             # clamp_live2d_scale resolves it to the baseline scale.
             self._live2d_scale = clamp_live2d_scale(self._cfg.get("live2d_scale", 0))
-            self._live2d_hit_alpha_threshold = _clamp_int(
+            self._live2d_hit_alpha_threshold = clamp_int(
                 self._cfg.get("live2d_hit_alpha_threshold", DEFAULT_HIT_ALPHA_THRESHOLD),
                 0,
                 255,
                 DEFAULT_HIT_ALPHA_THRESHOLD,
             )
-            self._live2d_lip_sync_max_open = _clamp_float(
+            self._live2d_lip_sync_max_open = clamp_float(
                 self._cfg.get("live2d_lip_sync_max_open", DEFAULT_LIP_SYNC_MAX_OPEN),
                 0.0,
                 1.0,
@@ -683,8 +675,8 @@ class PetWindow(QWidget):
         if not isinstance(placement, dict) or screen is None:
             return None
         geo = screen.availableGeometry()
-        rel_x = _clamp_float(placement.get("relative_x", 0.5), -4.0, 4.0, 0.5)
-        rel_y = _clamp_float(placement.get("relative_y", 0.5), -4.0, 4.0, 0.5)
+        rel_x = clamp_float(placement.get("relative_x", 0.5), -4.0, 4.0, 0.5)
+        rel_y = clamp_float(placement.get("relative_y", 0.5), -4.0, 4.0, 0.5)
         target_x = geo.left() + int(round(rel_x * max(0, geo.width() - self.width())))
         target_y = geo.top() + int(round(rel_y * max(0, geo.height() - self.height())))
         return self._constrain_position_to_screen(target_x, target_y, screen, allow_partial=allow_partial)
@@ -712,7 +704,7 @@ class PetWindow(QWidget):
         if legacy_x is None or legacy_y is None or (legacy_x == -1 and legacy_y == -1):
             legacy_x = self._cfg.get(x_key, -1)
             legacy_y = self._cfg.get(y_key, -1)
-        return not (_as_int(legacy_x) == -1 and _as_int(legacy_y) == -1)
+        return not (clamp_int(legacy_x, -2147483648, 2147483647, -1) == -1 and clamp_int(legacy_y, -2147483648, 2147483647, -1) == -1)
 
     def _saved_position(self, mode: str, *, offset_x: int = 0) -> tuple[int, int] | None:
         if not self._cfg:
@@ -737,8 +729,8 @@ class PetWindow(QWidget):
             legacy_x = self._cfg.get(x_key, -1)
             legacy_y = self._cfg.get(y_key, -1)
             using_global_fallback = True
-        x = _as_int(legacy_x)
-        y = _as_int(legacy_y)
+        x = clamp_int(legacy_x, -2147483648, 2147483647, -1)
+        y = clamp_int(legacy_y, -2147483648, 2147483647, -1)
 
         if isinstance(placement, dict) and placement:
             screen = self._screen_for_placement(placement)
@@ -2414,7 +2406,7 @@ class PetWindow(QWidget):
         if "live2d_scale" in data:
             self.set_live2d_scale(data["live2d_scale"])
         if "live2d_hit_alpha_threshold" in data:
-            self._live2d_hit_alpha_threshold = _clamp_int(
+            self._live2d_hit_alpha_threshold = clamp_int(
                 data["live2d_hit_alpha_threshold"],
                 0,
                 255,
@@ -2422,7 +2414,7 @@ class PetWindow(QWidget):
             )
             self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
         if "live2d_lip_sync_max_open" in data:
-            self._live2d_lip_sync_max_open = _clamp_float(
+            self._live2d_lip_sync_max_open = clamp_float(
                 data["live2d_lip_sync_max_open"],
                 0.0,
                 1.0,

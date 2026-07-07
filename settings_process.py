@@ -5,19 +5,14 @@ import sys
 
 from process_utils import (
     app_base_dir,
-    configure_debug_logging,
-    ensure_windows_app_user_model_shortcut,
+    app_icon_path,
+    bootstrap_app,
+    ensure_taskbar_icon_identity,
     install_parent_death_watch,
     set_windows_app_user_model_id,
 )
-from config_manager import ConfigManager
-from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled
 
-configure_debug_logging()
-
-BASE_DIR = str(app_base_dir())
-_STARTUP_CONFIG = ConfigManager()
-configure_qt_opengl_environment(is_gpu_acceleration_enabled(_STARTUP_CONFIG))
+BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
@@ -30,9 +25,11 @@ from app_theme import apply_app_theme
 from app_info import APP_NAME
 from live2d_widget import Live2DWidget
 from gpu_acceleration import configure_qt_gpu_acceleration
-from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key
+from ipc_bus import (
+    attach_main_ipc_queues,
+    start_ipc_heartbeat,
+)
 from shared_memory_ipc import (
-    SharedMemoryLineQueue,
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -52,35 +49,8 @@ def _parse_args():
     return parser.parse_args()
 
 
-def _app_icon_path() -> str:
-    icon_path = os.path.join(BASE_DIR, "logo.ico")
-    return icon_path if os.path.exists(icon_path) else ""
-
-
-def _ensure_taskbar_icon_identity(app_id: str) -> bool:
-    if sys.platform != "win32":
-        return True
-    icon_path = _app_icon_path()
-    target_path = sys.executable
-    arguments = ""
-    if getattr(sys, "frozen", False):
-        candidate = os.path.join(BASE_DIR, "BandoriPet.exe")
-        if os.path.exists(candidate):
-            target_path = candidate
-    else:
-        arguments = f'"{os.path.join(BASE_DIR, "main.py")}"'
-    return ensure_windows_app_user_model_shortcut(
-        app_id,
-        "BandoriPet Settings",
-        icon_path,
-        target_path=target_path,
-        arguments=arguments,
-        working_dir=BASE_DIR,
-    )
-
-
 def _apply_app_icon(app: QApplication) -> None:
-    icon_path = _app_icon_path()
+    icon_path = app_icon_path()
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
@@ -96,16 +66,15 @@ def main():
     Live2DWidget.configure_default_surface_format()
 
     app_user_model_id = f"{APP_NAME}.Settings"
-    if not _ensure_taskbar_icon_identity(app_user_model_id):
+    if not ensure_taskbar_icon_identity(app_user_model_id, "BandoriPet Settings", BASE_DIR):
         app_user_model_id = APP_NAME
     set_windows_app_user_model_id(app_user_model_id)
 
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
 
-    if sys.platform == "darwin":
-        import macos_patch
-        macos_patch.hide_dock_icon()
+    import macos_patch
+    macos_patch.hide_dock_icon_if_needed()
     app.setApplicationName(f"{APP_NAME}Settings")
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(True)
@@ -117,27 +86,12 @@ def main():
     ipc = {"inbound": None, "broadcast": None}
     ipc_queue = []
 
-    def attach_ipc_queues() -> bool:
-        try:
-            if ipc["inbound"] is None or not ipc["inbound"].is_attached():
-                ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
-            if ipc["broadcast"] is None or not ipc["broadcast"].is_attached():
-                ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
-            return True
-        except Exception:
-            for key in ("inbound", "broadcast"):
-                queue = ipc.get(key)
-                if queue is not None:
-                    queue.close()
-                ipc[key] = None
-            return False
-
     def _stdout_fallback_line(line: str):
         if line.startswith(("MODEL\t", "SETTINGS\t")) or line in {"LAUNCH", "EXIT"}:
             print(line, flush=True)
 
     def flush_ipc_queue() -> bool:
-        if not attach_ipc_queues():
+        if not attach_main_ipc_queues(ipc):
             return False
         while ipc_queue:
             line = ipc_queue.pop(0)
@@ -174,7 +128,7 @@ def main():
     window.connect_ipc_output(send_ipc_line)
 
     def poll_ipc_messages():
-        if not attach_ipc_queues():
+        if not attach_main_ipc_queues(ipc):
             return
         flush_ipc_queue()
         for raw_line in ipc["broadcast"].read_available(max_messages=200):
@@ -198,15 +152,7 @@ def main():
     def send_ipc_heartbeat():
         send_ipc_line("REGISTER\tSETTINGS")
 
-    ipc_timer = QTimer(app)
-    ipc_timer.setInterval(30)
-    ipc_timer.timeout.connect(poll_ipc_messages)
-    ipc_timer.start()
-    ipc_heartbeat_timer = QTimer(app)
-    ipc_heartbeat_timer.setInterval(3000)
-    ipc_heartbeat_timer.timeout.connect(send_ipc_heartbeat)
-    ipc_heartbeat_timer.start()
-    QTimer.singleShot(0, send_ipc_heartbeat)
+    start_ipc_heartbeat(app, send_ipc_heartbeat, poll_ipc_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 

@@ -116,10 +116,8 @@ def main():
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
-    if sys.platform == "darwin":
-        import macos_patch
-
-        macos_patch.hide_dock_icon()
+    import macos_patch
+    macos_patch.hide_dock_icon_if_needed()
 
     try:
         command_queue = SharedMemoryLineQueue.attach(

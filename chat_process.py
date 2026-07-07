@@ -5,8 +5,9 @@ import sys
 
 from process_utils import (
     app_base_dir,
+    app_icon_path,
     configure_debug_logging,
-    ensure_windows_app_user_model_shortcut,
+    ensure_taskbar_icon_identity,
     install_parent_death_watch,
     ipc_server_name,
     set_windows_app_user_model_id,
@@ -18,7 +19,7 @@ BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
-from PySide6.QtCore import QLockFile, QRect, Qt, QTimer
+from PySide6.QtCore import QLockFile, QRect, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -26,11 +27,14 @@ from app_theme import apply_app_theme
 from app_info import APP_NAME
 from chat_window import ChatWindow
 from config_manager import ConfigManager
-from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key, send_ipc_message
+from ipc_bus import (
+    attach_main_ipc_queues,
+    send_ipc_message,
+    start_ipc_heartbeat,
+)
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
 from shared_memory_ipc import (
-    SharedMemoryLineQueue,
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -86,11 +90,6 @@ def _send_ipc_line(line: str):
     send_ipc_message(line + "\n")
 
 
-def _app_icon_path() -> str:
-    icon_path = os.path.join(BASE_DIR, "logo.ico")
-    return icon_path if os.path.exists(icon_path) else ""
-
-
 def focus_chat_window(window):
     prepare_for_reopen = getattr(window, "prepare_for_reopen", None)
     if callable(prepare_for_reopen):
@@ -103,30 +102,8 @@ def focus_chat_window(window):
     window.activateWindow()
 
 
-def _ensure_taskbar_icon_identity(app_id: str) -> bool:
-    if sys.platform != "win32":
-        return True
-    icon_path = _app_icon_path()
-    target_path = sys.executable
-    arguments = ""
-    if getattr(sys, "frozen", False):
-        candidate = os.path.join(BASE_DIR, "BandoriPet.exe")
-        if os.path.exists(candidate):
-            target_path = candidate
-    else:
-        arguments = f'"{os.path.join(BASE_DIR, "main.py")}"'
-    return ensure_windows_app_user_model_shortcut(
-        app_id,
-        "BandoriPet Chat",
-        icon_path,
-        target_path=target_path,
-        arguments=arguments,
-        working_dir=BASE_DIR,
-    )
-
-
 def _apply_app_icon(app: QApplication) -> QIcon:
-    icon_path = _app_icon_path()
+    icon_path = app_icon_path()
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
     if not icon.isNull():
         app.setWindowIcon(icon)
@@ -142,7 +119,7 @@ def main():
     set_language(lang)
 
     app_user_model_id = f"{APP_NAME}.Chat"
-    if not _ensure_taskbar_icon_identity(app_user_model_id):
+    if not ensure_taskbar_icon_identity(app_user_model_id, "BandoriPet Chat", BASE_DIR):
         app_user_model_id = APP_NAME
     set_windows_app_user_model_id(app_user_model_id)
     try:
@@ -162,9 +139,9 @@ def main():
 
     normal_window_mode = bool(cfg.get("chat_window_normal_window", False))
 
-    if sys.platform == "darwin" and not normal_window_mode:
+    if not normal_window_mode:
         import macos_patch
-        macos_patch.hide_dock_icon()
+        macos_patch.hide_dock_icon_if_needed()
     app.setApplicationName("BandoriPetChat")
     app.setApplicationDisplayName("BandoriPet Chat")
     app.setOrganizationName(APP_NAME)
@@ -204,27 +181,12 @@ def main():
     def focus_window():
         focus_chat_window(window)
 
-    def attach_ipc_queues() -> bool:
-        try:
-            if ipc["inbound"] is None or not ipc["inbound"].is_attached():
-                ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
-            if ipc["broadcast"] is None or not ipc["broadcast"].is_attached():
-                ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
-            return True
-        except Exception:
-            for key in ("inbound", "broadcast"):
-                queue = ipc.get(key)
-                if queue is not None:
-                    queue.close()
-                ipc[key] = None
-            return False
-
     def send_ipc_line(line: str):
-        if attach_ipc_queues():
+        if attach_main_ipc_queues(ipc):
             ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line))
 
     def read_shutdown_messages():
-        if not attach_ipc_queues():
+        if not attach_main_ipc_queues(ipc):
             return
         for raw_line in ipc["broadcast"].read_available(max_messages=200):
             envelope = decode_ipc_envelope(raw_line)
@@ -245,15 +207,7 @@ def main():
     def register_chat_window():
         send_ipc_line(f"REGISTER\tCHAT\t{args.character}")
 
-    ipc_timer = QTimer(app)
-    ipc_timer.setInterval(30)
-    ipc_timer.timeout.connect(read_shutdown_messages)
-    ipc_timer.start()
-    ipc_heartbeat_timer = QTimer(app)
-    ipc_heartbeat_timer.setInterval(3000)
-    ipc_heartbeat_timer.timeout.connect(register_chat_window)
-    ipc_heartbeat_timer.start()
-    QTimer.singleShot(0, register_chat_window)
+    start_ipc_heartbeat(app, register_chat_window, read_shutdown_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
 
     window.show()
