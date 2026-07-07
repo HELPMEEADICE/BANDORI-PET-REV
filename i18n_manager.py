@@ -7,7 +7,7 @@ import sys
 from process_utils import app_base_dir
 
 
-_SUPPORTED_LANGUAGES = {"en_US", "ja", "zh_CN", "zh_TW"}
+_SUPPORTED_LANGUAGES = {"en_US", "ja", "zh_CN", "zh_TW", "ko"}
 _POSIX_LOCALE_NAMES = {"c", "posix", "utf8", "utf_8", "utf-8"}
 _APPLE_LANGUAGE_TOKEN_RE = re.compile(r'"([^"]+)"|([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]+)*)')
 _LANGUAGE_ALIASES = {
@@ -27,6 +27,9 @@ _LANGUAGE_ALIASES = {
     "zh_hans": "zh_CN",
     "en": "en_US",
     "en_us": "en_US",
+    "kr": "ko",
+    "ko_kr": "ko",
+    "korean": "ko",
 }
 
 
