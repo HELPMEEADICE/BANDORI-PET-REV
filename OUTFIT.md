@@ -382,7 +382,7 @@
 
 ---
 
-## 10. 八幡海玲 (umiri) — Ave Mujica
+## 10. 八幡海铃 (umiri) — Ave Mujica
 > 服装数: 4
 
 | 服装 ID | 显示名称 |

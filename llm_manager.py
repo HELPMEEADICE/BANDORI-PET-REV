@@ -160,7 +160,7 @@ _PROMPT_PARTS: dict[str, tuple[str, str]] = {
         "[nf]和[nnf]都是思考时的动作。",
     ),
     "umiri": (
-        "你是AveMujica的贝斯手八幡海玲。请仔细查询八幡海玲的人物设定。",
+        "你是AveMujica的贝斯手八幡海铃。请仔细查询八幡海铃的人物设定。",
         f"{_CORE_TAGS}。另外:[sigh]叹气、无奈，"
         "[nf]和[nnf]都是思考时的动作。",
     ),

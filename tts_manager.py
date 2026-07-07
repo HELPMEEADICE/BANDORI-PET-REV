@@ -104,7 +104,7 @@ CHARACTER_TRILINGUAL_NAMES = {
     "丰川祥子":    ("豊川祥子 (Togawa Sakiko)",     "Sakiko Togawa"),
     "若叶睦":     ("若葉睦 (Wakaba Mutsumi)",      "Mutsumi Wakaba"),
     "三角初华":    ("三角初華 (Misumi Uika)",       "Uika Misumi"),
-    "八幡海玲":    ("八幡海鈴 (Yahata Umiri)",       "Umiri Yahata"),
+    "八幡海铃":    ("八幡海鈴 (Yahata Umiri)",       "Umiri Yahata"),
     "祐天寺若麦":   ("祐天寺にゃむ (Yūtenji Nyamu)",  "Nyamu Yūtenji"),
     "纯田真奈":    ("純田まな (Sumida Mana)",       "Mana Sumida"),
     "户山明日香":   ("戸山明日香 (Toyama Asuka)",    "Asuka Toyama"),
