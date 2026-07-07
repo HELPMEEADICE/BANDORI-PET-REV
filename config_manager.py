@@ -45,6 +45,16 @@ def _try_replace_file(src, dst) -> OSError | None:
         return exc
 
 
+def _unlink_if_possible(path: Path) -> bool:
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 @contextmanager
 def _config_file_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
@@ -81,6 +91,7 @@ def _config_file_lock(path: Path):
                 yield
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    _unlink_if_possible(lock_path)
 
 
 BASE_DIR = app_data_dir()
@@ -970,6 +981,8 @@ class ConfigManager:
 
     def flush_save(self):
         self._flush_pending_save()
+        cleanup_stale_config_temp_files(self._path, max_age_seconds=0)
+        _unlink_if_possible(self._path.with_suffix(self._path.suffix + ".lock"))
 
     def _flush_pending_save(self):
         gen = self._save_generation

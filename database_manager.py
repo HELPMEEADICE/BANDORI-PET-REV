@@ -31,6 +31,16 @@ _VALID_MESSAGE_ROLES = {"user", "assistant", "system"}
 _EXTERNAL_GROUP_CHAT_MESSAGE_LIMIT = 50
 
 
+def _unlink_if_possible(path: Path) -> bool:
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def _migrate_legacy_database(db_path: str) -> None:
     target = Path(db_path)
     if target != Path(DB_PATH) or LEGACY_BASE_DIR == BASE_DIR or target.exists():
@@ -127,6 +137,7 @@ class _DatabaseFileLock:
         file = getattr(self, "_file", None)
         if file is not None and not file.closed:
             file.close()
+        _unlink_if_possible(self._lock_path)
 
     def _lock_file(self):
         if self._file is None or self._file.closed:

@@ -4,7 +4,8 @@ import time
 import unittest
 from pathlib import Path
 
-from config_manager import cleanup_stale_config_temp_files
+from config_manager import ConfigManager, _config_file_lock, cleanup_stale_config_temp_files
+from database_manager import DatabaseManager
 
 
 class ConfigTempCleanupTest(unittest.TestCase):
@@ -31,6 +32,38 @@ class ConfigTempCleanupTest(unittest.TestCase):
             self.assertTrue(non_matching.exists())
             self.assertTrue(lock_file.exists())
             self.assertTrue(config_path.exists())
+
+    def test_config_file_lock_is_removed_after_release(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+
+            with _config_file_lock(config_path):
+                self.assertTrue(Path(str(config_path) + ".lock").exists())
+
+            self.assertFalse(Path(str(config_path) + ".lock").exists())
+
+    def test_flush_save_removes_runtime_temp_and_lock_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            runtime_tmp = Path(temp_dir) / "config.json.x14ibzhp.tmp"
+            lock_file = Path(temp_dir) / "config.json.lock"
+            runtime_tmp.write_text("{}", encoding="utf-8")
+            lock_file.write_text("", encoding="utf-8")
+
+            config = ConfigManager(config_path)
+            config.flush_save()
+
+            self.assertFalse(runtime_tmp.exists())
+            self.assertFalse(lock_file.exists())
+
+    def test_database_lock_is_removed_after_close(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "data.db"
+
+            db = DatabaseManager(str(db_path))
+            db.close()
+
+            self.assertFalse(Path(str(db_path) + ".lock").exists())
 
 
 if __name__ == "__main__":
