@@ -2092,9 +2092,11 @@ class SettingsWindow(
         display = self._model_manager.get_display_name(character)
         costume_name = self._model_manager.get_costume_display_name(character, costume)
         band_name = self._model_manager.get_band_display_name(self._selected_band) if self._selected_band else ""
-        model_format = item.get("format") or self._model_manager.get_model_format(character, costume)
-        self._detail_format_badge.setVisible(str(model_format or "").lower() == "moc3")
-        self._detail_format_badge.raise_()
+        get_model_format = getattr(self._model_manager, "get_model_format", None)
+        model_format = item.get("format") or (get_model_format(character, costume) if get_model_format else "")
+        if hasattr(self, "_detail_format_badge"):
+            self._detail_format_badge.setVisible(str(model_format or "").lower() == "moc3")
+            self._detail_format_badge.raise_()
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
         self._detail_band.setText(_tr("SettingsWindow.detail_band", band=band_name) if band_name else "")
@@ -2866,6 +2868,8 @@ class SettingsWindow(
         finally:
             self._defer_config_save = False
         settings = {
+            "character": self._current_char,
+            "costume": self._selected_costume,
             "language": current_language(),
             "fps": self._current_fps_setting(),
             "opacity": self._current_opacity_setting(),

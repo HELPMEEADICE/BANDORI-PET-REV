@@ -961,6 +961,7 @@ def main():
             launch_pet()
 
     def on_settings_changed(data):
+        nonlocal char, costume
         _SETTINGS_MAP = (
             ("fps", "fps", 120),
             ("opacity", "opacity", 1.0),
@@ -1026,6 +1027,17 @@ def main():
         if language:
             set_language(language)
             pet_window_ref["language"] = language
+        selected_char = str(data.get("character", "") or "").strip()
+        selected_costume = str(data.get("costume", "") or "").strip()
+        pet_relaunch_requested = has_active_pet_processes() and (
+            bool(selected_char and selected_costume)
+            or "models" in data
+        )
+        if selected_char and selected_costume:
+            char = selected_char
+            costume = selected_costume
+            pet_window_ref["char"] = selected_char
+            pet_window_ref["costume"] = selected_costume
         for cfg_key, ref_key, default in _SETTINGS_MAP:
             value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
             if cfg_key in ("ai_status_port", "chat_integration_port"):
@@ -1059,7 +1071,13 @@ def main():
             value = data.get(key)
             if value is not None:
                 cfg.set(key, value)
+        if selected_char and selected_costume:
+            cfg.set("character", selected_char)
+            cfg.set("costume", selected_costume)
         cfg.save()
+        if pet_relaunch_requested:
+            pet_window_ref["suppress_next_model_relaunch"] = (selected_char, selected_costume)
+            launch_pet()
         init_ai_status_server()
         init_chat_integration_server()
         init_napcat_adapter()
@@ -1118,7 +1136,12 @@ def main():
                 group_characters.append(model_char)
                 seen_group_characters.add(model_char)
         group_characters_arg = json.dumps(group_characters, ensure_ascii=False)
-        close_pet_processes(wait=False)
+        old_processes = [
+            process
+            for process in list(pet_window_ref.get("processes", []))
+            if process and isValid(process)
+        ]
+        clear_ipc_peers("PET")
         pet_window_ref["processes"] = []
         for idx, model in enumerate(models):
             process = QProcess(app)
@@ -1137,6 +1160,12 @@ def main():
             pet_window_ref["processes"].append(process)
             process.setWorkingDirectory(BASE_DIR)
             process.start()
+        for process in old_processes:
+            if process.state() != QProcess.ProcessState.NotRunning:
+                closing = pet_window_ref.setdefault("closing_processes", [])
+                if process not in closing:
+                    closing.append(process)
+            _close_qprocess(process, force=False, wait=False)
 
     def _read_process_error(process):
         if not isValid(process):
@@ -1257,6 +1286,9 @@ def main():
                     if len(parts) >= 4
                     else not settings_process_ref.get("show_launch", True)
                 )
+                suppressed = pet_window_ref.pop("suppress_next_model_relaunch", None)
+                if suppressed == (character, costume):
+                    relaunch = False
                 on_model_selected(character, costume, relaunch=relaunch)
         elif line.startswith("SETTINGS\t"):
             try:
