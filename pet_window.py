@@ -471,7 +471,7 @@ class PetWindow(QWidget):
         self._position_save_timer = QTimer(self)
         self._position_save_timer.setSingleShot(True)
         self._position_save_timer.setInterval(250)
-        self._position_save_timer.timeout.connect(self._save_config)
+        self._position_save_timer.timeout.connect(self._save_position_config)
         self._windows_topmost_guard_timer = QTimer(self)
         self._windows_topmost_guard_timer.setInterval(TOPMOST_GUARD_INTERVAL_MS)
         self._windows_topmost_guard_timer.timeout.connect(self._tick_windows_topmost_guard)
@@ -1569,7 +1569,7 @@ class PetWindow(QWidget):
         self._close_compact_ai_window()
         self._close_settings_process()
         self._close_ipc_bus()
-        self._save_config()
+        self._save_position_config()
         super().closeEvent(event)
 
     def _schedule_position_save(self):
@@ -4369,6 +4369,66 @@ class PetWindow(QWidget):
             if skip_model_sync:
                 self._settings_models_updated = False
             self._cfg.save()
+
+    def _save_position_config(self):
+        if not self._cfg:
+            return
+        save_position = bool(
+            getattr(self, "_show_pos_set", False)
+            and not self._startup_position_restore_pending
+            and not self._restoring_saved_position
+        )
+        if not save_position:
+            return
+
+        self._cfg.load()
+        placement = self._window_placement()
+        configured_model_count = self._configured_model_count()
+        if configured_model_count <= 1:
+            if self._pixel_mode:
+                self._cfg.set("pixel_window_x", self.x())
+                self._cfg.set("pixel_window_y", self.y())
+                self._cfg.set("pixel_window_placement", placement)
+            else:
+                self._cfg.set("window_x", self.x())
+                self._cfg.set("window_y", self.y())
+                self._cfg.set("window_width", self.width())
+                self._cfg.set("window_height", self.height())
+                self._cfg.set("window_placement", placement)
+
+        models = self._cfg.get("models", [])
+        if isinstance(models, list):
+            updated_models = [dict(item) if isinstance(item, dict) else item for item in models]
+            target_index = None
+            fallback_index = None
+            for idx, item in enumerate(updated_models):
+                if not isinstance(item, dict) or item.get("character") != self._current_char:
+                    continue
+                if item.get("costume") == self._current_costume:
+                    target_index = idx
+                    break
+                if fallback_index is None:
+                    fallback_index = idx
+            if target_index is None:
+                target_index = fallback_index
+            if target_index is not None and isinstance(updated_models[target_index], dict):
+                if self._pixel_mode:
+                    updated_models[target_index].update({
+                        "pixel_window_x": self.x(),
+                        "pixel_window_y": self.y(),
+                        "pixel_window_placement": placement,
+                    })
+                else:
+                    updated_models[target_index].update({
+                        "window_x": self.x(),
+                        "window_y": self.y(),
+                        "window_width": self.width(),
+                        "window_height": self.height(),
+                        "window_placement": placement,
+                    })
+                self._cfg.set("models", updated_models)
+
+        self._cfg.save()
 
     def _flush_save(self):
         if self._cfg:

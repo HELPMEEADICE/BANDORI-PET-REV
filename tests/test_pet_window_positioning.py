@@ -71,6 +71,7 @@ class FakeLive2DWidget:
 
 class SaveConfigHarness(QWidget):
     _save_config = PetWindow._save_config
+    _save_position_config = PetWindow._save_position_config
     _sync_current_model_entry = PetWindow._sync_current_model_entry
     _current_model_entry = PetWindow._current_model_entry
     _configured_model_count = PetWindow._configured_model_count
@@ -102,6 +103,9 @@ class SaveConfigHarness(QWidget):
         self._startup_position_restore_pending = False
         self._restoring_saved_position = False
         self._settings_models_updated = True
+
+    def _window_placement(self):
+        return {"x": self.x(), "y": self.y()}
 
 
 class PetWindowPositioningTest(unittest.TestCase):
@@ -180,6 +184,50 @@ class PetWindowPositioningTest(unittest.TestCase):
 
         for key in ("fps", "opacity", "dark_theme", "vsync", "live2d_quality", "live2d_scale"):
             self.assertNotIn(f'self._cfg.set("{key}"', source)
+
+    def test_position_save_only_updates_position_fields(self):
+        harness = SaveConfigHarness()
+        harness._cfg = FakeConfig({
+            "models": [{
+                "character": "kasumi",
+                "costume": "old_costume",
+                "path": "/models/kasumi/old_costume/model.json",
+                "default_motion": "idle",
+            }],
+            "language": "zh_CN",
+            "drag_locked": False,
+            "live2d_hit_alpha_threshold": 3,
+        })
+        harness._show_pos_set = True
+        harness._settings_models_updated = False
+        harness._live2d_widget._drag_locked = True
+        harness._live2d_hit_alpha_threshold = 8
+        harness.resize(456, 567)
+        harness.move(123, 234)
+
+        harness._save_position_config()
+
+        self.assertEqual("zh_CN", harness._cfg.get("language"))
+        self.assertFalse(harness._cfg.get("drag_locked"))
+        self.assertEqual(3, harness._cfg.get("live2d_hit_alpha_threshold"))
+        self.assertEqual(123, harness._cfg.get("window_x"))
+        self.assertEqual(234, harness._cfg.get("window_y"))
+        self.assertEqual(456, harness._cfg.get("window_width"))
+        self.assertEqual(567, harness._cfg.get("window_height"))
+        self.assertEqual(
+            {
+                "character": "kasumi",
+                "costume": "old_costume",
+                "path": "/models/kasumi/old_costume/model.json",
+                "default_motion": "idle",
+                "window_x": 123,
+                "window_y": 234,
+                "window_width": 456,
+                "window_height": 567,
+                "window_placement": {"x": 123, "y": 234},
+            },
+            harness._cfg.get("models")[0],
+        )
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
-from i18n_manager import current_language, detect_system_language, set_language
+from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
@@ -186,8 +186,7 @@ def main():
     app.aboutToQuit.connect(lambda: pet._close_chat_process())
     app.aboutToQuit.connect(lambda: pet._close_compact_ai_window())
     app.aboutToQuit.connect(lambda: pet._close_settings_process())
-    app.aboutToQuit.connect(lambda: cfg.set("language", current_language()))
-    app.aboutToQuit.connect(pet._save_config)
+    app.aboutToQuit.connect(pet._save_position_config)
     app.aboutToQuit.connect(pet._flush_save)
     app.aboutToQuit.connect(live2d.dispose)
 
