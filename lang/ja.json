@@ -1339,7 +1339,7 @@
   "SettingsWindow.wizard_models_all_packages_ready": "すべてのモデルパッケージが準備完了",
   "SettingsWindow.wizard_models_detect_detail": "{count} 個のモデルパッケージを検出しました。",
   "SettingsWindow.wizard_models_download_done": "ダウンロード完了",
-  "SettingsWindow.wizard_models_download_done_detail": "{count} 個のモデルパッケージをダウンロードしました。",
+  "SettingsWindow.wizard_models_download_done_detail": "ダウンロード完了：成功 {downloaded} 個、失敗 {failed} 個。",
   "SettingsWindow.wizard_models_download_failed": "ダウンロード失敗",
   "SettingsWindow.wizard_models_download_partial": "一部のダウンロードに失敗しました",
   "SettingsWindow.wizard_models_download_progress": "ダウンロード中 {current}/{total}...",

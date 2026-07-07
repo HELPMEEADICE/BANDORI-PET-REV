@@ -1339,7 +1339,7 @@
   "SettingsWindow.wizard_models_all_packages_ready": "所有模型包已就绪",
   "SettingsWindow.wizard_models_detect_detail": "检测到 {count} 个模型包。",
   "SettingsWindow.wizard_models_download_done": "下载完成",
-  "SettingsWindow.wizard_models_download_done_detail": "已下载 {count} 个模型包。",
+  "SettingsWindow.wizard_models_download_done_detail": "下载完成：成功 {downloaded} 个，失败 {failed} 个。",
   "SettingsWindow.wizard_models_download_failed": "下载失败",
   "SettingsWindow.wizard_models_download_partial": "部分下载失败",
   "SettingsWindow.wizard_models_download_progress": "正在下载 {current}/{total}...",

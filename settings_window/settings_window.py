@@ -1169,6 +1169,7 @@ class SettingsWindow(
         self._wizard_model_download_label.setText(_tr(
             "SettingsWindow.wizard_models_download_done_detail",
             default="下载完成：成功 {downloaded} 个，失败 {failed} 个。",
+            count=downloaded,
             downloaded=downloaded,
             failed=len(failed),
         ))

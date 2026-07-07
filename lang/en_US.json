@@ -1339,7 +1339,7 @@
   "SettingsWindow.wizard_models_all_packages_ready": "All model packages are ready",
   "SettingsWindow.wizard_models_detect_detail": "Detected {count} model package(s).",
   "SettingsWindow.wizard_models_download_done": "Download complete",
-  "SettingsWindow.wizard_models_download_done_detail": "Downloaded {count} model package(s).",
+  "SettingsWindow.wizard_models_download_done_detail": "Download complete: {downloaded} succeeded, {failed} failed.",
   "SettingsWindow.wizard_models_download_failed": "Download failed",
   "SettingsWindow.wizard_models_download_partial": "Some downloads failed",
   "SettingsWindow.wizard_models_download_progress": "Downloading {current}/{total}...",
