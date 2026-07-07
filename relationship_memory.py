@@ -437,8 +437,7 @@ def _mood_from_actions(actions: list[str]) -> str:
     return ""
 
 
-def analyze_interaction(user_text: str, assistant_text: str = "", actions: list[str] | None = None) -> dict:
-    del assistant_text
+def analyze_interaction(user_text: str, actions: list[str] | None = None) -> dict:
     text = str(user_text or "")
     affection_delta = 0
     trust_delta = 0

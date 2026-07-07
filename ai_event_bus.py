@@ -9,6 +9,6 @@ def publish_ai_event(data: dict):
         return
     try:
         payload = json.dumps(data, ensure_ascii=False)
-        send_ipc_message(f"AI_EVENT\t{payload}\n", 200)
+        send_ipc_message(f"AI_EVENT\t{payload}\n")
     except Exception as exc:
         log_swallowed("ai_event_bus.publish_ai_event", exc)

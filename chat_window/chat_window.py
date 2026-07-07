@@ -3840,7 +3840,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not user_text.strip() or not character:
             return
         user_key = self._user_memory_key()
-        fallback_analysis = analyze_interaction(user_text, assistant_text, actions)
+        fallback_analysis = analyze_interaction(user_text, actions=actions)
         if self._start_memory_extraction(
             character,
             user_key,

@@ -628,7 +628,6 @@ class TTSPlayer(QObject):
     def enqueue(self, audio: bytes, media_type: str = "wav"):
         if not audio:
             return
-        del media_type
         try:
             data, sample_rate = _soundfile().read(io.BytesIO(audio), dtype="float32")
             _numpy()

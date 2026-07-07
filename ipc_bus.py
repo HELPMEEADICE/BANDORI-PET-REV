@@ -30,15 +30,14 @@ def radial_event_queue_key(name: str) -> str:
     return make_shared_memory_key(name, "radial-event")
 
 
-def send_ipc_message(message: str, timeout_ms: int = 200) -> bool:
+def send_ipc_message(message: str) -> bool:
     if not message:
         return False
     with _ipc_lock:
-        return _send_ipc_message_locked(message, timeout_ms)
+        return _send_ipc_message_locked(message)
 
 
-def _send_ipc_message_locked(message: str, timeout_ms: int) -> bool:
-    del timeout_ms
+def _send_ipc_message_locked(message: str) -> bool:
     global _ipc_inbound_queue
     try:
         if _ipc_inbound_queue is None or not _ipc_inbound_queue.is_attached():

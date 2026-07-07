@@ -82,8 +82,8 @@ def _chat_lock_path() -> str:
     return os.path.join(runtime_dir, f"{safe_name}-chat.lock")
 
 
-def _send_ipc_line(line: str, timeout_ms: int = 300):
-    send_ipc_message(line + "\n", timeout_ms)
+def _send_ipc_line(line: str):
+    send_ipc_message(line + "\n")
 
 
 def _app_icon_path() -> str:

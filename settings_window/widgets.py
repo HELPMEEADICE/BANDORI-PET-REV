@@ -100,7 +100,6 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             self.update()
 
     def set_static_render(self, enabled: bool):
-        del enabled
         self._static_render_done = False
         self.update()
 

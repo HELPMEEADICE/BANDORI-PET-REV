@@ -980,7 +980,6 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
         if self.sender() is not self._worker:
             return
-        del actions
         acts = merged_action_tags(
             self._current_response_actions,
             parse_action_tags(self._action_tag_stream_buffer + full_text),
@@ -1153,7 +1152,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         if not self._last_user_text.strip():
             return
         user_key = self._user_memory_key()
-        fallback_analysis = analyze_interaction(self._last_user_text, assistant_text, actions)
+        fallback_analysis = analyze_interaction(self._last_user_text, actions=actions)
         if self._start_memory_extraction(user_key, self._last_user_text, assistant_text, self._last_user_message_id, fallback_analysis):
             return
         self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
