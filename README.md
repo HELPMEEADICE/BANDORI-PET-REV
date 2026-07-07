@@ -88,7 +88,26 @@ BandoriPet/
 │   └── ...
 ```
 
-### 4. 安装依赖
+### 4. 创建虚拟环境 & 安装依赖
+
+> 💡 **强烈建议在虚拟环境中运行**，避免与系统全局 Python 包冲突。
+
+**创建虚拟环境：**
+
+```bash
+python -m venv venv
+```
+
+**激活虚拟环境：**
+
+| 平台 | 命令 |
+|------|------|
+| **Windows** | `venv\Scripts\activate` |
+| **Linux / macOS** | `source venv/bin/activate` |
+
+激活后终端前面会出现 `(venv)` 提示符。
+
+---
 
 **Python 包：**
 
