@@ -16,9 +16,11 @@ _HEADER = struct.Struct("<8sIIIQ")
 _SLOT_HEADER = struct.Struct("<QI")
 # Keep the default queues small enough for macOS's conservative System V shared
 # memory budget while still allowing large SETTINGS payloads in a single slot.
-_DEFAULT_SLOT_COUNT = 16
+# macOS commonly caps total System V shared memory near 4MB, so leave headroom
+# for the radial-menu queues and for stale segments left by forced quits.
+_DEFAULT_SLOT_COUNT = 8
 _DEFAULT_SLOT_SIZE = 65536
-_DEFAULT_FALLBACK_SLOT_COUNTS = (16, 12, 8, 4)
+_DEFAULT_FALLBACK_SLOT_COUNTS = (8, 4, 2)
 
 
 def _queue_memory_size(slot_count: int, slot_size: int) -> int:
@@ -151,8 +153,10 @@ class SharedMemoryLineQueue:
         return queue
 
     def close(self) -> None:
-        if self._memory is not None and self._memory.isAttached():
-            self._memory.detach()
+        memory = self._memory
+        self._memory = None
+        if memory is not None and memory.isAttached():
+            memory.detach()
 
     def is_attached(self) -> bool:
         return self._memory is not None and self._memory.isAttached()
@@ -161,10 +165,16 @@ class SharedMemoryLineQueue:
         payload = normalize_ipc_line(line).encode("utf-8")
         if not payload or len(payload) > self.slot_size:
             return False
-        if not self._memory.lock():
+        if not self.is_attached():
+            return False
+        memory = self._memory
+        if memory is None or not memory.lock():
             return False
         try:
-            view = memoryview(self._memory.data())
+            data = memory.data()
+            if data is None:
+                return False
+            view = memoryview(data)
             magic, version, slot_count, slot_size, next_seq = self._read_header(view)
             if magic != _MAGIC or version != _VERSION:
                 return False
@@ -176,17 +186,23 @@ class SharedMemoryLineQueue:
             self._write_header(view, slot_count, slot_size, next_seq + 1)
             return True
         finally:
-            self._memory.unlock()
+            memory.unlock()
 
     def read_available(self, max_messages: int | None = None) -> list[str]:
         if max_messages is not None:
             max_messages = max(0, int(max_messages))
             if max_messages == 0:
                 return []
-        if not self._memory.lock():
+        if not self.is_attached():
+            return []
+        memory = self._memory
+        if memory is None or not memory.lock():
             return []
         try:
-            view = memoryview(self._memory.data())
+            data = memory.data()
+            if data is None:
+                return []
+            view = memoryview(data)
             magic, version, slot_count, slot_size, next_seq = self._read_header(view)
             if magic != _MAGIC or version != _VERSION:
                 return []
@@ -209,7 +225,7 @@ class SharedMemoryLineQueue:
             self._cursor = seq
             return messages
         finally:
-            self._memory.unlock()
+            memory.unlock()
 
     def _initialize(self) -> None:
         if not self._memory.lock():
