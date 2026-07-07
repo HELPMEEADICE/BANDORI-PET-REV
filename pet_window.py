@@ -1892,6 +1892,31 @@ class PetWindow(QWidget):
         QTimer.singleShot(0, lambda t=token: self._prefetch_live2d_action_resources(t))
         QTimer.singleShot(120, lambda t=token: self._prewarm_next_live2d_action(t))
 
+    def _restart_live2d_action_prewarm(self):
+        self._live2d_prewarm_token += 1
+        self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
+        self._motion_guard_token += 1
+        QTimer.singleShot(
+            80,
+            lambda t=self._motion_guard_token: self._restore_default_motion(t, force_clear=True),
+        )
+
+    @staticmethod
+    def _models_runtime_signature(models) -> tuple:
+        if not isinstance(models, list):
+            return ()
+        signature = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            signature.append((
+                str(item.get("character", "") or "").strip(),
+                str(item.get("costume", "") or "").strip(),
+                str(item.get("path", "") or "").strip(),
+                str(item.get("pet_mode", "live2d") or "live2d").strip(),
+            ))
+        return tuple(signature)
+
     def _prefetch_live2d_action_resources(self, token: int):
         if token != self._live2d_prewarm_token:
             return
@@ -2429,6 +2454,7 @@ class PetWindow(QWidget):
         if "model_action_settings" in data and self._cfg:
             self._cfg.set("model_action_settings", data["model_action_settings"])
         if "models" in data and self._cfg:
+            previous_models_signature = self._models_runtime_signature(self._cfg.get("models", []))
             self._settings_models_updated = True
             next_group_characters = self._chat_group_characters_from_models(data["models"])
             if next_group_characters:
@@ -2438,9 +2464,12 @@ class PetWindow(QWidget):
                 self._layer_index = self._compute_layer_index()
             self._cfg.set("models", data["models"])
             self._cfg.save()
-        if "models" in data or "model_action_settings" in data:
-            self._live2d_prewarm_token += 1
-            self._schedule_live2d_action_prewarm(self._live2d_prewarm_token)
+            models_runtime_changed = self._models_runtime_signature(data["models"]) != previous_models_signature
+        else:
+            models_runtime_changed = False
+        if models_runtime_changed:
+            self._restart_live2d_action_prewarm()
+        elif "models" in data or "model_action_settings" in data:
             self._motion_guard_token += 1
             QTimer.singleShot(
                 80,

@@ -199,6 +199,13 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
         self.assertEqual(1, manager.path_reads)
         self.assertEqual(1, manager.data_reads)
 
+    def test_apply_emits_model_selection_as_final_fallback(self):
+        window = SettingsWindow.__new__(SettingsWindow)
+        window._current_char = "kasumi"
+        window._selected_costume = "live_default"
+
+        self.assertTrue(window._should_emit_model_selection_on_apply())
+
 
 if __name__ == "__main__":
     unittest.main()

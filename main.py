@@ -936,6 +936,21 @@ def main():
         if relaunch or (model_changed and has_active_pet_processes()):
             launch_pet()
 
+    def _models_runtime_signature(models) -> tuple:
+        if not isinstance(models, list):
+            return ()
+        signature = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            signature.append((
+                str(item.get("character", "") or "").strip(),
+                str(item.get("costume", "") or "").strip(),
+                str(item.get("path", "") or "").strip(),
+                str(item.get("pet_mode", "live2d") or "live2d").strip(),
+            ))
+        return tuple(signature)
+
     def on_settings_changed(data):
         nonlocal char, costume
         _SETTINGS_MAP = (
@@ -1005,9 +1020,20 @@ def main():
             pet_window_ref["language"] = language
         selected_char = str(data.get("character", "") or "").strip()
         selected_costume = str(data.get("costume", "") or "").strip()
+        selected_model_changed = bool(selected_char and selected_costume) and (
+            selected_char != pet_window_ref.get("char", char)
+            or selected_costume != pet_window_ref.get("costume", costume)
+        )
+        old_models_signature = _models_runtime_signature(cfg.get("models", []))
+        new_models_signature = (
+            _models_runtime_signature(data.get("models", []))
+            if "models" in data
+            else old_models_signature
+        )
+        models_runtime_changed = "models" in data and new_models_signature != old_models_signature
         pet_relaunch_requested = has_active_pet_processes() and (
-            bool(selected_char and selected_costume)
-            or "models" in data
+            selected_model_changed
+            or models_runtime_changed
         )
         if selected_char and selected_costume:
             char = selected_char

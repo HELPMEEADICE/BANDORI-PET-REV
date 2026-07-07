@@ -2953,11 +2953,14 @@ class SettingsWindow(
                 import traceback
                 traceback.print_exc()
         self.settings_changed.emit(settings)
-        if self._current_char and self._selected_costume:
+        if self._should_emit_model_selection_on_apply():
             self.model_selected.emit(self._current_char, self._selected_costume)
         if self._show_launch:
             self.launch_requested.emit()
         self.close()
+
+    def _should_emit_model_selection_on_apply(self) -> bool:
+        return bool(self._current_char and self._selected_costume)
 
     def connect_ipc_output(self, send_line):
         self._ipc_output = send_line
