@@ -1374,5 +1374,10 @@
   "SettingsWindow.care_policy_state_idle": "離席/アイドル",
   "SettingsWindow.care_policy_state_unknown": "不明",
   "SettingsWindow.screen_awareness_include_process_name": "前面プロセス名を送信",
-  "SettingsWindow.screen_awareness_include_window_title": "ウィンドウタイトルを送信"
+  "SettingsWindow.screen_awareness_include_window_title": "ウィンドウタイトルを送信",
+  "Language.pt_PT": "Português",
+  "Language.es_ES": "Español",
+  "Language.fr_FR": "Français",
+  "Language.de_DE": "Deutsch",
+  "Language.ru_RU": "Русский"
 }

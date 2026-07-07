@@ -7,7 +7,18 @@ import sys
 from process_utils import app_base_dir
 
 
-_SUPPORTED_LANGUAGES = {"en_US", "ja", "zh_CN", "zh_TW", "ko"}
+_SUPPORTED_LANGUAGES = {
+    "de_DE",
+    "en_US",
+    "es_ES",
+    "fr_FR",
+    "ja",
+    "ko",
+    "pt_PT",
+    "ru_RU",
+    "zh_CN",
+    "zh_TW",
+}
 _POSIX_LOCALE_NAMES = {"c", "posix", "utf8", "utf_8", "utf-8"}
 _APPLE_LANGUAGE_TOKEN_RE = re.compile(r'"([^"]+)"|([A-Za-z]{2,3}(?:[-_][A-Za-z0-9]+)*)')
 _LANGUAGE_ALIASES = {
@@ -30,6 +41,34 @@ _LANGUAGE_ALIASES = {
     "kr": "ko",
     "ko_kr": "ko",
     "korean": "ko",
+    "de": "de_DE",
+    "de_at": "de_DE",
+    "de_ch": "de_DE",
+    "de_de": "de_DE",
+    "deutsch": "de_DE",
+    "es": "es_ES",
+    "es_419": "es_ES",
+    "es_es": "es_ES",
+    "es_mx": "es_ES",
+    "es_us": "es_ES",
+    "espanol": "es_ES",
+    "espaol": "es_ES",
+    "español": "es_ES",
+    "fr": "fr_FR",
+    "fr_be": "fr_FR",
+    "fr_ca": "fr_FR",
+    "fr_ch": "fr_FR",
+    "fr_fr": "fr_FR",
+    "franais": "fr_FR",
+    "french": "fr_FR",
+    "pt": "pt_PT",
+    "pt_br": "pt_PT",
+    "pt_pt": "pt_PT",
+    "portuguese": "pt_PT",
+    "portugus": "pt_PT",
+    "ru": "ru_RU",
+    "ru_ru": "ru_RU",
+    "russian": "ru_RU",
 }
 
 
@@ -59,6 +98,16 @@ def normalize_language(lang: str) -> str:
         return "ja"
     if primary == "en":
         return "en_US"
+    if primary == "de":
+        return "de_DE"
+    if primary == "es":
+        return "es_ES"
+    if primary == "fr":
+        return "fr_FR"
+    if primary == "pt":
+        return "pt_PT"
+    if primary == "ru":
+        return "ru_RU"
     return key
 
 

@@ -1374,5 +1374,10 @@
   "SettingsWindow.care_policy_state_idle": "Idle",
   "SettingsWindow.care_policy_state_unknown": "Unknown",
   "SettingsWindow.screen_awareness_include_process_name": "Send foreground process name",
-  "SettingsWindow.screen_awareness_include_window_title": "Send window title"
+  "SettingsWindow.screen_awareness_include_window_title": "Send window title",
+  "Language.pt_PT": "Português",
+  "Language.es_ES": "Español",
+  "Language.fr_FR": "Français",
+  "Language.de_DE": "Deutsch",
+  "Language.ru_RU": "Русский"
 }

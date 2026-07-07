@@ -1374,5 +1374,10 @@
   "SettingsWindow.care_policy_state_idle": "空闲",
   "SettingsWindow.care_policy_state_unknown": "未知",
   "SettingsWindow.screen_awareness_include_process_name": "发送前台进程名",
-  "SettingsWindow.screen_awareness_include_window_title": "发送窗口标题"
+  "SettingsWindow.screen_awareness_include_window_title": "发送窗口标题",
+  "Language.pt_PT": "Português",
+  "Language.es_ES": "Español",
+  "Language.fr_FR": "Français",
+  "Language.de_DE": "Deutsch",
+  "Language.ru_RU": "Русский"
 }
