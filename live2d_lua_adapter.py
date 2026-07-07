@@ -391,6 +391,14 @@ def _decode_lua_string(value) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
+def _first_error_line(exc: BaseException) -> str:
+    for line in str(exc).splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return exc.__class__.__name__
+
+
 def _lua_array(table) -> list[str]:
     return [_decode_lua_string(table[index]) for index in range(1, len(table) + 1) if table[index]]
 
@@ -435,6 +443,7 @@ class LuaLive2DModule:
         self._lua = None
         self._embed = None
         self._moc3_embed = None
+        self._moc3_error = ""
         self._initialized = False
         self._load_model = None
         self._resize = None
@@ -486,6 +495,7 @@ class LuaLive2DModule:
         self._lua = None
         self._embed = None
         self._moc3_embed = None
+        self._moc3_error = ""
         self._initialized = False
 
     def LAppModel(self):
@@ -517,9 +527,22 @@ class LuaLive2DModule:
             lua_dir,
         )
         self._embed = lua.execute(b'return require("live2d_embed")')
-        self._moc3_embed = lua.execute(b'return require("live2d_moc3_pet_embed")')
         self._embed.init()
-        self._moc3_embed.init()
+        try:
+            self._moc3_embed = lua.execute(b'return require("live2d_moc3_pet_embed")')
+            self._moc3_embed.init()
+            self._moc3_error = ""
+        except Exception as exc:
+            # The Cubism 3 renderer is optional: most bundled Bandori models are
+            # Cubism 2 .moc assets, and they should not fail just because the
+            # MOC3 Lua bridge is absent from a source checkout or older bundle.
+            self._moc3_embed = None
+            self._moc3_error = _first_error_line(exc)
+            print(
+                f"[Live2D] MOC3 renderer unavailable; Cubism 2 models remain enabled: {self._moc3_error}",
+                file=sys.stderr,
+                flush=True,
+            )
         self._load_model = lua.eval(
             b"function(renderer, path, w, h, opts) return renderer:load_model(path, w, h, opts) end"
         )
@@ -615,7 +638,13 @@ class LuaLive2DModule:
 
     def _new_renderer(self, width: int, height: int, model_format: str = MODEL_FORMAT_MOC):
         self._ensure_runtime()
-        embed = self._moc3_embed if model_format == MODEL_FORMAT_MOC3 else self._embed
+        if model_format == MODEL_FORMAT_MOC3:
+            if self._moc3_embed is None:
+                detail = f": {self._moc3_error}" if self._moc3_error else ""
+                raise RuntimeError(f"Live2D MOC3 renderer is unavailable{detail}")
+            embed = self._moc3_embed
+        else:
+            embed = self._embed
         return embed.new(width, height)
 
     def _new_options(self, model_path: str, model_format: str = MODEL_FORMAT_MOC):

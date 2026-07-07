@@ -7,11 +7,31 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from lupa import LuaRuntime
 
-from live2d_lua_adapter import _patch_lua_moc3_pet_embed_delta
+from live2d_lua_adapter import (
+    MODEL_FORMAT_MOC,
+    MODEL_FORMAT_MOC3,
+    LuaLive2DModule,
+    _patch_lua_moc3_pet_embed_delta,
+)
 from pet_window import PetWindow
 
 
 class Moc3MotionLoopingTest(unittest.TestCase):
+    def test_cubism2_renderer_does_not_require_moc3_bridge(self):
+        class _FakeEmbed:
+            def new(self, width, height):
+                return ("renderer", width, height)
+
+        module = LuaLive2DModule()
+        module._initialized = True
+        module._embed = _FakeEmbed()
+        module._moc3_embed = None
+        module._moc3_error = "missing bridge"
+
+        self.assertEqual(("renderer", 12, 34), module._new_renderer(12, 34, MODEL_FORMAT_MOC))
+        with self.assertRaisesRegex(RuntimeError, "MOC3 renderer is unavailable"):
+            module._new_renderer(12, 34, MODEL_FORMAT_MOC3)
+
     def test_looping_motion_can_be_played_once(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
         root = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()

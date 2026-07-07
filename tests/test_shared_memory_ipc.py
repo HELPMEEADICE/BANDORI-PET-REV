@@ -72,6 +72,17 @@ def test_default_shared_memory_queue_accepts_large_settings_payloads():
         writer.close()
 
 
+def test_closed_shared_memory_queue_read_write_are_noops():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("closed")
+    queue = SharedMemoryLineQueue.create(key, slot_count=1, slot_size=128)
+    queue.close()
+
+    assert not queue.publish("ACTION\tkasumi\twave")
+    assert queue.read_available() == []
+
+
 def test_default_shared_memory_queue_stays_below_macos_shared_memory_budget():
     from shared_memory_ipc import (
         _DEFAULT_SLOT_COUNT,
