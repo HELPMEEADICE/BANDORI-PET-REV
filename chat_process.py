@@ -6,6 +6,7 @@ import sys
 from process_utils import (
     app_base_dir,
     app_icon_path,
+    app_runtime_dir,
     configure_debug_logging,
     ensure_taskbar_icon_identity,
     install_parent_death_watch,
@@ -79,11 +80,10 @@ def _parse_group_characters(value: str, valid_characters: set[str], current_char
 
 
 def _chat_lock_path() -> str:
-    runtime_dir = os.path.join(BASE_DIR, ".runtime")
-    os.makedirs(runtime_dir, exist_ok=True)
+    runtime_dir = app_runtime_dir()
     server_name = ipc_server_name() or APP_NAME
     safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in server_name)
-    return os.path.join(runtime_dir, f"{safe_name}-chat.lock")
+    return str(runtime_dir / f"{safe_name}-chat.lock")
 
 
 def _send_ipc_line(line: str):

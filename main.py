@@ -124,6 +124,35 @@ def main():
 
     def init_tray():
         nonlocal tray_icon
+        if sys.platform == "darwin":
+            try:
+                from macos_status_item import MacOSStatusItem, available as native_status_item_available
+
+                if native_status_item_available():
+                    tray_icon = MacOSStatusItem(
+                        _tr("MainTray.tooltip"),
+                        [
+                            {
+                                "title": _tr("MainTray.chat"),
+                                "callback": lambda: QTimer.singleShot(0, launch_chat_process),
+                            },
+                            {
+                                "title": _tr("MainTray.settings"),
+                                "callback": lambda: QTimer.singleShot(
+                                    0,
+                                    lambda: launch_settings_process(show_launch=False),
+                                ),
+                            },
+                            {
+                                "title": _tr("MainTray.exit"),
+                                "callback": lambda: QTimer.singleShot(0, quit_all),
+                            },
+                        ],
+                    )
+                    return
+            except Exception as exc:
+                print(f"Native macOS status item failed: {exc}", file=sys.stderr)
+
         tray_icon = QSystemTrayIcon(app)
         tray_icon.setIcon(load_tray_icon())
         tray_icon.setToolTip(_tr("MainTray.tooltip"))

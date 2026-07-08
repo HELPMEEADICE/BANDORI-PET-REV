@@ -190,6 +190,8 @@ def apply_popup_window_polish(widget):
         return
     set_window_no_shadow(widget)
     set_window_level_above_menu_bar(widget)
+    set_hides_on_deactivate(widget, False)
+    set_collection_behavior(widget, PET_COLLECTION_BEHAVIOR)
 
 
 def hide_dock_icon_if_needed():
@@ -223,3 +225,27 @@ def hide_dock_icon():
         pass
 
 
+def activate_app_ignoring_other_apps() -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        from AppKit import NSApp
+        NSApp.activateIgnoringOtherApps_(True)
+        return True
+    except Exception:
+        pass
+    if not _init_objc():
+        return False
+    try:
+        app_class = _OBJC.objc_getClass(b"NSApplication")
+        if not app_class:
+            return False
+        app = _send_id(app_class, "sharedApplication")
+        if not app:
+            return False
+        f = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool)
+        sender = ctypes.cast(_OBJC.objc_msgSend, f)
+        sender(app, _sel("activateIgnoringOtherApps:"), ctypes.c_bool(True))
+        return True
+    except Exception:
+        return False

@@ -102,7 +102,7 @@ def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
     )
 
     main_ipc_bytes = 2 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
-    radial_ipc_bytes = _queue_memory_size(128, 8192) + _queue_memory_size(128, 4096)
+    radial_ipc_bytes = _queue_memory_size(8, 8192) + _queue_memory_size(8, 4096)
 
     assert main_ipc_bytes + radial_ipc_bytes < 4 * 1024 * 1024
 

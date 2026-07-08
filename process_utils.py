@@ -237,6 +237,17 @@ def app_data_dir() -> Path:
     return path
 
 
+def app_runtime_dir(base_dir: Path | str | None = None, *, create: bool = True) -> Path:
+    if base_dir is not None and (not getattr(sys, "frozen", False) or sys.platform != "darwin"):
+        root = Path(base_dir)
+    else:
+        root = app_data_dir()
+    path = root / ".runtime"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def frozen_executable_name(script_name: str) -> str:
     base, _ext = os.path.splitext(script_name)
     return base + (".exe" if sys.platform == "win32" else "")
@@ -347,7 +358,7 @@ def cleanup_stale_runtime_locks(
     only delete locks that are free or stale and never touch one held by a live
     instance. A short minimum age avoids racing a concurrently launching peer.
     """
-    runtime_dir = (Path(base_dir) if base_dir is not None else app_base_dir()) / ".runtime"
+    runtime_dir = app_runtime_dir(base_dir, create=False)
     if not runtime_dir.is_dir():
         return 0
     try:

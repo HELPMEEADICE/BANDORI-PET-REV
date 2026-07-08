@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import select
 import sys
 
 from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, interaction_trace, set_windows_app_user_model_id
@@ -20,15 +21,20 @@ from shared_memory_ipc import SharedMemoryLineQueue
 
 
 _EVENT_QUEUE = None
+_STDIO_MODE = False
 
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="Show radial menu in a separate process.")
-    parser.add_argument("--channel-name", required=True)
+    parser.add_argument("--channel-name", default="")
+    parser.add_argument("--stdio", action="store_true")
     return parser.parse_args()
 
 
 def _emit(line: str):
+    if _STDIO_MODE:
+        print(line, flush=True)
+        return
     if _EVENT_QUEUE is not None:
         _EVENT_QUEUE.publish(line)
 
@@ -101,12 +107,14 @@ def _update_menu(menu: RadialMenu, payload: dict, actions: list[str]) -> bool:
 
 def main():
     global _EVENT_QUEUE
+    global _STDIO_MODE
     ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
+    _STDIO_MODE = bool(args.stdio)
 
     channel_name = str(args.channel_name or "").strip()
-    if not channel_name:
+    if not channel_name and not _STDIO_MODE:
         return 2
 
     set_windows_app_user_model_id(f"{APP_NAME}.RadialMenu")
@@ -119,15 +127,17 @@ def main():
     import macos_patch
     macos_patch.hide_dock_icon_if_needed()
 
-    try:
-        command_queue = SharedMemoryLineQueue.attach(
-            radial_command_queue_key(channel_name),
-            start_at_tail=False,
-        )
-        _EVENT_QUEUE = SharedMemoryLineQueue.attach(radial_event_queue_key(channel_name))
-    except RuntimeError as exc:
-        print(f"Radial menu shared-memory IPC attach failed: {exc}", file=sys.stderr)
-        return 3
+    command_queue = None
+    if not _STDIO_MODE:
+        try:
+            command_queue = SharedMemoryLineQueue.attach(
+                radial_command_queue_key(channel_name),
+                start_at_tail=False,
+            )
+            _EVENT_QUEUE = SharedMemoryLineQueue.attach(radial_event_queue_key(channel_name))
+        except RuntimeError as exc:
+            print(f"Radial menu shared-memory IPC attach failed: {exc}", file=sys.stderr)
+            return 3
 
     menu = None
     menu_actions: list[str] = []
@@ -199,14 +209,28 @@ def main():
             app.quit()
 
     def read_commands():
+        if command_queue is None:
+            return
         for line in command_queue.read_available(max_messages=100):
             handle_line(line)
 
+    def read_stdio_commands():
+        while True:
+            ready, _write, _error = select.select([sys.stdin], [], [], 0)
+            if not ready:
+                return
+            line = sys.stdin.readline()
+            if line == "":
+                app.quit()
+                return
+            handle_line(line.rstrip("\r\n"))
+
     command_timer = QTimer(app)
     command_timer.setInterval(15)
-    command_timer.timeout.connect(read_commands)
+    command_timer.timeout.connect(read_stdio_commands if _STDIO_MODE else read_commands)
     command_timer.start()
-    app.aboutToQuit.connect(command_queue.close)
+    if command_queue is not None:
+        app.aboutToQuit.connect(command_queue.close)
     app.aboutToQuit.connect(lambda: _EVENT_QUEUE.close() if _EVENT_QUEUE is not None else None)
     _emit("READY")
     return app.exec()

@@ -390,6 +390,8 @@ class PetWindow(QWidget):
         self._radial_menu_event_ipc = None
         self._radial_menu_command_queue = []
         self._radial_menu_process_ready = False
+        self._radial_menu_stdio = False
+        self._radial_menu_stdout_buffer = ""
         self._radial_menu_shutting_down = False
         self._radial_menu_visible = False
         self._radial_menu_opening = False
@@ -1585,6 +1587,51 @@ class PetWindow(QWidget):
     def _init_tray(self):
         from PySide6.QtWidgets import QMenu
         from tray_utils import keep_tray_icon_visible, load_tray_icon
+
+        if sys.platform == "darwin":
+            try:
+                from macos_status_item import MacOSStatusItem, available as native_status_item_available
+
+                if native_status_item_available():
+                    self._tray_icon = MacOSStatusItem(
+                        _tr("PetWindow.tray_tooltip"),
+                        [
+                            {
+                                "title": _tr("PetWindow.tray_show_hide"),
+                                "callback": lambda: QTimer.singleShot(0, self._toggle_visible),
+                            },
+                            {
+                                "title": _tr("PetWindow.tray_chat"),
+                                "callback": lambda: QTimer.singleShot(0, self._open_chat),
+                            },
+                            {
+                                "title": _tr("PetWindow.tray_settings"),
+                                "callback": lambda: QTimer.singleShot(0, self._open_settings),
+                            },
+                            {"separator": True},
+                            {
+                                "title": _tr("PetWindow.tray_opacity"),
+                                "submenu": [
+                                    {
+                                        "title": _tr("PetWindow.opacity_pct", pct=pct),
+                                        "callback": lambda pct=pct: QTimer.singleShot(
+                                            0,
+                                            lambda pct=pct: self.set_opacity(pct / 100.0),
+                                        ),
+                                    }
+                                    for pct in [100, 80, 60, 40, 20]
+                                ],
+                            },
+                            {"separator": True},
+                            {
+                                "title": _tr("PetWindow.tray_exit"),
+                                "callback": lambda: QTimer.singleShot(0, self._quit),
+                            },
+                        ],
+                    )
+                    return
+            except Exception as exc:
+                print(f"Native macOS status item failed: {exc}", file=sys.stderr)
 
         self._tray_icon = QSystemTrayIcon(self)
         self._tray_icon.setIcon(load_tray_icon())
@@ -2913,37 +2960,48 @@ class PetWindow(QWidget):
         process = QProcess(self)
         self._radial_menu_server_name = f"{ipc_server_name()}-radial-{uuid.uuid4().hex[:8]}"
         self._close_radial_menu_ipc()
-        try:
-            self._radial_menu_command_ipc = SharedMemoryLineQueue.create(
-                radial_command_queue_key(self._radial_menu_server_name),
-                slot_count=128,
-                slot_size=8192,
+        self._radial_menu_stdio = sys.platform == "darwin"
+        if self._radial_menu_stdio:
+            program, arguments = process_program_and_args(
+                base_dir,
+                "radial_menu_process.py",
+                ["--stdio"],
             )
-            self._radial_menu_event_ipc = SharedMemoryLineQueue.create(
-                radial_event_queue_key(self._radial_menu_server_name),
-                slot_count=128,
-                slot_size=4096,
+        else:
+            try:
+                self._radial_menu_command_ipc = SharedMemoryLineQueue.create(
+                    radial_command_queue_key(self._radial_menu_server_name),
+                    slot_count=8,
+                    slot_size=8192,
+                )
+                self._radial_menu_event_ipc = SharedMemoryLineQueue.create(
+                    radial_event_queue_key(self._radial_menu_server_name),
+                    slot_count=8,
+                    slot_size=4096,
+                )
+            except RuntimeError as exc:
+                self._close_radial_menu_ipc()
+                print(f"Radial menu shared-memory IPC error: {exc}", file=sys.stderr)
+                return
+            program, arguments = process_program_and_args(
+                base_dir,
+                "radial_menu_process.py",
+                ["--channel-name", self._radial_menu_server_name],
             )
-        except RuntimeError as exc:
-            self._close_radial_menu_ipc()
-            print(f"Radial menu shared-memory IPC error: {exc}", file=sys.stderr)
-            return
-        program, arguments = process_program_and_args(
-            base_dir,
-            "radial_menu_process.py",
-            ["--channel-name", self._radial_menu_server_name],
-        )
         process.setProgram(program)
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
+        process.readyReadStandardOutput.connect(lambda p=process: self._read_radial_menu_process_output(p))
         process.readyReadStandardError.connect(lambda p=process: self._read_radial_menu_process_error(p))
         process.finished.connect(lambda *_args, p=process: self._on_radial_menu_process_finished(p))
         process.errorOccurred.connect(lambda _error, p=process: self._on_radial_menu_process_finished(p))
         self._radial_menu_process_ready = False
+        self._radial_menu_stdout_buffer = ""
         self._radial_menu_visible = False
         self._radial_menu_process = process
         process.setWorkingDirectory(base_dir)
-        self._radial_menu_event_timer.start()
+        if not self._radial_menu_stdio:
+            self._radial_menu_event_timer.start()
         process.start()
 
     def _is_radial_menu_visible(self) -> bool:
@@ -2979,6 +3037,23 @@ class PetWindow(QWidget):
         self._flush_radial_menu_commands()
 
     def _flush_radial_menu_commands(self):
+        if self._radial_menu_stdio:
+            process = self._radial_menu_process
+            if process is None or process.state() == QProcess.ProcessState.NotRunning:
+                return
+            while self._radial_menu_command_queue:
+                line = self._radial_menu_command_queue.pop(0)
+                interaction_trace(
+                    "pet",
+                    "radial_send",
+                    command=line.split("\t", 1)[0],
+                    transport="stdio",
+                )
+                if process.write((line + "\n").encode("utf-8")) < 0:
+                    self._radial_menu_command_queue.insert(0, line)
+                    break
+            return
+
         queue = self._radial_menu_command_ipc
         if queue is None or not queue.is_attached():
             return
@@ -3000,7 +3075,12 @@ class PetWindow(QWidget):
         was_visible = self._radial_menu_visible
         if was_visible:
             self._radial_menu_visible = False
-        if self._radial_menu_command_ipc is not None:
+        if self._radial_menu_stdio and self._radial_menu_process is not None:
+            try:
+                self._radial_menu_process.write(b"EXIT\n")
+            except RuntimeError:
+                pass
+        elif self._radial_menu_command_ipc is not None:
             self._radial_menu_command_ipc.publish("EXIT")
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
@@ -3010,6 +3090,8 @@ class PetWindow(QWidget):
         if self._radial_menu_process is process:
             self._radial_menu_process = None
             self._radial_menu_server_name = ""
+            self._radial_menu_stdio = False
+            self._radial_menu_stdout_buffer = ""
             self._radial_menu_command_queue.clear()
             self._radial_menu_process_ready = False
             self._radial_menu_opening = False
@@ -3062,6 +3144,19 @@ class PetWindow(QWidget):
         if data:
             print(data, file=sys.stderr, end="")
 
+    def _read_radial_menu_process_output(self, process: QProcess):
+        if not isValid(process):
+            return
+        data = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        if not data:
+            return
+        self._radial_menu_stdout_buffer += data
+        while "\n" in self._radial_menu_stdout_buffer:
+            line, self._radial_menu_stdout_buffer = self._radial_menu_stdout_buffer.split("\n", 1)
+            line = line.rstrip("\r")
+            if line:
+                self._handle_radial_menu_process_line(line)
+
     def _handle_radial_menu_process_line(self, line: str):
         interaction_trace("pet", "radial_receive", line=line)
         if line == "READY":
@@ -3099,6 +3194,8 @@ class PetWindow(QWidget):
         if self._radial_menu_process is process:
             self._radial_menu_process = None
             self._radial_menu_server_name = ""
+            self._radial_menu_stdio = False
+            self._radial_menu_stdout_buffer = ""
             self._radial_menu_process_ready = False
             self._radial_menu_opening = False
             self._radial_menu_visible = False
