@@ -52,10 +52,40 @@ jobs:
       - name: Install system tools
         shell: pwsh
         run: |
-          choco install 7zip innosetup luajit -y --no-progress
+          choco install 7zip innosetup -y --no-progress
           "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Append
           "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append
           "C:\Program Files\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install LuaJIT
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "LuaJIT-For-Windows.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "LuaJIT-For-Windows"
+          Invoke-WebRequest `
+            -Uri "https://github.com/ScriptTiger/LuaJIT-For-Windows/releases/download/1APR2023/LuaJIT-For-Windows.exe" `
+            -OutFile $archive
+          7z x $archive `
+            "LuaJIT-For-Windows\bin\*" `
+            "LuaJIT-For-Windows\lua\jit\*" `
+            "-o$installDir" -y
+
+          $luajitBin = Join-Path $installDir "LuaJIT-For-Windows\bin"
+          $luajitLua = Join-Path $installDir "LuaJIT-For-Windows\lua"
+          if (-not (Test-Path -LiteralPath (Join-Path $luajitBin "luajit.exe"))) {
+            throw "luajit.exe was not found after extracting LuaJIT-For-Windows."
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $luajitLua "jit\bcsave.lua"))) {
+            throw "LuaJIT jit modules were not found after extracting LuaJIT-For-Windows."
+          }
+
+          $luaPath = "$luajitLua\?.lua;$luajitLua\?\init.lua;;"
+          $luajitBin | Out-File -FilePath $env:GITHUB_PATH -Append
+          "LUA_PATH=$luaPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $env:PATH = "$luajitBin;$env:PATH"
+          $env:LUA_PATH = $luaPath
+          luajit -v
+          luajit -e "require('jit.bcsave'); print('jit modules OK')"
 
       - name: Install Python dependencies
         shell: pwsh
