@@ -164,3 +164,25 @@ jobs:
           name: BandoriPet-macos-${{ matrix.arch }}
           path: BUILD/*.dmg
           if-no-files-found: error
+
+  release:
+    name: Upload release assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - windows
+      - macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Upload GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
