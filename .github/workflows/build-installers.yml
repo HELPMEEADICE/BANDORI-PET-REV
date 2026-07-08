@@ -1,0 +1,136 @@
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: x64
+            runner: windows-2022
+            python-architecture: x64
+            artifact-arch: x64
+          - label: ARM64
+            runner: windows-11-arm
+            python-architecture: arm64
+            artifact-arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch third-party sources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "third_party" | Out-Null
+          if (-not (Test-Path -LiteralPath "third_party\PyQt-Fluent-Widgets\qfluentwidgets")) {
+            git clone -b PySide6 --single-branch https://github.com/zhiyiYo/PyQt-Fluent-Widgets.git "third_party\PyQt-Fluent-Widgets"
+          }
+          if (-not (Test-Path -LiteralPath "third_party\Live2D-v2-Lua")) {
+            git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git "third_party\Live2D-v2-Lua"
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python-architecture }}
+
+      - name: Install system tools
+        shell: pwsh
+        run: |
+          choco install 7zip innosetup luajit -y --no-progress
+          "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "C:\Program Files\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip wheel setuptools Cython cx_Freeze
+          python -m pip install -r requirements.txt
+          python -c "import lupa.luajit21 as lj; print(lj.LuaRuntime().eval('jit.version'))"
+
+      - name: Build Windows packages
+        shell: pwsh
+        run: |
+          python setup.py build_exe
+          python setup.py build_msi
+          python setup.py build_inno
+
+          $version = python -c "import app_info; print(app_info.APP_VERSION)"
+          $artifactDir = Join-Path $PWD "artifacts"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $buildDir = Get-ChildItem -Path "BUILD" -Directory -Filter "BANDORI-PET-REV-RELEASE-WIN-*" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $buildDir) { throw "Portable build directory was not found." }
+
+          $portable = Join-Path $artifactDir "BandoriPet-$version-windows-${{ matrix.artifact-arch }}-portable.7z"
+          7z a -t7z -mx=9 $portable "$($buildDir.FullName)\*"
+
+          Get-ChildItem -Path "BUILD\*.msi", "BUILD\*setup.exe" -File | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $artifactDir
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandoriPet-windows-${{ matrix.artifact-arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: x86_64
+            runner: macos-13
+            arch: x86_64
+          - label: ARM64
+            runner: macos-14
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fetch third-party sources
+        run: |
+          mkdir -p third_party
+          test -d third_party/PyQt-Fluent-Widgets/qfluentwidgets || \
+            git clone -b PySide6 --single-branch https://github.com/zhiyiYo/PyQt-Fluent-Widgets.git third_party/PyQt-Fluent-Widgets
+          test -d third_party/Live2D-v2-Lua || \
+            git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-Lua
+
+      - name: Install system tools
+        run: brew install luajit
+
+      - name: Build DMG
+        run: installer/macos/build_dmg.sh ${{ matrix.arch }}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BandoriPet-macos-${{ matrix.arch }}
+          path: BUILD/*.dmg
+          if-no-files-found: error

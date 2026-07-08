@@ -493,8 +493,6 @@ def _current_arch() -> str:
         return "amd64"
     if machine in {"arm64", "aarch64"}:
         return "arm64"
-    if machine in {"x86", "i386", "i686"}:
-        return "x86"
     return machine
 
 
@@ -511,7 +509,7 @@ def _asset_arch(name: str) -> str:
     ):
         return "amd64"
     if {"x86", "i386", "i686", "win32"} & tokens:
-        return "x86"
+        return "unsupported-x86"
     return ""
 
 

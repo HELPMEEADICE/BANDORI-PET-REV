@@ -319,6 +319,7 @@ class BuildInnoAlias(Command):
         replacements = {
             "{APP_NAME}": APP_NAME,
             "{APP_VERSION}": APP_VERSION,
+            "{VERSION_INFO_VERSION}": windows_version_info_version(),
             "{APP_REPO_URL}": APP_REPO_URL,
             "{APP_ID}": f"{{{{{app_guid}}}",
             "{BUILD_DIR}": str(build_dir),
@@ -326,6 +327,8 @@ class BuildInnoAlias(Command):
             "{OUTPUT_FILENAME}": output_filename,
             "{LICENSE_FILE}": str(license_file) if license_file.exists() else "",
             "{ICON_FILE}": str(icon_file) if icon_file.exists() else "",
+            "{ARCHITECTURES_ALLOWED}": inno_architectures_allowed(),
+            "{ARCHITECTURES_64BIT_MODE}": inno_architectures_64bit_mode(),
             "{LANGUAGE_ENTRIES}": _inno_language_entries(iscc),
         }
 
@@ -442,13 +445,43 @@ def release_platform_name() -> str:
 
 def release_arch_name() -> str:
     machine = platform.machine().lower()
-    if machine in {"amd64", "x86_64"}:
+    if machine in {"amd64", "x86_64", "x64"}:
         return "AMD64"
     if machine in {"arm64", "aarch64"}:
         return "ARM64"
-    if machine in {"x86", "i386", "i686"}:
-        return "X86"
-    return machine.upper().replace("-", "_")
+    raise RuntimeError(
+        f"Unsupported build architecture: {machine}. "
+        "Only x86_64/AMD64 and ARM64 builds are supported."
+    )
+
+
+def inno_architectures_allowed() -> str:
+    arch = release_arch_name()
+    if arch == "ARM64":
+        return "arm64"
+    if arch == "AMD64":
+        return "x64compatible"
+    raise RuntimeError(f"Unsupported Inno Setup architecture: {arch}")
+
+
+def inno_architectures_64bit_mode() -> str:
+    arch = release_arch_name()
+    if arch == "ARM64":
+        return "arm64"
+    if arch == "AMD64":
+        return "x64compatible"
+    raise RuntimeError(f"Unsupported Inno Setup architecture: {arch}")
+
+
+def windows_version_info_version() -> str:
+    parts = APP_VERSION.split(".")
+    numeric_parts = []
+    for part in parts[:4]:
+        numeric = "".join(ch for ch in part if ch.isdigit())
+        numeric_parts.append(numeric or "0")
+    while len(numeric_parts) < 4:
+        numeric_parts.append("0")
+    return ".".join(numeric_parts)
 
 
 def _mac_iconfile() -> str | None:
