@@ -1,4 +1,5 @@
 import io
+import ntpath
 import os
 import shutil
 import socket
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from process_utils import app_base_dir
+from process_utils import app_runtime_dir
 
 
 _NUMPY_MODULE = None
@@ -19,7 +20,7 @@ _REQUESTS_MODULE = None
 _SOUNDDEVICE_MODULE = None
 _SOUNDFILE_MODULE = None
 ASR_LOCAL_API_URL = "http://127.0.0.1:8000/v1/audio/transcriptions"
-ASR_LOCAL_SERVER_DIR = app_base_dir() / ".runtime" / "asr-server"
+ASR_LOCAL_SERVER_DIR = app_runtime_dir() / "asr-server"
 ASR_LOCAL_MODEL = "Systran/faster-whisper-small"
 ASR_LOCAL_DEVICE = "cpu"
 ASR_LOCAL_COMPUTE_TYPE = "int8"
@@ -108,9 +109,9 @@ def _local_asr_python() -> Path:
 def _is_windows_store_python_alias(executable: str) -> bool:
     if sys.platform != "win32":
         return False
-    normalized = os.path.normcase(os.path.normpath(executable))
-    windows_apps = os.path.normcase(os.path.normpath(
-        os.path.join(
+    normalized = ntpath.normcase(ntpath.normpath(executable))
+    windows_apps = ntpath.normcase(ntpath.normpath(
+        ntpath.join(
             os.environ.get("LOCALAPPDATA", ""),
             "Microsoft",
             "WindowsApps",
@@ -118,7 +119,7 @@ def _is_windows_store_python_alias(executable: str) -> bool:
     ))
     return bool(windows_apps) and (
         normalized == windows_apps
-        or normalized.startswith(windows_apps + os.sep)
+        or normalized.startswith(windows_apps + "\\")
     )
 
 
@@ -204,11 +205,17 @@ def _python_can_create_venv(command: list[str]) -> bool:
 def _venv_create_command() -> list[str]:
     for command in _venv_python_candidates():
         if _python_can_create_venv(command):
+            server_dir = str(ASR_LOCAL_SERVER_DIR)
+            venv_dir = (
+                ntpath.join(server_dir, ".venv")
+                if sys.platform == "win32" or "\\" in server_dir
+                else str(ASR_LOCAL_SERVER_DIR / ".venv")
+            )
             return [
                 *command,
                 "-m",
                 "venv",
-                str(ASR_LOCAL_SERVER_DIR / ".venv"),
+                venv_dir,
             ]
     raise RuntimeError(
         "未找到可用于安装本地 ASR 的 Python 3。"

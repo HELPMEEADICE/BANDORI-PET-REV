@@ -9,12 +9,15 @@ from process_utils import app_base_dir
 
 
 def load_tray_icon() -> QIcon:
+    if sys.platform == "darwin":
+        return _macos_status_icon()
+
     base_dir = str(app_base_dir())
     for name in ("logo.png", "logo.ico", "logo.icns"):
         path = os.path.join(base_dir, name)
         if not os.path.exists(path):
             continue
-        icon = _icon_from_image(path) if sys.platform == "darwin" else QIcon(path)
+        icon = QIcon(path)
         if not icon.isNull():
             return icon
     return _fallback_icon()
@@ -81,6 +84,36 @@ def _device_pixel_ratio() -> float:
     if screen is None:
         return 1.0
     return max(1.0, float(screen.devicePixelRatio()))
+
+
+def _macos_status_icon() -> QIcon:
+    if QApplication.instance() is None:
+        return QIcon()
+
+    size = 22
+    dpr = _device_pixel_ratio()
+    pixel_size = int(round(size * dpr))
+    pixmap = QPixmap(pixel_size, pixel_size)
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QColor("black"))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawRoundedRect(QRectF(3, 4, 16, 14), 3, 3)
+    painter.setBrush(Qt.GlobalColor.transparent)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+    painter.drawEllipse(QRectF(6, 7, 3, 3))
+    painter.drawEllipse(QRectF(13, 7, 3, 3))
+    painter.drawRect(QRectF(8, 13, 6, 1.6))
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+    painter.end()
+
+    icon = QIcon()
+    icon.addPixmap(pixmap)
+    icon.setIsMask(True)
+    return icon
 
 
 def _fallback_icon() -> QIcon:

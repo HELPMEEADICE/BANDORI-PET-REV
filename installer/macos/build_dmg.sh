@@ -71,6 +71,60 @@ VERSION="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;sys.path.insert(0,".");impor
 PYVER="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
 echo "▶ 架构=$ARCH  Python=$PYTHON (3.x=$PYVER)  版本=$VERSION"
 
+echo "▶ 复核 Live2D Lua 图片字节流加载补丁"
+"${ARCHRUN[@]}" "$PYTHON" - <<'PY'
+from pathlib import Path
+import sys
+
+path = Path("third_party/Live2D-v2-Lua/live2d/image_loader.lua")
+if not path.exists():
+    sys.exit(f"找不到 {path}，无法打包 Live2D 运行时。")
+
+source = path.read_text()
+if "function M.loadImageBytes" in source:
+    print("  image_loader.lua 已包含 loadImageBytes")
+    raise SystemExit(0)
+
+needle = """    function M.loadImage(path)
+        local ok, w, h, data = pcall(decodePNGFile, path)
+        if not ok then
+            print("PNG load failed for: " .. path .. " (" .. tostring(w) .. ")")
+            return createDummyTexture(4, 4)
+        end
+        return w, h, data
+    end
+
+    return M
+end
+"""
+replacement = """    function M.loadImage(path)
+        local ok, w, h, data = pcall(decodePNGFile, path)
+        if not ok then
+            print("PNG load failed for: " .. path .. " (" .. tostring(w) .. ")")
+            return createDummyTexture(4, 4)
+        end
+        return w, h, data
+    end
+
+    function M.loadImageBytes(bytes, path)
+        local label = tostring(path or "<memory>")
+        local ok, w, h, data = pcall(decodePNG, bytes, label)
+        if not ok then
+            print("PNG byte load failed for: " .. label .. " (" .. tostring(w) .. ")")
+            return createDummyTexture(4, 4)
+        end
+        return w, h, data
+    end
+
+    return M
+end
+"""
+if needle not in source:
+    sys.exit("image_loader.lua 结构已变化，无法自动加入 loadImageBytes。")
+path.write_text(source.replace(needle, replacement))
+print("  已为 image_loader.lua 加入 loadImageBytes")
+PY
+
 # ---------------------------------------------------------------------------
 # 2. 为该架构建独立 venv，安装依赖（含从源码编译、带 LuaJIT FFI 的 lupa）
 # ---------------------------------------------------------------------------
@@ -102,13 +156,30 @@ LUPA_DIR="$(ls -d "$LUPA_SRC"/lupa-*/ | head -1)"
 import sys
 p = sys.argv[1]
 s = open(p).read()
-needle = "or (platform == 'darwin' and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))"
-if needle not in s:
-    sys.exit("lupa setup.py 的 darwin-luajit 跳过行未找到，lupa 版本可能已变，请检查补丁。")
-open(p, "w").write(s.replace(needle, "or False  # patched by build_dmg.sh: allow bundled LuaJIT on macOS"))
-print("  已为 lupa 去掉 macOS 跳过内置 LuaJIT 的逻辑")
+replacements = [
+    (
+        "or (platform == 'darwin' and 'luajit' in os.path.basename(lua_bundle_path.rstrip(os.sep)))",
+        "or False  # patched by build_dmg.sh: allow bundled LuaJIT on macOS",
+        "darwin-luajit 跳过行",
+    ),
+    (
+        "or (get_machine().lower() in (\"aarch64\", \"arm64\") and 'luajit20' in os.path.basename(lua_bundle_path.rstrip(os.sep)))",
+        "or ('luajit20' in os.path.basename(lua_bundle_path.rstrip(os.sep)))  # patched by build_dmg.sh: use LuaJIT 2.1 only",
+        "luajit20 跳过行",
+    ),
+]
+for needle, replacement, description in replacements:
+    if needle not in s:
+        sys.exit(f"lupa setup.py 的 {description} 未找到，lupa 版本可能已变，请检查补丁。")
+    s = s.replace(needle, replacement)
+open(p, "w").write(s)
+print("  已为 lupa 启用 macOS 内置 LuaJIT 2.1，并跳过 LuaJIT 2.0")
 PY
-MACOSX_DEPLOYMENT_TARGET=10.13 "${ARCHRUN[@]}" "$VPY" -m pip install \
+MACOSX_DEPLOYMENT_TARGET=10.13 \
+ARCHFLAGS="-arch $ARCH" \
+CFLAGS="-arch $ARCH ${CFLAGS:-}" \
+LDFLAGS="-arch $ARCH ${LDFLAGS:-}" \
+"${ARCHRUN[@]}" "$VPY" -m pip install \
   --force-reinstall --no-build-isolation "$LUPA_DIR"
 
 echo "▶ 复核 lupa.luajit21 可用"
@@ -126,17 +197,40 @@ APP="$ROOT/BUILD/BandoriPet.app"
 [ -d "$APP" ] || { echo "构建失败：找不到 BandoriPet.app" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
-# 4. 架构自检（守住 issue 里那个 bug，绝不静默出错包）
+# 4. 瘦身到目标架构并自检
 # ---------------------------------------------------------------------------
-echo "▶ 校验包内原生二进制都含 $ARCH"
+echo "▶ 将包内 Mach-O 瘦身到 $ARCH"
+while IFS= read -r f; do
+  archs="$(lipo -archs "$f" 2>/dev/null || true)"
+  [ -n "$archs" ] || continue
+  if ! printf '%s\n' "$archs" | tr ' ' '\n' | grep -qx "$ARCH"; then
+    continue
+  fi
+  if [ "$(printf '%s\n' "$archs" | wc -w | tr -d ' ')" -le 1 ]; then
+    continue
+  fi
+  mode="$(stat -f '%Lp' "$f")"
+  tmp="${f}.thin.$$"
+  lipo "$f" -thin "$ARCH" -output "$tmp"
+  chmod "$mode" "$tmp"
+  mv "$tmp" "$f"
+  echo "  thin ${f#$APP/}: $archs -> $ARCH"
+done < <(find "$APP" -type f)
+
+echo "▶ 瘦身后重新 ad-hoc 签名"
+codesign --force --deep --sign - "$APP"
+
+echo "▶ 校验包内原生二进制都只含 $ARCH"
 bad=0
 while IFS= read -r f; do
-  if ! lipo -archs "$f" 2>/dev/null | tr ' ' '\n' | grep -qx "$ARCH"; then
-    echo "  ✗ 缺 $ARCH: ${f#$APP/}"; bad=$((bad+1))
+  archs="$(lipo -archs "$f" 2>/dev/null || true)"
+  [ -n "$archs" ] || continue
+  if [ "$archs" != "$ARCH" ]; then
+    echo "  ✗ 架构不是纯 $ARCH: ${f#$APP/} ($archs)"; bad=$((bad+1))
   fi
-done < <(find "$APP" \( -name '*.so' -o -name '*.dylib' \))
+done < <(find "$APP" -type f)
 if [ "$bad" -ne 0 ]; then
-  echo "有 $bad 个二进制缺 $ARCH 架构，停止打包。" >&2
+  echo "有 $bad 个二进制不是纯 $ARCH 架构，停止打包。" >&2
   exit 1
 fi
 # LuaJIT 自查（漏了会导致 Live2D 启动崩溃）

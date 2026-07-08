@@ -164,7 +164,18 @@ def main():
             geo.top() + (geo.height() - window.height()) // 2,
         )
 
+    def bring_window_to_front():
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+        macos_patch.activate_app_ignoring_other_apps()
+
     window.show()
+    if sys.platform == "darwin":
+        for delay in (0, 150, 500, 1200):
+            QTimer.singleShot(delay, bring_window_to_front)
+    else:
+        bring_window_to_front()
     return app.exec()
 
 
