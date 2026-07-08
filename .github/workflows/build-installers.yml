@@ -11,20 +11,8 @@ permissions:
 
 jobs:
   windows:
-    name: Windows ${{ matrix.label }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: x64
-            runner: windows-2022
-            python-architecture: x64
-            artifact-arch: x64
-          - label: ARM64
-            runner: windows-11-arm
-            python-architecture: arm64
-            artifact-arch: arm64
+    name: Windows x64
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
@@ -47,7 +35,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          architecture: ${{ matrix.python-architecture }}
+          architecture: x64
 
       - name: Install system tools
         shell: pwsh
@@ -110,7 +98,7 @@ jobs:
             Select-Object -First 1
           if (-not $buildDir) { throw "Portable build directory was not found." }
 
-          $portable = Join-Path $artifactDir "BandoriPet-$version-windows-${{ matrix.artifact-arch }}-portable.7z"
+          $portable = Join-Path $artifactDir "BandoriPet-$version-windows-x64-portable.7z"
           7z a -t7z -mx=9 $portable "$($buildDir.FullName)\*"
 
           Get-ChildItem -Path "BUILD\*.msi", "BUILD\*setup.exe" -File | ForEach-Object {
@@ -120,23 +108,13 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BandoriPet-windows-${{ matrix.artifact-arch }}
+          name: BandoriPet-windows-x64
           path: artifacts/*
           if-no-files-found: error
 
   macos:
-    name: macOS ${{ matrix.label }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: x86_64
-            runner: macos-13
-            arch: x86_64
-          - label: ARM64
-            runner: macos-14
-            arch: arm64
+    name: macOS ARM64
+    runs-on: macos-14
 
     steps:
       - name: Checkout
@@ -156,12 +134,12 @@ jobs:
         run: brew install luajit
 
       - name: Build DMG
-        run: installer/macos/build_dmg.sh ${{ matrix.arch }}
+        run: installer/macos/build_dmg.sh arm64
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: BandoriPet-macos-${{ matrix.arch }}
+          name: BandoriPet-macos-arm64
           path: BUILD/*.dmg
           if-no-files-found: error
 
