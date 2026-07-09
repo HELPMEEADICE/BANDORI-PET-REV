@@ -313,7 +313,7 @@ Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Rel
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HELPMEEADICE/BANDORI-PET-REV&type=Date)](https://star-history.com/#HELPMEEADICE/BANDORI-PET-REV&Date)
+[![Star History Chart](https://api.star-history.com/chart?repos=HELPMEEADICE/BANDORI-PET-REV&type=date&theme=dark&legend=top-left&sealed_token=92HgFwLMfA_dw1_sRCIqGIgNmU6LlqR-TuX8ouN6EhWpt-MwYw778h6LPYcQ0vpnlzfLB_Csf1FGzyZjs2JJovIi78-1CMdXeGBvi3l9Rxfwfn5FJhouag)](https://api.star-history.com/chart?repos=HELPMEEADICE/BANDORI-PET-REV&type=date&theme=dark&legend=top-left&sealed_token=92HgFwLMfA_dw1_sRCIqGIgNmU6LlqR-TuX8ouN6EhWpt-MwYw778h6LPYcQ0vpnlzfLB_Csf1FGzyZjs2JJovIi78-1CMdXeGBvi3l9Rxfwfn5FJhouag)
 
 ---
 
