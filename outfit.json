@@ -121,7 +121,8 @@
         "festival": "夏日祭",
         "halloween": "万圣节",
         "furisode": "振袖和服",
-        "live_event_332_r": "332期 これからも迎える朝は"
+        "live_event_332_r": "332期 これからも迎える朝は",
+        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！"
       }
     },
     "yukina": {
@@ -225,7 +226,8 @@
         "school_winter": "冬季校服",
         "school_winter_s2": "冬季校服2",
         "special_5th": "五周年",
-        "swimsuit-2023": "2023夏季泳衣"
+        "swimsuit-2023": "2023夏季泳衣",
+        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン"
       }
     },
     "anon": {
@@ -474,7 +476,9 @@
         "halloween": "万圣节",
         "arbeit": "RING工作服",
         "furisode": "振袖和服",
-        "live_event_332_ur": "332期 これからも迎える朝は"
+        "live_event_332_ur": "332期 これからも迎える朝は",
+        "live_event_317_r": "317期 迷い道の先、福来たる",
+        "live_event_321_ssr": "321期 約束重ねて、また明日"
       }
     },
     "rimi": {
@@ -567,7 +571,9 @@
         "festival": "夏日祭",
         "furisode": "振袖和服",
         "arbeit": "RING工作服",
-        "live_event_332_sr": "332期 これからも迎える朝は"
+        "live_event_332_sr": "332期 これからも迎える朝は",
+        "live_event_315_ssr": "315期 在笑颜盛放的平安夜",
+        "live_event_321_r": "321期 約束重ねて、また明日"
       }
     },
     "saaya": {
@@ -659,7 +665,10 @@
         "furisode": "振袖和服",
         "festival": "夏日祭",
         "halloween": "万圣节",
-        "live_event_332_ur": "332期 これからも迎える朝は"
+        "live_event_332_ur": "332期 これからも迎える朝は",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_321_sr": "321期 約束重ねて、また明日",
+        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!"
       }
     },
     "arisa": {
@@ -762,7 +771,8 @@
         "festival": "夏日祭",
         "arbeit": "RING工作服",
         "halloween": "万圣节",
-        "live_event_332_ssr": "332期 これからも迎える朝は"
+        "live_event_332_ssr": "332期 これからも迎える朝は",
+        "live_event_321_ur": "321期 約束重ねて、また明日"
       }
     },
     "ran": {
@@ -852,7 +862,11 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_320_ssr": "320期 Our Sweetest Valentine！",
+        "live_event_328_ur": "328期 芽生えた想い、夕陽に交わして",
+        "live_event_336_sr": "336期 あの夕映えに誓って"
       }
     },
     "moca": {
@@ -937,7 +951,10 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_320_ur": "320期 Our Sweetest Valentine！",
+        "live_event_328_ssr": "328期 芽生えた想い、夕陽に交わして",
+        "live_event_336_ur": "336期 あの夕映えに誓って"
       }
     },
     "himari": {
@@ -1024,7 +1041,11 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_320_sr": "320期 Our Sweetest Valentine！",
+        "live_event_327_r": "327期 黎明のスタン・バイ",
+        "live_event_328_ur": "328期 芽生えた想い、夕陽に交わして",
+        "live_event_336_r": "336期 あの夕映えに誓って"
       }
     },
     "tomoe": {
@@ -1107,7 +1128,11 @@
         "school_summer": "夏季校服",
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
-        "school_winter_s2": "冬季校服2"
+        "school_winter_s2": "冬季校服2",
+        "live_event_320_r": "320期 Our Sweetest Valentine！",
+        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_328_sr": "328期 芽生えた想い、夕陽に交わして",
+        "live_event_336_ur": "336期 あの夕映えに誓って"
       }
     },
     "tsugumi": {
@@ -1195,7 +1220,10 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_320_ur": "320期 Our Sweetest Valentine！",
+        "live_event_328_r": "328期 芽生えた想い、夕陽に交わして",
+        "live_event_336_ssr": "336期 あの夕映えに誓って"
       }
     },
     "aya": {
@@ -1289,7 +1317,10 @@
         "school_summer": "夏季校服",
         "school_winter": "冬季校服",
         "story_01": "story_01",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_5_ur": "梦限5",
+        "live_event_323_sr": "323期 千の言葉でも足りないくらい",
+        "live_event_330_ssr": "330期 君と一緒に！パスパレ全国ツアー！"
       }
     },
     "hina": {
@@ -1375,7 +1406,9 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter_s2": "冬季校服2",
-        "story_01": "story_01"
+        "story_01": "story_01",
+        "live_event_323_ur": "323期 千の言葉でも足りないくらい",
+        "live_event_330_r": "330期 君と一緒に！パスパレ全国ツアー！"
       }
     },
     "chisato": {
@@ -1459,7 +1492,10 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter": "冬季校服",
-        "story_01": "story_01"
+        "story_01": "story_01",
+        "live_event_323_ur": "323期 千の言葉でも足りないくらい",
+        "live_event_327_ur": "327期 黎明のスタン・バイ",
+        "live_event_330_sr": "330期 君と一緒に！パスパレ全国ツアー！"
       }
     },
     "maya": {
@@ -1541,7 +1577,12 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter_s2": "冬季校服2",
-        "story_01": "story_01"
+        "story_01": "story_01",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_323_r": "323期 千の言葉でも足りないくらい",
+        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_327_sr": "327期 黎明のスタン・バイ",
+        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！"
       }
     },
     "eve": {
@@ -1630,7 +1671,10 @@
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
         "story_01": "story_01",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_317_ssr": "317期 迷い道の先、福来たる",
+        "live_event_323_ssr": "323期 千の言葉でも足りないくらい",
+        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！"
       }
     },
     "kokoro": {
@@ -1718,7 +1762,12 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_315_sr": "315期 在笑颜盛放的平安夜",
+        "live_event_316_ssr": "316期 Welcome to 濑田薰乐园",
+        "live_event_324_sr": "324期 ほっとひと息、ハロハピ温泉旅情",
+        "live_event_331_ssr": "331期 ハロー・スマイル♡なんでも屋さん★",
+        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！"
       }
     },
     "kaoru": {
@@ -1804,7 +1853,11 @@
         "ranger": "ranger",
         "school_summer": "夏季校服",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_316_ur": "316期 Welcome to 濑田薰乐园",
+        "live_event_324_r": "324期 ほっとひと息、ハロハピ温泉旅情",
+        "live_event_327_ur": "327期 黎明のスタン・バイ",
+        "live_event_331_sr": "331期 ハロー・スマイル♡なんでも屋さん★"
       }
     },
     "hagumi": {
@@ -1891,7 +1944,10 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_316_ur": "316期 Welcome to 濑田薰乐园",
+        "live_event_324_ssr": "324期 ほっとひと息、ハロハピ温泉旅情",
+        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★"
       }
     },
     "kanon": {
@@ -1974,7 +2030,14 @@
         "ranger": "ranger",
         "school_summer": "夏季校服",
         "school_winter": "冬季校服",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_316_r": "316期 Welcome to 濑田薰乐园",
+        "live_event_317_ur": "317期 迷い道の先、福来たる",
+        "live_event_324_ur": "324期 ほっとひと息、ハロハピ温泉旅情",
+        "live_event_325_sr": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_327_ssr": "327期 黎明のスタン・バイ",
+        "live_event_331_r": "331期 ハロー・スマイル♡なんでも屋さん★"
       }
     },
     "misaki": {
@@ -2061,7 +2124,11 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_315_r": "315期 在笑颜盛放的平安夜",
+        "live_event_316_sr": "316期 Welcome to 濑田薰乐园",
+        "live_event_324_ur": "324期 ほっとひと息、ハロハピ温泉旅情",
+        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★"
       }
     },
     "sayo": {
@@ -2146,7 +2213,11 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter": "冬季校服",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_314_r": "314期 燐光微芒、渐染炽热",
+        "live_event_322_sr": "322期 Re:Like Re:Live",
+        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン"
       }
     },
     "lisa": {
@@ -2232,7 +2303,11 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter_s2": "冬季校服2",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_314_sr": "314期 燐光微芒、渐染炽热",
+        "live_event_315_ur": "315期 在笑颜盛放的平安夜",
+        "live_event_322_ur": "322期 Re:Like Re:Live",
+        "live_event_333_ssr": "333期 ディープ・ローズ・ホライズン"
       }
     },
     "ako": {
@@ -2318,7 +2393,13 @@
         "school_winter-2023": "冬季校服2023",
         "school_winter_s2": "冬季校服2",
         "swimsuit-2023": "泳衣2023",
-        "dream_festival_4_ur": "梦限4"
+        "dream_festival_4_ur": "梦限4",
+        "live_event_314_ssr": "314期 燐光微芒、渐染炽热",
+        "live_event_317_sr": "317期 迷い道の先、福来たる",
+        "live_event_322_ur": "322期 Re:Like Re:Live",
+        "live_event_325_ssr": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_333_sr": "333期 ディープ・ローズ・ホライズン",
+        "live_event_335_r": "335期 エンジョイ！　私たちのベストサマー！"
       }
     },
     "rinko": {
@@ -2399,7 +2480,11 @@
         "precious_summer": "完美夏天",
         "school_summer": "夏季校服",
         "school_winter": "冬季校服",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "dream_festival_5_ur": "梦限5",
+        "live_event_314_ur": "314期 燐光微芒、渐染炽热",
+        "live_event_322_r": "322期 Re:Like Re:Live",
+        "live_event_333_r": "333期 ディープ・ローズ・ホライズン"
       }
     },
     "pareo": {
@@ -2443,7 +2528,10 @@
         "live_r_2023": "队服2023",
         "miku_rettou": "劣等上等",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_319_sr": "319期 Radiance and Eclipse",
+        "live_event_329_ssr": "329期 Beyond my Imagination"
       }
     },
     "masuki": {
@@ -2489,7 +2577,11 @@
         "live_r_2023": "队服2023",
         "miku_rettou": "劣等上等",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "live_event_319_ur": "319期 Radiance and Eclipse",
+        "live_event_325_ssr": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_329_r": "329期 Beyond my Imagination",
+        "live_event_335_sr": "335期 エンジョイ！　私たちのベストサマー！"
       }
     },
     "lock": {
@@ -2542,7 +2634,9 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "swimsuit-2023": "泳衣2023"
+        "swimsuit-2023": "泳衣2023",
+        "live_event_319_r": "319期 Radiance and Eclipse",
+        "live_event_329_ur": "329期 Beyond my Imagination"
       }
     },
     "chu2": {
@@ -2588,7 +2682,10 @@
         "live_r_2023": "队服2023",
         "miku_rettou": "劣等上等",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "dream_festival_5_ur": "梦限5",
+        "live_event_319_ssr": "319期 Radiance and Eclipse",
+        "live_event_329_ur": "329期 Beyond my Imagination"
       }
     },
     "mashiro": {
@@ -2648,7 +2745,10 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "vocal_limited_ssr": "限定SSR"
+        "vocal_limited_ssr": "限定SSR",
+        "live_event_318_ur": "318期 あなたを照らすオーバード",
+        "live_event_326_r": "326期 広がる世界へのリベラメンテ",
+        "live_event_334_ur": "334期 輝く星々のコンチェルト"
       }
     },
     "touko": {
@@ -2701,7 +2801,11 @@
         "school_summer": "夏季校服",
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "live_event_315_ur": "315期 在笑颜盛放的平安夜",
+        "live_event_318_r": "318期 あなたを照らすオーバード",
+        "live_event_326_ur": "326期 広がる世界へのリベラメンテ",
+        "live_event_334_ssr": "334期 輝く星々のコンチェルト"
       }
     },
     "nanami": {
@@ -2753,7 +2857,12 @@
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
         "school_winter-2023": "冬季校服2023",
-        "dream_festival_4_ur": "梦限4"
+        "dream_festival_4_ur": "梦限4",
+        "live_event_317_ur": "317期 迷い道の先、福来たる",
+        "live_event_318_sr": "318期 あなたを照らすオーバード",
+        "live_event_326_ur": "326期 広がる世界へのリベラメンテ",
+        "live_event_334_sr": "334期 輝く星々のコンチェルト",
+        "live_event_335_ssr": "335期 エンジョイ！　私たちのベストサマー！"
       }
     },
     "tsukushi": {
@@ -2803,7 +2912,12 @@
         "school_summer": "夏季校服",
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_318_ur": "318期 あなたを照らすオーバード",
+        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
+        "live_event_326_sr": "326期 広がる世界へのリベラメンテ",
+        "live_event_334_r": "334期 輝く星々のコンチェルト"
       }
     },
     "rui": {
@@ -2854,7 +2968,11 @@
         "school_summer": "夏季校服",
         "school_summer-2023": "夏季校服2023",
         "school_winter": "冬季校服",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "dream_festival_4_ur": "梦限4",
+        "live_event_318_ssr": "318期 あなたを照らすオーバード",
+        "live_event_326_ssr": "326期 広がる世界へのリベラメンテ",
+        "live_event_334_ur": "334期 輝く星々のコンチェルト"
       }
     },
     "rei": {
@@ -2901,7 +3019,10 @@
         "live_r_2022": "队服2022",
         "live_r_2023": "队服2023",
         "miku_rettou": "劣等上等",
-        "vocal_limited_sr": "限定SR"
+        "vocal_limited_sr": "限定SR",
+        "dream_festival_5_ur": "梦限5",
+        "live_event_319_ur": "319期 Radiance and Eclipse",
+        "live_event_329_sr": "329期 Beyond my Imagination"
       }
     },
     "asuka": {

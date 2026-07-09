@@ -4,10 +4,19 @@ import os
 import tarfile
 import time
 import io
+import concurrent.futures
+import threading
 from pathlib import Path
 
 import zstandard as zstd
 from zst_model_archive import INDEX_MEMBER
+
+_print_lock = threading.Lock()
+
+
+def locked_print(*args, **kwargs):
+    with _print_lock:
+        print(*args, **kwargs)
 
 
 def iter_model_dirs(models_dir: Path, names: list[str]) -> list[Path]:
@@ -49,7 +58,7 @@ def convert_model_dir(source_dir: Path, output_path: Path, level: int, force: bo
     if not source_dir.is_dir():
         raise FileNotFoundError(f"Model directory not found: {source_dir}")
     if output_path.exists() and not force:
-        print(f"skip {source_dir.name}: {output_path.name} already exists")
+        locked_print(f"skip {source_dir.name}: {output_path.name} already exists")
         return
 
     compressor = zstd.ZstdCompressor(level=level)
@@ -59,7 +68,7 @@ def convert_model_dir(source_dir: Path, output_path: Path, level: int, force: bo
             with tarfile.open(fileobj=zstd_file, mode="w|") as tar:
                 add_index(tar, files)
                 add_directory_contents(tar, files)
-    print(f"wrote {output_path}")
+    locked_print(f"wrote {output_path}")
 
 
 def main():
@@ -87,6 +96,12 @@ def main():
         action="store_true",
         help="Overwrite existing .zst files.",
     )
+    parser.add_argument(
+        "--jobs", "-j",
+        type=int,
+        default=1,
+        help="Number of parallel compression workers. Defaults to 1 (sequential).",
+    )
     args = parser.parse_args()
 
     models_dir = Path(args.models_dir).resolve()
@@ -98,9 +113,27 @@ def main():
         print("no model folders found")
         return
 
+    tasks = []
     for model_dir in model_dirs:
         output_path = models_dir / f"{model_dir.name}.zst"
-        convert_model_dir(model_dir, output_path, args.level, args.force)
+        tasks.append((model_dir, output_path, args.level, args.force))
+
+    max_workers = args.jobs if args.jobs > 0 else os.cpu_count() or 1
+    if max_workers <= 1 or len(tasks) <= 1:
+        for model_dir, output_path, level, force in tasks:
+            convert_model_dir(model_dir, output_path, level, force)
+        return
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        fut_map = {
+            executor.submit(convert_model_dir, d, o, args.level, args.force): d
+            for d, o, _l, _f in tasks
+        }
+        for future in concurrent.futures.as_completed(fut_map):
+            model_dir = fut_map[future]
+            exc = future.exception()
+            if exc:
+                locked_print(f"FAILED {model_dir.name}: {exc}")
 
 
 if __name__ == "__main__":
