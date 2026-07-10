@@ -113,13 +113,6 @@ class DownloadManagementPageMixin:
         toolbar.addWidget(open_folder_btn)
         layout.addLayout(toolbar)
 
-        self._download_manager_progress = ProgressBar(page)
-        self._download_manager_progress.hide()
-        layout.addWidget(self._download_manager_progress)
-        self._download_manager_progress_label = BodyLabel('', page)
-        self._download_manager_progress_label.hide()
-        layout.addWidget(self._download_manager_progress_label)
-
         self._download_manager_list = QWidget(page)
         self._download_manager_list_layout = QVBoxLayout(self._download_manager_list)
         self._download_manager_list_layout.setContentsMargins(0, 0, 0, 0)
@@ -128,6 +121,7 @@ class DownloadManagementPageMixin:
         layout.addStretch()
 
         self._download_manager_action_buttons = {}
+        self._download_manager_rows = {}
         self._refresh_download_management_page()
         self._connect_theme_changed(self._refresh_download_management_page)
         return page
@@ -215,7 +209,7 @@ class DownloadManagementPageMixin:
     def _refresh_download_management_page(self):
         if not hasattr(self, '_download_manager_list_layout'):
             return
-        if getattr(self, '_download_manager_worker', None) is not None:
+        if getattr(self, '_download_manager_workers', {}):
             return
         while self._download_manager_list_layout.count():
             item = self._download_manager_list_layout.takeAt(0)
@@ -223,6 +217,7 @@ class DownloadManagementPageMixin:
             if widget is not None:
                 widget.deleteLater()
         self._download_manager_action_buttons = {}
+        self._download_manager_rows = {}
 
         entries = self._download_manager_entries()
         downloaded = sum(bool(entry['archives'] or entry['folders']) for entry in entries)
@@ -243,9 +238,13 @@ class DownloadManagementPageMixin:
     def _create_download_manager_card(self, entry: dict) -> QWidget:
         card = CardWidget(self._download_manager_list)
         card.setObjectName('downloadManagerCard')
-        layout = QHBoxLayout(card)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(12)
+        layout.setSpacing(6)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(12)
 
         text_column = QVBoxLayout()
         text_column.setContentsMargins(0, 0, 0, 0)
@@ -258,7 +257,7 @@ class DownloadManagementPageMixin:
             str(path) for path in [*entry['archives'], *entry['folders']]
         ))
         text_column.addWidget(detail)
-        layout.addLayout(text_column, 1)
+        row.addLayout(text_column, 1)
 
         badge = BodyLabel(self._download_manager_source_label(entry), card)
         badge.setObjectName('downloadManagerBadge')
@@ -266,9 +265,10 @@ class DownloadManagementPageMixin:
         badge.setFixedHeight(26)
         badge.setMinimumWidth(72)
         self._style_download_manager_badge(badge, entry)
-        layout.addWidget(badge)
+        row.addWidget(badge)
 
         action = self._download_manager_action(entry)
+        button = None
         if action:
             is_update = action == 'update'
             button_type = PushButton if is_update else PrimaryPushButton
@@ -286,7 +286,23 @@ class DownloadManagementPageMixin:
                 self._start_download_manager_package(character, force)
             )
             self._download_manager_action_buttons[entry['character']] = button
-            layout.addWidget(button)
+            row.addWidget(button)
+        layout.addLayout(row)
+
+        progress = ProgressBar(card)
+        progress.hide()
+        layout.addWidget(progress)
+        progress_label = BodyLabel('', card)
+        progress_label.hide()
+        layout.addWidget(progress_label)
+        self._download_manager_rows[entry['character']] = {
+            'entry': entry,
+            'detail': detail,
+            'badge': badge,
+            'button': button,
+            'progress': progress,
+            'progress_label': progress_label,
+        }
         return card
 
     def _download_manager_entry_detail(self, entry: dict) -> str:
@@ -351,52 +367,78 @@ class DownloadManagementPageMixin:
         ''')
 
     def _start_download_manager_package(self, character: str, force: bool):
-        if getattr(self, '_download_manager_worker', None) is not None:
+        workers = getattr(self, '_download_manager_workers', None)
+        if workers is None:
+            workers = self._download_manager_workers = {}
+        if character in workers:
+            return
+        row = self._download_manager_rows.get(character)
+        if not row:
             return
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        self._download_manager_active_character = character
         self._download_manager_refresh_btn.setEnabled(False)
-        for button in self._download_manager_action_buttons.values():
+        button = row.get('button')
+        if button is not None:
             button.setEnabled(False)
-        self._download_manager_progress.setRange(0, 0)
-        self._download_manager_progress.show()
-        self._download_manager_progress_label.setText(_tr(
+        progress = row['progress']
+        progress.setRange(0, 0)
+        progress.show()
+        progress_label = row['progress_label']
+        progress_label.setText(_tr(
             'SettingsWindow.download_management_downloading',
             default='正在下载 {character}...',
             character=character,
         ))
-        self._download_manager_progress_label.show()
+        progress_label.show()
 
         worker = ModelPackageDownloadWorker(
             [character], MODELS_DIR, parent=self, overwrite=force,
         )
-        self._download_manager_worker = worker
+        workers[character] = worker
         worker.progress.connect(self._on_download_manager_progress)
         worker.finished.connect(self._on_download_manager_finished)
         worker.error.connect(self._on_download_manager_error)
         worker.start()
 
+    def _download_manager_character_for_worker(self, worker) -> str:
+        for character, active_worker in self._download_manager_workers.items():
+            if active_worker is worker:
+                return character
+        return ''
+
     def _on_download_manager_progress(self, info: dict):
+        character = self._download_manager_character_for_worker(self.sender())
+        if not character:
+            character = str(info.get('current') or '')
+        row = self._download_manager_rows.get(character)
+        if not row:
+            return
         total = int(info.get('total_bytes') or 0)
         downloaded = int(info.get('downloaded_bytes') or 0)
+        progress = row['progress']
         if total > 0:
-            self._download_manager_progress.setRange(0, total)
-            self._download_manager_progress.setValue(min(downloaded, total))
+            progress.setRange(0, total)
+            progress.setValue(min(downloaded, total))
         else:
-            self._download_manager_progress.setRange(0, 0)
-        self._download_manager_progress_label.setText(_tr(
+            progress.setRange(0, 0)
+        row['progress_label'].setText(_tr(
             'SettingsWindow.download_management_progress',
             default='正在下载 {character}：{speed}',
-            character=self._download_manager_active_character,
+            character=character,
             speed=self._format_download_speed(float(info.get('speed') or 0.0)),
         ))
 
     def _on_download_manager_finished(self, result: dict):
+        character = self._download_manager_character_for_worker(self.sender())
+        if not character:
+            return
         failed = result.get('failed', []) or []
-        character = self._download_manager_active_character
-        self._finish_download_manager_operation()
+        self._finish_download_manager_operation(character)
+        all_finished = not self._download_manager_workers
         if failed:
-            self._download_manager_progress_label.setText('; '.join(failed[:3]))
+            self._show_download_manager_error(character, '; '.join(failed[:3]))
+            if all_finished:
+                self._rescan_download_manager_models()
             InfoBar.error(
                 _tr('SettingsWindow.download_management_failed_title', default='模型包下载失败'),
                 '; '.join(failed[:3]),
@@ -405,8 +447,9 @@ class DownloadManagementPageMixin:
                 parent=self,
             )
             return
-        self._recheck_model_resources(show_message=False)
-        self._refresh_download_management_page()
+        self._mark_download_manager_card_complete(character)
+        if all_finished:
+            self._rescan_download_manager_models()
         InfoBar.success(
             _tr('SettingsWindow.download_management_done_title', default='模型包已更新'),
             _tr(
@@ -420,8 +463,13 @@ class DownloadManagementPageMixin:
         )
 
     def _on_download_manager_error(self, message: str):
-        self._finish_download_manager_operation()
-        self._download_manager_progress_label.setText(message)
+        character = self._download_manager_character_for_worker(self.sender())
+        if not character:
+            return
+        self._finish_download_manager_operation(character)
+        self._show_download_manager_error(character, message)
+        if not self._download_manager_workers:
+            self._rescan_download_manager_models()
         InfoBar.error(
             _tr('SettingsWindow.download_management_failed_title', default='模型包下载失败'),
             message,
@@ -430,11 +478,45 @@ class DownloadManagementPageMixin:
             parent=self,
         )
 
-    def _finish_download_manager_operation(self):
-        self._download_manager_worker = None
-        self._download_manager_refresh_btn.setEnabled(True)
-        for button in self._download_manager_action_buttons.values():
-            button.setEnabled(True)
-        self._download_manager_progress.setRange(0, 100)
-        self._download_manager_progress.hide()
-        self._download_manager_progress_label.hide()
+    def _finish_download_manager_operation(self, character: str):
+        worker = self._download_manager_workers.pop(character, None)
+        if worker is not None:
+            worker.deleteLater()
+        row = self._download_manager_rows.get(character)
+        if row:
+            row['progress'].setRange(0, 100)
+            row['progress'].hide()
+            row['progress_label'].hide()
+            button = row.get('button')
+            if button is not None:
+                button.setEnabled(True)
+        if not self._download_manager_workers:
+            self._download_manager_refresh_btn.setEnabled(True)
+
+    def _show_download_manager_error(self, character: str, message: str):
+        row = self._download_manager_rows.get(character)
+        if not row:
+            return
+        row['progress_label'].setText(message)
+        row['progress_label'].show()
+
+    def _mark_download_manager_card_complete(self, character: str):
+        row = self._download_manager_rows.get(character)
+        if not row:
+            return
+        entry = row['entry']
+        archive = MODELS_DIR / f'{character}.zst'
+        entry['archives'] = [archive] if archive.exists() else entry['archives']
+        entry['catalogued'] = True
+        row['detail'].setText(self._download_manager_entry_detail(entry))
+        row['badge'].setText(self._download_manager_source_label(entry))
+        self._style_download_manager_badge(row['badge'], entry)
+        button = row.get('button')
+        if button is not None:
+            button.setText(_tr('SettingsWindow.download_management_update', default='更新'))
+            button.setIcon(FluentIcon.SYNC.icon())
+
+    def _rescan_download_manager_models(self):
+        self._model_manager = ModelManager()
+        self._update_wizard_model_status()
+        self._update_wizard_footer()

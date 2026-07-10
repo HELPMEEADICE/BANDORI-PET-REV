@@ -137,7 +137,7 @@ class SettingsWindow(
         self._mcp_computer_page = None
         self._data_management_page = None
         self._download_management_page = None
-        self._download_manager_worker = None
+        self._download_manager_workers: dict[str, QThread] = {}
         self._quality_page = None
         self._about_page = None
         self._statistics_page = None
@@ -562,12 +562,19 @@ class SettingsWindow(
             '_test_worker', '_fetch_worker', '_mcp_test_worker',
             '_update_check_worker', '_update_apply_worker', '_tts_test_worker',
             '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker',
-            '_model_download_worker', '_download_manager_worker', '_model_detail_metadata_worker',
+            '_model_download_worker', '_model_detail_metadata_worker',
             '_history_worker', '_history_filter_worker',
         )
         for attr in worker_attrs:
             worker = getattr(self, attr, None)
             if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.quit()
+                if not worker.wait(2000):
+                    worker.terminate()
+                    worker.wait(1000)
+        for worker in getattr(self, '_download_manager_workers', {}).values():
+            if worker.isRunning():
                 worker.requestInterruption()
                 worker.quit()
                 if not worker.wait(2000):
