@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "Lado mais longo da captura de ecrã em pixéis",
   "SettingsWindow.computer_use_hint": "As APIs DeepSeek/OpenRouter-compatible utilizam estas características através de chamadas tool_calls/function. O modelo necessita de suporte de entrada de imagem para compreender as capturas de ecrã de forma fiável; as ferramentas do rato mapeiam as coordenadas da captura de ecrã para as coordenadas reais do ambiente de trabalho.",
   "SettingsWindow.mcp_json_invalid_title": "JSON MCP inválido",
-  "SettingsWindow.mcp_json_invalid_content": "Verificar o formato JSON: {error}",
+  "SettingsWindow.mcp_json_invalid_content": "Erro de sintaxe JSON (linha {line}, coluna {column}): {error}\nIntroduza [] para desativar temporariamente o MCP, ou clique em \"Formato JSON\" para verificar a estrutura.",
   "SettingsWindow.mcp_json_must_be_list": "A configuração do servidor MCP deve ser um array.",
   "SettingsWindow.mcp_json_copied_title": "Copiado",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON foi copiado como texto simples.",

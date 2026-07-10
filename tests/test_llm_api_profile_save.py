@@ -20,6 +20,7 @@ def _profile(**overrides):
         "llm_aux_model_id": "model-vision",
         "llm_aux_enable_thinking": None,
         "llm_aux_vision_fallback_enabled": True,
+        "llm_live2d_outfit_recognition_enabled": False,
         "llm_api_mode": "chat_completions",
         "llm_web_search_enabled": True,
         "llm_web_search_engine": "bing_cn",

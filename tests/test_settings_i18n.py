@@ -79,6 +79,15 @@ class SettingsI18nTests(unittest.TestCase):
                 )
                 self.assertEqual([], missing)
 
+    def test_mcp_json_error_message_has_recovery_placeholders(self):
+        required_parts = ["{line}", "{column}", "{error}", "[]"]
+        for path in sorted(LANG_DIR.glob("*.json")):
+            with self.subTest(language=path.stem):
+                translations = json.loads(path.read_text(encoding="utf-8-sig"))
+                message = str(translations.get("SettingsWindow.mcp_json_invalid_content", ""))
+                missing = [part for part in required_parts if part not in message]
+                self.assertEqual([], missing)
+
     def test_date_picker_months_follow_current_language(self):
         from i18n_manager import date_picker_months, current_language, set_language
 

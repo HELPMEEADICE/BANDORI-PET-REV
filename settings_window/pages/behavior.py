@@ -95,14 +95,22 @@ class BehaviorPageMixin:
         self._cfg.set("move_all_roles_together", self._move_all_roles_together)
         self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
         self._cfg.save()
+        self.settings_changed.emit(self._live2d_behavior_settings_data())
+
+    def _live2d_behavior_settings_data(self) -> dict:
+        return {
+            "live2d_idle_actions_enabled": self._live2d_idle_actions_enabled,
+            "live2d_random_actions_enabled": self._live2d_random_actions_enabled,
+            "live2d_head_tracking_enabled": self._live2d_head_tracking_enabled,
+            "live2d_mutual_gaze_enabled": self._live2d_mutual_gaze_enabled,
+            "emotion_behavior_enabled": self._emotion_behavior_enabled,
+            "move_all_roles_together": self._move_all_roles_together,
+            "birthday_tray_notifications_enabled": self._birthday_tray_notifications_enabled,
+        }
 
     def _on_birthday_tray_notifications_changed(self, checked: bool):
         self._birthday_tray_notifications_enabled = bool(checked)
         self._save_live2d_behavior_config()
-        if self._cfg:
-            self.settings_changed.emit({
-                "birthday_tray_notifications_enabled": self._birthday_tray_notifications_enabled,
-            })
 
     def _on_live2d_idle_actions_changed(self, checked: bool):
         self._live2d_idle_actions_enabled = bool(checked)

@@ -2877,18 +2877,45 @@ class SettingsWindow(
             return
         compact_reset_pending = bool(getattr(self, "_compact_window_reset_position_pending", False))
         self._defer_config_save = True
+        failed_steps = []
+
+        def save_step(label: str, callback) -> None:
+            if failed_steps:
+                return
+            try:
+                ok = callback()
+            except Exception as exc:
+                failed_steps.append(f"{label}: {exc}")
+                return
+            if ok is False:
+                failed_steps.append(label)
+
         try:
-            self._save_llm_config(show_info=False)
-            self._save_tts_config(show_info=False)
-            self._save_asr_config(show_info=False)
-            self._save_compact_window_config(show_info=False, emit_update=False)
-            self._save_chat_integration_config(show_info=False, emit_update=False)
-            self._save_mcp_computer_config(show_info=False)
-            self._save_reminder_config(show_info=False, emit_update=False)
-            self._save_screen_awareness_config(show_info=False, emit_update=False)
-            self._save_configured_models(emit_update=False)
+            save_step("LLM", lambda: self._save_llm_config(show_info=False))
+            save_step("TTS", lambda: self._save_tts_config(show_info=False))
+            save_step("ASR", lambda: self._save_asr_config(show_info=False))
+            save_step("compact window", lambda: self._save_compact_window_config(show_info=False, emit_update=False))
+            save_step("chat integration", lambda: self._save_chat_integration_config(show_info=False, emit_update=False))
+            save_step("tools", lambda: self._save_mcp_computer_config(show_info=False))
+            save_step("reminders", lambda: self._save_reminder_config(show_info=False, emit_update=False))
+            save_step("screen awareness", lambda: self._save_screen_awareness_config(show_info=False, emit_update=False))
+            save_step("model list", lambda: self._save_configured_models(emit_update=False))
         finally:
             self._defer_config_save = False
+        if failed_steps:
+            self._launched = False
+            InfoBar.error(
+                _tr("SettingsWindow.apply_failed_title", default="应用失败"),
+                _tr(
+                    "SettingsWindow.apply_failed_content",
+                    default="部分设置未能保存：{items}",
+                    items="；".join(failed_steps),
+                ),
+                duration=5000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
         settings = {
             "character": self._current_char,
             "costume": self._selected_costume,
@@ -2981,8 +3008,19 @@ class SettingsWindow(
             try:
                 self._cfg.save()
             except Exception:
-                import traceback
-                traceback.print_exc()
+                self._launched = False
+                InfoBar.error(
+                    _tr("SettingsWindow.apply_failed_title", default="应用失败"),
+                    _tr(
+                        "SettingsWindow.apply_failed_content",
+                        default="部分设置未能保存：{items}",
+                        items="basic settings",
+                    ),
+                    duration=5000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return
         self.settings_changed.emit(settings)
         if self._should_emit_model_selection_on_apply():
             self.model_selected.emit(self._current_char, self._selected_costume)
@@ -3157,9 +3195,9 @@ class SettingsWindow(
             }
         """)
 
-    def _save_configured_models(self, emit_update: bool = True):
+    def _save_configured_models(self, emit_update: bool = True) -> bool:
         if not self._cfg:
-            return
+            return True
         for item in self._configured_models:
             self._archive_model_action_profile(item)
         selected = self._selected_model_item()
@@ -3176,14 +3214,21 @@ class SettingsWindow(
         if not self._config_save_deferred():
             try:
                 self._cfg.save()
-            except Exception:
-                import traceback
-                traceback.print_exc()
+            except Exception as exc:
+                InfoBar.error(
+                    _tr("SettingsWindow.models_save_failed_title", default="保存失败"),
+                    str(exc),
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return False
         if emit_update:
             self.settings_changed.emit({
                 "models": [dict(item) for item in self._configured_models],
                 "model_action_settings": self._cfg.get("model_action_settings", {}),
             })
+        return True
 
     def _refresh_model_list(self):
         while self._model_list_layout.count():

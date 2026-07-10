@@ -282,9 +282,17 @@ class MCPPageMixin:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
+            line = max(1, int(getattr(exc, "lineno", 1) or 1))
+            column = max(1, int(getattr(exc, "colno", 1) or 1))
             InfoBar.error(
                 _tr("SettingsWindow.mcp_json_invalid_title", default="MCP JSON 有误"),
-                _tr("SettingsWindow.mcp_json_invalid_content", default="请检查 JSON 格式：{error}", error=str(exc)),
+                _tr(
+                    "SettingsWindow.mcp_json_invalid_content",
+                    default="JSON 格式错误（第 {line} 行，第 {column} 列）：{error}\n可填 [] 临时禁用 MCP，或点击“格式化 JSON”检查结构。",
+                    line=line,
+                    column=column,
+                    error=str(exc),
+                ),
                 duration=3500,
                 position=InfoBarPosition.TOP,
                 parent=self,
@@ -382,7 +390,7 @@ class MCPPageMixin:
 
     def _save_mcp_computer_config(self, show_info: bool = True):
         if not self._cfg or not self._mcp_computer_widgets_ready():
-            return False
+            return True
         servers = self._parse_mcp_servers_text()
         if servers is None:
             return False
@@ -405,9 +413,11 @@ class MCPPageMixin:
         self._cfg.set("computer_use_allow_clipboard", self._computer_use_allow_clipboard.isChecked())
         self._cfg.set("computer_use_allow_wait", self._computer_use_allow_wait.isChecked())
         self._sync_care_policy_config_from_ui()
-        if not self._config_save_deferred():
-            self._cfg.save()
-        if show_info:
+        try:
+            if not self._config_save_deferred():
+                self._cfg.save()
+            if not show_info:
+                return True
             InfoBar.success(
                 _tr("SettingsWindow.mcp_saved_title", default="屏幕感知与工具控制已保存"),
                 _tr("SettingsWindow.mcp_saved_content", default="屏幕感知和工具配置已更新。"),
@@ -415,7 +425,16 @@ class MCPPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-        return True
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.mcp_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _save_screen_tools_config(self):
         if not self._save_mcp_computer_config(show_info=False):

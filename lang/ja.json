@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "スクリーンショットの最長辺ピクセル",
   "SettingsWindow.computer_use_hint": "DeepSeek/OpenRouter などの互換インターフェースでは tool_calls/function calling を通じてこれらの機能を使用します。スクリーンショットを安定して理解するには画像入力対応モデルが必要です。マウスツールはスクリーンショット座標を実際のデスクトップ座標にマッピングします。",
   "SettingsWindow.mcp_json_invalid_title": "MCP JSON が不正です",
-  "SettingsWindow.mcp_json_invalid_content": "JSON 形式を確認してください：{error}",
+  "SettingsWindow.mcp_json_invalid_content": "JSON 構文エラー（{line} 行目、{column} 列目）：{error}\nMCP を一時的に無効にするには [] を入力するか、「JSON を整形」をクリックして構造を確認してください。",
   "SettingsWindow.mcp_json_must_be_list": "MCP サーバー設定は配列である必要があります。",
   "SettingsWindow.mcp_json_copied_title": "コピーしました",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON をプレーンテキストとしてコピーしました。",

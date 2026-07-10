@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "截圖最長邊像素",
   "SettingsWindow.computer_use_hint": "DeepSeek/OpenRouter 等相容介面會透過 tool_calls/function calling 使用這些能力。模型需要支援圖片輸入，才能穩定理解螢幕截圖；滑鼠工具會把截圖座標映射到真實桌面座標。",
   "SettingsWindow.mcp_json_invalid_title": "MCP JSON 有誤",
-  "SettingsWindow.mcp_json_invalid_content": "請檢查 JSON 格式：{error}",
+  "SettingsWindow.mcp_json_invalid_content": "JSON 格式錯誤（第 {line} 行，第 {column} 列）：{error}\n可填 [] 暫時停用 MCP，或點擊「格式化 JSON」檢查結構。",
   "SettingsWindow.mcp_json_must_be_list": "MCP 伺服器設定必須是陣列。",
   "SettingsWindow.mcp_json_copied_title": "已複製",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON 已複製為純文字。",

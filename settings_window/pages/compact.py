@@ -322,9 +322,9 @@ class CompactPageMixin:
             data["compact_ai_window_reset_position"] = True
         return data
 
-    def _save_compact_window_config(self, show_info: bool = True, emit_update: bool = False):
+    def _save_compact_window_config(self, show_info: bool = True, emit_update: bool = False) -> bool:
         if not self._cfg or not self._compact_config_widgets_ready():
-            return
+            return True
         self._cfg.set("compact_ai_window_enabled", self._compact_ai_window_enabled.isChecked())
         self._cfg.set("compact_ai_window_opacity", self._compact_window_opacity_slider.value())
         self._cfg.set("compact_ai_window_font_size", self._compact_window_font_size_slider.value())
@@ -355,8 +355,16 @@ class CompactPageMixin:
                     position=InfoBarPosition.TOP,
                     parent=self,
                 )
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.compact_window_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _reset_compact_window_config(self):
         if not self._cfg or not self._compact_config_widgets_ready():

@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "스크린샷 최대 변 길이 (픽셀)",
   "SettingsWindow.computer_use_hint": "DeepSeek/OpenRouter 호환 API는 이러한 기능을 tool_calls/function calling을 통해 사용합니다. 스크린샷을 안정적으로 이해하려면 이미지 입력 지원이 필요하며, 마우스 도구는 스크린샷 좌표를 실제 데스크톱 좌표로 매핑합니다.",
   "SettingsWindow.mcp_json_invalid_title": "MCP JSON 유효하지 않음",
-  "SettingsWindow.mcp_json_invalid_content": "JSON 형식을 확인하세요: {error}",
+  "SettingsWindow.mcp_json_invalid_content": "JSON 구문 오류({line}행, {column}열): {error}\nMCP를 임시로 비활성화하려면 []를 입력하거나, \"JSON 포맷\"을 클릭해 구조를 확인하세요.",
   "SettingsWindow.mcp_json_must_be_list": "MCP 서버 설정은 배열이어야 합니다.",
   "SettingsWindow.mcp_json_copied_title": "복사됨",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON이 일반 텍스트로 복사되었습니다.",

@@ -327,7 +327,7 @@ class ScreenAwarenessPageMixin:
 
     def _save_screen_awareness_config(self, show_info: bool = True, emit_update: bool = True):
         if not self._screen_awareness_ready():
-            return False
+            return True
         self._sync_screen_awareness_config_from_ui()
         try:
             if not self._config_save_deferred():

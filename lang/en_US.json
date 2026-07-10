@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "Screenshot longest side in pixels",
   "SettingsWindow.computer_use_hint": "DeepSeek/OpenRouter-compatible APIs use these capabilities through tool_calls/function calling. The model needs image input support to understand screenshots reliably; mouse tools map screenshot coordinates to real desktop coordinates.",
   "SettingsWindow.mcp_json_invalid_title": "Invalid MCP JSON",
-  "SettingsWindow.mcp_json_invalid_content": "Check the JSON format: {error}",
+  "SettingsWindow.mcp_json_invalid_content": "JSON syntax error (line {line}, column {column}): {error}\nEnter [] to temporarily disable MCP, or click Format JSON to check the structure.",
   "SettingsWindow.mcp_json_must_be_list": "MCP server config must be an array.",
   "SettingsWindow.mcp_json_copied_title": "Copied",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON was copied as plain text.",

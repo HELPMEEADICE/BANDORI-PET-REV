@@ -502,9 +502,9 @@ class ReminderPageMixin:
             REMINDER_DISPLAY_MODE_KEY: normalize_display_mode(self._cfg.get(REMINDER_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)),
         }
 
-    def _save_reminder_config(self, show_info: bool = True, emit_update: bool = True):
+    def _save_reminder_config(self, show_info: bool = True, emit_update: bool = True) -> bool:
         if not self._cfg or not hasattr(self, "_reminder_display_mode"):
-            return
+            return True
         save_timer = getattr(self, "_proactive_save_timer", None)
         if save_timer is not None and save_timer.isActive():
             save_timer.stop()
@@ -529,6 +529,7 @@ class ReminderPageMixin:
                     position=InfoBarPosition.TOP,
                     parent=self,
                 )
+            return True
         except Exception as exc:
             InfoBar.error(
                 _tr("SettingsWindow.reminder_failed_title", default="提醒设置保存失败"),
@@ -537,6 +538,7 @@ class ReminderPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+            return False
 
     def _add_alarm_from_form(self):
         if not self._cfg:

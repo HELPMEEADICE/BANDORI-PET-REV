@@ -1220,8 +1220,10 @@ class LLMPageMixin:
             return "responses"
         return "chat_completions"
 
-    def _save_llm_config(self, source: str = "llm", show_info: bool = True):
-        if self._cfg and self._llm_config_widgets_ready():
+    def _save_llm_config(self, source: str = "llm", show_info: bool = True) -> bool:
+        if not self._cfg or not self._llm_config_widgets_ready():
+            return True
+        try:
             self._cfg.set("llm_api_url", self._llm_api_url.text().strip())
             self._cfg.set("llm_api_key", self._llm_api_key.text().strip())
             self._cfg.set("llm_model_id", self._llm_model_id.text().strip())
@@ -1286,27 +1288,34 @@ class LLMPageMixin:
             self._cfg.set("llm_show_reasoning", self._llm_show_reasoning.isChecked())
             active_profile = self._matching_llm_api_profile_name()
             self._cfg.set("llm_active_api_profile", active_profile)
-            try:
-                if not self._config_save_deferred():
-                    self._cfg.save()
-                    self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
-                    self._refresh_memory_page()
-                    self._reload_llm_api_profiles(active_profile)
-                    self._update_current_llm_api_profile_label()
-                if show_info and hasattr(self, "_user_profile_settings_data"):
-                    self.settings_changed.emit(self._user_profile_settings_data())
-                if show_info:
-                    title_key = "SettingsWindow.pov_saved_title" if source == "pov" else "SettingsWindow.llm_saved_title"
-                    content_key = "SettingsWindow.pov_saved_content" if source == "pov" else "SettingsWindow.llm_saved_content"
-                    InfoBar.success(
-                        _tr(title_key),
-                        _tr(content_key),
-                        duration=2000,
-                        position=InfoBarPosition.TOP,
-                        parent=self,
-                    )
-            except Exception:
-                pass
+            if not self._config_save_deferred():
+                self._cfg.save()
+                self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
+                self._refresh_memory_page()
+                self._reload_llm_api_profiles(active_profile)
+                self._update_current_llm_api_profile_label()
+            if show_info and hasattr(self, "_user_profile_settings_data"):
+                self.settings_changed.emit(self._user_profile_settings_data())
+            if show_info:
+                title_key = "SettingsWindow.pov_saved_title" if source == "pov" else "SettingsWindow.llm_saved_title"
+                content_key = "SettingsWindow.pov_saved_content" if source == "pov" else "SettingsWindow.llm_saved_content"
+                InfoBar.success(
+                    _tr(title_key),
+                    _tr(content_key),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.llm_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _test_connection(self):
         api_url = self._llm_api_url.text().strip()

@@ -293,7 +293,7 @@ class ASRPageMixin:
             parent=self,
         )
 
-    def _save_asr_config(self, show_info: bool = True):
+    def _save_asr_config(self, show_info: bool = True) -> bool:
         if self._cfg and self._asr_config_widgets_ready():
             config = self._current_asr_config()
             for key, value in config.items():
@@ -309,8 +309,17 @@ class ASRPageMixin:
                         position=InfoBarPosition.TOP,
                         parent=self,
                     )
-            except Exception:
-                pass
+                return True
+            except Exception as exc:
+                InfoBar.error(
+                    _tr("SettingsWindow.asr_save_failed_title", default="保存失败"),
+                    str(exc),
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return False
+        return True
 
     def _toggle_asr_test(self):
         if getattr(self, "_asr_test_recording", False):

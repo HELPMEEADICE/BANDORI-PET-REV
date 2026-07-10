@@ -511,9 +511,9 @@ class ChatIntegrationPageMixin:
         data.update(self._napcat_settings_data())
         return data
 
-    def _save_chat_integration_config(self, show_info: bool = True, emit_update: bool = False):
+    def _save_chat_integration_config(self, show_info: bool = True, emit_update: bool = False) -> bool:
         if not self._cfg or not self._chat_integration_widgets_ready():
-            return
+            return True
         enabled = self._chat_integration_enabled.isChecked()
         token = self._chat_integration_token_input.text().strip()
         if enabled and not token:
@@ -540,6 +540,7 @@ class ChatIntegrationPageMixin:
                     position=InfoBarPosition.TOP,
                     parent=self,
                 )
+            return True
         except Exception as exc:
             InfoBar.error(
                 _tr("SettingsWindow.chat_integration_failed_title", default="保存失败"),
@@ -548,6 +549,7 @@ class ChatIntegrationPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+            return False
 
     def _build_napcat_section(self, layout, page):
         layout.addWidget(SubtitleLabel(_tr(

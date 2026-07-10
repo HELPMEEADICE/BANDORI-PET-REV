@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "Screenshot längste Seite in Pixel",
   "SettingsWindow.computer_use_hint": "DeepSeek/OpenRouter-compatible-APIs nutzen diese Funktionen durch tool_calls/function-Aufrufe. Das Modell benötigt Bildeingabeunterstützung, um Screenshots zuverlässig zu verstehen; Mauswerkzeuge ordnen Screenshot-Koordinaten echten Desktop-Koordinaten zu.",
   "SettingsWindow.mcp_json_invalid_title": "Ungültiger MCP JSON",
-  "SettingsWindow.mcp_json_invalid_content": "Überprüfen Sie das JSON-Format: {error}",
+  "SettingsWindow.mcp_json_invalid_content": "JSON-Syntaxfehler (Zeile {line}, Spalte {column}): {error}\nGeben Sie [] ein, um MCP vorübergehend zu deaktivieren, oder klicken Sie auf \"JSON formatieren\", um die Struktur zu prüfen.",
   "SettingsWindow.mcp_json_must_be_list": "MCP-Serverkonfiguration muss ein Array sein.",
   "SettingsWindow.mcp_json_copied_title": "Kopiert",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON wurde als Klartext kopiert.",

@@ -223,24 +223,33 @@ class TTSPageMixin:
                 config[key] = self._cfg.get(key, None)
         return config
 
-    def _save_tts_config(self, show_info: bool = True):
-        if self._cfg and self._tts_config_widgets_ready():
+    def _save_tts_config(self, show_info: bool = True) -> bool:
+        if not self._cfg or not self._tts_config_widgets_ready():
+            return True
+        try:
             config = self._current_tts_config()
             for key, value in config.items():
                 self._cfg.set(key, value)
-            try:
-                if not self._config_save_deferred():
-                    self._cfg.save()
-                if show_info:
-                    InfoBar.success(
-                        _tr("SettingsWindow.tts_saved_title"),
-                        _tr("SettingsWindow.tts_saved_content"),
-                        duration=2000,
-                        position=InfoBarPosition.TOP,
-                        parent=self,
-                    )
-            except Exception:
-                pass
+            if not self._config_save_deferred():
+                self._cfg.save()
+            if show_info:
+                InfoBar.success(
+                    _tr("SettingsWindow.tts_saved_title"),
+                    _tr("SettingsWindow.tts_saved_content"),
+                    duration=2000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.tts_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _test_tts(self):
         if getattr(self, "_tts_test_running", False):

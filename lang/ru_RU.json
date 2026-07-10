@@ -387,7 +387,7 @@
   "SettingsWindow.computer_use_max_screenshot_width": "Самая длинная сторона скриншота в пикселях",
   "SettingsWindow.computer_use_hint": "API DeepSeek/OpenRouter-compatible используют эти возможности посредством вызова tool_calls/function. Модель нуждается в поддержке ввода изображений для надежного понимания снимков экрана; инструменты мыши сопоставляют координаты скриншота с реальными координатами рабочего стола.",
   "SettingsWindow.mcp_json_invalid_title": "Неверный MCP JSON",
-  "SettingsWindow.mcp_json_invalid_content": "Проверьте формат JSON: {error}",
+  "SettingsWindow.mcp_json_invalid_content": "Синтаксическая ошибка JSON (строка {line}, столбец {column}): {error}\nВведите [], чтобы временно отключить MCP, или нажмите \"Формат JSON\", чтобы проверить структуру.",
   "SettingsWindow.mcp_json_must_be_list": "Конфигурация сервера MCP должна быть массивом.",
   "SettingsWindow.mcp_json_copied_title": "Скопировано",
   "SettingsWindow.mcp_json_copied_content": "MCP JSON был скопирован как обычный текст.",
