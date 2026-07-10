@@ -127,6 +127,12 @@ def main():
     )
     window.connect_ipc_output(send_ipc_line)
 
+    def bring_window_to_front():
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+        macos_patch.activate_app_ignoring_other_apps()
+
     def poll_ipc_messages():
         if not attach_main_ipc_queues(ipc):
             return
@@ -146,6 +152,9 @@ def main():
                 parts = line.split("\t", 1)
                 character = parts[1].strip() if len(parts) == 2 else ""
                 window.show_costume_picker(character)
+                bring_window_to_front()
+            elif line == "FOCUS_SETTINGS":
+                bring_window_to_front()
             elif line == "SHUTDOWN":
                 QTimer.singleShot(0, window.close)
 
@@ -163,12 +172,6 @@ def main():
             geo.left() + (geo.width() - window.width()) // 2,
             geo.top() + (geo.height() - window.height()) // 2,
         )
-
-    def bring_window_to_front():
-        window.showNormal()
-        window.raise_()
-        window.activateWindow()
-        macos_patch.activate_app_ignoring_other_apps()
 
     window.show()
     if sys.platform == "darwin":

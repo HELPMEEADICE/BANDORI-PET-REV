@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QProcess, QRect
 
 from chat_process import focus_chat_window
 from chat_window.chat_window import ChatWindow
@@ -44,6 +44,8 @@ class _ChatWindowHarness:
         self._close_animating = True
         self._close_waiting_for_workers = True
         self._window_anim = _WindowAnim()
+        self._pre_close_geometry = QRect(20, 30, 640, 480)
+        self.restored_geometry = None
         self.enabled = False
         self.opacity = 0.0
 
@@ -52,6 +54,9 @@ class _ChatWindowHarness:
 
     def setWindowOpacity(self, opacity: float):
         self.opacity = opacity
+
+    def setGeometry(self, geometry: QRect):
+        self.restored_geometry = QRect(geometry)
 
 
 class _FocusWindow:
@@ -96,6 +101,8 @@ class ChatReopenTest(unittest.TestCase):
         self.assertTrue(harness.enabled)
         self.assertEqual(1.0, harness.opacity)
         self.assertTrue(harness._window_anim.stopped)
+        self.assertEqual(QRect(20, 30, 640, 480), harness.restored_geometry)
+        self.assertFalse(hasattr(harness, "_pre_close_geometry"))
 
     def test_ipc_focus_prepares_window_before_showing(self):
         window = _FocusWindow()
@@ -106,6 +113,16 @@ class ChatReopenTest(unittest.TestCase):
     def test_main_reopening_running_direct_chat_broadcasts_focus(self):
         source = Path("main.py").read_text(encoding="utf-8")
         self.assertIn('broadcast_ipc_line("FOCUS_CHAT")', source)
+
+    def test_main_reopening_running_settings_broadcasts_focus(self):
+        source = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn('broadcast_ipc_line("FOCUS_SETTINGS")', source)
+        self.assertIn('broadcast_ipc_line(f"SHOW_COSTUMES\\t{costume_character}")', source)
+
+    def test_settings_process_focuses_existing_window_requests(self):
+        source = Path("settings_process.py").read_text(encoding="utf-8")
+        self.assertIn('elif line == "FOCUS_SETTINGS":', source)
+        self.assertIn('window.show_costume_picker(character)\n                bring_window_to_front()', source)
 
 
 if __name__ == "__main__":

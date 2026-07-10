@@ -846,6 +846,8 @@ def main():
             cfg.save()
         elif line == "FOCUS_CHAT":
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
+        elif line == "FOCUS_SETTINGS":
+            broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line.startswith("OPEN_SETTINGS"):
             handle_open_settings_request(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
@@ -1408,6 +1410,8 @@ def main():
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             if start_on_costumes:
                 broadcast_ipc_line(f"SHOW_COSTUMES\t{costume_character}")
+            else:
+                broadcast_ipc_line("FOCUS_SETTINGS")
             return
         cfg.load()
         mgr = ModelManager()

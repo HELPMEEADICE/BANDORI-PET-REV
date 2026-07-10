@@ -855,11 +855,24 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 self._window_anim.stop()
             except RuntimeError:
                 pass
+        if hasattr(self, "_pre_close_geometry"):
+            self.setGeometry(QRect(self._pre_close_geometry))
+            del self._pre_close_geometry
         self._closing = False
         self._close_animating = False
         self._close_waiting_for_workers = False
         self.setEnabled(True)
         self.setWindowOpacity(1.0)
+
+    def _save_window_geometry_config(self, geometry: QRect | None = None):
+        if not self._cfg:
+            return
+        geo = QRect(geometry) if geometry is not None else QRect(self.geometry())
+        self._cfg.set("chat_window_x", geo.x())
+        self._cfg.set("chat_window_y", geo.y())
+        self._cfg.set("chat_window_width", geo.width())
+        self._cfg.set("chat_window_height", geo.height())
+        self._cfg.save()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -6058,12 +6071,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_flush_timer.stop()
         self._tts_player.stop()
         self._db.close()
-        if self._cfg and hasattr(self, '_pre_close_geometry'):
-            geo = self._pre_close_geometry
-            self._cfg.set("chat_window_x", geo.x())
-            self._cfg.set("chat_window_y", geo.y())
-            self._cfg.set("chat_window_width", geo.width())
-            self._cfg.set("chat_window_height", geo.height())
-            self._cfg.save()
+        self._save_window_geometry_config(getattr(self, "_pre_close_geometry", None))
         self.closed.emit()
         super().closeEvent(event)
