@@ -27,6 +27,7 @@ EXPECTED_NAV_ORDER = [
     "character_persona",
     "chat_integration",
     "data_management",
+    "download_management",
 ]
 
 

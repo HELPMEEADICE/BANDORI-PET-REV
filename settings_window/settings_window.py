@@ -27,6 +27,7 @@ from settings_window.pages.behavior import BehaviorPageMixin
 from settings_window.pages.statistics import StatisticsPageMixin
 from settings_window.pages.chat_history import ChatHistoryPageMixin
 from settings_window.pages.character_persona import CharacterPersonaPageMixin
+from settings_window.pages.download_manager import DownloadManagementPageMixin
 
 
 class SettingsWindow(
@@ -48,6 +49,7 @@ class SettingsWindow(
     StatisticsPageMixin,
     ChatHistoryPageMixin,
     CharacterPersonaPageMixin,
+    DownloadManagementPageMixin,
     QWidget,
 ):
 
@@ -134,6 +136,8 @@ class SettingsWindow(
         self._chat_integration_page = None
         self._mcp_computer_page = None
         self._data_management_page = None
+        self._download_management_page = None
+        self._download_manager_worker = None
         self._quality_page = None
         self._about_page = None
         self._statistics_page = None
@@ -558,7 +562,7 @@ class SettingsWindow(
             '_test_worker', '_fetch_worker', '_mcp_test_worker',
             '_update_check_worker', '_update_apply_worker', '_tts_test_worker',
             '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker',
-            '_model_download_worker', '_model_detail_metadata_worker',
+            '_model_download_worker', '_download_manager_worker', '_model_detail_metadata_worker',
             '_history_worker', '_history_filter_worker',
         )
         for attr in worker_attrs:
@@ -932,6 +936,8 @@ class SettingsWindow(
         self._wizard_go_to_step(self._wizard_step - 1)
 
     def _update_wizard_footer(self):
+        if not hasattr(self, "_wizard_back_btn"):
+            return
         self._wizard_back_btn.setEnabled(self._wizard_step > 0)
         self._wizard_skip_ai_btn.setVisible(self._wizard_step == 2)
         self._wizard_next_btn.setEnabled(not self._model_download_running)
@@ -1316,6 +1322,11 @@ class SettingsWindow(
         if key == "data_management":
             self._data_management_page = self._add_lazy_page("data_management", self._build_data_management_page())
             return self._data_management_page
+        if key == "download_management":
+            self._download_management_page = self._add_lazy_page(
+                "download_management", self._build_download_management_page(),
+            )
+            return self._download_management_page
         if key == "statistics":
             self._statistics_page = self._add_lazy_page("statistics", self._build_statistics_page())
             return self._statistics_page
@@ -1569,6 +1580,17 @@ class SettingsWindow(
         self._nav_buttons["data_management"] = btn_data_management
         nav_layout.addWidget(btn_data_management)
 
+        btn_download_management = NavButton(
+            "download_management",
+            FluentIcon.DOWNLOAD,
+            _tr("SettingsWindow.nav_download_management", default="下载管理"),
+            nav_content,
+            "#ec4899",
+        )
+        btn_download_management.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["download_management"] = btn_download_management
+        nav_layout.addWidget(btn_download_management)
+
         nav_layout.addStretch()
         nav_scroll.setWidget(nav_content)
         nav_scroll.verticalScrollBar().valueChanged.connect(
@@ -1630,6 +1652,8 @@ class SettingsWindow(
                 self._refresh_memory_album_page()
             elif nav_key == "chat_history":
                 QTimer.singleShot(0, self._activate_chat_history_page)
+            elif nav_key == "download_management":
+                self._refresh_download_management_page()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 

@@ -63,10 +63,11 @@ class ModelPackageDownloadWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, package_keys: list[str], models_dir, parent=None):
+    def __init__(self, package_keys: list[str], models_dir, parent=None, overwrite: bool = False):
         super().__init__(parent)
         self._package_keys = list(package_keys)
         self._models_dir = models_dir
+        self._overwrite = bool(overwrite)
         self._downloaded_bytes = 0
         self._total_bytes = 0
         self._known_sizes: dict[str, int] = {}
@@ -111,7 +112,7 @@ class ModelPackageDownloadWorker(QThread):
         url = f"{MODEL_PACKAGE_BASE_URL}/{urllib.parse.quote(package_key, safe='')}.zst"
         target = self._models_dir / f"{package_key}.zst"
         part = self._models_dir / f"{package_key}.zst.part"
-        if target.exists() and target.stat().st_size > 0:
+        if not self._overwrite and target.exists() and target.stat().st_size > 0:
             return
         if part.exists():
             try:
