@@ -55,6 +55,20 @@ class LocalReminderToolSaveSemanticsTest(unittest.TestCase):
         publish.assert_not_called()
         self.assertIn("失败", result["content"])
 
+    def test_create_alarm_publish_failure_reports_restart_fallback(self):
+        cfg = _Config(True)
+        with (
+            patch("config_manager.ConfigManager", return_value=cfg),
+            patch("settings_bus.publish_settings", return_value=False),
+            patch("local_tools._resolve_reminder_character", return_value="kasumi"),
+        ):
+            result = local_tools._run_reminder_tool_call(
+                local_tools.CREATE_ALARM_TOOL_NAME,
+                {"time": "12:30", "description": "lunch"},
+            )
+
+        self.assertIn("重启", result["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,17 @@ from onebot_message import normalize_onebot_event
 from process_utils import token_matches
 
 
+def _prepare_chat_event_batch(events, normalize_event) -> list[dict | None]:
+    events = events if isinstance(events, list) else [events]
+    invalid_index = next(
+        (index for index, event in enumerate(events) if not isinstance(event, dict)),
+        None,
+    )
+    if invalid_index is not None:
+        raise ValueError(f"event at index {invalid_index} must be an object")
+    return [normalize_event(event) for event in events]
+
+
 class ChatIntegrationHttpServer:
     def __init__(self, port: int, token: str, on_message, on_read=None):
         self._port = int(port)
@@ -100,23 +111,33 @@ class ChatIntegrationHttpServer:
                     data = self._read_request_body()
                 if data is None:
                     return
-                events = data if isinstance(data, list) else [data]
+                try:
+                    events = _prepare_chat_event_batch(data, self._normalize_event)
+                except ValueError as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                    return
                 results = []
-                for event in events:
-                    if not isinstance(event, dict):
-                        self._send_json({"ok": False, "error": "each event must be an object"}, status=400)
-                        return
-                    event = self._normalize_event(event)
+                for index, event in enumerate(events):
                     if event is None:
                         results.append({"ignored": True})
                         continue
                     try:
                         results.append(on_message(event) or {})
                     except ValueError as exc:
-                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        self._send_json({
+                            "ok": False,
+                            "error": str(exc),
+                            "failed_index": index,
+                            "processed_count": len(results),
+                        }, status=400)
                         return
                     except Exception as exc:
-                        self._send_json({"ok": False, "error": str(exc)}, status=500)
+                        self._send_json({
+                            "ok": False,
+                            "error": str(exc),
+                            "failed_index": index,
+                            "processed_count": len(results),
+                        }, status=500)
                         return
                 payload = {"ok": True, "count": len(results)}
                 if len(results) == 1:

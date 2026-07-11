@@ -9,7 +9,7 @@ callback; replies are sent back over the same connection via OneBot actions.
 import json
 import uuid
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, QUrlQuery, Signal
 from PySide6.QtNetwork import QNetworkRequest
 from PySide6.QtWebSockets import QWebSocket
 
@@ -71,9 +71,10 @@ class NapcatClient(QObject):
         if self._access_token:
             # OneBot v11 also accepts the token as a query param; keep it as a
             # fallback for servers that don't read the Authorization header.
-            query = url.query()
-            token_param = f"access_token={self._access_token}"
-            url.setQuery(f"{query}&{token_param}" if query else token_param)
+            query = QUrlQuery(url)
+            query.removeAllQueryItems("access_token")
+            query.addQueryItem("access_token", self._access_token)
+            url.setQuery(query)
         request = QNetworkRequest(url)
         if self._access_token:
             request.setRawHeader(b"Authorization", f"Bearer {self._access_token}".encode("utf-8"))
@@ -139,8 +140,7 @@ class NapcatClient(QObject):
             "echo": uuid.uuid4().hex,
         }
         try:
-            self._socket.sendTextMessage(json.dumps(payload, ensure_ascii=False))
-            return True
+            return self._socket.sendTextMessage(json.dumps(payload, ensure_ascii=False)) > 0
         except RuntimeError:
             return False
 

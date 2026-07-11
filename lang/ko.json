@@ -3,6 +3,7 @@
   "Reminder.save_failed_content": "이번 세션에서는 계속 실행되지만 재시작 후 이전 상태로 돌아갈 수 있습니다. 설정 파일 권한 또는 사용 중인지 확인하세요.",
   "PetWindow.runtime_save_failed_title": "화면 상태 저장 실패",
   "PetWindow.runtime_save_failed_content": "이번 세션에서는 현재 상태를 유지하지만 재시작 후 일부 화면 설정이 돌아갈 수 있습니다. 설정 파일 권한 또는 사용 중인지 확인하세요.",
+  "ChatCommand.runtime_sync_failed": "설정은 저장되었지만 현재 세션에 동기화되지 않았습니다. 앱을 재시작하면 적용됩니다.",
   "SettingsWindow.config_save_failed_content": "설정 파일을 쓰지 못했습니다. 권한 또는 디스크나 파일 사용 여부를 확인한 뒤 다시 시도하세요.",
   "SettingsWindow.attachment_settings_save_failed_title": "저장 실패",
   "SettingsWindow.language_save_failed_title": "저장 실패",

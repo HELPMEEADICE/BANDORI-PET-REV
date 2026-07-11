@@ -1,5 +1,12 @@
+import logging
+import time
+
 from PySide6.QtCore import QObject, QTimer, Signal, QTime, QDate
 from event_db_manager import EventDbManager, SpecialEvent
+
+
+_log = logging.getLogger(__name__)
+_ERROR_LOG_INTERVAL_SECONDS = 10 * 60
 
 
 class SpecialEventManager(QObject):
@@ -9,6 +16,7 @@ class SpecialEventManager(QObject):
         super().__init__(parent)
         self.event_db = EventDbManager(data_dir)
         self.last_checked_date = None
+        self._last_error_log_at = None
         self._setup_timer()
 
     def _setup_timer(self):
@@ -34,9 +42,17 @@ class SpecialEventManager(QObject):
             for event in events:
                 self.event_detected.emit(event)
         except Exception:
+            now = time.monotonic()
+            if (
+                self._last_error_log_at is None
+                or now - self._last_error_log_at >= _ERROR_LOG_INTERVAL_SECONDS
+            ):
+                self._last_error_log_at = now
+                _log.exception("Special event check failed; retrying in 60 seconds")
             self.check_timer.start(60 * 1000)
             return
 
+        self._last_error_log_at = None
         self.last_checked_date = today
         self._schedule_next_check()
 

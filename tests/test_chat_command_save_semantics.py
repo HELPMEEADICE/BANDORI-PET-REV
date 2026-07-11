@@ -47,6 +47,15 @@ class ChatCommandSaveSemanticsTests(unittest.TestCase):
         publish.assert_not_called()
         self.assertTrue(result.get("save_failed"))
 
+    def test_toggle_publish_failure_reports_restart_fallback(self):
+        cfg = _ConfigStub({"llm_show_reasoning": True})
+
+        with patch("chat_commands._publish", return_value=False):
+            result = handle_command(cfg, "@cot off")
+
+        self.assertFalse(cfg.get("llm_show_reasoning"))
+        self.assertTrue(result.get("runtime_sync_failed"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@
   "Reminder.save_failed_content": "Reminders will keep running for this session, but may revert after restart. Check the configuration file permissions or whether it is in use.",
   "PetWindow.runtime_save_failed_title": "Interface state not saved",
   "PetWindow.runtime_save_failed_content": "The current state will remain active for this session, but some interface settings may revert after restart. Check the configuration file permissions or whether it is in use.",
+  "ChatCommand.runtime_sync_failed": "The configuration was saved but could not be synchronized with the current session; it will take effect after restarting the app.",
   "SettingsWindow.config_save_failed_content": "The configuration file could not be written. Check permissions or whether the disk or file is in use, then try again.",
   "SettingsWindow.attachment_settings_save_failed_title": "Save failed",
   "SettingsWindow.language_save_failed_title": "Save failed",

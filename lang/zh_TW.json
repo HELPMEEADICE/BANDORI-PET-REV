@@ -3,6 +3,7 @@
   "Reminder.save_failed_content": "本次工作階段仍會繼續執行，但重新啟動後提醒可能恢復舊狀態。請檢查設定檔權限或占用情況。",
   "PetWindow.runtime_save_failed_title": "介面狀態儲存失敗",
   "PetWindow.runtime_save_failed_content": "本次工作階段仍會使用目前狀態，但重新啟動後部分介面設定可能恢復。請檢查設定檔權限或占用情況。",
+  "ChatCommand.runtime_sync_failed": "設定已儲存，但目前工作階段未能同步；重新啟動應用程式後將生效。",
   "SettingsWindow.config_save_failed_content": "設定檔未寫入，請檢查權限或磁碟、檔案占用後再試。",
   "SettingsWindow.attachment_settings_save_failed_title": "儲存失敗",
   "SettingsWindow.language_save_failed_title": "儲存失敗",

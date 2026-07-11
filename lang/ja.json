@@ -3,6 +3,7 @@
   "Reminder.save_failed_content": "このセッションでは引き続き動作しますが、再起動後に以前の状態へ戻る可能性があります。設定ファイルの権限や使用状況を確認してください。",
   "PetWindow.runtime_save_failed_title": "画面状態を保存できませんでした",
   "PetWindow.runtime_save_failed_content": "このセッションでは現在の状態を維持しますが、再起動後に一部の画面設定が戻る可能性があります。設定ファイルの権限や使用状況を確認してください。",
+  "ChatCommand.runtime_sync_failed": "設定は保存されましたが、現在のセッションには同期できませんでした。アプリの再起動後に反映されます。",
   "SettingsWindow.config_save_failed_content": "設定ファイルを書き込めませんでした。権限、またはディスクやファイルの使用状況を確認して再試行してください。",
   "SettingsWindow.attachment_settings_save_failed_title": "保存失敗",
   "SettingsWindow.language_save_failed_title": "保存失敗",

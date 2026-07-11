@@ -425,12 +425,15 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
                     "extra_messages": [],
                 }
             payload = _reminder_settings_payload(cfg, alarms, pomodoros)
-            publish_settings(payload)
+            runtime_synced = publish_settings(payload) is not False
             next_at = alarm.get("next_at", "").replace("T", " ")
             repeat_label = repeat_days_label(alarm.get("repeat_days", []))
             desc = alarm.get("description", "") or "无描述"
             return {
-                "content": f"已创建闹钟：{alarm['time']}，{repeat_label}，下次 {next_at}，描述：{desc}。",
+                "content": (
+                    f"已创建闹钟：{alarm['time']}，{repeat_label}，下次 {next_at}，描述：{desc}。"
+                    + (" 配置已保存，但当前会话未能同步，重启应用后将开始生效。" if not runtime_synced else "")
+                ),
                 "extra_messages": [],
             }
         if name == START_POMODORO_TOOL_NAME:
@@ -448,10 +451,13 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
                     "extra_messages": [],
                 }
             payload = _reminder_settings_payload(cfg, alarms, pomodoros)
-            publish_settings(payload)
+            runtime_synced = publish_settings(payload) is not False
             desc = pomodoro.get("description", "") or "无描述"
             return {
-                "content": f"已启动番茄钟：{pomodoro['repeat_count']} 次专注循环，描述：{desc}。",
+                "content": (
+                    f"已启动番茄钟：{pomodoro['repeat_count']} 次专注循环，描述：{desc}。"
+                    + (" 配置已保存，但当前会话未能同步，重启应用后将开始生效。" if not runtime_synced else "")
+                ),
                 "extra_messages": [],
             }
     except Exception as exc:

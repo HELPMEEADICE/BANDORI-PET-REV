@@ -666,7 +666,7 @@ def main():
         worker = NonStreamWorker(api_url, api_key, model_id, messages, enable_thinking, app)
         raw_event = event.get("raw_event") if isinstance(event, dict) else None
         character_for_event = character
-        cleanup_state = {"done": False}
+        cleanup_state = {"done": False, "timed_out": False}
 
         # Bound to the worker's lifetime rather than fired and forgotten: a
         # reply that finishes early cancels this immediately, so high-frequency
@@ -674,11 +674,17 @@ def main():
         timeout_timer = QTimer(app)
         timeout_timer.setSingleShot(True)
         timeout_timer.setInterval(130_000)
+        force_cleanup_timer = QTimer(app)
+        force_cleanup_timer.setSingleShot(True)
+        force_cleanup_timer.setInterval(5_000)
 
         def _stop_timeout_timer():
             if isValid(timeout_timer):
                 timeout_timer.stop()
                 timeout_timer.deleteLater()
+            if isValid(force_cleanup_timer):
+                force_cleanup_timer.stop()
+                force_cleanup_timer.deleteLater()
 
         def _cleanup(delete_later=True):
             _stop_timeout_timer()
@@ -693,8 +699,24 @@ def main():
             return True
 
         def _on_timeout():
+            cleanup_state["timed_out"] = True
             if isValid(worker) and worker.isRunning():
                 worker.requestInterruption()
+                force_cleanup_timer.start()
+            else:
+                _cleanup()
+
+        def _force_timeout_cleanup():
+            if not isValid(worker):
+                _cleanup(delete_later=False)
+                return
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait(250)
+            if worker.isRunning():
+                force_cleanup_timer.start()
+                return
+            _cleanup()
 
         def _on_destroyed():
             _stop_timeout_timer()
@@ -706,27 +728,34 @@ def main():
         def _on_finished(full_text, _reasoning, _actions):
             if not _cleanup(delete_later=False):
                 return
+            if cleanup_state["timed_out"]:
+                if isValid(worker):
+                    worker.deleteLater()
+                return
             clean = strip_action_tags(full_text)
             with napcat_ref["lock"]:
                 client = napcat_ref.get("client")
             if clean and client is not None and isinstance(raw_event, dict):
-                client.send_reply(
+                reply_sent = client.send_reply(
                     raw_event,
                     clean,
                     mention_sender=bool(cfg.get("napcat_reply_mention_sender", True)),
                 )
-                overlay = {
-                    "source": "napcat",
-                    "state": "stream",
-                    "mode": "replace",
-                    "title": _tr("ChatIntegration.napcat_reply_title", default="已回复 QQ"),
-                    "text": clean,
-                    "action": "smile",
-                    "ttl_ms": 9000,
-                    "anchor_to_pet": True,
-                    "character": character_for_event,
-                }
-                ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+                if reply_sent:
+                    overlay = {
+                        "source": "napcat",
+                        "state": "stream",
+                        "mode": "replace",
+                        "title": _tr("ChatIntegration.napcat_reply_title", default="已回复 QQ"),
+                        "text": clean,
+                        "action": "smile",
+                        "ttl_ms": 9000,
+                        "anchor_to_pet": True,
+                        "character": character_for_event,
+                    }
+                    ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+                else:
+                    print("NapCat auto-reply could not be queued: connection is unavailable")
             if isValid(worker):
                 worker.deleteLater()
 
@@ -738,6 +767,7 @@ def main():
         worker.error.connect(_on_error)
         worker.destroyed.connect(_on_destroyed)
         timeout_timer.timeout.connect(_on_timeout)
+        force_cleanup_timer.timeout.connect(_force_timeout_cleanup)
         with napcat_ref["lock"]:
             napcat_ref["workers"].append(worker)
         worker.start()

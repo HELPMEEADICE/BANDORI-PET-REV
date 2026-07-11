@@ -134,12 +134,25 @@ def _reminder_payload(cfg, alarms: list[dict], pomodoros: list[dict]) -> dict:
     }
 
 
-def _publish(payload: dict) -> None:
+def _publish(payload: dict) -> bool:
     try:
         from settings_bus import publish_settings
-        publish_settings(payload)
+        return publish_settings(payload) is not False
     except Exception as exc:
         log_swallowed("chat_commands._publish", exc)
+        return False
+
+
+def _with_runtime_sync_warning(result: dict, failed: bool) -> dict:
+    if not failed:
+        return result
+    result = dict(result)
+    result["runtime_sync_failed"] = True
+    result["message"] = str(result.get("message", "")).rstrip() + "\n" + _tr(
+        "ChatCommand.runtime_sync_failed",
+        default="配置已保存，但当前会话未能同步；重启应用后将生效。",
+    )
+    return result
 
 
 def _save_failed_result() -> dict:
@@ -178,8 +191,7 @@ def _handle_toggle(cfg, definition: dict, arg: str, publish: bool) -> dict:
     if not _save_config(cfg):
         cfg.set(key, current)
         return _save_failed_result()
-    if publish:
-        _publish({key: value})
+    runtime_sync_failed = publish and not _publish({key: value})
     message = _tr(
         "ChatCommand.toggle_done",
         default="已{state}{label}。",
@@ -198,7 +210,7 @@ def _handle_toggle(cfg, definition: dict, arg: str, publish: bool) -> dict:
     result = {"message": message}
     if key == "llm_show_reasoning":
         result["show_reasoning"] = value
-    return result
+    return _with_runtime_sync_warning(result, runtime_sync_failed)
 
 
 def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
@@ -233,12 +245,11 @@ def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
         cfg.set(ALARM_CONFIG_KEY, previous_alarms)
         cfg.set(POMODORO_CONFIG_KEY, previous_pomodoros)
         return _save_failed_result()
-    if publish:
-        _publish(_reminder_payload(cfg, alarms, pomodoros))
+    runtime_sync_failed = publish and not _publish(_reminder_payload(cfg, alarms, pomodoros))
     next_text = alarm.get("next_at", "").replace("T", " ")
     char_name = _resolve_name(character, name_resolver)
     if description:
-        return {
+        return _with_runtime_sync_warning({
             "message": _tr(
                 "ChatCommand.clock_added",
                 default="已为 {character} 添加时钟：{time}，下次响铃 {next_at}，描述：{desc}。",
@@ -247,8 +258,8 @@ def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
                 next_at=next_text,
                 desc=description,
             )
-        }
-    return {
+        }, runtime_sync_failed)
+    return _with_runtime_sync_warning({
         "message": _tr(
             "ChatCommand.clock_added_no_desc",
             default="已为 {character} 添加时钟：{time}，下次响铃 {next_at}。届时将由 {character} 生成个性化提醒。",
@@ -256,7 +267,7 @@ def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
             time=alarm.get("time", hhmm),
             next_at=next_text,
         )
-    }
+    }, runtime_sync_failed)
 
 
 def _handle_pomodoro(cfg, rest: str, publish: bool, name_resolver) -> dict:
@@ -283,11 +294,10 @@ def _handle_pomodoro(cfg, rest: str, publish: bool, name_resolver) -> dict:
         cfg.set(ALARM_CONFIG_KEY, previous_alarms)
         cfg.set(POMODORO_CONFIG_KEY, previous_pomodoros)
         return _save_failed_result()
-    if publish:
-        _publish(_reminder_payload(cfg, alarms, pomodoros))
+    runtime_sync_failed = publish and not _publish(_reminder_payload(cfg, alarms, pomodoros))
     char_name = _resolve_name(character, name_resolver)
     if description:
-        return {
+        return _with_runtime_sync_warning({
             "message": _tr(
                 "ChatCommand.pomodoro_added",
                 default="已为 {character} 启动番茄钟：{count} 次专注循环，描述：{desc}。",
@@ -295,15 +305,15 @@ def _handle_pomodoro(cfg, rest: str, publish: bool, name_resolver) -> dict:
                 count=pomodoro.get("repeat_count", repeat_count),
                 desc=description,
             )
-        }
-    return {
+        }, runtime_sync_failed)
+    return _with_runtime_sync_warning({
         "message": _tr(
             "ChatCommand.pomodoro_added_no_desc",
             default="已为 {character} 启动番茄钟：{count} 次专注循环。每个阶段将由 {character} 生成个性化提醒。",
             character=char_name,
             count=pomodoro.get("repeat_count", repeat_count),
         )
-    }
+    }, runtime_sync_failed)
 
 
 def _resolve_name(character: str, name_resolver) -> str:

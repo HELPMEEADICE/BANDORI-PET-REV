@@ -3,6 +3,7 @@
   "Reminder.save_failed_content": "Die Erinnerungen laufen in dieser Sitzung weiter, können aber nach einem Neustart auf den alten Stand zurückgesetzt werden. Prüfen Sie die Berechtigungen und Dateisperren.",
   "PetWindow.runtime_save_failed_title": "Oberflächenstatus nicht gespeichert",
   "PetWindow.runtime_save_failed_content": "Der aktuelle Status bleibt in dieser Sitzung aktiv, aber einige Oberflächeneinstellungen können nach einem Neustart zurückgesetzt werden. Prüfen Sie Berechtigungen und Dateisperren.",
+  "ChatCommand.runtime_sync_failed": "Die Konfiguration wurde gespeichert, konnte aber nicht mit der aktuellen Sitzung synchronisiert werden und wird nach einem Neustart wirksam.",
   "SettingsWindow.config_save_failed_content": "Die Konfigurationsdatei konnte nicht geschrieben werden. Prüfen Sie Berechtigungen oder ob der Datenträger bzw. die Datei verwendet wird, und versuchen Sie es erneut.",
   "SettingsWindow.attachment_settings_save_failed_title": "Speichern fehlgeschlagen",
   "SettingsWindow.language_save_failed_title": "Speichern fehlgeschlagen",

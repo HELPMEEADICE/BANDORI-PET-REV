@@ -23,6 +23,22 @@ def test_main_force_exit_watchdog_does_not_depend_on_qt_event_loop():
     assert "scheduler.has_running_workers()" in quit_source
 
 
+def test_napcat_reply_overlay_requires_successful_send():
+    source = Path("main.py").read_text(encoding="utf-8")
+    finished = source.split("        def _on_finished(full_text", 1)[1].split("        def _on_error", 1)[0]
+    assert "reply_sent = client.send_reply(" in finished
+    assert "if reply_sent:" in finished
+
+
+def test_napcat_timeout_suppresses_late_reply_and_has_cleanup_fallback():
+    source = Path("main.py").read_text(encoding="utf-8")
+    reply_flow = source.split("    def _napcat_generate_reply", 1)[1].split("    def read_ipc_messages", 1)[0]
+    assert 'cleanup_state["timed_out"] = True' in reply_flow
+    assert 'if cleanup_state["timed_out"]:' in reply_flow
+    assert "force_cleanup_timer.timeout.connect(_force_timeout_cleanup)" in reply_flow
+    assert "worker.terminate()" in reply_flow
+
+
 def test_settings_process_handles_shutdown_ipc():
     source = Path("settings_process.py").read_text(encoding="utf-8")
     assert 'elif line == "SHUTDOWN":' in source
