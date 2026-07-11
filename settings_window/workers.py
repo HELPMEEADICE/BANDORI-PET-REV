@@ -5,6 +5,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from settings_window.constants import *
+from network_worker import CancelableNetworkWorker
 
 
 class UpdateCheckWorker(QThread):
@@ -37,7 +38,7 @@ class UpdateApplyWorker(QThread):
             self.error.emit(str(exc))
 
 
-class McpConnectionTestWorker(QThread):
+class McpConnectionTestWorker(CancelableNetworkWorker):
     finished = Signal(str)
     error = Signal(str)
 
@@ -49,13 +50,17 @@ class McpConnectionTestWorker(QThread):
         try:
             from mcp_bridge import test_mcp_servers
 
+            self._config["_cancel_event"] = self.cancel_event
             success, details = test_mcp_servers(self._config)
+            if self.cancelled():
+                return
             if success:
                 self.finished.emit(details)
             else:
                 self.error.emit(details)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self.cancelled():
+                self.error.emit(str(exc))
 
 
 class ModelPackageDownloadWorker(QThread):
@@ -298,7 +303,7 @@ class ModelDetailMetadataWorker(QThread):
         return ""
 
 
-class TestConnectionWorker(QThread):
+class TestConnectionWorker(CancelableNetworkWorker):
     succeeded = Signal()
     error = Signal(str)
 
@@ -323,11 +328,13 @@ class TestConnectionWorker(QThread):
                     self._test_responses_request(urllib.request, json, headers, ctx)
                 else:
                     self._test_chat_completions_request(urllib.request, json, headers, ctx)
-                self.succeeded.emit()
+                if not self.cancelled():
+                    self.succeeded.emit()
             except urllib.error.HTTPError as e:
                 if self._api_mode == "responses" and e.code in (400, 403, 404, 422):
                     self._test_chat_completions_request(urllib.request, json, headers, ctx)
-                    self.succeeded.emit()
+                    if not self.cancelled():
+                        self.succeeded.emit()
                     return
                 raise
         except urllib.error.HTTPError as e:
@@ -336,11 +343,14 @@ class TestConnectionWorker(QThread):
                 msg = err_body.get("error", {}).get("message", str(e))
             except Exception:
                 msg = str(e)
-            self.error.emit(f"HTTP {e.code}: {msg}")
+            if not self.cancelled():
+                self.error.emit(f"HTTP {e.code}: {msg}")
         except urllib.error.URLError as e:
-            self.error.emit(f"Network error: {e.reason}")
+            if not self.cancelled():
+                self.error.emit(f"Network error: {e.reason}")
         except Exception as e:
-            self.error.emit(str(e))
+            if not self.cancelled():
+                self.error.emit(str(e))
 
     def _test_responses_request(self, urllib_request, json_module, headers: dict, ctx):
         url = responses_api_url(self._api_url)
@@ -349,10 +359,16 @@ class TestConnectionWorker(QThread):
             "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hi"}]}],
         }).encode("utf-8")
         req = urllib_request.Request(url, data=body, headers=headers, method="POST")
-        with urllib_request.urlopen(req, timeout=30, context=ctx) as resp:
-            data = json_module.loads(resp.read().decode("utf-8"))
-            if not data.get("id"):
-                raise ValueError("Unexpected response format")
+        resp = self.open_url(req, timeout=30, context=ctx)
+        if resp is None:
+            return
+        try:
+            with resp:
+                data = json_module.loads(resp.read().decode("utf-8"))
+        finally:
+            self._release_response(resp)
+        if not data.get("id"):
+            raise ValueError("Unexpected response format")
 
     def _test_chat_completions_request(self, urllib_request, json_module, headers: dict, ctx):
         url = chat_completions_api_url(self._api_url)
@@ -363,13 +379,19 @@ class TestConnectionWorker(QThread):
         sanitize_chat_body_for_url(body_obj, url)
         body = json_module.dumps(body_obj).encode("utf-8")
         req = urllib_request.Request(url, data=body, headers=headers, method="POST")
-        with urllib_request.urlopen(req, timeout=30, context=ctx) as resp:
-            data = json_module.loads(resp.read().decode("utf-8"))
-            if not data.get("choices", []):
-                raise ValueError("Unexpected response format")
+        resp = self.open_url(req, timeout=30, context=ctx)
+        if resp is None:
+            return
+        try:
+            with resp:
+                data = json_module.loads(resp.read().decode("utf-8"))
+        finally:
+            self._release_response(resp)
+        if not data.get("choices", []):
+            raise ValueError("Unexpected response format")
 
 
-class FetchModelsWorker(QThread):
+class FetchModelsWorker(CancelableNetworkWorker):
     finished = Signal(object)
     error = Signal(str)
 
@@ -390,10 +412,17 @@ class FetchModelsWorker(QThread):
                 self._models_url, headers=headers, method="GET"
             )
 
-            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                models = data.get("data", [])
-                ids = [m.get("id", "") for m in models if m.get("id")]
+            resp = self.open_url(req, timeout=30, context=ctx)
+            if resp is None:
+                return
+            try:
+                with resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            finally:
+                self._release_response(resp)
+            models = data.get("data", [])
+            ids = [m.get("id", "") for m in models if m.get("id")]
+            if not self.cancelled():
                 self.finished.emit(sorted(ids))
         except urllib.error.HTTPError as e:
             try:
@@ -401,8 +430,11 @@ class FetchModelsWorker(QThread):
                 msg = err_body.get("error", {}).get("message", str(e))
             except Exception:
                 msg = str(e)
-            self.error.emit(f"HTTP {e.code}: {msg}")
+            if not self.cancelled():
+                self.error.emit(f"HTTP {e.code}: {msg}")
         except urllib.error.URLError as e:
-            self.error.emit(f"Network error: {e.reason}")
+            if not self.cancelled():
+                self.error.emit(f"Network error: {e.reason}")
         except Exception as e:
-            self.error.emit(str(e))
+            if not self.cancelled():
+                self.error.emit(str(e))

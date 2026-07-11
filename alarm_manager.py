@@ -48,6 +48,7 @@ from reminder_core import (
     repeat_days_label,
 )
 from screen_awareness import ScreenAwarenessVisionWorker, clamp_screen_awareness_interval
+from network_worker import delete_thread_when_stopped
 from tts_common import SingleShotTTSCallbacksMixin, strip_tts_action_tags
 from tts_manager import TTSPlayer, TTSRequestWorker, is_tts_enabled
 _TTS_AVAILABLE = True
@@ -177,7 +178,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._screen_awareness_worker.quit()
             self._screen_awareness_worker.wait(250)
         if self._screen_awareness_worker is not None and not self._screen_awareness_worker.isRunning():
-            self._screen_awareness_worker.deleteLater()
+            delete_thread_when_stopped(self._screen_awareness_worker)
             self._screen_awareness_worker = None
         for worker in list(self._cancelled_tts_workers):
             if worker is not None and worker.isRunning():
@@ -313,7 +314,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         if worker is not self._screen_awareness_worker:
             return
         self._screen_awareness_worker = None
-        worker.deleteLater()
+        delete_thread_when_stopped(worker)
         if self._stopped:
             return
         result = result if isinstance(result, dict) else {}
@@ -352,7 +353,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         if worker is not self._screen_awareness_worker:
             return
         self._screen_awareness_worker = None
-        worker.deleteLater()
+        delete_thread_when_stopped(worker)
         if self._stopped:
             return
         _log.warning("Screen awareness failed: %s", message)

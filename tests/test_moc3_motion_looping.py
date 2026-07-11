@@ -147,7 +147,7 @@ end
         source = Path("third_party/Live2D-v2-Lua/live2d_moc3_pet_embed.lua").read_bytes()
         patched = _patch_lua_moc3_pet_embed_delta("live2d_moc3_pet_embed", source)
         helper = re.search(
-            rb"local function compute_delta_seconds\(state, time_msec\).*?\nend\n",
+            rb"local function compute_delta_seconds\(state, time_msec\).*?\r?\nend\r?\n",
             patched,
             re.DOTALL,
         ).group(0)

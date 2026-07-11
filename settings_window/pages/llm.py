@@ -1370,18 +1370,22 @@ class LLMPageMixin:
 
         if hasattr(self, '_test_worker') and self._test_worker is not None:
             if self._test_worker.isRunning():
-                self._test_worker.quit()
-                self._test_worker.wait(2000)
+                self._retire_settings_worker(self._test_worker)
 
         api_mode = self._effective_llm_api_mode() if hasattr(self, "_llm_api_mode") else "chat_completions"
         self._test_connection_target = target
         self._test_worker = TestConnectionWorker(api_url, api_key, model_id, api_mode, parent=self)
+        self._test_worker._bandori_target = target
         self._test_worker.succeeded.connect(self._on_test_finished)
         self._test_worker.error.connect(self._on_test_error)
         self._test_worker.start()
 
     def _on_test_finished(self):
-        target = getattr(self, "_test_connection_target", "main")
+        worker = self.sender()
+        if worker is not getattr(self, "_test_worker", None):
+            return
+        self._test_worker = None
+        target = getattr(worker, "_bandori_target", "main")
         if target == "aux":
             content = _tr(
                 "SettingsWindow.llm_aux_connected_content",
@@ -1398,7 +1402,14 @@ class LLMPageMixin:
         )
 
     def _on_test_error(self, msg: str):
-        target = getattr(self, "_test_connection_target", "main")
+        worker = self.sender()
+        if worker is getattr(self, "_test_worker", None):
+            self._test_worker = None
+        elif worker is getattr(self, "_fetch_worker", None):
+            self._fetch_worker = None
+        else:
+            return
+        target = getattr(worker, "_bandori_target", "main")
         if target == "aux":
             msg = _tr(
                 "SettingsWindow.llm_aux_connection_failed_prefix",
@@ -1432,16 +1443,21 @@ class LLMPageMixin:
 
         if hasattr(self, '_fetch_worker') and self._fetch_worker is not None:
             if self._fetch_worker.isRunning():
-                self._fetch_worker.quit()
-                self._fetch_worker.wait(2000)
+                self._retire_settings_worker(self._fetch_worker)
 
         self._fetch_worker = FetchModelsWorker(models_url, api_key, parent=self)
+        self._fetch_worker._bandori_target = "aux" if is_aux_target else "main"
+        self._fetch_worker._bandori_target_input = self._llm_model_fetch_target
         self._fetch_worker.finished.connect(self._on_models_fetched)
         self._fetch_worker.error.connect(self._on_test_error)
         self._fetch_worker.start()
 
     def _on_models_fetched(self, models: list[str]):
-        target = self._llm_model_fetch_target
+        worker = self.sender()
+        if worker is not getattr(self, "_fetch_worker", None):
+            return
+        self._fetch_worker = None
+        target = getattr(worker, "_bandori_target_input", self._llm_model_id)
         if target is self._llm_aux_model_id:
             list_widget = self._llm_aux_model_list
             list_layout = self._llm_aux_model_list_layout

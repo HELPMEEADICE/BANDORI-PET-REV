@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import QBuffer, QIODevice, QThread, Qt, Signal
 
 from vision_fallback import analyze_images_with_aux_model
+from network_worker import CancelableNetworkWorker
 
 
 OUTFIT_DESCRIPTIONS_KEY = "outfit_descriptions"
@@ -167,7 +168,7 @@ def make_outfit_description_entry(
     }
 
 
-class OutfitDescriptionWorker(QThread):
+class OutfitDescriptionWorker(CancelableNetworkWorker):
     finished = Signal(str, str)
     error = Signal(str)
 
@@ -218,6 +219,8 @@ class OutfitDescriptionWorker(QThread):
         candidates.append(main)
 
         for api_url, api_key, model_id, enable_thinking, source in candidates:
+            if self.cancelled():
+                return
             if not api_url or not model_id:
                 failures.append(f"{source}: model is not configured")
                 continue
@@ -230,15 +233,18 @@ class OutfitDescriptionWorker(QThread):
                     prompt,
                     enable_thinking,
                     timeout=60,
+                    worker=self,
                 )
                 description = _clean_description(description)
                 if description:
-                    self.finished.emit(description, source)
+                    if not self.cancelled():
+                        self.finished.emit(description, source)
                     return
                 failures.append(f"{source}: empty response")
             except Exception as exc:
                 failures.append(f"{source}: {exc}")
-        self.error.emit("; ".join(failures) or "No multimodal model is configured")
+        if not self.cancelled():
+            self.error.emit("; ".join(failures) or "No multimodal model is configured")
 
 
 def _clean_description(value) -> str:

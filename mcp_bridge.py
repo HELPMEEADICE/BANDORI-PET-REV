@@ -121,10 +121,13 @@ def test_mcp_servers(config: dict) -> tuple[bool, str]:
         return False, _tr("McpBridge.no_enabled_servers", default="No enabled MCP servers were found.")
 
     lines = []
+    cancel_event = config.get("_cancel_event")
     ok_count = 0
     warning_count = 0
     fail_count = 0
     for server in servers:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("MCP test cancelled")
         label = str(server.get("label", "") or "mcp")
         transport = str(server.get("transport", "stdio") or "stdio").lower()
         try:
@@ -146,9 +149,9 @@ def test_mcp_servers(config: dict) -> tuple[bool, str]:
                         label=label,
                     ))
                     continue
-                tools = _list_http_tools(server)
+                tools = _list_http_tools(server, cancel_event)
             else:
-                tools = _list_server_tools(server)
+                tools = _list_server_tools(server, cancel_event)
             names = [str(tool.get("name", "") or "") for tool in tools if isinstance(tool, dict)]
             ok_count += 1
             preview = ", ".join(name for name in names[:6] if name)

@@ -105,7 +105,7 @@ def main():
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
     napcat_ref = {"client": None, "workers": [], "lock": threading.RLock()}
-    reminder_ref = {"scheduler": None}
+    reminder_ref = {"scheduler": None, "restart_generation": 0}
     event_manager_ref = {"manager": None}
     ai_event_bridge = AiEventBridge()
 
@@ -312,10 +312,18 @@ def main():
             15_000,
         )
 
-    def init_reminder_scheduler():
+    def init_reminder_scheduler(generation=None):
+        if generation is None:
+            reminder_ref["restart_generation"] += 1
+            generation = reminder_ref["restart_generation"]
+        elif generation != reminder_ref["restart_generation"]:
+            return
         scheduler = reminder_ref.get("scheduler")
         if scheduler is not None:
             scheduler.stop()
+            if scheduler.has_running_workers():
+                QTimer.singleShot(50, lambda current=generation: init_reminder_scheduler(current))
+                return
             scheduler.deleteLater()
         reminder_ref["scheduler"] = ReminderScheduler(
             cfg,
@@ -326,6 +334,7 @@ def main():
         )
 
     def stop_reminder_scheduler():
+        reminder_ref["restart_generation"] += 1
         scheduler = reminder_ref.get("scheduler")
         if scheduler is not None:
             scheduler.stop()

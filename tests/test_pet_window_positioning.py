@@ -8,7 +8,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication, QWidget
 
 from model_manager import MODEL_FORMAT_MOC3
-from pet_window import PetWindow
+from pet_window import LIVE2D_MOC3_BASE_HEIGHT, PetWindow
 
 
 class FakeScreen:
@@ -76,6 +76,7 @@ class SaveConfigHarness(QWidget):
     _current_model_entry = PetWindow._current_model_entry
     _configured_model_count = PetWindow._configured_model_count
     _with_saved_action_profile = PetWindow._with_saved_action_profile
+    _persist_runtime_config = PetWindow._persist_runtime_config
 
     def __init__(self):
         super().__init__()
@@ -103,6 +104,8 @@ class SaveConfigHarness(QWidget):
         self._startup_position_restore_pending = False
         self._restoring_saved_position = False
         self._settings_models_updated = True
+        self._runtime_save_failure_reported = False
+        self._tray_icon = None
 
     def _window_placement(self):
         return {"x": self.x(), "y": self.y()}
@@ -157,7 +160,7 @@ class PetWindowPositioningTest(unittest.TestCase):
         harness = ScaleHarness()
         harness._live2d_model_format = MODEL_FORMAT_MOC3
 
-        self.assertEqual((400, 720), harness._live2d_size())
+        self.assertEqual((400, LIVE2D_MOC3_BASE_HEIGHT), harness._live2d_size())
 
     def test_save_config_does_not_rewrite_models_after_remote_model_update(self):
         harness = SaveConfigHarness()

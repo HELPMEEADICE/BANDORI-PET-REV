@@ -354,8 +354,7 @@ class MCPPageMixin:
             )
             return
         if hasattr(self, "_mcp_test_worker") and self._mcp_test_worker is not None and self._mcp_test_worker.isRunning():
-            self._mcp_test_worker.quit()
-            self._mcp_test_worker.wait(2000)
+            self._retire_settings_worker(self._mcp_test_worker)
         config = {
             "llm_mcp_enabled": True,
             "llm_mcp_use_native": self._llm_mcp_use_native.isChecked(),
@@ -367,6 +366,9 @@ class MCPPageMixin:
         self._mcp_test_worker.start()
 
     def _on_mcp_test_finished(self, details: str):
+        if self.sender() is not getattr(self, "_mcp_test_worker", None):
+            return
+        self._mcp_test_worker = None
         InfoBar.success(
             _tr("SettingsWindow.mcp_test_success_title", default="MCP 连接成功"),
             details,
@@ -376,6 +378,9 @@ class MCPPageMixin:
         )
 
     def _on_mcp_test_error(self, details: str):
+        if self.sender() is not getattr(self, "_mcp_test_worker", None):
+            return
+        self._mcp_test_worker = None
         InfoBar.error(
             _tr("SettingsWindow.mcp_test_failed_title", default="MCP 连接失败"),
             details,

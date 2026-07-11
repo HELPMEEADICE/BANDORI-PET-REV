@@ -39,12 +39,10 @@ def test_napcat_timeout_suppresses_late_reply_and_has_cleanup_fallback():
     assert "worker.terminate()" in reply_flow
 
 
-def test_settings_cleanup_does_not_terminate_model_download_worker():
+def test_settings_cleanup_never_force_terminates_workers():
     source = Path("settings_window/settings_window.py").read_text(encoding="utf-8")
-    cleanup = source.split("    def _cleanup_workers(self):", 1)[1].split("    def _make_theme_widget", 1)[0]
-    assert "if attr == '_model_download_worker':" in cleanup
-    manager_loop = cleanup.split("        for worker in getattr(self, '_download_manager_workers'", 1)[1]
-    assert "worker.terminate()" not in manager_loop
+    cleanup = source.split("    def _cleanup_workers(self) -> bool:", 1)[1].split("    def _make_theme_widget", 1)[0]
+    assert "worker.terminate()" not in cleanup
 
 
 def test_settings_process_handles_shutdown_ipc():
@@ -58,7 +56,8 @@ def test_chat_process_uses_immediate_shutdown_path():
     window_source = Path("chat_window/chat_window.py").read_text(encoding="utf-8")
     assert "window.request_immediate_shutdown()" in process_source
     assert "def request_immediate_shutdown(self):" in window_source
-    assert "if self._immediate_shutdown:" in window_source
+    assert "(0.25 if self._immediate_shutdown else 1.5)" in window_source
+    assert "100 if self._immediate_shutdown else 1000" in window_source
 
 
 def test_settings_apply_does_not_block_on_flush_before_close():

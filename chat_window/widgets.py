@@ -29,12 +29,13 @@ from app_theme import (
     accent_color,
 )
 from vision_fallback import analyze_images_with_aux_model
+from network_worker import CancelableNetworkWorker
 
 from .constants import _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT, _prepare_fluent_round_menu
 from .scrollbar_style import fluent_scrollbar_style
 
 
-class AuxVisionFallbackWorker(QThread):
+class AuxVisionFallbackWorker(CancelableNetworkWorker):
     finished = Signal(str)
     error = Signal(str)
 
@@ -56,6 +57,7 @@ class AuxVisionFallbackWorker(QThread):
                 self._image_data_urls,
                 self._text,
                 self._config.get("llm_aux_enable_thinking", None),
+                worker=self,
             )
             if not self.isInterruptionRequested():
                 self.finished.emit(summary)

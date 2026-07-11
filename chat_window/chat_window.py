@@ -18,6 +18,7 @@ from i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir
+from network_worker import CancelableNetworkWorker
 from app_theme import (
     BANDORI_PRIMARY_SOFT,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
@@ -158,7 +159,7 @@ class ChatComposerTextEdit(FluentContextTextEdit):
         super().insertFromMimeData(source)
 
 
-class AttachmentImportWorker(QThread):
+class AttachmentImportWorker(CancelableNetworkWorker):
     progress = Signal(int, int, int, str)
     item_ready = Signal(dict)
     failed = Signal(str)
@@ -187,7 +188,8 @@ class AttachmentImportWorker(QThread):
                         str(item.get("name", "") or ""),
                     )
             except Exception as exc:
-                self.failed.emit(str(exc))
+                if not self.isInterruptionRequested():
+                    self.failed.emit(str(exc))
 
     def _emit_progress(self, index: int, job_count: int, copied: int, total: int, name: str):
         if total > 0:
@@ -245,11 +247,15 @@ class AttachmentImportWorker(QThread):
         name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
         request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
         target = None
+        response = None
         copied = 0
         content_type = ""
         success = False
         try:
-            with urllib.request.urlopen(request, timeout=12) as response:
+            response = self.open_url(request, timeout=12)
+            if response is None:
+                return None
+            with response:
                 content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
                 if content_type and not content_type.startswith("image/"):
                     raise OSError("URL does not point to an image")
@@ -275,6 +281,8 @@ class AttachmentImportWorker(QThread):
                         self._emit_progress(index, job_count, copied, total, name)
             success = True
         finally:
+            if response is not None:
+                self._release_response(response)
             if not success and target and target.exists():
                 try:
                     target.unlink()

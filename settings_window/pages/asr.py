@@ -357,12 +357,17 @@ class ASRPageMixin:
         self._asr_test_button.setEnabled(False)
 
     def _on_asr_test_recording_finished(self):
+        if self.sender() is not getattr(self, "_asr_test_worker", None):
+            return
+        self._asr_test_worker = None
         self._asr_test_recording = False
         if getattr(self, "_asr_test_request_worker", None) is None:
             self._asr_test_button.setEnabled(True)
             self._asr_test_button.setText(_tr("SettingsWindow.asr_test_button_start", default="开始录音"))
 
     def _on_asr_test_audio_ready(self, audio: bytes, media_type: str):
+        if self.sender() is not getattr(self, "_asr_test_worker", None):
+            return
         from asr_manager import ASRRequestWorker as request_class
         self._asr_test_result.setPlainText(_tr("SettingsWindow.asr_test_transcribing", default="正在识别..."))
         self._asr_test_request_worker = request_class(audio, media_type, self._current_asr_config(), self)
@@ -372,14 +377,24 @@ class ASRPageMixin:
         self._asr_test_request_worker.start()
 
     def _on_asr_test_text_ready(self, text: str):
+        if self.sender() is not getattr(self, "_asr_test_request_worker", None):
+            return
         self._asr_test_result.setPlainText(text)
 
     def _on_asr_test_request_finished(self):
+        if self.sender() is not getattr(self, "_asr_test_request_worker", None):
+            return
         self._asr_test_request_worker = None
         self._asr_test_button.setEnabled(True)
         self._asr_test_button.setText(_tr("SettingsWindow.asr_test_button_start", default="开始录音"))
 
     def _on_asr_test_error(self, msg: str):
+        sender = self.sender()
+        if sender not in (
+            getattr(self, "_asr_test_worker", None),
+            getattr(self, "_asr_test_request_worker", None),
+        ):
+            return
         self._asr_test_recording = False
         self._asr_test_request_worker = None
         self._asr_test_button.setEnabled(True)

@@ -18,6 +18,7 @@ def analyze_images_with_aux_model(
     user_text: str = "",
     enable_thinking=None,
     timeout: int = 120,
+    worker=None,
 ) -> str:
     image_data_urls = [url for url in image_data_urls if url]
     if not api_url or not model_id or not image_data_urls:
@@ -51,8 +52,15 @@ def analyze_images_with_aux_model(
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    resp = worker.open_url(req, timeout=timeout) if worker is not None else urllib.request.urlopen(req, timeout=timeout)
+    if resp is None:
+        return ""
+    try:
+        with resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    finally:
+        if worker is not None:
+            worker._release_response(resp)
     choices = data.get("choices", [])
     if not choices:
         return ""

@@ -34,6 +34,7 @@ from outfit_description import (
     outfit_description_key,
 )
 from process_utils import app_base_dir, clamp_float, clamp_int, interaction_trace, ipc_server_name, process_program_and_args
+from network_worker import delete_thread_when_stopped
 from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_inbound_queue_key,
@@ -363,6 +364,8 @@ class PetWindow(QWidget):
         self._cfg = config_manager
         self._runtime_save_failure_reported = False
         self._outfit_description_worker = None
+        self._outfit_description_retired_workers = []
+        self._close_waiting_for_workers = False
         self._outfit_description_token = 0
         self._restore_layer_order_from_config()
         self._layer_index = self._compute_layer_index()
@@ -1564,6 +1567,27 @@ class PetWindow(QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        if self._close_waiting_for_workers:
+            event.ignore()
+            return
+        self._cancel_outfit_description_workers()
+        running = [
+            worker for worker in self._outfit_description_retired_workers
+            if worker is not None and worker.isRunning()
+        ]
+        for worker in running:
+            worker.wait(100)
+        running = [worker for worker in running if worker.isRunning()]
+        if running:
+            event.ignore()
+            self._close_waiting_for_workers = True
+
+            def retry_close():
+                self._close_waiting_for_workers = False
+                self.close()
+
+            QTimer.singleShot(250, retry_close)
+            return
         self._set_mouse_passthrough(False)
         self._close_poke_user_badge()
         self._live2d_widget.dispose()
@@ -1784,6 +1808,7 @@ class PetWindow(QWidget):
         return mode if mode in {"live2d", "pixel"} else "live2d"
 
     def _on_live2d_model_loaded(self):
+        self._cancel_outfit_description_workers()
         self._motion_guard_token += 1
         self._live2d_prewarm_token += 1
         self._last_context_idle_action_at = 0.0
@@ -1929,7 +1954,30 @@ class PetWindow(QWidget):
     def _clear_outfit_description_worker(self, worker):
         if self._outfit_description_worker is worker:
             self._outfit_description_worker = None
-        worker.deleteLater()
+        self._outfit_description_retired_workers = [
+            item for item in self._outfit_description_retired_workers
+            if item is not worker
+        ]
+        delete_thread_when_stopped(worker)
+
+    def _cancel_outfit_description_workers(self):
+        worker = self._outfit_description_worker
+        if worker is not None:
+            if worker.isRunning():
+                worker.requestInterruption()
+                if worker not in self._outfit_description_retired_workers:
+                    self._outfit_description_retired_workers.append(worker)
+            else:
+                worker.deleteLater()
+            self._outfit_description_worker = None
+        retained = []
+        for item in self._outfit_description_retired_workers:
+            if item is not None and item.isRunning():
+                item.requestInterruption()
+                retained.append(item)
+            elif item is not None:
+                item.deleteLater()
+        self._outfit_description_retired_workers = retained
 
     def _schedule_live2d_action_prewarm(self, token: int):
         self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()

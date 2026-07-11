@@ -30,7 +30,9 @@ class _FakeWorker:
         self.parent = parent
         self.finished = _FakeSignal()
         self.error = _FakeSignal()
+        self.completed = _FakeSignal()
         self.started = False
+        self.interrupted = False
         self.__class__.instances.append(self)
 
     def isRunning(self):
@@ -38,6 +40,9 @@ class _FakeWorker:
 
     def wait(self, _timeout):
         return True
+
+    def requestInterruption(self):
+        self.interrupted = True
 
     def start(self):
         self.started = True
@@ -48,6 +53,7 @@ class _Harness(ChatHistoryPageMixin):
         self._history_list_view = object()
         self._history_worker = None
         self._history_filter_worker = None
+        self._history_retired_workers = []
 
     def _on_history_query_error(self, _message):
         pass

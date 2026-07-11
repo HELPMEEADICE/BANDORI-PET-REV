@@ -314,19 +314,24 @@ class TTSPageMixin:
     def _stop_tts_test_playback(self):
         worker = getattr(self, "_tts_test_worker", None)
         if worker is not None and worker.isRunning():
-            worker.requestInterruption()
-            worker.wait(2000)
+            self._retire_settings_worker(worker)
+            self._tts_test_worker = None
         player = getattr(self, "_tts_test_player", None)
         if player is not None:
             player.stop()
 
     def _on_tts_test_audio_ready(self, _sequence: int, _generation: int, audio: bytes, media_type: str):
+        if self.sender() is not getattr(self, "_tts_test_worker", None):
+            return
         if not audio or getattr(self, "_tts_test_player", None) is None:
             return
         self._tts_test_received_audio = True
         self._tts_test_player.enqueue(audio, media_type)
 
     def _on_tts_test_finished(self):
+        if self.sender() is not getattr(self, "_tts_test_worker", None):
+            return
+        self._tts_test_worker = None
         if getattr(self, "_tts_test_failed", False):
             self._set_tts_test_running(False)
             return
@@ -352,6 +357,9 @@ class TTSPageMixin:
         self._set_tts_test_running(False)
 
     def _on_tts_test_error(self, msg: str):
+        sender = self.sender()
+        if isinstance(sender, QThread) and sender is not getattr(self, "_tts_test_worker", None):
+            return
         self._tts_test_failed = True
         self._set_tts_test_running(False)
         player = getattr(self, "_tts_test_player", None)

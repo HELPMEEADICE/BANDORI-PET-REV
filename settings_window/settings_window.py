@@ -1,3 +1,5 @@
+import time
+
 from process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
@@ -138,6 +140,8 @@ class SettingsWindow(
         self._data_management_page = None
         self._download_management_page = None
         self._download_manager_workers: dict[str, QThread] = {}
+        self._retired_settings_workers: list[QThread] = []
+        self._close_waiting_for_workers = False
         self._quality_page = None
         self._about_page = None
         self._statistics_page = None
@@ -471,10 +475,23 @@ class SettingsWindow(
             return True
 
     def closeEvent(self, event):
+        if self._close_waiting_for_workers:
+            event.ignore()
+            return
+        if not self._cleanup_workers():
+            event.ignore()
+            self._close_waiting_for_workers = True
+            self.setEnabled(False)
+
+            def retry_close():
+                self._close_waiting_for_workers = False
+                self.close()
+
+            QTimer.singleShot(250, retry_close)
+            return
         should_exit_app = self._first_run_wizard and self._show_launch and not self._launched
         self._disconnect_theme_connections()
         self._dispose_live2d_preview()
-        self._cleanup_workers()
         if self._memory_db is not None:
             try:
                 self._memory_db.close()
@@ -601,7 +618,23 @@ class SettingsWindow(
         anim.finished.connect(lambda: btn.setGraphicsEffect(None) if isValid(btn) else None)
         anim.start()
 
-    def _cleanup_workers(self):
+    def _retire_settings_worker(self, worker):
+        if worker is None:
+            return
+        if worker.isRunning():
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                cancel()
+            else:
+                worker.requestInterruption()
+            if worker not in self._retired_settings_workers:
+                self._retired_settings_workers.append(worker)
+        self._retired_settings_workers = [
+            item for item in self._retired_settings_workers
+            if item is not None and item.isRunning()
+        ]
+
+    def _cleanup_workers(self) -> bool:
         worker_attrs = (
             '_test_worker', '_fetch_worker', '_mcp_test_worker',
             '_update_check_worker', '_update_apply_worker', '_tts_test_worker',
@@ -609,25 +642,40 @@ class SettingsWindow(
             '_model_download_worker', '_model_detail_metadata_worker',
             '_history_worker', '_history_filter_worker',
         )
+        workers = list(self._retired_settings_workers)
         for attr in worker_attrs:
             worker = getattr(self, attr, None)
-            if worker is not None and worker.isRunning():
-                worker.requestInterruption()
-                worker.quit()
-                if attr == '_model_download_worker':
-                    worker.wait(2000)
-                    continue
-                if not worker.wait(2000):
-                    worker.terminate()
-                    worker.wait(1000)
-        for worker in getattr(self, '_download_manager_workers', {}).values():
+            if worker is not None:
+                workers.append(worker)
+        workers.extend(getattr(self, '_download_manager_workers', {}).values())
+        workers.extend(getattr(self, '_history_retired_workers', []))
+        workers = list(dict.fromkeys(worker for worker in workers if worker is not None))
+        for worker in workers:
             if worker.isRunning():
-                worker.requestInterruption()
-                worker.quit()
-                worker.wait(2000)
+                cancel = getattr(worker, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                else:
+                    worker.requestInterruption()
+        deadline = time.monotonic() + 0.5
+        for worker in workers:
+            if worker.isRunning():
+                remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+                if remaining_ms <= 0:
+                    break
+                worker.wait(min(remaining_ms, 100))
+        running = [worker for worker in workers if worker.isRunning()]
+        self._retired_settings_workers = list(dict.fromkeys([
+            *self._retired_settings_workers,
+            *running,
+        ]))
+        if running:
+            return False
+        self._retired_settings_workers.clear()
         player = getattr(self, '_tts_test_player', None)
         if player is not None:
             player.stop()
+        return True
 
     def _make_theme_widget(self, w: QWidget) -> QWidget:
         w.setAutoFillBackground(True)

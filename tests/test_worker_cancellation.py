@@ -6,6 +6,7 @@ from llm_manager import LLMStreamWorker, NonStreamWorker, ResponsesStreamWorker
 from asr_manager import ASRRequestWorker
 from tts_manager import TTSRequestWorker, TTSTranslationWorker
 from pet_window import PetWindow
+from network_worker import CancelableNetworkWorker
 
 
 class _ClosableResponse:
@@ -29,6 +30,16 @@ class WorkerCancellationTests(unittest.TestCase):
 
             self.assertTrue(response.closed)
             self.assertTrue(worker._cancel_event.is_set())
+
+    def test_shared_network_worker_closes_active_response(self):
+        worker = CancelableNetworkWorker()
+        response = _ClosableResponse()
+        self.assertTrue(worker._track_response(response))
+
+        worker.requestInterruption()
+
+        self.assertTrue(response.closed)
+        self.assertTrue(worker.cancelled())
 
     def test_non_stream_worker_close_and_suppresses_result_after_cancel(self):
         worker = NonStreamWorker("https://example.com/v1", "key", "model", [])

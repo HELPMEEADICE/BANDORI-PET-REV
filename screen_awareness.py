@@ -1,9 +1,10 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
 from desktop_state import current_desktop_state
 from i18n_manager import tr as _tr
 from screen_capture import capture_screenshot_data_url
 from vision_fallback import analyze_images_with_aux_model
+from network_worker import CancelableNetworkWorker
 
 
 SCREEN_AWARENESS_MIN_INTERVAL_MINUTES = 5
@@ -70,7 +71,7 @@ def screen_awareness_desktop_state(config: dict | None = None) -> dict:
     return {key: state.get(key) for key in keys if key in state}
 
 
-class ScreenAwarenessVisionWorker(QThread):
+class ScreenAwarenessVisionWorker(CancelableNetworkWorker):
     finished = Signal(dict)
     error = Signal(str)
 
@@ -127,6 +128,7 @@ class ScreenAwarenessVisionWorker(QThread):
                         prompt,
                         None,
                         timeout=120,
+                        worker=self,
                     )
                     result["screen_observation"] = str(summary or "").strip()
                     if not result["screen_observation"]:
@@ -138,6 +140,8 @@ class ScreenAwarenessVisionWorker(QThread):
                     result["mode"] = SCREEN_AWARENESS_MODEL_MODE_MAIN
                     result["screen_image_data_url"] = data_url
                     result["aux_fallback_error"] = str(exc)
-            self.finished.emit(result)
+            if not self.cancelled():
+                self.finished.emit(result)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self.cancelled():
+                self.error.emit(str(exc))

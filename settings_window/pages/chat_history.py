@@ -1,5 +1,6 @@
 import html
 import re
+import threading
 
 from PySide6.QtCore import QDate, QModelIndex, QRect, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QTextDocument
@@ -20,6 +21,7 @@ from qfluentwidgets.components.date_time.picker_base import PickerColumnFormatte
 from i18n_manager import date_picker_months
 from settings_window.constants import *
 from settings_window.widgets import *
+from network_worker import delete_thread_when_stopped
 
 
 class _I18nMonthFormatter(PickerColumnFormatter):
@@ -37,24 +39,54 @@ class _I18nMonthFormatter(PickerColumnFormatter):
 class _ChatHistoryWorker(QThread):
     finished = Signal(object)
     error = Signal(str)
+    completed = Signal()
 
     def __init__(self, db_factory, query_params: dict, parent=None):
         super().__init__(parent)
         self._db_factory = db_factory
-        self._query_params = query_params
+        self._query_params = dict(query_params)
+        self._db_lock = threading.Lock()
+        self._db = None
+
+    def requestInterruption(self):
+        with self._db_lock:
+            db = self._db
+        connection = getattr(db, "_conn", None)
+        if connection is not None:
+            try:
+                connection.interrupt()
+            except Exception:
+                pass
+        super().requestInterruption()
 
     def run(self):
         try:
             db = self._db_factory()
-            params = self._query_params
+            with self._db_lock:
+                self._db = db
+            if self.isInterruptionRequested():
+                return
+            params = dict(self._query_params)
             action = params.pop("action", "search")
             if action == "filters":
                 result = db.get_chat_history_filter_options()
             else:
                 result = db.search_chat_history(**params)
-            self.finished.emit(result)
+            if not self.isInterruptionRequested():
+                self.finished.emit(result)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self.isInterruptionRequested():
+                self.error.emit(str(exc))
+        finally:
+            with self._db_lock:
+                db = self._db
+                self._db = None
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            self.completed.emit()
 
 
 class ChatHistoryModel:
@@ -594,6 +626,7 @@ class ChatHistoryPageMixin:
         self._history_db = None
         self._history_worker = None
         self._history_filter_worker = None
+        self._history_retired_workers = []
         self._history_filter_cache = None
         self._history_loading_widget = None
         self._history_search_generation = 0
@@ -819,7 +852,8 @@ class ChatHistoryPageMixin:
         if self._history_worker is not None and self._history_worker.isRunning():
             self._history_worker.finished.disconnect()
             self._history_worker.error.disconnect()
-            self._history_worker.wait(200)
+            self._history_worker.requestInterruption()
+            self._history_retired_workers.append(self._history_worker)
         worker = _ChatHistoryWorker(
             db_factory=lambda: DatabaseManager(),
             query_params=params,
@@ -827,6 +861,7 @@ class ChatHistoryPageMixin:
         )
         worker.finished.connect(on_result)
         worker.error.connect(on_error or self._on_history_query_error)
+        worker.completed.connect(lambda current=worker: self._on_history_worker_completed(current))
         self._history_worker = worker
         worker.start()
 
@@ -840,8 +875,20 @@ class ChatHistoryPageMixin:
         )
         worker.finished.connect(on_result)
         worker.error.connect(on_error or self._on_history_query_error)
+        worker.completed.connect(lambda current=worker: self._on_history_worker_completed(current))
         self._history_filter_worker = worker
         worker.start()
+
+    def _on_history_worker_completed(self, worker):
+        if self._history_worker is worker:
+            self._history_worker = None
+        if self._history_filter_worker is worker:
+            self._history_filter_worker = None
+        self._history_retired_workers = [
+            item for item in self._history_retired_workers
+            if item is not worker
+        ]
+        delete_thread_when_stopped(worker)
 
     def _on_history_query_error(self, msg: str):
         self._hide_history_loading()
