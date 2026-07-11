@@ -25,6 +25,7 @@ from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from mcp_bridge import close_mcp_clients
 from pet_window import PetWindow
 from gpu_acceleration import configure_qt_gpu_acceleration
 from tray_utils import load_tray_icon
@@ -185,6 +186,7 @@ def main():
     app.aboutToQuit.connect(lambda: pet._close_radial_menu_process(force=True))
     app.aboutToQuit.connect(lambda: pet._close_chat_process())
     app.aboutToQuit.connect(lambda: pet._close_compact_ai_window())
+    app.aboutToQuit.connect(close_mcp_clients)
     app.aboutToQuit.connect(lambda: pet._close_settings_process())
     app.aboutToQuit.connect(pet._save_position_config)
     app.aboutToQuit.connect(pet._flush_save)

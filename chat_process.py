@@ -35,6 +35,7 @@ from ipc_bus import (
 )
 from i18n_manager import detect_system_language, set_language
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from mcp_bridge import close_mcp_clients
 from shared_memory_ipc import (
     decode_ipc_envelope,
     encode_ipc_envelope,
@@ -227,6 +228,7 @@ def main():
 
     start_ipc_heartbeat(app, register_chat_window, read_shutdown_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
+    app.aboutToQuit.connect(close_mcp_clients)
 
     window.show()
     saved_x = cfg.get("chat_window_x")

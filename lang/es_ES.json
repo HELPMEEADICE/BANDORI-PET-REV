@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "El proceso del servidor MCP no se está ejecutando.",
   "McpBridge.request_timeout": "Solicitud MCP agotada: {method}",
   "McpBridge.stdin_closed": "La entrada estándar del servidor MCP está cerrada.",
+  "McpBridge.stdout_closed": "La salida estándar del servidor MCP está cerrada.",
   "McpBridge.missing_content_length": "MCP Falta la respuesta del servidor Longitud del contenido.",
   "SettingsWindow.compact_window_reset": "Restablecer ventana flotante",
   "SettingsWindow.compact_window_apply_hint": "Después de guardar, haga clic en Aplicar a la derecha para actualizar la mascota actual.",

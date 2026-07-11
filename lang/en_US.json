@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "MCP server process is not running.",
   "McpBridge.request_timeout": "MCP request timed out: {method}",
   "McpBridge.stdin_closed": "MCP server stdin is closed.",
+  "McpBridge.stdout_closed": "MCP server stdout is closed.",
   "McpBridge.missing_content_length": "MCP server response is missing Content-Length.",
   "SettingsWindow.compact_window_reset": "Reset Floating Window",
   "SettingsWindow.compact_window_apply_hint": "After saving, click Apply on the right to update the current pet.",

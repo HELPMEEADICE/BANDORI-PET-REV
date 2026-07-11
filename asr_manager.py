@@ -517,7 +517,55 @@ class ASRRecorderWorker(QThread):
             self.error.emit(f"ASR 音频编码失败: {exc}")
 
 
-class ASRRequestWorker(QThread):
+class _CancelableASRWorker(QThread):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelled = threading.Event()
+        self._io_lock = threading.Lock()
+        self._active_response = None
+        self._active_session = None
+
+    def cancel(self):
+        self._cancelled.set()
+        self.requestInterruption()
+        with self._io_lock:
+            response = self._active_response
+            session = self._active_session
+        for resource in (response, session):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+
+    def _track_response(self, response) -> bool:
+        with self._io_lock:
+            if self._cancelled.is_set():
+                should_close = True
+            else:
+                self._active_response = response
+                should_close = False
+        if should_close:
+            try:
+                response.close()
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _set_session(self, session):
+        with self._io_lock:
+            self._active_session = session
+
+    def _release_io(self, response=None, session=None):
+        with self._io_lock:
+            if response is not None and self._active_response is response:
+                self._active_response = None
+            if session is not None and self._active_session is session:
+                self._active_session = None
+
+
+class ASRRequestWorker(_CancelableASRWorker):
     text_ready = Signal(str)
     error = Signal(str)
 
@@ -545,12 +593,30 @@ class ASRRequestWorker(QThread):
         files = {
             "file": ("speech.wav", self._audio, self._media_type),
         }
+        session = _requests().Session()
+        self._set_session(session)
+        response = None
         try:
-            response = _requests().post(url, headers=headers, data=data, files=files, timeout=timeout)
+            if self._cancelled.is_set():
+                return
+            response = session.post(url, headers=headers, data=data, files=files, timeout=timeout)
+            if not self._track_response(response):
+                return
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
-            self.error.emit(format_asr_request_error(exc, url))
+            if not self._cancelled.is_set():
+                self.error.emit(format_asr_request_error(exc, url))
+            return
+        finally:
+            self._release_io(response=response, session=session)
+            try:
+                if response is not None:
+                    response.close()
+            finally:
+                session.close()
+
+        if self._cancelled.is_set():
             return
 
         text = ""
@@ -565,4 +631,5 @@ class ASRRequestWorker(QThread):
         if not text:
             self.error.emit("ASR 服务没有返回可用文本。")
             return
-        self.text_ready.emit(text)
+        if not self._cancelled.is_set():
+            self.text_ready.emit(text)

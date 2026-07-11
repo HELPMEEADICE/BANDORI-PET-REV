@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "MCP サーバープロセスが実行されていません。",
   "McpBridge.request_timeout": "MCP リクエストがタイムアウトしました：{method}",
   "McpBridge.stdin_closed": "MCP サーバーの stdin が閉じています。",
+  "McpBridge.stdout_closed": "MCP サーバーの stdout が閉じています。",
   "McpBridge.missing_content_length": "MCP サーバー応答に Content-Length がありません。",
   "SettingsWindow.compact_window_reset": "フローティングウィンドウをリセット",
   "SettingsWindow.compact_window_apply_hint": "保存後、右側の「適用」をクリックして現在のペットに反映してください。",

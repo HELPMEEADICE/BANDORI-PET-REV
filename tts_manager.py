@@ -175,7 +175,7 @@ def _language_name(language: str) -> str:
     return names.get(language, language)
 
 
-def _translate_to_selected_language(config: dict, text: str, target_language: str) -> str:
+def _translate_to_selected_language(config: dict, text: str, target_language: str, worker=None) -> str:
     api_url = str(config.get("llm_aux_api_url", "") or "").strip() or str(config.get("llm_api_url", "") or "").strip()
     api_key = str(config.get("llm_aux_api_key", "") or "").strip() or str(config.get("llm_api_key", "") or "").strip()
     model_id = str(config.get("llm_aux_model_id", "") or "").strip() or str(config.get("llm_model_id", "") or "").strip()
@@ -201,8 +201,17 @@ def _translate_to_selected_language(config: dict, text: str, target_language: st
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    if worker is not None and worker._cancelled.is_set():
+        return ""
+    resp = urllib.request.urlopen(req, timeout=60)
+    if worker is not None and not worker._track_response(resp):
+        return ""
+    try:
+        with resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    finally:
+        if worker is not None:
+            worker._release_response(resp)
     choices = data.get("choices", [])
     if not choices:
         return ""
@@ -311,7 +320,58 @@ def _estimate_units_per_second(language: str) -> float:
     return 7.0
 
 
-class TTSTranslationWorker(QThread):
+class _CancelableTTSWorker(QThread):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelled = threading.Event()
+        self._io_lock = threading.Lock()
+        self._active_response = None
+        self._active_session = None
+
+    def cancel(self):
+        self._cancelled.set()
+        self.requestInterruption()
+        with self._io_lock:
+            response = self._active_response
+            session = self._active_session
+        for resource in (response, session):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+
+    def _track_response(self, response) -> bool:
+        with self._io_lock:
+            if self._cancelled.is_set():
+                should_close = True
+            else:
+                self._active_response = response
+                should_close = False
+        if should_close:
+            try:
+                response.close()
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _release_response(self, response):
+        with self._io_lock:
+            if self._active_response is response:
+                self._active_response = None
+
+    def _set_session(self, session):
+        with self._io_lock:
+            self._active_session = session
+
+    def _release_session(self, session):
+        with self._io_lock:
+            if self._active_session is session:
+                self._active_session = None
+
+
+class TTSTranslationWorker(_CancelableTTSWorker):
     translated = Signal(int, int, str, str)
     error = Signal(str)
 
@@ -330,11 +390,14 @@ class TTSTranslationWorker(QThread):
             if not text:
                 return
             if self._should_translate(selected_language):
-                translated = _translate_to_selected_language(self._config, text, selected_language)
+                translated = _translate_to_selected_language(self._config, text, selected_language, self)
                 if translated:
                     text = translated
-            self.translated.emit(self.sequence, self.generation, text, self._character)
+            if not self._cancelled.is_set():
+                self.translated.emit(self.sequence, self.generation, text, self._character)
         except Exception as exc:
+            if self._cancelled.is_set():
+                return
             self.error.emit(f"TTS translation: {exc}")
             text = strip_tts_action_tags(self._text)
             if text:
@@ -345,7 +408,7 @@ class TTSTranslationWorker(QThread):
             return False
         return text_language not in {"Chinese", "zh", "中文"}
 
-class TTSRequestWorker(QThread):
+class TTSRequestWorker(_CancelableTTSWorker):
     audio_ready = Signal(int, int, bytes, str)
     error = Signal(str)
 
@@ -368,8 +431,10 @@ class TTSRequestWorker(QThread):
                 return
             if self._should_translate(selected_language):
                 try:
-                    translated = _translate_to_selected_language(self._config, text, selected_language)
+                    translated = _translate_to_selected_language(self._config, text, selected_language, self)
                 except Exception as exc:
+                    if self._cancelled.is_set():
+                        return
                     self.error.emit(f"TTS translation: {exc}")
                 else:
                     if translated:
@@ -397,6 +462,9 @@ class TTSRequestWorker(QThread):
             try_streaming = bool(self._config.get("tts_streaming", True)) and not _streaming_unavailable
             streaming = try_streaming
             last_error = ""
+            session = _requests().Session()
+            self._set_session(session)
+            response = None
             while True:
                 payload["stream_mode"] = "normal" if streaming else "close"
                 if streaming:
@@ -409,18 +477,32 @@ class TTSRequestWorker(QThread):
                     payload.pop("chunk_size", None)
 
                 try:
-                    response = _requests().post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                    if self._cancelled.is_set():
+                        return
+                    response = session.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                    if not self._track_response(response):
+                        session.close()
+                        self._release_session(session)
+                        return
                     if response.status_code != 200 and speed_applied:
                         try:
                             response.close()
                         except Exception:
                             pass
+                        self._release_response(response)
                         payload.pop("speed_factor", None)
-                        response = _requests().post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                        response = session.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                        if not self._track_response(response):
+                            session.close()
+                            self._release_session(session)
+                            return
                     if response.status_code != 200:
                         last_error = f"TTS HTTP {response.status_code}: {response.text[:240]}"
                         if streaming:
                             _streaming_unavailable = True
+                            self._release_response(response)
+                            response.close()
+                            response = None
                             streaming = False
                             continue
                         break
@@ -431,12 +513,12 @@ class TTSRequestWorker(QThread):
                             self._read_framed_stream(response)
                         else:
                             for chunk in response.iter_content(chunk_size=None):
-                                if self.isInterruptionRequested():
+                                if self._cancelled.is_set():
                                     response.close()
                                     return
                                 if chunk:
                                     self.audio_ready.emit(self.sequence, self.generation, chunk, "ogg")
-                    elif response.content:
+                    elif response.content and not self._cancelled.is_set():
                         self.audio_ready.emit(self.sequence, self.generation, response.content, "wav")
                     return
                 except urllib.error.HTTPError as exc:
@@ -444,25 +526,50 @@ class TTSRequestWorker(QThread):
                     last_error = f"TTS HTTP {exc.code}: {body[:240]}"
                 except Exception as exc:
                     last_error = f"TTS: {exc}"
+                if response is not None:
+                    self._release_response(response)
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                    response = None
                 if streaming:
                     _streaming_unavailable = True
                     streaming = False
                     continue
                 break
-            if last_error:
+            if last_error and not self._cancelled.is_set():
                 self.error.emit(last_error)
                 return
         except urllib.error.HTTPError as exc:
+            if self._cancelled.is_set():
+                return
             body = exc.read().decode("utf-8", errors="replace")
             self.error.emit(f"TTS HTTP {exc.code}: {body[:240]}")
         except Exception as exc:
-            self.error.emit(f"TTS: {exc}")
+            if not self._cancelled.is_set():
+                self.error.emit(f"TTS: {exc}")
+        finally:
+            response = locals().get("response")
+            session = locals().get("session")
+            if response is not None:
+                self._release_response(response)
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            if session is not None:
+                self._release_session(session)
+                try:
+                    session.close()
+                except Exception:
+                    pass
 
     def _read_framed_stream(self, response):
         buffer = bytearray()
         expected_size = None
         for chunk in response.iter_content(chunk_size=65536):
-            if self.isInterruptionRequested():
+            if self._cancelled.is_set():
                 response.close()
                 return
             if not chunk:

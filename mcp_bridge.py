@@ -9,7 +9,7 @@ import time
 import urllib.error
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEventLoop, QUrl
+from PySide6.QtCore import QByteArray, QEventLoop, QTimer, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from i18n_manager import tr as _tr
@@ -43,11 +43,12 @@ def mcp_proxy_tools(config: dict) -> list[dict]:
         return []
     tools = []
     tool_name_map_updates = {}
+    cancel_event = config.get("_cancel_event")
     for server in _enabled_servers(config):
         if _is_native_only(server):
             continue
         try:
-            for item in _list_server_tools(server):
+            for item in _list_server_tools(server, cancel_event):
                 public_name = _public_tool_name(server.get("label", ""), item.get("name", ""))
                 tool_name_map_updates[public_name] = (server, item.get("name", ""))
                 schema = item.get("inputSchema") or item.get("input_schema") or {"type": "object", "properties": {}}
@@ -61,6 +62,8 @@ def mcp_proxy_tools(config: dict) -> list[dict]:
                         "parameters": schema,
                     },
                 })
+        except InterruptedError:
+            return []
         except Exception as exc:
             tools.append(_mcp_error_tool(server, exc))
     if tool_name_map_updates:
@@ -180,7 +183,7 @@ def is_mcp_tool_name(name: str) -> bool:
     return str(name or "").startswith(_TOOL_PREFIX)
 
 
-def call_mcp_tool(public_name: str, arguments) -> str:
+def call_mcp_tool(public_name: str, arguments, cancel_event=None) -> str:
     arguments = _parse_arguments(arguments)
     with _LOCK:
         server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
@@ -196,9 +199,13 @@ def call_mcp_tool(public_name: str, arguments) -> str:
         # the user switches that server to never/auto in settings.
         return f"MCP tool blocked by approval setting: {server.get('label', '')}/{tool_name}"
     try:
+        if cancel_event is not None and cancel_event.is_set():
+            return "MCP tool call cancelled."
         if server.get("transport") == "http":
-            return _call_http_tool(server, tool_name, arguments)
-        return _stdio_client(server).call_tool(tool_name, arguments)
+            return _call_http_tool(server, tool_name, arguments, cancel_event=cancel_event)
+        return _stdio_client(server).call_tool(tool_name, arguments, cancel_event=cancel_event)
+    except InterruptedError:
+        return "MCP tool call cancelled."
     except Exception as exc:
         return f"MCP tool failed: {exc}"
 
@@ -288,14 +295,14 @@ def _format_mcp_exception(server: dict, exc: Exception) -> str:
     )
 
 
-def _list_server_tools(server: dict) -> list[dict]:
+def _list_server_tools(server: dict, cancel_event=None) -> list[dict]:
     allowed = server.get("allowed_tools", [])
     if isinstance(allowed, str):
         allowed = [part.strip() for part in allowed.split(",") if part.strip()]
     if server.get("transport") == "http":
-        tools = _list_http_tools(server)
+        tools = _list_http_tools(server, cancel_event)
     else:
-        tools = _stdio_client(server).list_tools()
+        tools = _stdio_client(server).list_tools(cancel_event)
     if isinstance(allowed, list) and allowed:
         allowed_set = {str(name) for name in allowed}
         tools = [tool for tool in tools if str(tool.get("name", "")) in allowed_set]
@@ -398,11 +405,11 @@ def _thread_nam() -> QNetworkAccessManager:
     return _thread_local.nam
 
 
-def _request_http_json(server: dict, payload: dict) -> dict:
-    return run_off_gui_thread(lambda: _request_http_json_direct(server, payload))
+def _request_http_json(server: dict, payload: dict, cancel_event=None) -> dict:
+    return run_off_gui_thread(lambda: _request_http_json_direct(server, payload, cancel_event))
 
 
-def _request_http_json_direct(server: dict, payload: dict) -> dict:
+def _request_http_json_direct(server: dict, payload: dict, cancel_event=None) -> dict:
     url = str(server.get("url", "") or "").strip()
     if not url:
         raise ValueError(_tr("McpBridge.http_url_empty", default="HTTP MCP server url is empty"))
@@ -422,7 +429,23 @@ def _request_http_json_direct(server: dict, payload: dict) -> dict:
     loop = QEventLoop()
     reply = nam.post(request, QByteArray(body))
     reply.finished.connect(loop.quit)
+    cancel_timer = None
+    if cancel_event is not None:
+        cancel_timer = QTimer()
+        cancel_timer.setInterval(50)
+        def abort_if_cancelled():
+            if cancel_event.is_set():
+                reply.abort()
+                loop.quit()
+        cancel_timer.timeout.connect(abort_if_cancelled)
+        cancel_timer.start()
     loop.exec()
+    if cancel_timer is not None:
+        cancel_timer.stop()
+    if cancel_event is not None and cancel_event.is_set():
+        reply.abort()
+        reply.deleteLater()
+        raise InterruptedError("MCP request cancelled")
 
     error_code = reply.error()
     status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute) or 0
@@ -454,16 +477,16 @@ def _request_http_json_direct(server: dict, payload: dict) -> dict:
     return json.loads(raw)
 
 
-def _http_request_with_init(server: dict, method: str, params: dict | None = None) -> dict:
+def _http_request_with_init(server: dict, method: str, params: dict | None = None, cancel_event=None) -> dict:
     req_id = int(time.time() * 1000) % 1_000_000_000
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
     if params is not None:
         payload["params"] = params
-    try:
-        return _request_http_json(server, payload)
-    except urllib.error.HTTPError:
-        raise
-    except Exception:
+    response = _request_http_json(server, payload, cancel_event)
+    error = response.get("error") if isinstance(response, dict) else None
+    error_text = json.dumps(error, ensure_ascii=False).lower() if error else ""
+    error_code = error.get("code") if isinstance(error, dict) else None
+    if error_code == -32002 or "initializ" in error_text:
         init = {
             "jsonrpc": "2.0",
             "id": req_id + 1,
@@ -474,12 +497,13 @@ def _http_request_with_init(server: dict, method: str, params: dict | None = Non
                 "clientInfo": {"name": APP_NAME, "version": "1.0"},
             },
         }
-        _request_http_json(server, init)
-        return _request_http_json(server, payload)
+        _request_http_json(server, init, cancel_event)
+        return _request_http_json(server, payload, cancel_event)
+    return response
 
 
-def _list_http_tools(server: dict) -> list[dict]:
-    response = _http_request_with_init(server, "tools/list", {})
+def _list_http_tools(server: dict, cancel_event=None) -> list[dict]:
+    response = _http_request_with_init(server, "tools/list", {}, cancel_event)
     if response.get("error"):
         raise RuntimeError(response["error"])
     result = response.get("result", {})
@@ -487,8 +511,13 @@ def _list_http_tools(server: dict) -> list[dict]:
     return tools if isinstance(tools, list) else []
 
 
-def _call_http_tool(server: dict, name: str, arguments: dict) -> str:
-    response = _http_request_with_init(server, "tools/call", {"name": name, "arguments": arguments})
+def _call_http_tool(server: dict, name: str, arguments: dict, cancel_event=None) -> str:
+    response = _http_request_with_init(
+        server,
+        "tools/call",
+        {"name": name, "arguments": arguments},
+        cancel_event,
+    )
     if response.get("error"):
         raise RuntimeError(response["error"])
     return _mcp_result_text(response.get("result", {}))
@@ -523,6 +552,7 @@ class StdioMcpClient:
         self._responses: queue.Queue[dict] = queue.Queue()
         self._next_id = 1
         self._initialized = False
+        self._reader_error = None
         command, args, cwd = _validated_stdio_command(server)
         self._process = subprocess.Popen(
             [command, *args],
@@ -542,13 +572,13 @@ class StdioMcpClient:
     def alive(self) -> bool:
         return self._process.poll() is None
 
-    def list_tools(self) -> list[dict]:
-        result = self._request("tools/list", {})
+    def list_tools(self, cancel_event=None) -> list[dict]:
+        result = self._request("tools/list", {}, cancel_event)
         tools = result.get("tools", []) if isinstance(result, dict) else []
         return tools if isinstance(tools, list) else []
 
-    def call_tool(self, name: str, arguments: dict) -> str:
-        result = self._request("tools/call", {"name": name, "arguments": arguments})
+    def call_tool(self, name: str, arguments: dict, cancel_event=None) -> str:
+        result = self._request("tools/call", {"name": name, "arguments": arguments}, cancel_event)
         return _mcp_result_text(result)
 
     def close(self):
@@ -594,21 +624,27 @@ class StdioMcpClient:
     def _read_stdout(self):
         stdout = self._process.stdout
         if stdout is None:
+            self._reader_error = RuntimeError(_tr("McpBridge.stdout_closed", default="MCP server stdout is closed"))
             return
         reader = getattr(stdout, "read1", stdout.read)
         buffer = b""
-        while True:
-            chunk = reader(4096)
-            if not chunk:
-                break
-            buffer += chunk
+        try:
             while True:
-                message, buffer = _extract_stdio_message(buffer)
-                if message is None:
+                chunk = reader(4096)
+                if not chunk:
+                    if self.alive:
+                        self._reader_error = RuntimeError(_tr("McpBridge.stdout_closed", default="MCP server stdout is closed"))
                     break
-                self._responses.put(message)
+                buffer += chunk
+                while True:
+                    message, buffer = _extract_stdio_message(buffer)
+                    if message is None:
+                        break
+                    self._responses.put(message)
+        except Exception as exc:
+            self._reader_error = exc
 
-    def _request(self, method: str, params: dict | None = None) -> dict:
+    def _request(self, method: str, params: dict | None = None, cancel_event=None) -> dict:
         with self._lock:
             if not self.alive:
                 raise RuntimeError(_tr("McpBridge.process_not_running", default="MCP server process is not running"))
@@ -620,8 +656,12 @@ class StdioMcpClient:
             self._write(message)
             deadline = time.monotonic() + int(self._server.get("timeout_seconds", 30) or 30)
             while time.monotonic() < deadline:
+                if self._reader_error is not None:
+                    raise RuntimeError(str(self._reader_error))
+                if cancel_event is not None and cancel_event.is_set():
+                    raise InterruptedError("MCP request cancelled")
                 try:
-                    response = self._responses.get(timeout=max(0.1, min(1.0, deadline - time.monotonic())))
+                    response = self._responses.get(timeout=max(0.05, min(0.1, deadline - time.monotonic())))
                 except queue.Empty:
                     continue
                 if response.get("id") != req_id:
@@ -645,6 +685,18 @@ class StdioMcpClient:
         stdin.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
         stdin.write(payload)
         stdin.flush()
+
+
+def close_mcp_clients():
+    with _LOCK:
+        clients = list(_CLIENTS.values())
+        _CLIENTS.clear()
+        _TOOL_NAME_MAP.clear()
+    for client in clients:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:

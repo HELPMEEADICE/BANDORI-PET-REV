@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "MCP-Serverprozess läuft nicht.",
   "McpBridge.request_timeout": "Zeitüberschreitung der MCP-Anfrage: {method}",
   "McpBridge.stdin_closed": "MCP Server stdin ist geschlossen.",
+  "McpBridge.stdout_closed": "MCP Server stdout ist geschlossen.",
   "McpBridge.missing_content_length": "MCP-Serverantwort fehlt Inhaltslänge.",
   "SettingsWindow.compact_window_reset": "Schwebendes Fenster zurücksetzen",
   "SettingsWindow.compact_window_apply_hint": "Klicken Sie nach dem Speichern rechts auf „Übernehmen“, um das aktuelle Haustier zu aktualisieren.",

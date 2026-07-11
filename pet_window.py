@@ -3555,7 +3555,8 @@ class PetWindow(QWidget):
         if self._compact_ai_window is None:
             return
         self._compact_ai_window.close()
-        self._compact_ai_window.deleteLater()
+
+    def _on_compact_ai_window_destroyed(self, *_args):
         self._compact_ai_window = None
 
     def _close_settings_process(self):
@@ -3576,6 +3577,8 @@ class PetWindow(QWidget):
                 self._model_manager,
                 self._cfg,
             )
+            self._compact_ai_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self._compact_ai_window.destroyed.connect(self._on_compact_ai_window_destroyed)
             self._compact_ai_window.action_triggered.connect(self._on_chat_action)
         self._compact_ai_window.set_character(self._current_char)
         self._compact_ai_window.refresh_theme()

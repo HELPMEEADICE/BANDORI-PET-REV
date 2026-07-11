@@ -703,7 +703,56 @@ def estimate_llm_request_tokens(
     return total
 
 
-class LLMStreamWorker(QThread):
+class _CancelableNetworkWorker(QThread):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelled = False
+        self._cancel_event = threading.Event()
+        self._response_lock = threading.Lock()
+        self._active_response = None
+
+    def cancel(self):
+        self._cancelled = True
+        self._cancel_event.set()
+        self.requestInterruption()
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def _track_response(self, response) -> bool:
+        with self._response_lock:
+            if self._cancelled:
+                should_close = True
+            else:
+                self._active_response = response
+                should_close = False
+        if should_close:
+            try:
+                response.close()
+            except Exception:
+                pass
+            return False
+        return True
+
+    def _release_response(self, response):
+        with self._response_lock:
+            if self._active_response is response:
+                self._active_response = None
+
+    def _open_response(self, request, timeout: int):
+        if self._cancelled:
+            return None
+        response = urllib.request.urlopen(request, timeout=timeout)
+        if not self._track_response(response):
+            return None
+        return response
+
+
+class LLMStreamWorker(_CancelableNetworkWorker):
     chunk_received = Signal(str, str)
     auto_continue_boundary = Signal(str, str, list)
     finished = Signal(str, str, list)
@@ -721,7 +770,7 @@ class LLMStreamWorker(QThread):
         self._web_search = bool(web_search)
         self._show_search_sources = bool(show_search_sources)
         self._tool_config = dict(tool_config or {})
-        self._cancelled = False
+        self._tool_config["_cancel_event"] = self._cancel_event
         self._full_text = ""
         self._reasoning_text = ""
         self._stream_tool_calls = []
@@ -730,9 +779,6 @@ class LLMStreamWorker(QThread):
         self._round_usage_seen = False
         self._round_usage = None
         self._round_output_text = ""
-
-    def cancel(self):
-        self._cancelled = True
 
     @property
     def token_usage(self) -> dict:
@@ -818,8 +864,11 @@ class LLMStreamWorker(QThread):
                     self._full_text = ""
                     self._reasoning_text = ""
                 for tool_call in executable_tool_calls:
+                    if self._cancelled:
+                        return
                     function = tool_call.get("function", {})
                     tool_config = dict(self._tool_config)
+                    tool_config["_cancel_event"] = self._cancel_event
                     if function.get("name") == AUTO_CONTINUE_TOOL_NAME:
                         tool_config["_auto_continue_count"] = auto_continue_count
                     tool_result = run_local_tool_call(
@@ -849,9 +898,11 @@ class LLMStreamWorker(QThread):
                 content = parsed_content
             self.finished.emit(content, reasoning, list(self._search_sources))
         except urllib.error.HTTPError as e:
-            self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
+            if not self._cancelled:
+                self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._cancelled:
+                self.error.emit(str(e))
 
     def _auto_continue_limit(self) -> int:
         if not self._tool_config.get("llm_auto_continue_enabled", False):
@@ -896,17 +947,23 @@ class LLMStreamWorker(QThread):
             self._api_url, data=data, headers=headers, method="POST"
         )
 
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            buffer = b""
-            for chunk in iter(lambda: resp.read(4096), b""):
-                if self._cancelled:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    self._process_line(line.decode("utf-8", errors="replace"))
-            if not self._cancelled and buffer.strip():
-                self._process_line(buffer.decode("utf-8", errors="replace"))
+        resp = self._open_response(req, 120)
+        if resp is None:
+            return
+        try:
+            with resp:
+                buffer = b""
+                for chunk in iter(lambda: resp.read(4096), b""):
+                    if self._cancelled:
+                        break
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        self._process_line(line.decode("utf-8", errors="replace"))
+                if not self._cancelled and buffer.strip():
+                    self._process_line(buffer.decode("utf-8", errors="replace"))
+        finally:
+            self._release_response(resp)
         if self._round_usage_seen:
             self._usage = merge_token_usage(self._usage, self._round_usage or {})
         else:
@@ -1009,7 +1066,7 @@ class LLMStreamWorker(QThread):
                 self._search_sources.append({"title": title, "url": url})
 
 
-class ResponsesStreamWorker(QThread):
+class ResponsesStreamWorker(_CancelableNetworkWorker):
     chunk_received = Signal(str, str)
     finished = Signal(str, str, list)
     error = Signal(str)
@@ -1026,13 +1083,9 @@ class ResponsesStreamWorker(QThread):
         self._web_search = web_search
         self._show_search_sources = bool(show_search_sources)
         self._tool_config = dict(tool_config or {})
-        self._cancelled = False
         self._full_text = ""
         self._reasoning_text = ""
         self._usage = normalize_token_usage({})
-
-    def cancel(self):
-        self._cancelled = True
 
     @property
     def token_usage(self) -> dict:
@@ -1073,17 +1126,23 @@ class ResponsesStreamWorker(QThread):
                 self._api_url, data=data, headers=headers, method="POST"
             )
 
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                buffer = b""
-                for chunk in iter(lambda: resp.read(4096), b""):
-                    if self._cancelled:
-                        break
-                    buffer += chunk
-                    while b"\n" in buffer:
-                        line, buffer = buffer.split(b"\n", 1)
-                        self._process_line(line.decode("utf-8", errors="replace"))
-                if not self._cancelled and buffer.strip():
-                    self._process_line(buffer.decode("utf-8", errors="replace"))
+            resp = self._open_response(req, 180)
+            if resp is None:
+                return
+            try:
+                with resp:
+                    buffer = b""
+                    for chunk in iter(lambda: resp.read(4096), b""):
+                        if self._cancelled:
+                            break
+                        buffer += chunk
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+                            self._process_line(line.decode("utf-8", errors="replace"))
+                    if not self._cancelled and buffer.strip():
+                        self._process_line(buffer.decode("utf-8", errors="replace"))
+            finally:
+                self._release_response(resp)
 
             if self._cancelled:
                 return
@@ -1105,6 +1164,8 @@ class ResponsesStreamWorker(QThread):
             content, sources = extract_inline_search_sources(content)
             self.finished.emit(content, reasoning, sources if self._show_search_sources else [])
         except urllib.error.HTTPError as e:
+            if self._cancelled:
+                return
             err_body = e.read().decode("utf-8", errors="replace")
             try:
                 err_json = json.loads(err_body)
@@ -1113,7 +1174,8 @@ class ResponsesStreamWorker(QThread):
                 msg = err_body[:300] or str(e)
             self.error.emit(f"HTTP {e.code}: {msg}")
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._cancelled:
+                self.error.emit(str(e))
 
     def _process_line(self, line: str):
         line = line.strip()
@@ -1148,7 +1210,7 @@ class ResponsesStreamWorker(QThread):
                 self._usage = normalize_token_usage(response["usage"])
 
 
-class NonStreamWorker(QThread):
+class NonStreamWorker(_CancelableNetworkWorker):
     finished = Signal(str, str, list)
     error = Signal(str)
 
@@ -1182,21 +1244,32 @@ class NonStreamWorker(QThread):
                 self._api_url, data=data, headers=headers, method="POST"
             )
 
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
-                choices = resp_data.get("choices", [{}])
-                if not choices:
-                    self.error.emit("API returned empty choices")
-                    return
-                message = choices[0].get("message", {})
-                content = message.get("content", "")
-                reasoning = _extract_reasoning(message)
-                content, reasoning = split_thinking_text(
-                    content,
-                    reasoning,
-                )
+            resp = self._open_response(req, 120)
+            if resp is None:
+                return
+            try:
+                with resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+            finally:
+                self._release_response(resp)
+            if self._cancelled:
+                return
+            choices = resp_data.get("choices", [{}])
+            if not choices:
+                self.error.emit("API returned empty choices")
+                return
+            message = choices[0].get("message", {})
+            content = message.get("content", "")
+            reasoning = _extract_reasoning(message)
+            content, reasoning = split_thinking_text(
+                content,
+                reasoning,
+            )
+            if not self._cancelled:
                 self.finished.emit(content, reasoning, [])
         except urllib.error.HTTPError as e:
+            if self._cancelled:
+                return
             err_body = e.read().decode("utf-8", errors="replace")
             try:
                 err_json = json.loads(err_body)
@@ -1205,7 +1278,8 @@ class NonStreamWorker(QThread):
                 msg = err_body[:300] or str(e)
             self.error.emit(f"HTTP {e.code}: {msg}")
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._cancelled:
+                self.error.emit(str(e))
 
 
 

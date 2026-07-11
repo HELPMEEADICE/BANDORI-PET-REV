@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "Серверный процесс MCP не запущен.",
   "McpBridge.request_timeout": "Время ожидания запроса MCP: {method}",
   "McpBridge.stdin_closed": "Серверный ввод MCP закрыт.",
+  "McpBridge.stdout_closed": "Стандартный вывод сервера MCP закрыт.",
   "McpBridge.missing_content_length": "В ответе сервера MCP отсутствует Content-Length.",
   "SettingsWindow.compact_window_reset": "Сбросить плавающее окно",
   "SettingsWindow.compact_window_apply_hint": "После сохранения нажмите «Применить» справа, чтобы обновить текущего питомца.",

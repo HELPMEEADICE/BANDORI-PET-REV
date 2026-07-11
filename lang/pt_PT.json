@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "O processo do servidor MCP não está em execução.",
   "McpBridge.request_timeout": "O pedido MCP expirou: {method}",
   "McpBridge.stdin_closed": "O stdin do servidor MCP está fechado.",
+  "McpBridge.stdout_closed": "O stdout do servidor MCP está fechado.",
   "McpBridge.missing_content_length": "A resposta do servidor MCP está em falta Content-Length.",
   "SettingsWindow.compact_window_reset": "Repor janela flutuante",
   "SettingsWindow.compact_window_apply_hint": "Após guardar, clique em Aplicar à direita para atualizar o animal de estimação atual.",

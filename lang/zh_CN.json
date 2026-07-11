@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "MCP 服务器进程未运行。",
   "McpBridge.request_timeout": "MCP 请求超时：{method}",
   "McpBridge.stdin_closed": "MCP 服务器 stdin 已关闭。",
+  "McpBridge.stdout_closed": "MCP 服务器 stdout 已关闭。",
   "McpBridge.missing_content_length": "MCP 服务器响应缺少 Content-Length。",
   "SettingsWindow.compact_window_reset": "重置悬浮窗",
   "SettingsWindow.compact_window_apply_hint": "保存后请点击右侧“应用”让当前桌宠生效。",

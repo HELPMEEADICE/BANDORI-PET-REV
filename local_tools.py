@@ -351,8 +351,12 @@ def with_web_search_system_hint(messages: list[dict], include_sources: bool = Tr
 
 
 def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
+    tool_config = tool_config or {}
+    cancel_event = tool_config.get("_cancel_event")
+    if cancel_event is not None and cancel_event.is_set():
+        return {"content": "Tool call cancelled.", "extra_messages": []}
     if name == AUTO_CONTINUE_TOOL_NAME:
-        return _run_auto_continue_tool_call(arguments, tool_config or {})
+        return _run_auto_continue_tool_call(arguments, tool_config)
     if name == POKE_USER_TOOL_NAME:
         return _run_poke_user_tool_call(arguments, tool_config or {})
     if name in {CREATE_ALARM_TOOL_NAME, START_POMODORO_TOOL_NAME}:
@@ -361,7 +365,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
         return _run_web_fetch_tool_call(arguments, tool_config or {})
     if name != WEB_SEARCH_TOOL_NAME:
         if is_mcp_tool_name(name):
-            return {"content": call_mcp_tool(name, arguments), "extra_messages": []}
+            return {"content": call_mcp_tool(name, arguments, cancel_event=cancel_event), "extra_messages": []}
         if is_computer_tool_name(name):
             return run_computer_tool(name, arguments, tool_config or {})
         return {"content": f"Unsupported tool: {name}", "extra_messages": []}

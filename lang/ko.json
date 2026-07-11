@@ -437,6 +437,7 @@
   "McpBridge.process_not_running": "MCP 서버 프로세스가 실행 중이 아닙니다.",
   "McpBridge.request_timeout": "MCP 요청 시간 초과: {method}",
   "McpBridge.stdin_closed": "MCP 서버 stdin이 닫혔습니다.",
+  "McpBridge.stdout_closed": "MCP 서버 stdout이 닫혔습니다.",
   "McpBridge.missing_content_length": "MCP 서버 응답에 Content-Length가 없습니다.",
   "SettingsWindow.compact_window_reset": "플로팅 창 초기화",
   "SettingsWindow.compact_window_apply_hint": "저장 후 오른쪽의 적용을 클릭하여 현재 펫에 업데이트하세요.",

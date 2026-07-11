@@ -1254,7 +1254,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         worker = self._tts_worker
         self._tts_worker = None
         if worker is not None and worker.isRunning():
-            worker.requestInterruption()
+            worker.cancel()
             self._park_cancelled_worker(worker)
         if stop_player:
             self._tts_player.stop()
@@ -1335,7 +1335,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
                 workers_to_wait.append(worker)
         for worker in list(self._memory_workers):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 workers_to_wait.append(worker)
         for worker in workers_to_wait:
             worker.wait(250)

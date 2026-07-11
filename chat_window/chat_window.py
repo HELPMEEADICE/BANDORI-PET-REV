@@ -3025,6 +3025,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._update_asr_button_state()
 
     def _on_asr_audio_ready(self, audio: bytes, media_type: str):
+        sender = self.sender()
+        if sender is not None and sender is not self._asr_recorder_worker:
+            return
         if not self._asr_enabled() or ASRRequestWorker is None:
             return
         self._asr_transcribing = True
@@ -3037,6 +3040,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._update_asr_button_state()
 
     def _on_asr_text_ready(self, text: str):
+        if self._closing:
+            return
+        sender = self.sender()
+        if sender is not None and sender is not self._asr_request_worker:
+            return
         text = str(text or "").strip()
         if not text:
             return
@@ -3056,6 +3064,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
             QTimer.singleShot(0, self._send_message)
 
     def _on_asr_request_finished(self):
+        sender = self.sender()
+        if sender is not None and sender is not self._asr_request_worker:
+            return
         self._asr_transcribing = False
         self._asr_request_worker = None
         had_error = bool(self._asr_last_error)
@@ -3066,6 +3077,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._update_asr_button_state()
 
     def _on_asr_error(self, msg: str):
+        sender = self.sender()
+        if sender is not None and sender not in (self._asr_recorder_worker, self._asr_request_worker):
+            return
         self._asr_recording = False
         self._asr_transcribing = False
         self._asr_last_error = msg or _tr("ChatWindow.asr_failed", default="语音识别失败。")
@@ -5721,11 +5735,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._clear_tts_bubble_highlights()
         for worker in list(self._tts_active_workers.values()):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 self._park_cancelled_worker(worker)
         for worker in list(self._tts_translation_workers.values()):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 self._park_cancelled_worker(worker)
         self._tts_active_workers.clear()
         self._tts_translation_workers.clear()
@@ -6062,7 +6076,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._worker.cancel()
             workers_to_wait.append(self._worker)
         if self._group_plan_worker and self._group_plan_worker.isRunning():
-            self._group_plan_worker.quit()
+            self._group_plan_worker.cancel()
             workers_to_wait.append(self._group_plan_worker)
         if self._vision_fallback_worker and self._vision_fallback_worker.isRunning():
             self._vision_fallback_worker.requestInterruption()
@@ -6074,46 +6088,50 @@ class ChatWindow(ChatWindowMixin, QWidget):
             workers_to_wait.append(self._attachment_import_worker)
         for worker in (self._asr_recorder_worker, self._asr_request_worker):
             if worker is not None and worker.isRunning():
-                worker.requestInterruption()
-                worker.quit()
+                cancel = getattr(worker, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                else:
+                    worker.requestInterruption()
                 workers_to_wait.append(worker)
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():
                 workers_to_wait.append(worker)
-        self._cancelled_workers.clear()
         for worker in list(self._tts_active_workers.values()):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 workers_to_wait.append(worker)
         for worker in list(self._tts_translation_workers.values()):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 workers_to_wait.append(worker)
         self._memory_generation += 1
         for worker in list(self._memory_workers):
             if worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 workers_to_wait.append(worker)
-        if self._immediate_shutdown:
-            self._close_waiting_for_workers = False
-        else:
-            deadline = time.monotonic() + 1.5
-            for worker in workers_to_wait:
-                remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
-                if remaining_ms <= 0:
-                    break
-                worker.wait(min(remaining_ms, 250))
-            still_running = [worker for worker in workers_to_wait if worker is not None and worker.isRunning()]
-            if still_running:
-                event.ignore()
-                self._close_waiting_for_workers = True
-                self.setEnabled(False)
-                def retry_close():
-                    self._close_waiting_for_workers = False
-                    if self._closing:
-                        self.close()
-                QTimer.singleShot(1000, retry_close)
-                return
+        workers_to_wait = list(dict.fromkeys(workers_to_wait))
+        deadline = time.monotonic() + (0.25 if self._immediate_shutdown else 1.5)
+        for worker in workers_to_wait:
+            remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                break
+            worker.wait(min(remaining_ms, 250))
+        still_running = [worker for worker in workers_to_wait if worker is not None and worker.isRunning()]
+        if still_running:
+            self._cancelled_workers = list(dict.fromkeys([
+                *self._cancelled_workers,
+                *still_running,
+            ]))
+            event.ignore()
+            self._close_waiting_for_workers = True
+            self.setEnabled(False)
+            def retry_close():
+                self._close_waiting_for_workers = False
+                if self._closing:
+                    self.close()
+            QTimer.singleShot(100 if self._immediate_shutdown else 1000, retry_close)
+            return
         self._cancelled_workers.clear()
         self._memory_workers.clear()
         self._stream_flush_timer.stop()
