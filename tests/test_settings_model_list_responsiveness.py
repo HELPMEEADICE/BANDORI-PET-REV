@@ -53,12 +53,17 @@ class _FakeModelManager:
 class _FakeConfig:
     def __init__(self):
         self.save_count = 0
+        self.data = {}
 
-    def set(self, _key, _value):
-        pass
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def set(self, key, value):
+        self.data[key] = value
 
     def save(self):
         self.save_count += 1
+        return True
 
 
 class _CountingImageModelManager(_FakeModelManager):

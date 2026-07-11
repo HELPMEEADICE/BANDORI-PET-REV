@@ -614,6 +614,9 @@ class SettingsWindow(
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
                 worker.quit()
+                if attr == '_model_download_worker':
+                    worker.wait(2000)
+                    continue
                 if not worker.wait(2000):
                     worker.terminate()
                     worker.wait(1000)
@@ -621,9 +624,7 @@ class SettingsWindow(
             if worker.isRunning():
                 worker.requestInterruption()
                 worker.quit()
-                if not worker.wait(2000):
-                    worker.terminate()
-                    worker.wait(1000)
+                worker.wait(2000)
         player = getattr(self, '_tts_test_player', None)
         if player is not None:
             player.stop()

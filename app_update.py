@@ -13,6 +13,7 @@ import tempfile
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,7 @@ _PORTABLE_UPDATE_PROTECTED_FILES = (
     "data.db-shm",
     "data.db-wal",
 )
+_UPDATE_DISK_MARGIN_BYTES = 256 * 1024 * 1024
 
 
 @dataclass
@@ -306,39 +308,58 @@ def _apply_git_update(cwd: Path) -> UpdateResult:
     remote = upstream.split("/", 1)[0] if "/" in upstream else "origin"
     branch = upstream.split("/", 1)[1] if "/" in upstream else upstream
     old_commit = _run_git(["rev-parse", "HEAD"], cwd, timeout=10)
+    dirty = bool(_run_git(["status", "--porcelain", "--untracked-files=no"], cwd, timeout=10))
+    if dirty:
+        raise RuntimeError(
+            "Tracked files changed after the update check. Commit, stash, or discard them before updating."
+        )
     _run_git(["pull", "--ff-only", remote, branch], cwd, timeout=180)
-    new_commit = _run_git(["rev-parse", "HEAD"], cwd, timeout=10)
+    try:
+        new_commit = _run_git(["rev-parse", "HEAD"], cwd, timeout=10)
 
-    requirements = cwd / "requirements.txt"
-    requirements_changed = bool(
-        old_commit != new_commit
-        and _run_git(
-            ["diff", "--name-only", old_commit, new_commit, "--", "requirements.txt"],
-            cwd,
-            timeout=30,
+        requirements = cwd / "requirements.txt"
+        requirements_changed = bool(
+            old_commit != new_commit
+            and _run_git(
+                ["diff", "--name-only", old_commit, new_commit, "--", "requirements.txt"],
+                cwd,
+                timeout=30,
+            )
         )
-    )
-    if requirements.exists() and requirements_changed:
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "-r",
-                str(requirements),
-            ],
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-            check=True,
-            **hidden_subprocess_kwargs(),
-        )
+        if requirements.exists() and requirements_changed:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "-r",
+                    str(requirements),
+                ],
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=True,
+                **hidden_subprocess_kwargs(),
+            )
+    except Exception as exc:
+        try:
+            _run_git(["reset", "--hard", old_commit], cwd, timeout=60)
+        except Exception as rollback_exc:
+            raise RuntimeError(
+                "The source update failed and the previous commit could not be restored. "
+                f"Update error: {exc}; rollback error: {rollback_exc}"
+            ) from exc
+        raise RuntimeError(
+            "The source update failed, so the code was restored to the previous commit. "
+            "The Python environment may have been partially modified; reinstall the previous requirements if needed. "
+            f"Original error: {exc}"
+        ) from exc
 
     return UpdateResult(
         True,
@@ -676,6 +697,12 @@ def _download_asset(
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", asset_name or "BandoriPet-update")
     download_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
     download_dir.mkdir(parents=True, exist_ok=True)
+    if expected_size > 0:
+        _ensure_update_space(
+            download_dir,
+            expected_size + _UPDATE_DISK_MARGIN_BYTES,
+            "downloading the update",
+        )
     target = download_dir / safe_name
     partial = target.with_name(f"{target.name}.part")
     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
@@ -711,6 +738,77 @@ def _ps_quote(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _path_size(path: Path) -> int:
+    path = Path(path)
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _ensure_update_space(path: Path, required_bytes: int, purpose: str) -> None:
+    free_bytes = shutil.disk_usage(Path(path)).free
+    if free_bytes < max(0, int(required_bytes)):
+        raise RuntimeError(
+            f"Insufficient disk space for {purpose}: "
+            f"requires about {required_bytes / (1024 ** 2):.0f} MiB free, "
+            f"but only {free_bytes / (1024 ** 2):.0f} MiB is available."
+        )
+
+
+def _portable_zip_layout(archive_path: Path) -> tuple[int, set[str]]:
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        files = [item for item in archive.infolist() if not item.is_dir()]
+    unpacked_size = sum(max(0, int(item.file_size)) for item in files)
+    parts = [Path(item.filename.replace("\\", "/")).parts for item in files]
+    first_parts = {item[0] for item in parts if item}
+    wrapper = next(iter(first_parts)) if len(first_parts) == 1 else ""
+    names = {
+        item[1] if wrapper and len(item) > 1 else item[0]
+        for item in parts
+        if item and (not wrapper or len(item) > 1)
+    }
+    names.difference_update(_PORTABLE_UPDATE_PROTECTED_FILES)
+    return unpacked_size, names
+
+
+def _check_portable_update_space(archive_path: Path, target_dir: Path) -> None:
+    unpacked_size, names = _portable_zip_layout(archive_path)
+    backup_size = sum(_path_size(target_dir / name) for name in names)
+    temp_required = backup_size + (2 * unpacked_size) + _UPDATE_DISK_MARGIN_BYTES
+    temp_dir = Path(tempfile.gettempdir())
+    _ensure_update_space(temp_dir, temp_required, "staging and backing up the portable update")
+
+    if temp_dir.resolve().anchor.lower() != target_dir.resolve().anchor.lower():
+        existing_size = sum(_path_size(target_dir / name) for name in names)
+        target_required = max(0, unpacked_size - existing_size) + _UPDATE_DISK_MARGIN_BYTES
+        _ensure_update_space(target_dir, target_required, "installing the portable update")
+
+
+def _check_macos_package_space(package_path: Path) -> None:
+    if package_path.suffix.lower() != ".zip":
+        return
+    with zipfile.ZipFile(package_path, "r") as archive:
+        unpacked_size = sum(
+            max(0, int(item.file_size))
+            for item in archive.infolist()
+            if not item.is_dir()
+        )
+    _ensure_update_space(
+        Path(tempfile.gettempdir()),
+        unpacked_size + _UPDATE_DISK_MARGIN_BYTES,
+        "extracting the macOS update",
+    )
+
+
 def _write_update_script(name: str, body: str) -> Path:
     script_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
     script_dir.mkdir(parents=True, exist_ok=True)
@@ -738,35 +836,95 @@ def _launch_powershell_script(script_path: Path) -> None:
 
 def _launch_portable_zip_updater(archive_path: Path) -> None:
     target_dir = app_base_dir()
+    _check_portable_update_space(archive_path, target_dir)
     app_exe = target_dir / MAIN_EXECUTABLE
     process_names = ", ".join(_ps_quote(name) for name in _PROCESS_NAMES)
     protected_files = ", ".join(_ps_quote(name) for name in _PORTABLE_UPDATE_PROTECTED_FILES)
+    log_path = archive_path.with_suffix(".update.log")
     script = f"""
 $ErrorActionPreference = 'Stop'
 $zip = {_ps_quote(archive_path)}
 $target = {_ps_quote(target_dir)}
 $app = {_ps_quote(app_exe)}
+$log = {_ps_quote(log_path)}
 $processNames = @({process_names})
 $protectedFiles = @({protected_files})
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetUpdate-' + [guid]::NewGuid().ToString())
-New-Item -ItemType Directory -Path $stage -Force | Out-Null
-Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
-$source = $stage
-$children = @(Get-ChildItem -LiteralPath $stage -Force)
-if ($children.Count -eq 1 -and $children[0].PSIsContainer) {{
-    $source = $children[0].FullName
-}}
-Start-Sleep -Seconds 1
-Get-Process -ErrorAction SilentlyContinue |
-    Where-Object {{ $processNames -contains $_.ProcessName }} |
-    Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-Get-ChildItem -LiteralPath $source -Force |
-    Where-Object {{ -not ($protectedFiles -contains $_.Name) }} |
-    Copy-Item -Destination $target -Recurse -Force
-Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-if (Test-Path -LiteralPath $app) {{
-    Start-Process -FilePath $app -WorkingDirectory $target
+$backup = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetBackup-' + [guid]::NewGuid().ToString())
+$replacementStarted = $false
+$processesStopped = $false
+$updateNames = @()
+try {{
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    New-Item -ItemType Directory -Path $backup -Force | Out-Null
+    Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+    $source = $stage
+    $children = @(Get-ChildItem -LiteralPath $stage -Force)
+    if ($children.Count -eq 1 -and $children[0].PSIsContainer) {{
+        $source = $children[0].FullName
+    }}
+    $updateItems = @(Get-ChildItem -LiteralPath $source -Force |
+        Where-Object {{ -not ($protectedFiles -contains $_.Name) }})
+    foreach ($item in $updateItems) {{
+        $updateNames += $item.Name
+        $existing = Join-Path $target $item.Name
+        if (Test-Path -LiteralPath $existing) {{
+            Copy-Item -LiteralPath $existing -Destination $backup -Recurse -Force
+        }}
+    }}
+    Start-Sleep -Seconds 1
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object {{ $processNames -contains $_.ProcessName }} |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    $processesStopped = $true
+    Start-Sleep -Seconds 2
+    $replacementStarted = $true
+    foreach ($item in $updateItems) {{
+        $existing = Join-Path $target $item.Name
+        if (Test-Path -LiteralPath $existing) {{
+            Remove-Item -LiteralPath $existing -Recurse -Force
+        }}
+        Copy-Item -LiteralPath $item.FullName -Destination $target -Recurse -Force
+    }}
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    if ($processesStopped -and (Test-Path -LiteralPath $app)) {{
+        Start-Process -FilePath $app -WorkingDirectory $target
+    }}
+    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+}} catch {{
+    $message = "BandoriPet update failed: $($_.Exception.Message)"
+    $message | Out-File -LiteralPath $log -Append -Encoding utf8
+    $rollbackFailed = $false
+    if ($replacementStarted) {{
+        foreach ($name in $updateNames) {{
+            $current = Join-Path $target $name
+            $saved = Join-Path $backup $name
+            if (Test-Path -LiteralPath $current) {{
+                Remove-Item -LiteralPath $current -Recurse -Force -ErrorAction SilentlyContinue
+            }}
+            if (Test-Path -LiteralPath $saved) {{
+                try {{
+                    Copy-Item -LiteralPath $saved -Destination $target -Recurse -Force
+                }} catch {{
+                    $rollbackFailed = $true
+                    "Rollback failed for $name`: $($_.Exception.Message)" |
+                        Out-File -LiteralPath $log -Append -Encoding utf8
+                }}
+            }}
+        }}
+    }}
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    if ($rollbackFailed) {{
+        $message += "`nAutomatic rollback was incomplete. Backup retained at: $backup"
+        $message | Out-File -LiteralPath $log -Append -Encoding utf8
+    }} else {{
+        Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    }}
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show($message, 'BandoriPet Update', 'OK', 'Error') | Out-Null
+    if ($processesStopped -and (-not $rollbackFailed) -and (Test-Path -LiteralPath $app)) {{
+        Start-Process -FilePath $app -WorkingDirectory $target
+    }}
 }}
 """
     _launch_powershell_script(_write_update_script("apply-portable", script))
@@ -869,6 +1027,7 @@ def _launch_macos_updater(package_path: Path) -> None:
     if sys.platform != "darwin":
         raise RuntimeError("The macOS updater can only run on macOS.")
 
+    _check_macos_package_space(package_path)
     target_app = _mac_app_bundle()
     script_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
     script_dir.mkdir(parents=True, exist_ok=True)
@@ -887,6 +1046,8 @@ mount_dir=""
 stage="${{target}}.update-stage-$$"
 backup="${{target}}.update-backup-$$"
 success=0
+target_existed=0
+[[ -d "$target" ]] && target_existed=1
 
 move_user_data() {{
     local source_root="$1"
@@ -921,7 +1082,7 @@ cleanup() {{
         fi
         /bin/rm -rf "$target"
         /bin/mv "$backup" "$target"
-    elif [[ "$success" -ne 1 ]]; then
+    elif [[ "$success" -ne 1 && "$target_existed" -ne 1 ]]; then
         /bin/rm -rf "$target"
     fi
     /bin/rm -rf "$stage"
@@ -950,6 +1111,13 @@ source_app="$(/usr/bin/find "$source_root" -maxdepth 3 -type d -name '{APP_NAME}
 if [[ -z "$source_app" ]]; then
     echo "{APP_NAME}.app was not found in the update package." >&2
     exit 3
+fi
+
+required_kb=$(( $(/usr/bin/du -sk "$source_app" | /usr/bin/awk '{{print $1}}') + 262144 ))
+available_kb=$(/bin/df -Pk "${{target:h}}" | /usr/bin/awk 'NR == 2 {{print $4}}')
+if [[ -z "$available_kb" || "$available_kb" -lt "$required_kb" ]]; then
+    echo "Insufficient disk space to stage the macOS update: need $required_kb KiB, available ${{available_kb:-unknown}} KiB." >&2
+    exit 4
 fi
 
 for process_name in {process_names}; do

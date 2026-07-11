@@ -88,7 +88,7 @@ def cleanup_chat_attachments(
                 failed_files += 1
 
     removed_references = 0
-    if sanitize_database and deleted_files:
+    if sanitize_database:
         from database_manager import sanitize_chat_attachment_references
 
         removed_references = sanitize_chat_attachment_references()

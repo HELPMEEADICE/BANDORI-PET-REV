@@ -39,6 +39,14 @@ def test_napcat_timeout_suppresses_late_reply_and_has_cleanup_fallback():
     assert "worker.terminate()" in reply_flow
 
 
+def test_settings_cleanup_does_not_terminate_model_download_worker():
+    source = Path("settings_window/settings_window.py").read_text(encoding="utf-8")
+    cleanup = source.split("    def _cleanup_workers(self):", 1)[1].split("    def _make_theme_widget", 1)[0]
+    assert "if attr == '_model_download_worker':" in cleanup
+    manager_loop = cleanup.split("        for worker in getattr(self, '_download_manager_workers'", 1)[1]
+    assert "worker.terminate()" not in manager_loop
+
+
 def test_settings_process_handles_shutdown_ipc():
     source = Path("settings_process.py").read_text(encoding="utf-8")
     assert 'elif line == "SHUTDOWN":' in source

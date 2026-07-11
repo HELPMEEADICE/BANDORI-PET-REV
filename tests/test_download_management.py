@@ -2,7 +2,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from settings_window.pages.download_manager import (
     DownloadManagementPageMixin,
@@ -79,6 +79,41 @@ class _DownloadPage(DownloadManagementPageMixin):
 
 
 class DownloadManagementTests(unittest.TestCase):
+    def test_cancelled_download_removes_partial_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            part = models_dir / "kasumi.zst.part"
+            part.write_bytes(b"partial")
+            worker = ModelPackageDownloadWorker(["kasumi"], models_dir, overwrite=True)
+            worker._cancel_event.set()
+
+            result = worker._download_one("kasumi")
+
+            self.assertEqual("cancelled", result)
+            self.assertFalse(part.exists())
+
+    def test_cancelled_overwrite_keeps_existing_model(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            target = models_dir / "kasumi.zst"
+            target.write_bytes(b"working-model")
+            worker = ModelPackageDownloadWorker(["kasumi"], models_dir, overwrite=True)
+            worker._cancel_event.set()
+
+            worker._download_one("kasumi")
+
+            self.assertEqual(b"working-model", target.read_bytes())
+
+    def test_request_interruption_closes_active_responses(self):
+        worker = ModelPackageDownloadWorker(["kasumi"], Path("."), overwrite=True)
+        response = Mock()
+        worker._active_responses.add(response)
+
+        worker.requestInterruption()
+
+        self.assertTrue(worker._cancel_event.is_set())
+        response.close.assert_called_once()
+
     def test_discovers_zst_and_folder_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

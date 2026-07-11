@@ -75,6 +75,22 @@ class ModelPackageDownloadWorker(QThread):
         self._total = len(self._package_keys)
         self._started_at = 0.0
         self._lock = threading.Lock()
+        self._cancel_event = threading.Event()
+        self._active_responses = set()
+
+    def requestInterruption(self):
+        self._cancel_event.set()
+        with self._lock:
+            responses = list(self._active_responses)
+        for response in responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+        super().requestInterruption()
+
+    def _cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     def run(self):
         if not self._package_keys:
@@ -83,37 +99,47 @@ class ModelPackageDownloadWorker(QThread):
         self._started_at = time.monotonic()
         downloaded = 0
         failed = []
+        executor = ThreadPoolExecutor(max_workers=min(8, len(self._package_keys)))
+        futures = {
+            executor.submit(self._download_one, package_key): package_key
+            for package_key in self._package_keys
+        }
         try:
-            with ThreadPoolExecutor(max_workers=min(8, len(self._package_keys))) as executor:
-                futures = {
-                    executor.submit(self._download_one, package_key): package_key
-                    for package_key in self._package_keys
-                }
-                for future in as_completed(futures):
-                    if self.isInterruptionRequested():
-                        break
-                    package_key = futures[future]
-                    try:
-                        future.result()
+            for future in as_completed(futures):
+                if self._cancelled():
+                    break
+                package_key = futures[future]
+                try:
+                    outcome = future.result()
+                    if outcome == "downloaded":
                         downloaded += 1
-                    except Exception as exc:
-                        failed.append(f"{package_key}: {exc}")
-                    with self._lock:
-                        self._done += 1
-                    self._emit_progress(package_key)
+                except Exception as exc:
+                    failed.append(f"{package_key}: {exc}")
+                with self._lock:
+                    self._done += 1
+                self._emit_progress(package_key)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self._cancelled():
+                self.error.emit(str(exc))
+            return
+        finally:
+            if self._cancelled():
+                for future in futures:
+                    future.cancel()
+            executor.shutdown(wait=not self._cancelled(), cancel_futures=True)
+        if self._cancelled():
             return
         self.finished.emit({"downloaded": downloaded, "failed": failed})
 
     def _download_one(self, package_key: str):
-        if self.isInterruptionRequested():
-            return
         url = f"{MODEL_PACKAGE_BASE_URL}/{urllib.parse.quote(package_key, safe='')}.zst"
         target = self._models_dir / f"{package_key}.zst"
         part = self._models_dir / f"{package_key}.zst.part"
+        if self._cancelled():
+            part.unlink(missing_ok=True)
+            return "cancelled"
         if not self._overwrite and target.exists() and target.stat().st_size > 0:
-            return
+            return "skipped"
         if part.exists():
             try:
                 part.unlink()
@@ -121,31 +147,46 @@ class ModelPackageDownloadWorker(QThread):
                 pass
         req = urllib.request.Request(url, headers={"User-Agent": "Bandori-Pet/1.0"}, method="GET")
         ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
-            length = int(resp.headers.get("Content-Length") or 0)
-            if length:
+        try:
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
                 with self._lock:
-                    self._known_sizes[package_key] = length
-                    self._total_bytes = sum(self._known_sizes.values())
-                self._emit_progress(package_key)
-            with part.open("wb") as file:
-                while True:
-                    if self.isInterruptionRequested():
-                        raise RuntimeError("cancelled")
-                    chunk = resp.read(1024 * 256)
-                    if not chunk:
-                        break
-                    file.write(chunk)
+                    self._active_responses.add(resp)
+                length = int(resp.headers.get("Content-Length") or 0)
+                if length:
                     with self._lock:
-                        self._downloaded_bytes += len(chunk)
+                        self._known_sizes[package_key] = length
+                        self._total_bytes = sum(self._known_sizes.values())
                     self._emit_progress(package_key)
-        if part.stat().st_size <= 0:
-            raise RuntimeError("empty response")
-        if target.exists():
-            target.unlink()
-        part.replace(target)
+                with part.open("wb") as file:
+                    while True:
+                        if self._cancelled():
+                            return "cancelled"
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        if self._cancelled():
+                            return "cancelled"
+                        file.write(chunk)
+                        with self._lock:
+                            self._downloaded_bytes += len(chunk)
+                        self._emit_progress(package_key)
+            if self._cancelled():
+                return "cancelled"
+            if part.stat().st_size <= 0:
+                raise RuntimeError("empty response")
+            if target.exists():
+                target.unlink()
+            part.replace(target)
+            return "downloaded"
+        finally:
+            with self._lock:
+                self._active_responses.discard(locals().get("resp"))
+            if self._cancelled():
+                part.unlink(missing_ok=True)
 
     def _emit_progress(self, current: str):
+        if self._cancelled():
+            return
         elapsed = max(time.monotonic() - self._started_at, 0.001)
         with self._lock:
             downloaded_bytes = self._downloaded_bytes
