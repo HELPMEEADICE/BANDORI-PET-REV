@@ -1,4 +1,8 @@
 {
+  "Reminder.save_failed_title": "État des rappels non enregistré",
+  "Reminder.save_failed_content": "Les rappels continueront pendant cette session, mais pourront revenir à leur ancien état après redémarrage. Vérifiez les autorisations ou si le fichier est utilisé.",
+  "PetWindow.runtime_save_failed_title": "État de l’interface non enregistré",
+  "PetWindow.runtime_save_failed_content": "L’état actuel restera actif pendant cette session, mais certains réglages d’interface pourront être rétablis après redémarrage. Vérifiez les autorisations ou si le fichier est utilisé.",
   "SettingsWindow.config_save_failed_content": "Le fichier de configuration n'a pas pu être écrit. Vérifiez les autorisations ou si le disque ou le fichier est utilisé, puis réessayez.",
   "SettingsWindow.attachment_settings_save_failed_title": "Échec de l'enregistrement",
   "SettingsWindow.language_save_failed_title": "Échec de l'enregistrement",

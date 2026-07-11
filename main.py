@@ -195,8 +195,21 @@ def main():
         def _force_exit():
             os._exit(0)
 
-        QTimer.singleShot(1500, _force_exit)
-        QTimer.singleShot(50, app.quit)
+        force_exit_timer = threading.Timer(1.5, _force_exit)
+        force_exit_timer.daemon = True
+        force_exit_timer.start()
+
+        scheduler = reminder_ref.get("scheduler")
+        if scheduler is not None:
+            scheduler.stop()
+
+        def _quit_when_reminders_stop():
+            if scheduler is not None and scheduler.has_running_workers():
+                QTimer.singleShot(50, _quit_when_reminders_stop)
+                return
+            app.quit()
+
+        QTimer.singleShot(50, _quit_when_reminders_stop)
 
     def init_ipc_server():
         def create_ipc_queues():

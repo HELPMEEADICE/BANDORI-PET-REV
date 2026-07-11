@@ -361,6 +361,7 @@ class PetWindow(QWidget):
         self._tray_actions = []
         self._enable_tray = enable_tray
         self._cfg = config_manager
+        self._runtime_save_failure_reported = False
         self._outfit_description_worker = None
         self._outfit_description_token = 0
         self._restore_layer_order_from_config()
@@ -1115,7 +1116,7 @@ class PetWindow(QWidget):
         if not self._cfg:
             return
         self._cfg.set("chat_group_order", list(self._group_characters))
-        self._cfg.save()
+        self._persist_runtime_config()
 
     def _restore_layer_order_from_config(self):
         if not self._cfg:
@@ -1904,7 +1905,7 @@ class PetWindow(QWidget):
         self._cfg.set(OUTFIT_DESCRIPTIONS_KEY, descriptions)
         payload = json.dumps(entry, ensure_ascii=False)
         if not self._send_ipc(f"OUTFIT_DESCRIPTION\t{payload}"):
-            self._cfg.save()
+            self._persist_runtime_config()
 
     def _on_outfit_description_error(self, worker, token: int, attempt: int, message: str):
         self._clear_outfit_description_worker(worker)
@@ -2432,7 +2433,7 @@ class PetWindow(QWidget):
                 self._cfg.set("user_avatar_path", data["user_avatar_path"])
             if data.get("language"):
                 self._cfg.set("language", str(data["language"]))
-            self._cfg.save()
+            self._persist_runtime_config()
         if "compact_ai_window_enabled" in data:
             self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
             if not self._compact_ai_window_enabled:
@@ -2510,7 +2511,7 @@ class PetWindow(QWidget):
                 self._restore_layer_order_from_config()
                 self._layer_index = self._compute_layer_index()
             self._cfg.set("models", data["models"])
-            self._cfg.save()
+            self._persist_runtime_config()
             models_runtime_changed = self._models_runtime_signature(data["models"]) != previous_models_signature
         else:
             models_runtime_changed = False
@@ -4307,7 +4308,7 @@ class PetWindow(QWidget):
         if self._cfg:
             self._cfg.load()
             self._cfg.set("drag_locked", bool(locked))
-            self._cfg.save()
+            self._persist_runtime_config()
 
     def _on_radial_pixel(self):
         self._note_user_interaction()
@@ -4396,7 +4397,7 @@ class PetWindow(QWidget):
             if self._cfg:
                 self._cfg.load()
                 self._cfg.set("hide_live2d_model", False)
-                self._cfg.save()
+                self._persist_runtime_config()
             self.show()
 
     def _open_settings(self, start_on_costumes=False):
@@ -4494,7 +4495,7 @@ class PetWindow(QWidget):
                         self._cfg.set("window_placement", self._window_placement())
             if skip_model_sync:
                 self._settings_models_updated = False
-            self._cfg.save()
+            self._persist_runtime_config()
 
     def _save_position_config(self):
         if not self._cfg:
@@ -4554,11 +4555,37 @@ class PetWindow(QWidget):
                     })
                 self._cfg.set("models", updated_models)
 
-        self._cfg.save()
+        self._persist_runtime_config()
 
     def _flush_save(self):
         if self._cfg:
             self._cfg.flush_save()
+
+    def _persist_runtime_config(self) -> bool:
+        if not self._cfg:
+            return False
+        try:
+            saved = self._cfg.save()
+        except Exception as exc:
+            print(f"Pet runtime config save failed: {exc}", file=sys.stderr)
+            saved = False
+        if saved is not False:
+            return True
+        if self._runtime_save_failure_reported:
+            return False
+        self._runtime_save_failure_reported = True
+        print("Pet runtime config save returned false", file=sys.stderr)
+        if self._tray_icon is not None and self._tray_icon.isVisible():
+            self._tray_icon.showMessage(
+                _tr("PetWindow.runtime_save_failed_title", default="界面状态保存失败"),
+                _tr(
+                    "PetWindow.runtime_save_failed_content",
+                    default="本次会话仍会使用当前状态，但重启后部分界面设置可能恢复。请检查配置文件权限或占用。",
+                ),
+                QSystemTrayIcon.MessageIcon.Warning,
+                10_000,
+            )
+        return False
 
     def _sync_current_model_entry(self, path: str, save: bool = True, include_position: bool = True):
         if not self._cfg or not path:
@@ -4620,7 +4647,7 @@ class PetWindow(QWidget):
             models.append(entry)
         self._cfg.set("models", models)
         if save:
-            self._cfg.save()
+            self._persist_runtime_config()
 
     def _quit(self):
         self._close_radial_menu_process(force=True)

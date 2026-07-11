@@ -1,4 +1,8 @@
 {
+  "Reminder.save_failed_title": "提醒状态保存失败",
+  "Reminder.save_failed_content": "本次会话仍会继续运行，但重启后提醒可能恢复旧状态。请检查配置文件权限或占用。",
+  "PetWindow.runtime_save_failed_title": "界面状态保存失败",
+  "PetWindow.runtime_save_failed_content": "本次会话仍会使用当前状态，但重启后部分界面设置可能恢复。请检查配置文件权限或占用。",
   "SettingsWindow.config_save_failed_content": "配置文件未写入，请检查权限或磁盘、文件占用后重试。",
   "SettingsWindow.attachment_settings_save_failed_title": "保存失败",
   "SettingsWindow.language_save_failed_title": "保存失败",

@@ -419,7 +419,11 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
             alarms.append(alarm)
             cfg.set(ALARM_CONFIG_KEY, alarms)
             cfg.set(POMODORO_CONFIG_KEY, pomodoros)
-            cfg.save()
+            if cfg.save() is False:
+                return {
+                    "content": "创建闹钟失败：配置文件未能写入，请检查文件权限或占用后重试。",
+                    "extra_messages": [],
+                }
             payload = _reminder_settings_payload(cfg, alarms, pomodoros)
             publish_settings(payload)
             next_at = alarm.get("next_at", "").replace("T", " ")
@@ -438,7 +442,11 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
             pomodoros.append(pomodoro)
             cfg.set(ALARM_CONFIG_KEY, alarms)
             cfg.set(POMODORO_CONFIG_KEY, pomodoros)
-            cfg.save()
+            if cfg.save() is False:
+                return {
+                    "content": "启动番茄钟失败：配置文件未能写入，请检查文件权限或占用后重试。",
+                    "extra_messages": [],
+                }
             payload = _reminder_settings_payload(cfg, alarms, pomodoros)
             publish_settings(payload)
             desc = pomodoro.get("description", "") or "无描述"

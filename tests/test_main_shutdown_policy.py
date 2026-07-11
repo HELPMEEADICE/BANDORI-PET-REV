@@ -9,10 +9,18 @@ def test_tray_exit_defers_quit_until_context_menu_unwinds():
 def test_main_shutdown_uses_cooperative_nonblocking_process_close():
     source = Path("main.py").read_text(encoding="utf-8")
     assert "notify_child_processes_shutdown()" in source
-    assert "QTimer.singleShot(50, app.quit)" in source
+    assert "QTimer.singleShot(50, _quit_when_reminders_stop)" in source
     assert "app.aboutToQuit.connect(notify_child_processes_shutdown)" in source
     assert "app.aboutToQuit.connect(lambda: close_settings_process(force=False, wait=False))" in source
     assert "app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=False))" in source
+
+
+def test_main_force_exit_watchdog_does_not_depend_on_qt_event_loop():
+    source = Path("main.py").read_text(encoding="utf-8")
+    quit_source = source.split("    def quit_all():", 1)[1].split("    def init_ipc_server", 1)[0]
+    assert "threading.Timer" in quit_source
+    assert "QTimer.singleShot(1500, _force_exit)" not in quit_source
+    assert "scheduler.has_running_workers()" in quit_source
 
 
 def test_settings_process_handles_shutdown_ipc():

@@ -1,4 +1,8 @@
 {
+  "Reminder.save_failed_title": "No se guardó el estado de los recordatorios",
+  "Reminder.save_failed_content": "Los recordatorios seguirán funcionando en esta sesión, pero podrían volver al estado anterior tras reiniciar. Comprueba los permisos o si el archivo está en uso.",
+  "PetWindow.runtime_save_failed_title": "No se guardó el estado de la interfaz",
+  "PetWindow.runtime_save_failed_content": "El estado actual seguirá activo en esta sesión, pero algunos ajustes de interfaz podrían revertirse tras reiniciar. Comprueba los permisos o si el archivo está en uso.",
   "SettingsWindow.config_save_failed_content": "No se pudo escribir el archivo de configuración. Compruebe los permisos o si el disco o el archivo están en uso y vuelva a intentarlo.",
   "SettingsWindow.attachment_settings_save_failed_title": "Error al guardar",
   "SettingsWindow.language_save_failed_title": "Error al guardar",

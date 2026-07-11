@@ -62,6 +62,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._system_notify = system_notify
         self._db = DatabaseManager()
         self._workers: list[NonStreamWorker] = []
+        self._ignored_workers: set[NonStreamWorker] = set()
         self._cancelled_tts_workers = []
         self._tts_worker = None
         self._tts_generation = 0
@@ -78,6 +79,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._watchdog_timer: QTimer | None = None
         self._screen_awareness_worker: ScreenAwarenessVisionWorker | None = None
         self._next_screen_awareness_at = None
+        self._persist_failure_reported = False
+        self._stopped = False
         self._timer = QTimer(self)
         self._timer.setInterval(15_000)
         self._timer.timeout.connect(self._tick)
@@ -102,8 +105,36 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._cfg.set(ALARM_CONFIG_KEY, alarms)
             self._cfg.set(POMODORO_CONFIG_KEY, pomodoros)
             self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
-            self._cfg.save()
+            self._persist_config("reload")
         self._schedule_next_screen_awareness()
+
+    def _persist_config(self, operation: str) -> bool:
+        try:
+            saved = self._cfg.save()
+        except Exception as exc:
+            _log.error("ReminderScheduler %s: failed to persist config: %s", operation, exc)
+            saved = False
+        if saved is not False:
+            return True
+        if not self._persist_failure_reported:
+            self._persist_failure_reported = True
+            self._report_persist_failure(operation)
+        return False
+
+    def _report_persist_failure(self, operation: str):
+        _log.error("ReminderScheduler %s: config save returned false", operation)
+        self._broadcast_event({
+            "source": "reminder",
+            "state": "error",
+            "mode": "replace_raw",
+            "title": _tr("Reminder.save_failed_title", default="提醒状态保存失败"),
+            "text": _tr(
+                "Reminder.save_failed_content",
+                default="本次会话仍会继续运行，但重启后提醒可能恢复旧状态。请检查配置文件权限或占用。",
+            ),
+            "ttl_ms": 12_000,
+            "anchor_to_pet": True,
+        })
 
     def _defer_overdue_proactive_items(self, proactive: dict, now):
         for item in proactive.get("items", []):
@@ -125,28 +156,44 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         return True
 
     def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
         self._timer.stop()
         self._pending_contexts.clear()
         self._text_generation_busy = False
         self._clear_watchdog()
         for worker in list(self._workers):
             if worker.isRunning():
+                self._ignored_workers.add(worker)
                 worker.requestInterruption()
                 worker.quit()
-                worker.wait(1000)
-        self._workers.clear()
+                worker.wait(250)
+            if not worker.isRunning():
+                self._forget_worker(worker)
         self._reset_tts()
         if self._screen_awareness_worker is not None and self._screen_awareness_worker.isRunning():
             self._screen_awareness_worker.requestInterruption()
             self._screen_awareness_worker.quit()
-            self._screen_awareness_worker.wait(1000)
-        self._screen_awareness_worker = None
+            self._screen_awareness_worker.wait(250)
+        if self._screen_awareness_worker is not None and not self._screen_awareness_worker.isRunning():
+            self._screen_awareness_worker.deleteLater()
+            self._screen_awareness_worker = None
         for worker in list(self._cancelled_tts_workers):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(1000)
-        self._cancelled_tts_workers.clear()
+                worker.quit()
+                worker.wait(250)
+        self._prune_cancelled_tts_workers()
         self._db.close()
+
+    def has_running_workers(self) -> bool:
+        workers = list(self._workers) + list(self._cancelled_tts_workers)
+        if self._screen_awareness_worker is not None:
+            workers.append(self._screen_awareness_worker)
+        if self._tts_worker is not None:
+            workers.append(self._tts_worker)
+        return any(worker is not None and worker.isRunning() for worker in workers)
 
     def _tick(self):
         if not self._cfg:
@@ -212,10 +259,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._cfg.set(ALARM_CONFIG_KEY, alarms)
             self._cfg.set(POMODORO_CONFIG_KEY, pomodoros)
             self._cfg.set(PROACTIVE_COMPANION_CONFIG_KEY, proactive)
-            try:
-                self._cfg.save()
-            except OSError as exc:
-                _log.error("ReminderScheduler tick: failed to persist config: %s", exc)
+            self._persist_config("tick")
 
     def _screen_awareness_enabled(self) -> bool:
         return bool(self._cfg and self._cfg.get("screen_awareness_enabled", False))
@@ -270,6 +314,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return
         self._screen_awareness_worker = None
         worker.deleteLater()
+        if self._stopped:
+            return
         result = result if isinstance(result, dict) else {}
         summary = str(result.get("screen_observation", "") or "").strip()
         image_data_url = str(result.get("screen_image_data_url", "") or "").strip()
@@ -305,9 +351,11 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
     def _on_screen_awareness_error(self, worker: ScreenAwarenessVisionWorker, message: str):
         if worker is not self._screen_awareness_worker:
             return
-        _log.warning("Screen awareness failed: %s", message)
         self._screen_awareness_worker = None
         worker.deleteLater()
+        if self._stopped:
+            return
+        _log.warning("Screen awareness failed: %s", message)
 
     def _screen_awareness_character(self) -> str:
         mode = str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible").strip()
@@ -404,10 +452,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         if not self._cfg:
             return
         self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, policy)
-        try:
-            self._cfg.save()
-        except OSError as exc:
-            _log.error("ReminderScheduler: failed to persist care policy: %s", exc)
+        self._persist_config("care policy")
 
     def _care_policy_decision(
         self,
@@ -666,10 +711,11 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return
         _log.warning("ReminderScheduler: watchdog fired, forcing fallback")
         context = dict(self._active_context) if self._active_context else {}
+        self._ignored_workers.add(worker)
         if worker.isRunning():
             worker.requestInterruption()
             worker.quit()
-            worker.wait(1000)
+            worker.wait(250)
         self._active_worker = None
         self._active_context = None
         if self._watchdog_timer is not None:
@@ -689,6 +735,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._active_context = None
 
     def _on_text_generated(self, worker: NonStreamWorker, context: dict, text: str):
+        if worker in self._ignored_workers:
+            self._forget_worker(worker)
+            return
         self._clear_watchdog()
         self._forget_worker(worker)
         actions = parse_action_tags(text)
@@ -712,6 +761,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         QTimer.singleShot(300, self._drain_pending_contexts)
 
     def _on_text_generation_failed(self, worker: NonStreamWorker, context: dict):
+        if worker in self._ignored_workers:
+            self._forget_worker(worker)
+            return
         self._clear_watchdog()
         self._forget_worker(worker)
         if context.get("kind") == "screen_awareness":
@@ -723,7 +775,11 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         QTimer.singleShot(300, self._drain_pending_contexts)
 
     def _forget_worker(self, worker: NonStreamWorker):
+        if worker.isRunning():
+            QTimer.singleShot(250, lambda worker=worker: self._forget_worker(worker))
+            return
         self._workers = [item for item in self._workers if item is not worker]
+        self._ignored_workers.discard(worker)
         worker.deleteLater()
 
     def _fallback_text(self, context: dict) -> str:
@@ -836,7 +892,10 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         QTimer.singleShot(1000, self._prune_cancelled_tts_workers)
 
     def _prune_cancelled_tts_workers(self):
-        self._cancelled_tts_workers = [
-            worker for worker in self._cancelled_tts_workers
-            if worker is not None and worker.isRunning()
-        ]
+        running = []
+        for worker in self._cancelled_tts_workers:
+            if worker is not None and worker.isRunning():
+                running.append(worker)
+            elif worker is not None:
+                worker.deleteLater()
+        self._cancelled_tts_workers = running

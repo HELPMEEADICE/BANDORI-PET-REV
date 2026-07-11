@@ -7,6 +7,52 @@ from alarm_manager import ReminderScheduler
 
 
 class ReminderSchedulerTest(unittest.TestCase):
+    def test_persist_config_reports_false_result_once(self):
+        scheduler = SimpleNamespace(
+            _cfg=SimpleNamespace(save=Mock(return_value=False)),
+            _persist_failure_reported=False,
+            _report_persist_failure=Mock(),
+        )
+
+        self.assertFalse(ReminderScheduler._persist_config(scheduler, "tick"))
+        self.assertFalse(ReminderScheduler._persist_config(scheduler, "tick"))
+
+        scheduler._report_persist_failure.assert_called_once_with("tick")
+
+    def test_persist_config_accepts_successful_save(self):
+        scheduler = SimpleNamespace(
+            _cfg=SimpleNamespace(save=Mock(return_value=True)),
+            _persist_failure_reported=False,
+            _report_persist_failure=Mock(),
+        )
+
+        self.assertTrue(ReminderScheduler._persist_config(scheduler, "tick"))
+        scheduler._report_persist_failure.assert_not_called()
+
+    def test_running_cancelled_worker_is_retained_until_it_stops(self):
+        worker = Mock()
+        worker.isRunning.return_value = True
+        scheduler = SimpleNamespace(_workers=[worker], _ignored_workers={worker})
+
+        with patch("alarm_manager.QTimer.singleShot") as single_shot:
+            ReminderScheduler._forget_worker(scheduler, worker)
+
+        self.assertEqual([worker], scheduler._workers)
+        worker.deleteLater.assert_not_called()
+        single_shot.assert_called_once()
+
+    def test_running_worker_delays_scheduler_shutdown(self):
+        worker = Mock()
+        worker.isRunning.return_value = True
+        scheduler = SimpleNamespace(
+            _workers=[worker],
+            _cancelled_tts_workers=[],
+            _screen_awareness_worker=None,
+            _tts_worker=None,
+        )
+
+        self.assertTrue(ReminderScheduler.has_running_workers(scheduler))
+
     def test_screen_awareness_uses_its_own_display_mode(self):
         scheduler = SimpleNamespace(
             _cfg=SimpleNamespace(get=lambda key, default=None: {

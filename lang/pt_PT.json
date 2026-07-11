@@ -1,4 +1,8 @@
 {
+  "Reminder.save_failed_title": "Estado dos lembretes não guardado",
+  "Reminder.save_failed_content": "Os lembretes continuarão nesta sessão, mas podem regressar ao estado anterior após reiniciar. Verifique as permissões ou se o ficheiro está em utilização.",
+  "PetWindow.runtime_save_failed_title": "Estado da interface não guardado",
+  "PetWindow.runtime_save_failed_content": "O estado atual continuará nesta sessão, mas algumas definições da interface podem ser repostas após reiniciar. Verifique as permissões ou se o ficheiro está em utilização.",
   "SettingsWindow.config_save_failed_content": "Não foi possível escrever o ficheiro de configuração. Verifique as permissões ou se o disco ou ficheiro está em uso e tente novamente.",
   "SettingsWindow.attachment_settings_save_failed_title": "Falha ao guardar",
   "SettingsWindow.language_save_failed_title": "Falha ao guardar",
