@@ -679,6 +679,7 @@
   "SettingsWindow.update_channel_inno": "Inno Setup 설치 프로그램",
   "SettingsWindow.update_channel_msi": "MSI 설치 프로그램",
   "SettingsWindow.update_channel_macos_app": "macOS 앱",
+  "SettingsWindow.update_channel_linux_portable": "Linux 포터블",
   "SettingsWindow.update_channel_unknown": "알 수 없음",
   "SettingsWindow.side_settings": "설정",
   "SettingsWindow.side_fps": "재생률 (FPS)",

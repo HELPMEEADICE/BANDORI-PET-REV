@@ -77,6 +77,48 @@ class AppUpdateTests(unittest.TestCase):
         ):
             self.assertEqual(app_update.detect_update_channel(), "macos_app")
 
+    def test_frozen_linux_uses_linux_portable_channel(self):
+        with (
+            patch.object(app_update.sys, "frozen", True, create=True),
+            patch.object(app_update.sys, "platform", "linux"),
+        ):
+            self.assertEqual(app_update.detect_update_channel(), "linux_portable")
+
+    def test_linux_update_selects_matching_zip(self):
+        assets = [
+            _asset("BandoriPet-3.1.4-WIN-AMD64.zip"),
+            _asset("BandoriPet-3.1.4-LINUX-AMD64.zip"),
+        ]
+        with (
+            patch.object(app_update.sys, "platform", "linux"),
+            patch.object(app_update.platform, "machine", return_value="x86_64"),
+        ):
+            selected = app_update._select_release_asset(assets, "linux_portable")
+
+        self.assertEqual("BandoriPet-3.1.4-LINUX-AMD64.zip", selected["name"])
+        self.assertEqual("install_linux", app_update._asset_action(selected["name"], "linux_portable"))
+
+    def test_apply_linux_update_downloads_and_launches_linux_updater(self):
+        info = app_update.UpdateInfo(
+            channel="linux_portable",
+            action="install_linux",
+            download_url="https://example.invalid/linux.zip",
+            asset_name="BandoriPet-LINUX-AMD64.zip",
+            asset_size=10,
+            asset_sha256="a" * 64,
+        )
+        archive = Path("/tmp/linux.zip")
+        with (
+            patch.object(app_update, "_download_asset", return_value=archive) as download,
+            patch.object(app_update, "_launch_linux_zip_updater") as launch,
+        ):
+            result = app_update.apply_update(info)
+
+        download.assert_called_once()
+        launch.assert_called_once_with(archive)
+        self.assertTrue(result.success)
+        self.assertTrue(result.exits_app)
+
     def test_macos_updater_stages_app_and_preserves_user_data(self):
         with (
             tempfile.TemporaryDirectory() as temp_dir,
@@ -282,6 +324,30 @@ class AppUpdateTests(unittest.TestCase):
         self.assertIn("Backup retained at: $backup", script)
         self.assertIn("if ($processesStopped -and (-not $rollbackFailed)", script)
         self.assertIn("Start-Process -FilePath $app", script)
+
+    def test_linux_updater_script_backs_up_rolls_back_and_preserves_user_data(self):
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(app_update.sys, "platform", "linux"),
+            patch.object(app_update.tempfile, "gettempdir", return_value=temp_dir),
+            patch.object(app_update, "app_base_dir", return_value=Path(temp_dir) / "app"),
+            patch.object(app_update, "_check_portable_update_space"),
+            patch.object(app_update.subprocess, "Popen") as popen,
+        ):
+            app_dir = Path(temp_dir) / "app"
+            app_dir.mkdir()
+            app_update._launch_linux_zip_updater(Path(temp_dir) / "update.zip")
+            scripts = list(Path(temp_dir, "BandoriPetUpdate").glob("apply-linux-*.sh"))
+            script = scripts[0].read_text(encoding="utf-8")
+
+        self.assertIn("command -v unzip", script)
+        self.assertIn("command -v bsdtar", script)
+        self.assertIn('"models"|"chat_attachments"', script)
+        self.assertIn("replacement_started=0", script)
+        self.assertIn("rollback_failed=0", script)
+        self.assertIn('cp -a -- "$existing" "$backup/"', script)
+        self.assertIn('if [[ "$processes_stopped" -eq 1 && "$rollback_failed" -eq 0', script)
+        popen.assert_called_once()
 
     def test_download_rejects_sha256_mismatch_and_removes_partial_file(self):
         response = io.BytesIO(b"update")

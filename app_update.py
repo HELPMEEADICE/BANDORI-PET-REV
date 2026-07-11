@@ -36,6 +36,8 @@ _PORTABLE_UPDATE_PROTECTED_FILES = (
     "data.db",
     "data.db-shm",
     "data.db-wal",
+    "models",
+    "chat_attachments",
 )
 _UPDATE_DISK_MARGIN_BYTES = 256 * 1024 * 1024
 
@@ -73,6 +75,8 @@ def detect_update_channel() -> str:
         return "source" if _is_git_repo(base_dir) else "source_unmanaged"
     if sys.platform == "darwin":
         return "macos_app"
+    if sys.platform.startswith("linux"):
+        return "linux_portable"
     if sys.platform == "win32":
         install_type = _detect_windows_install_type(base_dir)
         if install_type:
@@ -149,6 +153,20 @@ def apply_update(info: UpdateInfo) -> UpdateResult:
         return UpdateResult(
             True,
             "The macOS updater has started. BandoriPet will close, replace the app, and restart.",
+            requires_restart=True,
+            exits_app=True,
+        )
+    if info.action == "install_linux":
+        archive_path = _download_asset(
+            info.download_url,
+            info.asset_name,
+            info.asset_size,
+            info.asset_sha256,
+        )
+        _launch_linux_zip_updater(archive_path)
+        return UpdateResult(
+            True,
+            "The Linux updater has started. BandoriPet will close, replace the application files, and restart.",
             requires_restart=True,
             exits_app=True,
         )
@@ -451,6 +469,9 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
         elif channel == "macos_app":
             if not lower.endswith((".dmg", ".zip")):
                 continue
+        elif channel == "linux_portable":
+            if not lower.endswith(".zip"):
+                continue
         elif channel == "portable":
             if not lower.endswith(".zip") and not lower.endswith(".msi"):
                 continue
@@ -478,6 +499,8 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
             score += 7
         if lower.endswith(".zip") and channel == "macos_app":
             score += 3
+        if lower.endswith(".zip") and channel == "linux_portable":
+            score += 6
         candidates.append((score, asset))
 
     if not candidates:
@@ -495,6 +518,8 @@ def _asset_action(asset_name: str, channel: str) -> str:
         return "portable_zip"
     if lower.endswith((".dmg", ".zip")) and channel == "macos_app":
         return "install_macos"
+    if lower.endswith(".zip") and channel == "linux_portable":
+        return "install_linux"
     return ""
 
 
@@ -928,6 +953,151 @@ try {{
 }}
 """
     _launch_powershell_script(_write_update_script("apply-portable", script))
+
+
+def _launch_linux_zip_updater(archive_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError("The Linux updater can only run on Linux.")
+    target_dir = app_base_dir()
+    _check_portable_update_space(archive_path, target_dir)
+    script_dir = Path(tempfile.gettempdir()) / "BandoriPetUpdate"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    script_path = script_dir / f"apply-linux-{token}.sh"
+    log_path = script_dir / f"apply-linux-{token}.log"
+    app_exe = target_dir / Path(MAIN_EXECUTABLE).stem
+    process_names = " ".join(shlex.quote(Path(name).stem) for name in _PROCESS_NAMES)
+    executable_names = " ".join(
+        shlex.quote(name)
+        for name in ("BandoriPet", "pet_process", "radial_menu_process", "settings_process", "chat_process")
+    )
+    script = f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+archive={shlex.quote(str(archive_path))}
+target={shlex.quote(str(target_dir))}
+app={shlex.quote(str(app_exe))}
+log={shlex.quote(str(log_path))}
+stage="$(mktemp -d "${{TMPDIR:-/tmp}}/BandoriPetUpdate.XXXXXX")"
+backup="$(mktemp -d "${{TMPDIR:-/tmp}}/BandoriPetBackup.XXXXXX")"
+success=0
+processes_stopped=0
+replacement_started=0
+rollback_failed=0
+declare -a update_names=()
+
+log_error() {{
+    printf '%s\n' "$*" >>"$log"
+}}
+
+restart_app() {{
+    [[ -x "$app" ]] || return 1
+    nohup "$app" >/dev/null 2>&1 &
+}}
+
+cleanup() {{
+    local status=$?
+    trap - EXIT
+    if [[ "$success" -eq 1 ]]; then
+        rm -rf -- "$stage" "$backup"
+        exit 0
+    fi
+    log_error "BandoriPet update failed with status $status."
+    if [[ "$replacement_started" -eq 1 ]]; then
+        local name current saved
+        for name in "${{update_names[@]}}"; do
+            current="$target/$name"
+            saved="$backup/$name"
+            rm -rf -- "$current" || true
+            if [[ -e "$saved" ]]; then
+                if ! cp -a -- "$saved" "$target/"; then
+                    rollback_failed=1
+                    log_error "Rollback failed for $name."
+                fi
+            fi
+        done
+    fi
+    rm -rf -- "$stage"
+    if [[ "$rollback_failed" -eq 0 ]]; then
+        rm -rf -- "$backup"
+    else
+        log_error "Automatic rollback was incomplete. Backup retained at: $backup"
+    fi
+    if [[ "$processes_stopped" -eq 1 && "$rollback_failed" -eq 0 && -x "$app" ]]; then
+        restart_app
+    fi
+    exit "$status"
+}}
+trap cleanup EXIT
+
+if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$archive" -d "$stage"
+elif command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -xf "$archive" -C "$stage"
+else
+    log_error "Neither unzip nor bsdtar is available."
+    exit 2
+fi
+
+source_dir="$stage"
+mapfile -d '' top_entries < <(find "$stage" -mindepth 1 -maxdepth 1 -print0)
+if [[ "${{#top_entries[@]}}" -eq 1 && -d "${{top_entries[0]}}" ]]; then
+    source_dir="${{top_entries[0]}}"
+fi
+mapfile -d '' update_items < <(find "$source_dir" -mindepth 1 -maxdepth 1 -print0)
+if [[ "${{#update_items[@]}}" -eq 0 ]]; then
+    log_error "The Linux update archive is empty."
+    exit 3
+fi
+if [[ ! -f "$source_dir/BandoriPet" ]]; then
+    log_error "BandoriPet executable was not found in the Linux update archive."
+    exit 4
+fi
+
+for item in "${{update_items[@]}}"; do
+    name="$(basename "$item")"
+    case "$name" in
+        "models"|"chat_attachments"|"config.json"|"data.db"|"data.db-shm"|"data.db-wal") continue ;;
+    esac
+    update_names+=("$name")
+    existing="$target/$name"
+    if [[ -e "$existing" ]]; then
+        cp -a -- "$existing" "$backup/"
+    fi
+done
+
+sleep 2
+for process_name in {process_names}; do
+    pkill -x "$process_name" >/dev/null 2>&1 || true
+done
+processes_stopped=1
+sleep 1
+replacement_started=1
+
+for item in "${{update_items[@]}}"; do
+    name="$(basename "$item")"
+    case "$name" in
+        "models"|"chat_attachments"|"config.json"|"data.db"|"data.db-shm"|"data.db-wal") continue ;;
+    esac
+    rm -rf -- "$target/$name"
+    cp -a -- "$item" "$target/"
+done
+
+for executable in {executable_names}; do
+    [[ -f "$target/$executable" ]] && chmod +x "$target/$executable"
+done
+restart_app
+success=1
+"""
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o700)
+    subprocess.Popen(
+        ["/bin/bash", str(script_path)],
+        cwd=str(script_dir),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def _launch_msi_updater(installer_path: Path) -> None:

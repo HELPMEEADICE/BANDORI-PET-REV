@@ -679,6 +679,7 @@
   "SettingsWindow.update_channel_inno": "Установщик Inno Setup",
   "SettingsWindow.update_channel_msi": "Установщик MSI",
   "SettingsWindow.update_channel_macos_app": "Приложение для MacOS",
+  "SettingsWindow.update_channel_linux_portable": "Портативная версия Linux",
   "SettingsWindow.update_channel_unknown": "Неизвестно",
   "SettingsWindow.side_settings": "Настройки",
   "SettingsWindow.side_fps": "Частота обновления (FPS)",

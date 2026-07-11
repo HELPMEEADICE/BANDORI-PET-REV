@@ -679,6 +679,7 @@
   "SettingsWindow.update_channel_inno": "Instalador do Inno Setup",
   "SettingsWindow.update_channel_msi": "Instalador MSI",
   "SettingsWindow.update_channel_macos_app": "Aplicação macOS",
+  "SettingsWindow.update_channel_linux_portable": "Linux portátil",
   "SettingsWindow.update_channel_unknown": "Desconhecido",
   "SettingsWindow.side_settings": "Configurações",
   "SettingsWindow.side_fps": "Taxa de atualização (FPS)",
