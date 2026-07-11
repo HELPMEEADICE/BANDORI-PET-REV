@@ -333,33 +333,53 @@ class SettingsWindow(
 
     def _save_model_picker_state(self):
         if not self._cfg:
-            return
-        self._cfg.set(MODEL_PICKER_STATE_KEY, {
+            return False
+        previous_state = self._cfg.get(MODEL_PICKER_STATE_KEY, {})
+        state = {
             "recent_characters": list(self._picker_state.get("recent_characters", [])),
             "favorite_characters": list(self._picker_state.get("favorite_characters", [])),
             "recent_costumes": list(self._picker_state.get("recent_costumes", [])),
             "favorite_costumes": list(self._picker_state.get("favorite_costumes", [])),
-        })
-        self._cfg.save()
+        }
+        self._cfg.set(MODEL_PICKER_STATE_KEY, state)
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            self._cfg.set(MODEL_PICKER_STATE_KEY, previous_state)
+            InfoBar.error(
+                _tr("SettingsWindow.model_picker_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=3500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
+        return True
 
     def _remember_character(self, character: str, save: bool = True):
         if not character:
             return
+        previous = list(self._picker_state.get("recent_characters", []))
         recent = [item for item in self._picker_state.get("recent_characters", []) if item != character]
         recent.insert(0, character)
         self._picker_state["recent_characters"] = recent[:MODEL_PICKER_RECENT_LIMIT]
-        if save:
-            self._save_model_picker_state()
+        if save and self._save_model_picker_state() is False:
+            self._picker_state["recent_characters"] = previous
+            return False
+        return True
 
     def _remember_costume(self, character: str, costume: str, save: bool = True):
         if not character or not costume:
             return
+        previous = list(self._picker_state.get("recent_costumes", []))
         key = self._costume_key(character, costume)
         recent = [item for item in self._picker_state.get("recent_costumes", []) if item != key]
         recent.insert(0, key)
         self._picker_state["recent_costumes"] = recent[:MODEL_PICKER_RECENT_LIMIT]
-        if save:
-            self._save_model_picker_state()
+        if save and self._save_model_picker_state() is False:
+            self._picker_state["recent_costumes"] = previous
+            return False
+        return True
 
     def _is_favorite_character(self, character: str) -> bool:
         return character in self._picker_state.get("favorite_characters", [])
@@ -368,24 +388,32 @@ class SettingsWindow(
         return self._costume_key(character, costume) in self._picker_state.get("favorite_costumes", [])
 
     def _set_character_favorite(self, character: str, favorite: bool):
+        previous = list(self._picker_state.get("favorite_characters", []))
         favorites = [item for item in self._picker_state.get("favorite_characters", []) if item != character]
         if favorite and character:
             favorites.insert(0, character)
         self._picker_state["favorite_characters"] = favorites
-        self._save_model_picker_state()
+        if self._save_model_picker_state() is False:
+            self._picker_state["favorite_characters"] = previous
+            return False
         self._refresh_visible_character_favorites(character, favorite)
+        return True
 
     def _set_costume_favorite(self, costume: str, favorite: bool):
         if not self._current_char or not costume:
             return
+        previous = list(self._picker_state.get("favorite_costumes", []))
         key = self._costume_key(self._current_char, costume)
         favorites = [item for item in self._picker_state.get("favorite_costumes", []) if item != key]
         if favorite:
             favorites.insert(0, key)
         self._picker_state["favorite_costumes"] = favorites
-        self._save_model_picker_state()
+        if self._save_model_picker_state() is False:
+            self._picker_state["favorite_costumes"] = previous
+            return False
         if self._costume_filter == MODEL_PICKER_FILTER_FAVORITES:
             self._populate_costumes(self._current_char)
+        return True
 
     def _refresh_visible_character_favorites(self, character: str, favorite: bool):
         for card in self._selection_cards:
@@ -420,11 +448,27 @@ class SettingsWindow(
 
     def _on_language_changed(self, index: int):
         lang = normalize_language(self._lang_combo.itemData(index))
-        if lang and lang != current_language():
+        previous_lang = current_language()
+        if lang and lang != previous_lang:
             set_language(lang)
             if self._cfg:
                 self._cfg.set("language", lang)
-                self._cfg.save()
+                try:
+                    _require_config_saved(self._cfg)
+                except Exception as exc:
+                    InfoBar.error(
+                        _tr("SettingsWindow.language_save_failed_title", default="保存失败"),
+                        _tr(
+                            "SettingsWindow.language_save_failed_content",
+                            default="本次会话将继续使用新语言，但配置未写入，重启后可能恢复为原语言。\n{error}",
+                            error=str(exc),
+                        ),
+                        duration=3500,
+                        position=InfoBarPosition.TOP,
+                        parent=self,
+                    )
+                    return False
+            return True
 
     def closeEvent(self, event):
         should_exit_app = self._first_run_wizard and self._show_launch and not self._launched
@@ -3006,7 +3050,7 @@ class SettingsWindow(
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
             try:
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             except Exception:
                 self._launched = False
                 InfoBar.error(
@@ -3213,7 +3257,7 @@ class SettingsWindow(
         self._cfg.set("models", [dict(item) for item in self._configured_models])
         if not self._config_save_deferred():
             try:
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             except Exception as exc:
                 InfoBar.error(
                     _tr("SettingsWindow.models_save_failed_title", default="保存失败"),
@@ -3516,9 +3560,16 @@ class SettingsWindow(
         self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
         if persist:
             try:
-                self._cfg.save()
-            except Exception:
-                return
+                _require_config_saved(self._cfg)
+            except Exception as exc:
+                InfoBar.error(
+                    _tr("SettingsWindow.pov_user_profile_save_failed_title", default="保存失败"),
+                    str(exc),
+                    duration=4000,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return False
             self.settings_changed.emit(self._user_profile_settings_data())
         self._refresh_memory_page()
         if show_info:
@@ -3529,6 +3580,7 @@ class SettingsWindow(
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
+        return True
 
     def _on_user_profile_selected(self, index: int):
         if self._loading_user_profile or not self._cfg:
@@ -3543,9 +3595,15 @@ class SettingsWindow(
         if profile:
             self._load_user_profile_fields(profile)
         try:
-            self._cfg.save()
-        except Exception:
-            pass
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.pov_user_profile_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
         else:
             self.settings_changed.emit(self._user_profile_settings_data())
         self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
@@ -3568,9 +3626,15 @@ class SettingsWindow(
         self._load_user_profile_fields(profile)
         self._reload_user_profile_combo(key)
         try:
-            self._cfg.save()
-        except Exception:
-            pass
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.pov_user_profile_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
         else:
             self.settings_changed.emit(self._user_profile_settings_data())
         self._user_name.setFocus()
@@ -3588,9 +3652,15 @@ class SettingsWindow(
             self._load_user_profile_fields(profile)
         self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
         try:
-            self._cfg.save()
-        except Exception:
-            pass
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.pov_user_profile_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
         else:
             self.settings_changed.emit(self._user_profile_settings_data())
         self._refresh_memory_page()

@@ -343,7 +343,7 @@ class CompactPageMixin:
         self._cfg.set("ai_status_token", ai_status_token)
         try:
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             if emit_update:
                 self.settings_changed.emit(self._compact_window_settings_data())
             self._compact_window_reset_position_pending = False

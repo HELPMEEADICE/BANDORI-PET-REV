@@ -529,7 +529,7 @@ class ChatIntegrationPageMixin:
         self._save_napcat_into_cfg()
         try:
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             if emit_update:
                 self.settings_changed.emit(self._chat_integration_settings_data())
             if show_info:

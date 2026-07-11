@@ -86,7 +86,7 @@ class BehaviorPageMixin:
 
     def _save_live2d_behavior_config(self):
         if not self._cfg:
-            return
+            return True
         self._cfg.set("live2d_idle_actions_enabled", self._live2d_idle_actions_enabled)
         self._cfg.set("live2d_random_actions_enabled", self._live2d_random_actions_enabled)
         self._cfg.set("live2d_head_tracking_enabled", self._live2d_head_tracking_enabled)
@@ -94,8 +94,19 @@ class BehaviorPageMixin:
         self._cfg.set("emotion_behavior_enabled", self._emotion_behavior_enabled)
         self._cfg.set("move_all_roles_together", self._move_all_roles_together)
         self._cfg.set("birthday_tray_notifications_enabled", self._birthday_tray_notifications_enabled)
-        self._cfg.save()
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.behavior_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
         self.settings_changed.emit(self._live2d_behavior_settings_data())
+        return True
 
     def _live2d_behavior_settings_data(self) -> dict:
         return {
@@ -146,15 +157,26 @@ class BehaviorPageMixin:
 
     def _save_poke_feedback_config(self, emit_update: bool = True):
         if not self._cfg:
-            return
+            return True
         self._cfg.set("poke_motion", self._poke_motion)
         self._cfg.set("poke_expression", self._poke_expression)
-        self._cfg.save()
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.behavior_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=3000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
         if emit_update:
             self.settings_changed.emit({
                 "poke_motion": self._poke_motion,
                 "poke_expression": self._poke_expression,
             })
+        return True
 
     def _poke_feedback_model_item(self) -> dict | None:
         item = self._selected_model_item()
@@ -477,11 +499,20 @@ class BehaviorPageMixin:
             return
 
         if self._cfg:
+            previous_name = self._cfg.get("click_motion_active_profile", "")
             self._cfg.set_click_motion_active_profile(name)
             try:
-                self._cfg.save()
-            except Exception:
-                pass
+                _require_config_saved(self._cfg)
+            except Exception as exc:
+                self._cfg.set_click_motion_active_profile(previous_name)
+                InfoBar.error(
+                    _tr("SettingsWindow.click_motion_config_failed_title", default="保存失败"),
+                    str(exc),
+                    duration=3500,
+                    position=InfoBarPosition.TOP,
+                    parent=self,
+                )
+                return False
 
         if not name:
             item["click_motion_profile_name"] = ""
@@ -568,8 +599,9 @@ class BehaviorPageMixin:
         self._cfg.set_click_motion_active_profile(name)
         item["click_motion_profile_name"] = name
         try:
-            self._save_configured_models()
-            self._cfg.save()
+            if self._save_configured_models() is False:
+                return False
+            _require_config_saved(self._cfg)
             self._click_motion_profile_name.setText(name)
             self._reload_click_motion_profiles(select_name=name)
             InfoBar.success(
@@ -579,8 +611,16 @@ class BehaviorPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.click_motion_config_failed_title", default="配置文件处理失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _delete_click_motion_profile(self):
         from click_motion_presets import BUILTIN_PROFILE_NAMES
@@ -598,8 +638,9 @@ class BehaviorPageMixin:
             for item in self._configured_models:
                 if item.get("click_motion_profile_name") == name:
                     item["click_motion_profile_name"] = ""
-            self._save_configured_models()
-            self._cfg.save()
+            if self._save_configured_models() is False:
+                return False
+            _require_config_saved(self._cfg)
             self._click_motion_profile_name.clear()
             self._reload_click_motion_profiles()
             InfoBar.success(
@@ -609,8 +650,16 @@ class BehaviorPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.click_motion_config_failed_title", default="配置文件处理失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _apply_click_motion_profile(self):
         from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions

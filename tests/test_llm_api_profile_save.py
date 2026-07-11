@@ -45,6 +45,8 @@ class _ConfigStub:
             "llm_active_api_profile": "",
         }
         self.saved = False
+        self.save_result = True
+        self.save_exception = None
 
     def get(self, key, default=None):
         return self.data.get(key, default)
@@ -54,6 +56,9 @@ class _ConfigStub:
 
     def save(self):
         self.saved = True
+        if self.save_exception is not None:
+            raise self.save_exception
+        return self.save_result
 
 
 class _TextStub:
@@ -62,6 +67,9 @@ class _TextStub:
 
     def text(self):
         return self.value
+
+    def clear(self):
+        self.value = ""
 
 
 class _ComboStub:
@@ -124,7 +132,7 @@ class LLMApiProfileSaveTests(unittest.TestCase):
         harness = _LLMProfileHarness(profile)
 
         with patch("settings_window.pages.llm.InfoBar.success"):
-            harness._save_llm_api_profile()
+            self.assertIs(harness._save_llm_api_profile(), True)
 
         self.assertTrue(harness._cfg.saved)
         self.assertEqual("DS", harness._cfg.get("llm_active_api_profile"))
@@ -132,6 +140,57 @@ class LLMApiProfileSaveTests(unittest.TestCase):
         for key in LLM_API_PROFILE_KEYS:
             self.assertEqual(profile[key], harness._cfg.get(key), key)
         self.assertEqual(("DS", False), harness._applied_llm_api_profile_display_name())
+
+        harness.close()
+
+    def test_save_profile_failure_does_not_report_success(self):
+        profile = _profile()
+        harness = _LLMProfileHarness(profile)
+        harness._cfg.save_result = False
+
+        with patch("settings_window.pages.llm.InfoBar.success") as success_bar, \
+             patch("settings_window.pages.llm.InfoBar.error") as error_bar:
+            self.assertIs(harness._save_llm_api_profile(), False)
+
+        self.assertTrue(harness._cfg.saved)
+        self.assertFalse(success_bar.called)
+        self.assertTrue(error_bar.called)
+        self.assertFalse(hasattr(harness, "reloaded_name"))
+
+        harness.close()
+
+    def test_save_profile_exception_reports_failure(self):
+        profile = _profile()
+        harness = _LLMProfileHarness(profile)
+        harness._cfg.save_exception = OSError("locked")
+
+        with patch("settings_window.pages.llm.InfoBar.success") as success_bar, \
+             patch("settings_window.pages.llm.InfoBar.error") as error_bar:
+            self.assertIs(harness._save_llm_api_profile(), False)
+
+        self.assertFalse(success_bar.called)
+        self.assertTrue(error_bar.called)
+        self.assertFalse(hasattr(harness, "reloaded_name"))
+
+        harness.close()
+
+    def test_delete_profile_failure_does_not_report_success(self):
+        profile = _profile()
+        harness = _LLMProfileHarness(profile)
+        harness._cfg.data.update({
+            "llm_api_profiles": [profile],
+            "llm_active_api_profile": "DS",
+        })
+        harness._cfg.save_result = False
+
+        with patch("settings_window.pages.llm.InfoBar.success") as success_bar, \
+             patch("settings_window.pages.llm.InfoBar.error") as error_bar:
+            self.assertIs(harness._delete_llm_api_profile(), False)
+
+        self.assertFalse(success_bar.called)
+        self.assertTrue(error_bar.called)
+        self.assertFalse(hasattr(harness, "reloaded_name"))
+        self.assertEqual("DS", harness._llm_api_profile_name.text())
 
         harness.close()
 

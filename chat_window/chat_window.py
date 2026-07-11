@@ -1779,26 +1779,68 @@ class ChatWindow(ChatWindowMixin, QWidget):
             target = target_dir / self._safe_avatar_name(character, ext)
             shutil.copyfile(source, target)
             self._chat_avatar_paths[character] = str(target)
-            if self._cfg:
-                self._cfg.set("chat_avatar_paths", dict(self._chat_avatar_paths))
-                self._cfg.save()
-            self._refresh_avatar_views()
         except Exception as exc:
             QMessageBox.warning(
                 self,
                 _tr("ChatWindow.avatar_save_failed_title"),
                 _tr("ChatWindow.avatar_save_failed_content", error=str(exc)),
             )
+            return False
+
+        save_error = None
+        if self._cfg:
+            self._cfg.set("chat_avatar_paths", dict(self._chat_avatar_paths))
+            try:
+                if self._cfg.save() is False:
+                    save_error = _tr(
+                        "SettingsWindow.config_save_failed_content",
+                        default="配置文件未写入，请检查权限或磁盘占用后重试。",
+                    )
+            except Exception as exc:
+                save_error = str(exc)
+        self._refresh_avatar_views()
+        if save_error:
+            QMessageBox.warning(
+                self,
+                _tr("ChatWindow.avatar_save_failed_title"),
+                _tr(
+                    "ChatWindow.avatar_config_save_failed_content",
+                    default="本次会话将继续显示新头像，但配置未写入，重启后可能恢复原头像。\n{error}",
+                    error=save_error,
+                ),
+            )
+            return False
+        return True
 
     def _reset_character_avatar(self, character: str):
         if not character:
             return
         if character in self._chat_avatar_paths:
             self._chat_avatar_paths.pop(character, None)
+            save_error = None
             if self._cfg:
                 self._cfg.set("chat_avatar_paths", dict(self._chat_avatar_paths))
-                self._cfg.save()
+                try:
+                    if self._cfg.save() is False:
+                        save_error = _tr(
+                            "SettingsWindow.config_save_failed_content",
+                            default="配置文件未写入，请检查权限或磁盘占用后重试。",
+                        )
+                except Exception as exc:
+                    save_error = str(exc)
             self._refresh_avatar_views()
+            if save_error:
+                QMessageBox.warning(
+                    self,
+                    _tr("ChatWindow.avatar_save_failed_title"),
+                    _tr(
+                        "ChatWindow.avatar_reset_config_save_failed_content",
+                        default="本次会话将继续使用默认头像，但配置未写入，重启后可能恢复原头像。\n{error}",
+                        error=save_error,
+                    ),
+                )
+                return False
+            return True
 
     def _refresh_avatar_views(self):
         self._update_title_avatar()
@@ -4597,6 +4639,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 self._clear_message_widgets()
                 self._load_or_create_conversation()
                 self._refresh_group_list()
+
+    def apply_runtime_settings(self, data: dict):
+        if not isinstance(data, dict):
+            return False
+        self._reload_runtime_config()
+        return True
 
     def _history_user_label(self) -> str:
         return self._user_name or _tr("ChatWindow.you")

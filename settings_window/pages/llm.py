@@ -1112,7 +1112,7 @@ class LLMPageMixin:
 
     def _save_llm_api_profile(self):
         if not self._cfg or not self._llm_config_widgets_ready():
-            return
+            return False
         name = self._llm_api_profile_name.text().strip()
         if not name:
             current = self._llm_api_profile_combo.itemData(self._llm_api_profile_combo.currentIndex()) or ""
@@ -1125,8 +1125,12 @@ class LLMPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-            return
+            return False
         profile = self._current_llm_api_profile(name)
+        previous_values = {
+            key: self._cfg.get(key)
+            for key in ("llm_api_profiles", "llm_active_api_profile", *LLM_API_PROFILE_KEYS)
+        }
         profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
         profiles.append(profile)
         self._cfg.set("llm_api_profiles", profiles)
@@ -1134,7 +1138,7 @@ class LLMPageMixin:
             self._cfg.set(key, profile[key])
         self._cfg.set("llm_active_api_profile", name)
         try:
-            self._cfg.save()
+            _require_config_saved(self._cfg)
             self._reload_llm_api_profiles(name)
             self._update_current_llm_api_profile_label()
             if hasattr(self, "settings_changed") and hasattr(self, "_user_profile_settings_data"):
@@ -1146,21 +1150,35 @@ class LLMPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            for key, value in previous_values.items():
+                self._cfg.set(key, value)
+            InfoBar.error(
+                _tr("SettingsWindow.llm_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _delete_llm_api_profile(self):
         if not self._cfg or not self._llm_config_widgets_ready():
-            return
+            return False
         name = self._llm_api_profile_combo.itemData(self._llm_api_profile_combo.currentIndex()) or self._llm_api_profile_name.text().strip()
         if not name:
-            return
+            return False
+        previous_values = {
+            "llm_api_profiles": self._cfg.get("llm_api_profiles"),
+            "llm_active_api_profile": self._cfg.get("llm_active_api_profile"),
+        }
         profiles = [p for p in self._normalized_llm_api_profiles() if p["name"] != name]
         self._cfg.set("llm_api_profiles", profiles)
         if self._cfg.get("llm_active_api_profile", "") == name:
             self._cfg.set("llm_active_api_profile", "")
         try:
-            self._cfg.save()
+            _require_config_saved(self._cfg)
             self._llm_api_profile_name.clear()
             self._reload_llm_api_profiles()
             self._update_current_llm_api_profile_label()
@@ -1171,8 +1189,18 @@ class LLMPageMixin:
                 position=InfoBarPosition.TOP,
                 parent=self,
             )
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            for key, value in previous_values.items():
+                self._cfg.set(key, value)
+            InfoBar.error(
+                _tr("SettingsWindow.llm_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
 
     def _on_llm_api_mode_changed(self, index: int):
         mode = self._llm_api_mode.itemData(index)
@@ -1289,7 +1317,7 @@ class LLMPageMixin:
             active_profile = self._matching_llm_api_profile_name()
             self._cfg.set("llm_active_api_profile", active_profile)
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
                 self._reload_user_profile_combo(self._cfg.get("active_user_profile", ""))
                 self._refresh_memory_page()
                 self._reload_llm_api_profiles(active_profile)

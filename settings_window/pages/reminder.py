@@ -518,7 +518,7 @@ class ReminderPageMixin:
         self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})))
         try:
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             if emit_update:
                 self.settings_changed.emit(self._reminder_settings_data())
             if show_info:
@@ -860,7 +860,17 @@ class ReminderPageMixin:
             return
         self._sync_proactive_config_from_ui()
         self._sync_care_policy_config_from_ui()
-        self._cfg.save()
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.reminder_failed_title", default="提醒设置保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return
         self.settings_changed.emit(self._reminder_settings_data())
 
     def _update_proactive_row_preview(self, item_id: str):
@@ -960,7 +970,7 @@ class ReminderPageMixin:
         self._sync_care_policy_config_from_ui()
         try:
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             if emit_update:
                 self.settings_changed.emit({
                     PROACTIVE_CARE_POLICY_CONFIG_KEY: normalize_proactive_care_policy(

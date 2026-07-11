@@ -90,6 +90,22 @@ def _send_ipc_line(line: str):
     send_ipc_message(line + "\n")
 
 
+def _apply_settings_line(window, line: str) -> bool:
+    if not str(line or "").startswith("SETTINGS\t"):
+        return False
+    try:
+        payload = json.loads(line.split("\t", 1)[1])
+    except (IndexError, json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    apply_settings = getattr(window, "apply_runtime_settings", None)
+    if not callable(apply_settings):
+        return False
+    apply_settings(payload)
+    return True
+
+
 def focus_chat_window(window):
     prepare_for_reopen = getattr(window, "prepare_for_reopen", None)
     if callable(prepare_for_reopen):
@@ -198,6 +214,8 @@ def main():
                 break
             if line == "FOCUS_CHAT":
                 focus_window()
+            if line.startswith("SETTINGS\t"):
+                _apply_settings_line(window, line)
             if line.startswith("POKE_USER\t"):
                 try:
                     window.handle_external_user_poke(json.loads(line.split("\t", 1)[1]))

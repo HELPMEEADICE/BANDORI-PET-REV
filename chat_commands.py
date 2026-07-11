@@ -20,6 +20,7 @@ reminder system generates that character's personalized text.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import timedelta
 
 from i18n_manager import tr as _tr
@@ -141,6 +142,24 @@ def _publish(payload: dict) -> None:
         log_swallowed("chat_commands._publish", exc)
 
 
+def _save_failed_result() -> dict:
+    return {
+        "message": _tr(
+            "ChatCommand.save_failed",
+            default="配置未能保存，请检查文件权限或占用后重试。",
+        ),
+        "save_failed": True,
+    }
+
+
+def _save_config(cfg) -> bool:
+    try:
+        return cfg.save() is not False
+    except Exception as exc:
+        log_swallowed("chat_commands._save_config", exc)
+        return False
+
+
 def _handle_toggle(cfg, definition: dict, arg: str, publish: bool) -> dict:
     key = definition["key"]
     label = _tr(definition["label_key"], default=definition["label_default"])
@@ -156,7 +175,9 @@ def _handle_toggle(cfg, definition: dict, arg: str, publish: bool) -> dict:
             )
         }
     cfg.set(key, value)
-    cfg.save()
+    if not _save_config(cfg):
+        cfg.set(key, current)
+        return _save_failed_result()
     if publish:
         _publish({key: value})
     message = _tr(
@@ -193,8 +214,10 @@ def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
             )
         }
     character = default_reminder_character(cfg)
-    alarms = normalize_alarms(cfg.get(ALARM_CONFIG_KEY, []))
-    pomodoros = normalize_pomodoros(cfg.get(POMODORO_CONFIG_KEY, []))
+    previous_alarms = deepcopy(cfg.get(ALARM_CONFIG_KEY, []))
+    previous_pomodoros = deepcopy(cfg.get(POMODORO_CONFIG_KEY, []))
+    alarms = normalize_alarms(previous_alarms)
+    pomodoros = normalize_pomodoros(previous_pomodoros)
     try:
         alarm = create_alarm(hhmm, None, description, character, "")
     except ValueError:
@@ -206,7 +229,10 @@ def _handle_clock(cfg, rest: str, publish: bool, name_resolver) -> dict:
     alarms.append(alarm)
     cfg.set(ALARM_CONFIG_KEY, alarms)
     cfg.set(POMODORO_CONFIG_KEY, pomodoros)
-    cfg.save()
+    if not _save_config(cfg):
+        cfg.set(ALARM_CONFIG_KEY, previous_alarms)
+        cfg.set(POMODORO_CONFIG_KEY, previous_pomodoros)
+        return _save_failed_result()
     if publish:
         _publish(_reminder_payload(cfg, alarms, pomodoros))
     next_text = alarm.get("next_at", "").replace("T", " ")
@@ -245,13 +271,18 @@ def _handle_pomodoro(cfg, rest: str, publish: bool, name_resolver) -> dict:
         description = rest.strip()
     repeat_count = clamp_repeat_count(repeat_count)
     character = default_reminder_character(cfg)
-    alarms = normalize_alarms(cfg.get(ALARM_CONFIG_KEY, []))
-    pomodoros = normalize_pomodoros(cfg.get(POMODORO_CONFIG_KEY, []))
+    previous_alarms = deepcopy(cfg.get(ALARM_CONFIG_KEY, []))
+    previous_pomodoros = deepcopy(cfg.get(POMODORO_CONFIG_KEY, []))
+    alarms = normalize_alarms(previous_alarms)
+    pomodoros = normalize_pomodoros(previous_pomodoros)
     pomodoro = create_pomodoro(repeat_count, description, character)
     pomodoros.append(pomodoro)
     cfg.set(ALARM_CONFIG_KEY, alarms)
     cfg.set(POMODORO_CONFIG_KEY, pomodoros)
-    cfg.save()
+    if not _save_config(cfg):
+        cfg.set(ALARM_CONFIG_KEY, previous_alarms)
+        cfg.set(POMODORO_CONFIG_KEY, previous_pomodoros)
+        return _save_failed_result()
     if publish:
         _publish(_reminder_payload(cfg, alarms, pomodoros))
     char_name = _resolve_name(character, name_resolver)

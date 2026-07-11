@@ -443,6 +443,18 @@ def _horizontal_scroll_text_edit(edit: QTextEdit):
     return edit
 
 
+def _raise_config_save_failed() -> None:
+    raise OSError(_tr(
+        "SettingsWindow.config_save_failed_content",
+        default="配置文件未写入，请检查权限或磁盘占用后重试。",
+    ))
+
+
+def _require_config_saved(cfg) -> None:
+    if cfg.save() is False:
+        _raise_config_save_failed()
+
+
 def _fluent_scrollbar_qss(selector: str = "QScrollBar", dark: bool | None = None) -> str:
     if dark is None:
         dark = isDarkTheme()

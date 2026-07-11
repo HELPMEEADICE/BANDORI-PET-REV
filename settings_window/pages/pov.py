@@ -274,8 +274,15 @@ class POVPageMixin:
         self._cfg.set("pov_custom_personas", personas)
         self._cfg.set("pov_custom_prompt", prompt)
         try:
-            self._cfg.save()
-        except Exception:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.pov_persona_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
             return
         self._reload_pov_persona_combo()
         InfoBar.success(
@@ -295,8 +302,15 @@ class POVPageMixin:
         personas = [p for p in self._normalized_pov_personas() if p.get("prompt") != prompt]
         self._cfg.set("pov_custom_personas", personas)
         try:
-            self._cfg.save()
-        except Exception:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.pov_persona_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
             return
         self._reload_pov_persona_combo()
         InfoBar.success(

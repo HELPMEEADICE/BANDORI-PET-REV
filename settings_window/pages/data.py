@@ -293,7 +293,17 @@ class DataManagementPageMixin:
         self._attachment_retention_days.setEnabled(enabled)
         self._cfg.set("chat_attachment_auto_cleanup_enabled", enabled)
         self._cfg.set("chat_attachment_retention_days", days)
-        self._cfg.save()
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.attachment_settings_save_failed_title", default="保存失败"),
+                str(exc),
+                duration=3500,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
         self.settings_changed.emit({
             "chat_attachment_auto_cleanup_enabled": enabled,
             "chat_attachment_retention_days": days,
@@ -301,6 +311,7 @@ class DataManagementPageMixin:
         if enabled:
             cleanup_chat_attachments(days)
             self._refresh_attachment_file_stats()
+        return True
 
 
     def _refresh_attachment_file_stats(self):
@@ -530,7 +541,7 @@ class DataManagementPageMixin:
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
-            self._cfg.save()
+            _require_config_saved(self._cfg)
 
 
     def _export_data_package(self):
@@ -768,10 +779,10 @@ class DataManagementPageMixin:
             applied = self._apply_config_data_section(section, config_data)
             if applied:
                 summary[section] = applied
-        self._cfg.save()
+        _require_config_saved(self._cfg)
         if hasattr(self._cfg, "load"):
             self._cfg.load()
-            self._cfg.save()
+            _require_config_saved(self._cfg)
         return summary
 
 

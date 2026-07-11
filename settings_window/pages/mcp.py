@@ -415,7 +415,7 @@ class MCPPageMixin:
         self._sync_care_policy_config_from_ui()
         try:
             if not self._config_save_deferred():
-                self._cfg.save()
+                _require_config_saved(self._cfg)
             if not show_info:
                 return True
             InfoBar.success(

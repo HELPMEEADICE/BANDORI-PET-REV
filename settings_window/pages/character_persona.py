@@ -187,10 +187,21 @@ class CharacterPersonaPageMixin:
 
     def _save_character_persona_data(self, presets: dict[str, list[dict]], active: dict[str, str]):
         if not self._cfg:
-            return
+            return False
         self._cfg.set(CHARACTER_PERSONA_PRESETS_KEY, presets)
         self._cfg.set(CHARACTER_PERSONA_ACTIVE_KEY, active)
-        self._cfg.save()
+        try:
+            _require_config_saved(self._cfg)
+        except Exception as exc:
+            InfoBar.error(
+                _tr("SettingsWindow.character_persona_failed_title", default="保存失败"),
+                str(exc),
+                duration=4000,
+                position=InfoBarPosition.TOP,
+                parent=self,
+            )
+            return False
+        return True
 
     def _reload_character_persona_page(self):
         if not hasattr(self, "_character_persona_character"):
@@ -251,7 +262,8 @@ class CharacterPersonaPageMixin:
             active[character] = preset_id
         else:
             active.pop(character, None)
-        self._save_character_persona_data(self._character_persona_presets(), active)
+        if not self._save_character_persona_data(self._character_persona_presets(), active):
+            return
         self._set_character_persona_default_preview_visible(not preset_id)
         self._load_character_persona_editor(character, preset_id)
 
@@ -293,7 +305,8 @@ class CharacterPersonaPageMixin:
         }
         presets.setdefault(character, []).append(preset)
         active[character] = preset["id"]
-        self._save_character_persona_data(presets, active)
+        if not self._save_character_persona_data(presets, active):
+            return
         self._reload_character_persona_for_current_character()
         self._show_character_persona_saved()
 
@@ -320,7 +333,8 @@ class CharacterPersonaPageMixin:
             self._save_character_persona_as_new()
             return
         active[character] = preset_id
-        self._save_character_persona_data(presets, active)
+        if not self._save_character_persona_data(presets, active):
+            return
         self._reload_character_persona_for_current_character()
         self._show_character_persona_saved()
 
@@ -336,7 +350,8 @@ class CharacterPersonaPageMixin:
             presets.pop(character, None)
         if active.get(character) == preset_id:
             active.pop(character, None)
-        self._save_character_persona_data(presets, active)
+        if not self._save_character_persona_data(presets, active):
+            return
         self._reload_character_persona_for_current_character()
         InfoBar.success(
             _tr("SettingsWindow.character_persona_deleted_title", default="已删除"),

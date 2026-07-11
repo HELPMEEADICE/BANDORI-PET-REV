@@ -7,12 +7,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 
 from settings_window.pages.behavior import BehaviorPageMixin
+from settings_window.pages.data import DataManagementPageMixin
 
 
 class _ConfigStub:
     def __init__(self):
         self.data = {}
         self.saved = False
+        self.save_result = True
+        self.save_exception = None
 
     def set(self, key, value):
         self.data[key] = value
@@ -22,6 +25,12 @@ class _ConfigStub:
 
     def save(self):
         self.saved = True
+        if self.save_exception is not None:
+            raise self.save_exception
+        return self.save_result
+
+    def set_click_motion_active_profile(self, name):
+        self.data["click_motion_active_profile"] = name
 
 
 class _SwitchStub:
@@ -30,6 +39,38 @@ class _SwitchStub:
 
     def isChecked(self):
         return self._checked
+
+
+class _ComboStub:
+    def __init__(self, value):
+        self._value = value
+
+    def itemData(self, _index):
+        return self._value
+
+    def currentIndex(self):
+        return 0
+
+    def findData(self, value):
+        return 0 if value == "en_US" else 1
+
+    def setCurrentIndex(self, index):
+        self._value = "en_US" if index == 0 else "zh_CN"
+
+    def blockSignals(self, _blocked):
+        pass
+
+
+class _ValueStub:
+    def __init__(self, value):
+        self._value = value
+        self.enabled = None
+
+    def value(self):
+        return self._value
+
+    def setEnabled(self, enabled):
+        self.enabled = bool(enabled)
 
 
 class _BehaviorHarness(BehaviorPageMixin, QWidget):
@@ -43,6 +84,24 @@ class _BehaviorHarness(BehaviorPageMixin, QWidget):
         self._emotion_behavior_enabled = True
         self._move_all_roles_together = True
         self._birthday_tray_notifications_enabled = False
+        self.emitted_settings = []
+
+        class _Signal:
+            def __init__(self, owner):
+                self._owner = owner
+
+            def emit(self, data):
+                self._owner.emitted_settings.append(dict(data))
+
+        self.settings_changed = _Signal(self)
+
+
+class _DataHarness(DataManagementPageMixin, QWidget):
+    def __init__(self):
+        super().__init__()
+        self._cfg = _ConfigStub()
+        self._attachment_cleanup_mode = _ComboStub("auto")
+        self._attachment_retention_days = _ValueStub(30)
         self.emitted_settings = []
 
         class _Signal:
@@ -160,6 +219,44 @@ class _ApplyHarness(QWidget):
         self.closed = True
 
 
+class _LanguageHarness(QWidget):
+    from settings_window.settings_window import SettingsWindow
+
+    _on_language_changed = SettingsWindow._on_language_changed
+
+    def __init__(self):
+        super().__init__()
+        self._cfg = _ConfigStub()
+        self._cfg.data["language"] = "en_US"
+        self._cfg.save_result = False
+        self._lang_combo = _ComboStub("zh_CN")
+
+
+class _PickerHarness(QWidget):
+    from settings_window.settings_window import SettingsWindow
+
+    _save_model_picker_state = SettingsWindow._save_model_picker_state
+    _set_character_favorite = SettingsWindow._set_character_favorite
+
+    def __init__(self):
+        super().__init__()
+        self._cfg = _ConfigStub()
+        self._cfg.data["model_picker_state"] = {
+            "favorite_characters": ["kasumi"],
+        }
+        self._cfg.save_result = False
+        self._picker_state = {
+            "recent_characters": [],
+            "favorite_characters": ["kasumi"],
+            "recent_costumes": [],
+            "favorite_costumes": [],
+        }
+        self.refreshes = []
+
+    def _refresh_visible_character_favorites(self, character, favorite):
+        self.refreshes.append((character, favorite))
+
+
 class SettingsApplySaveSemanticsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -182,9 +279,61 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
             "birthday_tray_notifications_enabled": False,
         }, harness.emitted_settings[0])
 
+    def test_live2d_behavior_save_false_does_not_emit_runtime_settings(self):
+        harness = _BehaviorHarness()
+        harness._cfg.save_result = False
+
+        with patch("settings_window.pages.behavior.InfoBar.error") as error_bar:
+            self.assertIs(harness._save_live2d_behavior_config(), False)
+
+        self.assertTrue(harness._cfg.saved)
+        self.assertFalse(harness.emitted_settings)
+        self.assertTrue(error_bar.called)
+
+    def test_click_motion_profile_save_false_restores_active_profile(self):
+        harness = _BehaviorHarness()
+        harness._cfg.data["click_motion_active_profile"] = "previous"
+        harness._cfg.save_result = False
+        harness._click_motion_profile_combo = _ComboStub("next")
+        item = {"click_motion_profile_name": "previous"}
+        harness._selected_model_item = lambda: item
+
+        with patch("settings_window.pages.behavior.InfoBar.error") as error_bar:
+            result = harness._on_click_motion_profile_selected(0)
+
+        self.assertIs(result, False)
+        self.assertEqual("previous", harness._cfg.get("click_motion_active_profile"))
+        self.assertEqual("previous", item["click_motion_profile_name"])
+        self.assertTrue(error_bar.called)
+
+    def test_attachment_retention_save_false_does_not_emit_runtime_settings(self):
+        harness = _DataHarness()
+        harness._cfg.save_result = False
+
+        with patch("settings_window.pages.data.InfoBar.error") as error_bar:
+            result = harness._on_attachment_retention_changed()
+
+        self.assertIs(result, False)
+        self.assertFalse(harness.emitted_settings)
+        self.assertTrue(error_bar.called)
+
     def test_apply_failure_does_not_emit_or_close(self):
         harness = _ApplyHarness()
         harness.fail_llm = True
+
+        with patch("settings_window.settings_window.InfoBar.error") as error_bar:
+            harness._on_apply()
+
+        self.assertFalse(harness.closed)
+        self.assertFalse(harness.settings_payloads)
+        self.assertFalse(harness.model_payloads)
+        self.assertEqual(0, harness.launches)
+        self.assertFalse(harness._launched)
+        self.assertTrue(error_bar.called)
+
+    def test_apply_basic_config_save_false_does_not_emit_or_close(self):
+        harness = _ApplyHarness()
+        harness._cfg.save_result = False
 
         with patch("settings_window.settings_window.InfoBar.error") as error_bar:
             harness._on_apply()
@@ -204,6 +353,35 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
         self.assertTrue(harness.closed)
         self.assertEqual(1, len(harness.settings_payloads))
         self.assertEqual([("kasumi", "default")], harness.model_payloads)
+
+    def test_language_save_false_keeps_session_language_and_selector(self):
+        harness = _LanguageHarness()
+        applied_languages = []
+
+        with (
+            patch("settings_window.settings_window.current_language", return_value="en_US"),
+            patch("settings_window.settings_window.set_language", side_effect=applied_languages.append),
+            patch("settings_window.settings_window.InfoBar.error") as error_bar,
+        ):
+            result = harness._on_language_changed(1)
+
+        self.assertIs(result, False)
+        self.assertEqual(["zh_CN"], applied_languages)
+        self.assertEqual("zh_CN", harness._cfg.get("language"))
+        self.assertEqual("zh_CN", harness._lang_combo.itemData(0))
+        self.assertTrue(error_bar.called)
+
+    def test_character_favorite_save_false_restores_picker_state(self):
+        harness = _PickerHarness()
+
+        with patch("settings_window.settings_window.InfoBar.error") as error_bar:
+            result = harness._set_character_favorite("ran", True)
+
+        self.assertIs(result, False)
+        self.assertEqual(["kasumi"], harness._picker_state["favorite_characters"])
+        self.assertEqual(["kasumi"], harness._cfg.get("model_picker_state")["favorite_characters"])
+        self.assertFalse(harness.refreshes)
+        self.assertTrue(error_bar.called)
 
 
 if __name__ == "__main__":
