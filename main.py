@@ -50,7 +50,12 @@ from alarm_manager import ReminderScheduler
 from gpu_acceleration import configure_qt_gpu_acceleration
 from special_event_manager import SpecialEventManager
 from event_db_manager import SpecialEvent
-from ipc_bus import ipc_broadcast_queue_key, ipc_inbound_queue_key
+from ipc_bus import (
+    ipc_broadcast_queue_key,
+    ipc_control_queue_key,
+    ipc_inbound_queue_key,
+    is_control_ipc_line,
+)
 from shared_memory_ipc import (
     SharedMemoryLineQueue,
     decode_ipc_envelope,
@@ -61,6 +66,7 @@ from shared_memory_ipc import (
 
 class AiEventBridge(QObject):
     line_received = Signal(str)
+    delivery_requested = Signal(str, object)
 
 
 def main():
@@ -100,7 +106,7 @@ def main():
 
     mgr = ModelManager()
     pet_window_ref = {"processes": [], "closing_processes": []}
-    ipc_ref = {"lock": threading.RLock(), "peers": {}}
+    ipc_ref = {"lock": threading.RLock(), "peers": {}, "latest_settings_line": ""}
     main_peer_id = make_peer_id("main")
     ai_status_ref = {"server": None}
     chat_integration_ref = {"server": None, "db": None, "lock": threading.RLock()}
@@ -216,15 +222,19 @@ def main():
             inbound = SharedMemoryLineQueue.create(ipc_inbound_queue_key())
             try:
                 outbound = SharedMemoryLineQueue.create(ipc_broadcast_queue_key())
+                control = SharedMemoryLineQueue.create(ipc_control_queue_key())
             except RuntimeError:
                 inbound.close()
+                if "outbound" in locals():
+                    outbound.close()
                 raise
-            return inbound, outbound
+            return inbound, outbound, control
 
-        def start_ipc_polling(inbound, outbound):
+        def start_ipc_polling(inbound, outbound, control):
             with ipc_ref["lock"]:
                 ipc_ref["inbound"] = inbound
                 ipc_ref["outbound"] = outbound
+                ipc_ref["control"] = control
             poll_timer = QTimer(app)
             poll_timer.setInterval(15)
             poll_timer.timeout.connect(read_ipc_messages)
@@ -237,17 +247,17 @@ def main():
             ipc_ref["cleanup_timer"] = cleanup_timer
 
         try:
-            inbound, outbound = create_ipc_queues()
+            inbound, outbound, control = create_ipc_queues()
         except RuntimeError as exc:
             first_error = str(exc)
             refresh_ipc_session_name()
             try:
-                inbound, outbound = create_ipc_queues()
+                inbound, outbound, control = create_ipc_queues()
             except RuntimeError as retry_exc:
                 exc = retry_exc
             else:
                 print(f"Shared-memory IPC recovered with a fresh session name after: {first_error}")
-                start_ipc_polling(inbound, outbound)
+                start_ipc_polling(inbound, outbound, control)
                 return
             error = str(exc)
             message = (
@@ -265,11 +275,15 @@ def main():
                 ),
             )
             return
-        start_ipc_polling(inbound, outbound)
+        start_ipc_polling(inbound, outbound, control)
 
     def stop_ipc_server():
         with ipc_ref["lock"]:
-            queues = [ipc_ref.pop("inbound", None), ipc_ref.pop("outbound", None)]
+            queues = [
+                ipc_ref.pop("inbound", None),
+                ipc_ref.pop("outbound", None),
+                ipc_ref.pop("control", None),
+            ]
             timers = [ipc_ref.pop("poll_timer", None), ipc_ref.pop("cleanup_timer", None)]
             ipc_ref["peers"] = {}
         for timer in timers:
@@ -282,12 +296,32 @@ def main():
 
     def broadcast_ipc_line(line: str, exclude_peer_id: str = ""):
         with ipc_ref["lock"]:
-            queue = ipc_ref.get("outbound")
+            if is_control_ipc_line(line):
+                queue = ipc_ref.get("control")
+            else:
+                queue = ipc_ref.get("outbound")
         if queue is None:
-            return
-        queue.publish(encode_ipc_envelope(main_peer_id, line, exclude_peer_id=exclude_peer_id))
+            return False
+        return queue.publish(encode_ipc_envelope(main_peer_id, line, exclude_peer_id=exclude_peer_id))
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
+
+    def deliver_ipc_line(line: str, timeout: float = 1.0) -> bool:
+        if threading.current_thread() is threading.main_thread():
+            return broadcast_ipc_line(line)
+        completion = {"event": threading.Event(), "delivered": False}
+        ai_event_bridge.delivery_requested.emit(line, completion)
+        if not completion["event"].wait(max(0.0, float(timeout))):
+            return False
+        return bool(completion["delivered"])
+
+    def _complete_ipc_delivery(line: str, completion: dict):
+        try:
+            completion["delivered"] = broadcast_ipc_line(line)
+        finally:
+            completion["event"].set()
+
+    ai_event_bridge.delivery_requested.connect(_complete_ipc_delivery)
 
     def broadcast_reminder_event(event: dict):
         if not isinstance(event, dict):
@@ -455,7 +489,7 @@ def main():
         summary = stored.get("unread", {}) if isinstance(stored, dict) else {}
         total = int(summary.get("total_unread") or 0)
         if total <= 0:
-            return
+            return False
         overlay = {
             "source": str(event.get("platform") or event.get("source") or "chat"),
             "state": "stream",
@@ -469,20 +503,18 @@ def main():
         character = (event.get("character") or event.get("target_character") or "").strip()
         if character:
             overlay["character"] = character
-        ai_event_bridge.line_received.emit(f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}")
+        line = f"CHAT_EVENT\t{json.dumps(overlay, ensure_ascii=False)}"
+        return deliver_ipc_line(line)
 
     def handle_chat_integration_message(event: dict) -> dict:
         with chat_integration_ref["lock"]:
             stored = chat_integration_db().add_external_chat_message(event)
         if not stored.get("duplicate"):
-            broadcast_chat_overlay(event, stored)
-            # Notification model: the overlay copy already lives on the pet side
-            # and self-clears after its TTL, so clear the unread backlog now to
-            # stop stale messages (e.g. earlier test pushes) from re-surfacing
-            # on the next event. AI context reads messages regardless of the
-            # unread flag, so this does not affect what the model can see.
-            with chat_integration_ref["lock"]:
-                chat_integration_db().mark_external_chat_read("", "")
+            overlay_delivered = broadcast_chat_overlay(event, stored)
+            # Queue acceptance is not a read acknowledgement: a later burst can
+            # still replace an overlay before a pet consumes it. Only the
+            # explicit /chat-read endpoint clears persisted unread messages.
+            stored["overlay_delivered"] = overlay_delivered
         return stored
 
     def handle_chat_integration_read(data: dict) -> dict:
@@ -529,13 +561,27 @@ def main():
             client.stop()
             if isValid(client):
                 client.deleteLater()
+
+        def delete_worker_when_stopped(worker):
+            if not isValid(worker):
+                return
+            if worker.isRunning():
+                QTimer.singleShot(50, lambda w=worker: delete_worker_when_stopped(w))
+                return
+            worker.deleteLater()
+
         for worker in workers:
             if isValid(worker) and worker.isRunning():
-                worker.requestInterruption()
-                worker.quit()
-                if force and not worker.wait(500):
-                    worker.terminate()
+                cancel = getattr(worker, "cancel", None)
+                if callable(cancel):
+                    cancel()
+                else:
+                    worker.requestInterruption()
+                if force:
                     worker.wait(500)
+            if isValid(worker) and worker.isRunning():
+                delete_worker_when_stopped(worker)
+                continue
             if isValid(worker):
                 worker.deleteLater()
         with napcat_ref["lock"]:
@@ -710,7 +756,7 @@ def main():
         def _on_timeout():
             cleanup_state["timed_out"] = True
             if isValid(worker) and worker.isRunning():
-                worker.requestInterruption()
+                worker.cancel()
                 force_cleanup_timer.start()
             else:
                 _cleanup()
@@ -719,9 +765,6 @@ def main():
             if not isValid(worker):
                 _cleanup(delete_later=False)
                 return
-            if worker.isRunning():
-                worker.terminate()
-                worker.wait(250)
             if worker.isRunning():
                 force_cleanup_timer.start()
                 return
@@ -803,16 +846,21 @@ def main():
 
     def register_ipc_peer(line: str, peer_id: str):
         if not peer_id:
-            return
+            return False
         parts = line.split("\t")
         kind = parts[1].strip().upper() if len(parts) >= 2 else "UNKNOWN"
         character = parts[2].strip() if len(parts) >= 3 else ""
         with ipc_ref["lock"]:
+            is_new_peer = peer_id not in ipc_ref.setdefault("peers", {})
             ipc_ref.setdefault("peers", {})[peer_id] = {
                 "kind": kind,
                 "character": character,
                 "last_seen": time.monotonic(),
             }
+            latest_settings_line = ipc_ref.get("latest_settings_line", "")
+        if is_new_peer and latest_settings_line:
+            broadcast_ipc_line(latest_settings_line)
+        return is_new_peer
 
     def prune_ipc_peers(max_age_seconds: float = 8.0):
         now = time.monotonic()
@@ -903,9 +951,7 @@ def main():
         elif line.startswith("OPEN_SETTINGS"):
             handle_open_settings_request(line)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
-            handle_settings_line(line)
-            if line.startswith("SETTINGS\t"):
-                broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
+            handle_settings_line(line, source_peer_id=source_peer_id)
 
     def notify_child_processes_shutdown():
         broadcast_ipc_line("SHUTDOWN")
@@ -1396,7 +1442,7 @@ def main():
         process.setWorkingDirectory(BASE_DIR)
         process.start()
 
-    def handle_settings_line(line):
+    def handle_settings_line(line, source_peer_id=""):
         if line.startswith("MODEL\t"):
             parts = line.split("\t")
             if len(parts) >= 3:
@@ -1415,9 +1461,13 @@ def main():
                 on_model_selected(character, costume, relaunch=relaunch)
         elif line.startswith("SETTINGS\t"):
             try:
-                on_settings_changed(json.loads(line.split("\t", 1)[1]))
+                payload = json.loads(line.split("\t", 1)[1])
             except json.JSONDecodeError:
-                pass
+                return
+            with ipc_ref["lock"]:
+                ipc_ref["latest_settings_line"] = line
+            on_settings_changed(payload)
+            broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line == "LAUNCH":
             settings_process_ref["launched"] = True
             launch_pet(persist_config=False)

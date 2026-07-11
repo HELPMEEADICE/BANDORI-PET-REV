@@ -101,10 +101,32 @@ def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
         _queue_memory_size,
     )
 
-    main_ipc_bytes = 2 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
+    main_ipc_bytes = 3 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
     radial_ipc_bytes = _queue_memory_size(8, 8192) + _queue_memory_size(8, 4096)
 
     assert main_ipc_bytes + radial_ipc_bytes < 4 * 1024 * 1024
+
+
+def test_main_uses_a_separate_control_queue_for_reliable_commands():
+    from pathlib import Path
+
+    bus_source = Path("ipc_bus.py").read_text(encoding="utf-8")
+    main_source = Path("main.py").read_text(encoding="utf-8")
+    pet_source = Path("pet_window.py").read_text(encoding="utf-8")
+
+    assert "def ipc_control_queue_key()" in bus_source
+    assert 'ipc_ref.get("control")' in main_source
+    assert '"_ipc_control_queue"' in pet_source
+
+
+def test_main_resends_latest_settings_to_new_ipc_peers():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert 'ipc_ref["latest_settings_line"] = line' in source
+    assert 'latest_settings_line = ipc_ref.get("latest_settings_line", "")' in source
+    assert "if is_new_peer and latest_settings_line:" in source
 
 
 def test_ipc_envelope_round_trips_sender_and_exclusion():

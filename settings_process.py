@@ -83,7 +83,7 @@ def main():
     apply_app_theme(cfg.get("dark_theme", False))
 
     ipc_peer_id = make_peer_id("settings")
-    ipc = {"inbound": None, "broadcast": None}
+    ipc = {"inbound": None, "broadcast": None, "control": None}
     ipc_queue = []
 
     def _stdout_fallback_line(line: str):
@@ -137,7 +137,9 @@ def main():
         if not attach_main_ipc_queues(ipc):
             return
         flush_ipc_queue()
-        for raw_line in ipc["broadcast"].read_available(max_messages=200):
+        raw_lines = ipc["control"].read_available(max_messages=200)
+        raw_lines += ipc["broadcast"].read_available(max_messages=200)
+        for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == ipc_peer_id:
                 continue

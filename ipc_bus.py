@@ -22,6 +22,23 @@ def ipc_broadcast_queue_key() -> str:
     return make_shared_memory_key(ipc_server_name(), "main-out")
 
 
+def ipc_control_queue_key() -> str:
+    return make_shared_memory_key(ipc_server_name(), "main-control")
+
+
+def is_control_ipc_line(line: str) -> bool:
+    normalized = normalize_ipc_line(line)
+    return normalized == "SHUTDOWN" or normalized.startswith((
+        "SETTINGS\t",
+        "FOCUS_CHAT",
+        "FOCUS_SETTINGS",
+        "OPEN_CHAT",
+        "SHOW_COSTUMES",
+        "CHAT_EVENT\t",
+        "REMINDER_EVENT\t",
+    ))
+
+
 def radial_command_queue_key(name: str) -> str:
     return make_shared_memory_key(name, "radial-cmd")
 
@@ -65,6 +82,8 @@ def attach_main_ipc_queues(ipc: dict) -> bool:
             ipc["inbound"] = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
         if ipc.get("broadcast") is None or not ipc["broadcast"].is_attached():
             ipc["broadcast"] = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+        if ipc.get("control") is None or not ipc["control"].is_attached():
+            ipc["control"] = SharedMemoryLineQueue.attach(ipc_control_queue_key())
         return True
     except Exception:
         for key in ("inbound", "broadcast"):

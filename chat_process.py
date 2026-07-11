@@ -193,7 +193,7 @@ def main():
     window.closed.connect(app.quit)
 
     ipc_peer_id = make_peer_id("chat")
-    ipc = {"inbound": None, "broadcast": None}
+    ipc = {"inbound": None, "broadcast": None, "control": None}
 
     def focus_window():
         focus_chat_window(window)
@@ -205,7 +205,9 @@ def main():
     def read_shutdown_messages():
         if not attach_main_ipc_queues(ipc):
             return
-        for raw_line in ipc["broadcast"].read_available(max_messages=200):
+        raw_lines = ipc["control"].read_available(max_messages=200)
+        raw_lines += ipc["broadcast"].read_available(max_messages=200)
+        for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == ipc_peer_id:
                 continue

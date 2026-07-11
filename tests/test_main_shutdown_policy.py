@@ -36,7 +36,8 @@ def test_napcat_timeout_suppresses_late_reply_and_has_cleanup_fallback():
     assert 'cleanup_state["timed_out"] = True' in reply_flow
     assert 'if cleanup_state["timed_out"]:' in reply_flow
     assert "force_cleanup_timer.timeout.connect(_force_timeout_cleanup)" in reply_flow
-    assert "worker.terminate()" in reply_flow
+    assert "worker.cancel()" in reply_flow
+    assert "worker.terminate()" not in reply_flow
 
 
 def test_settings_cleanup_never_force_terminates_workers():

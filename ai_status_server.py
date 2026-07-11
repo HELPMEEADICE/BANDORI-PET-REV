@@ -6,6 +6,10 @@ from urllib.parse import parse_qs, urlparse
 from process_utils import token_matches
 
 
+class _LocalThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 class AiStatusHttpServer:
     def __init__(self, port: int, token: str, on_event):
         self._port = int(port)
@@ -20,7 +24,7 @@ class AiStatusHttpServer:
 
     def start(self):
         handler = self._handler_class()
-        self._server = ThreadingHTTPServer(("127.0.0.1", self._port), handler)
+        self._server = _LocalThreadingHTTPServer(("127.0.0.1", self._port), handler)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name=f"BandoriAiStatusHttp:{self._port}",
@@ -44,6 +48,10 @@ class AiStatusHttpServer:
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "BandoriAiStatus/1.0"
+
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(5.0)
 
             def log_message(self, _format, *_args):
                 return
@@ -70,7 +78,14 @@ class AiStatusHttpServer:
                     length = int(self.headers.get("Content-Length", "0") or "0")
                 except ValueError:
                     length = 0
-                raw = self.rfile.read(max(0, min(length, 1024 * 1024)))
+                try:
+                    raw = self.rfile.read(max(0, min(length, 1024 * 1024)))
+                except TimeoutError:
+                    try:
+                        self._send_json({"ok": False, "error": "request body timeout"}, status=408)
+                    except OSError:
+                        pass
+                    return
                 try:
                     event = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):

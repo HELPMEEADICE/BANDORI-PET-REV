@@ -37,6 +37,7 @@ from process_utils import app_base_dir, clamp_float, clamp_int, interaction_trac
 from network_worker import delete_thread_when_stopped
 from ipc_bus import (
     ipc_broadcast_queue_key,
+    ipc_control_queue_key,
     ipc_inbound_queue_key,
     radial_command_queue_key,
     radial_event_queue_key,
@@ -464,6 +465,7 @@ class PetWindow(QWidget):
         self._ipc_peer_id = make_peer_id("pet")
         self._ipc_inbound_queue = None
         self._ipc_broadcast_queue = None
+        self._ipc_control_queue = None
         self._ipc_registered = False
         self._ipc_reconnect_timer = QTimer(self)
         self._ipc_reconnect_timer.setInterval(1000)
@@ -3301,6 +3303,8 @@ class PetWindow(QWidget):
                 self._ipc_inbound_queue = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
             if self._ipc_broadcast_queue is None or not self._ipc_broadcast_queue.is_attached():
                 self._ipc_broadcast_queue = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
+            if self._ipc_control_queue is None or not self._ipc_control_queue.is_attached():
+                self._ipc_control_queue = SharedMemoryLineQueue.attach(ipc_control_queue_key())
             self._ipc_reconnect_timer.stop()
             if not self._ipc_registered:
                 self._ipc_registered = True
@@ -3310,7 +3314,7 @@ class PetWindow(QWidget):
             self._schedule_ipc_reconnect()
 
     def _close_ipc_bus(self):
-        for attr in ("_ipc_inbound_queue", "_ipc_broadcast_queue"):
+        for attr in ("_ipc_inbound_queue", "_ipc_broadcast_queue", "_ipc_control_queue"):
             queue = getattr(self, attr, None)
             if queue is not None:
                 queue.close()
@@ -3326,10 +3330,16 @@ class PetWindow(QWidget):
 
     def _read_ipc_messages(self):
         self._connect_ipc_bus()
-        queue = self._ipc_broadcast_queue
-        if queue is None or not queue.is_attached():
+        broadcast_queue = self._ipc_broadcast_queue
+        control_queue = self._ipc_control_queue
+        if (
+            broadcast_queue is None or not broadcast_queue.is_attached()
+            or control_queue is None or not control_queue.is_attached()
+        ):
             return
-        for raw_line in queue.read_available(max_messages=200):
+        raw_lines = control_queue.read_available(max_messages=200)
+        raw_lines += broadcast_queue.read_available(max_messages=200)
+        for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == self._ipc_peer_id:
                 continue

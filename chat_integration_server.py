@@ -7,6 +7,10 @@ from onebot_message import normalize_onebot_event
 from process_utils import token_matches
 
 
+class _LocalThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 def _prepare_chat_event_batch(events, normalize_event) -> list[dict | None]:
     events = events if isinstance(events, list) else [events]
     invalid_index = next(
@@ -33,7 +37,7 @@ class ChatIntegrationHttpServer:
 
     def start(self):
         handler = self._handler_class()
-        self._server = ThreadingHTTPServer(("127.0.0.1", self._port), handler)
+        self._server = _LocalThreadingHTTPServer(("127.0.0.1", self._port), handler)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name=f"BandoriChatIntegrationHttp:{self._port}",
@@ -58,6 +62,10 @@ class ChatIntegrationHttpServer:
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "BandoriChatIntegration/1.0"
+
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(5.0)
 
             def log_message(self, _format, *_args):
                 return
@@ -175,7 +183,14 @@ class ChatIntegrationHttpServer:
                     length = int(self.headers.get("Content-Length", "0") or "0")
                 except ValueError:
                     length = 0
-                raw = self.rfile.read(max(0, min(length, 1024 * 1024)))
+                try:
+                    raw = self.rfile.read(max(0, min(length, 1024 * 1024)))
+                except TimeoutError:
+                    try:
+                        self._send_json({"ok": False, "error": "request body timeout"}, status=408)
+                    except OSError:
+                        pass
+                    return None
                 if not raw:
                     return {}
                 content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
