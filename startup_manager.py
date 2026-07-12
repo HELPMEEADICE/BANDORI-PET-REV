@@ -1,3 +1,4 @@
+import ntpath
 import os
 import subprocess
 import sys
@@ -15,10 +16,10 @@ def is_supported() -> bool:
 
 
 def _packaged_main_executable(base_dir: str) -> str:
-    preferred = os.path.join(base_dir, "BandoriPet.exe")
+    preferred = ntpath.join(base_dir, "BandoriPet.exe")
     if os.path.exists(preferred):
         return preferred
-    return os.path.join(base_dir, frozen_executable_name("main.py"))
+    return ntpath.join(base_dir, frozen_executable_name("main.py"))
 
 
 def startup_command() -> str:
@@ -26,11 +27,11 @@ def startup_command() -> str:
     if getattr(sys, "frozen", False):
         return subprocess.list2cmdline([_packaged_main_executable(base_dir)])
     interpreter = sys.executable
-    if sys.platform == "win32" and os.path.basename(interpreter).lower() == "python.exe":
-        pythonw = os.path.join(os.path.dirname(interpreter), "pythonw.exe")
+    if sys.platform == "win32" and ntpath.basename(interpreter).lower() == "python.exe":
+        pythonw = ntpath.join(ntpath.dirname(interpreter), "pythonw.exe")
         if os.path.exists(pythonw):
             interpreter = pythonw
-    return subprocess.list2cmdline([interpreter, os.path.join(base_dir, "main.py")])
+    return subprocess.list2cmdline([interpreter, ntpath.join(base_dir, "main.py")])
 
 
 def _open_run_key(access):
