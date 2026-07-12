@@ -72,7 +72,10 @@ class Live2DSSAAFramebuffer:
         gl.glViewport(0, 0, max(int(width), 1), max(int(height), 1))
         gl.glClearColor(*clear_color)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        model.Draw()
+        # The model was already updated and rendered into the SSAA target.
+        # A fallback is a second render of that exact state, not a second
+        # simulation tick (which can reset physics outputs at zero delta).
+        model.Render()
 
 
 class Moc3RenderPipeline:

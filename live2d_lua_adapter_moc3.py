@@ -50,6 +50,9 @@ class LuaLive2DModuleMOC3(LuaLive2DRuntimeBase):
         try:
             self._embed = self._lua.execute(b'return require("live2d_moc3_pet_embed")')
             self._embed.init()
+            self._render_frame = self._lua.eval(
+                b"function(renderer, opts) return renderer:render_frame(opts) end"
+            )
         except Exception:
             super().dispose()
             raise

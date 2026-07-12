@@ -411,6 +411,7 @@ class LuaLive2DRuntimeBase:
         self._load_model = None
         self._resize = None
         self._draw = None
+        self._render_frame = None
         self._drag = None
         self._hit_test = None
         self._set_parameter = None
@@ -440,6 +441,7 @@ class LuaLive2DRuntimeBase:
         self._load_model = None
         self._resize = None
         self._draw = None
+        self._render_frame = None
         self._drag = None
         self._hit_test = None
         self._set_parameter = None
@@ -727,6 +729,17 @@ class LuaLAppModelBase:
         if self._profile_enabled:
             self.last_lua_update_draw_seconds = float(opts[b"profile_update_draw_seconds"] or 0.0)
             self.last_lua_gc_seconds = float(opts[b"profile_gc_seconds"] or 0.0)
+
+    def Render(self):
+        """Render the current model state without advancing its simulation."""
+        if self._renderer is None:
+            return
+        render_frame = self._module._render_frame
+        if render_frame is None:
+            # Cubism 2 does not expose a side-effect-free render boundary.
+            self.Draw()
+            return
+        render_frame(self._renderer, self._draw_opts)
 
     def Drag(self, x: float, y: float):
         if self._renderer is None:
