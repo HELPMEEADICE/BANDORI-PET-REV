@@ -5,17 +5,17 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QRectF, QSize,
+    QRectF, QSize, QUrl,
 )
 from PySide6.QtGui import (
-    QFont, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QRegion,
+    QFont, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QRegion, QDesktopServices, QCursor,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QScrollArea, QSizePolicy, QToolButton,
     QApplication,
     QGraphicsColorizeEffect, QFrame,
-    QSplitter, QSplitterHandle, QCheckBox,
+    QSplitter, QSplitterHandle, QCheckBox, QDialog,
 )
 
 from i18n_manager import tr as _tr
@@ -1228,6 +1228,92 @@ class SearchSourcePopup(QFrame):
         super().paintEvent(event)
 
 
+def _copy_to_clipboard(text: str):
+    QApplication.clipboard().setText(str(text or ""))
+
+
+def _open_local_path(path: str) -> bool:
+    if not path:
+        return False
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if not resolved.exists():
+        return False
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(str(resolved)))
+
+
+def _show_local_path_in_folder(path: str) -> bool:
+    if not path:
+        return False
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    folder = resolved.parent if resolved.parent.exists() else resolved
+    if not folder.exists():
+        return False
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+class ImagePreviewDialog(QDialog):
+    def __init__(self, path: str, title: str = "", parent=None):
+        super().__init__(parent)
+        self._pixmap = QPixmap(path)
+        self.setWindowTitle(title or Path(path).name or _tr("ChatWindow.image_preview_title", default="图片预览"))
+        self.setModal(False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        self._scroll = QScrollArea(self)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setWidgetResizable(True)
+        self._image_label = QLabel(self._scroll)
+        self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._image_label.setMinimumSize(240, 180)
+        self._image_label.setStyleSheet("background: transparent;")
+        self._scroll.setWidget(self._image_label)
+        layout.addWidget(self._scroll)
+
+        self._apply_theme()
+        self._set_initial_size()
+        QTimer.singleShot(0, self._update_image)
+
+    def _apply_theme(self):
+        dark = isDarkTheme()
+        bg = "#151923" if dark else "#f7f9fc"
+        self.setStyleSheet(f"QDialog {{ background: {bg}; }} QScrollArea {{ background: transparent; border: none; }}")
+
+    def _set_initial_size(self):
+        if self._pixmap.isNull():
+            self.resize(420, 260)
+            return
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        max_w = int(available.width() * 0.82) if available else 960
+        max_h = int(available.height() * 0.82) if available else 720
+        size = self._pixmap.size()
+        size.scale(max_w, max_h, Qt.AspectRatioMode.KeepAspectRatio)
+        self.resize(max(360, size.width() + 24), max(260, size.height() + 24))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_image()
+
+    def _update_image(self):
+        if self._pixmap.isNull():
+            self._image_label.setText(_tr("ChatWindow.image_preview_unavailable", default="图片不可用"))
+            return
+        viewport_size = self._scroll.viewport().size()
+        target = QSize(max(1, viewport_size.width() - 8), max(1, viewport_size.height() - 8))
+        scaled = self._pixmap.scaled(
+            target,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._image_label.setPixmap(scaled)
+
 class SearchSourceBadge(QLabel):
     _CIRCLED_NUMBERS = "123456789"
 
@@ -1260,6 +1346,39 @@ class SearchSourceBadge(QLabel):
             self._popup.deleteLater()
             self._popup = None
         return super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            url = str(self._source.get("url", "") or "").strip()
+            if url:
+                QDesktopServices.openUrl(QUrl(url))
+                event.accept()
+                return
+        return super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        url = str(self._source.get("url", "") or "").strip()
+        title = str(self._source.get("title", "") or "").strip()
+        if not url:
+            return super().contextMenuEvent(event)
+        menu = RoundMenu(parent=self)
+        open_action = Action(FluentIcon.LINK, _tr("ChatWindow.open_link", default="打开链接"), self)
+        open_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+        menu.addAction(open_action)
+        copy_action = Action(FluentIcon.COPY, _tr("ChatWindow.copy_link", default="复制链接"), self)
+        copy_action.triggered.connect(lambda: _copy_to_clipboard(url))
+        menu.addAction(copy_action)
+        if title:
+            copy_full_action = Action(
+                FluentIcon.SAVE_COPY,
+                _tr("ChatWindow.copy_link_with_title", default="复制标题和链接"),
+                self,
+            )
+            copy_full_action.triggered.connect(lambda: _copy_to_clipboard(f"{title}\n{url}"))
+            menu.addAction(copy_full_action)
+        _prepare_fluent_round_menu(menu)
+        menu.exec(event.globalPos(), ani=True)
+        event.accept()
 
     def apply_theme(self):
         dark = isDarkTheme()
@@ -1300,9 +1419,59 @@ class ChatImagePreview(QWidget):
         self._empty_text = QColor("#657089")
         self._file_text = QColor("#1f2328")
         self._file_meta = QColor("#657089")
+        self._preview_dialog = None
         self.setToolTip(self._name)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.set_preview_width(self._DEFAULT_WIDTH)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._type == "image" and not self._pixmap.isNull():
+                self._show_image_preview()
+            else:
+                _open_local_path(self._path)
+            event.accept()
+            return
+        return super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        if not self._path:
+            return super().contextMenuEvent(event)
+        menu = RoundMenu(parent=self)
+        if self._type == "image" and not self._pixmap.isNull():
+            preview_action = Action(FluentIcon.VIEW, _tr("ChatWindow.attachment_preview", default="预览图片"), self)
+            preview_action.triggered.connect(self._show_image_preview)
+            menu.addAction(preview_action)
+        open_action = Action(FluentIcon.FOLDER, _tr("ChatWindow.attachment_open", default="打开文件"), self)
+        open_action.triggered.connect(lambda: _open_local_path(self._path))
+        menu.addAction(open_action)
+        folder_action = Action(FluentIcon.FOLDER_ADD, _tr("ChatWindow.attachment_show_in_folder", default="在文件夹中显示"), self)
+        folder_action.triggered.connect(lambda: _show_local_path_in_folder(self._path))
+        menu.addAction(folder_action)
+        copy_action = Action(FluentIcon.COPY, _tr("ChatWindow.attachment_copy_path", default="复制路径"), self)
+        copy_action.triggered.connect(lambda: _copy_to_clipboard(self._path))
+        menu.addAction(copy_action)
+        _prepare_fluent_round_menu(menu)
+        menu.exec(event.globalPos(), ani=True)
+        event.accept()
+
+    def _show_image_preview(self):
+        if self._pixmap.isNull() or not self._path:
+            return
+        dialog = getattr(self, "_preview_dialog", None)
+        try:
+            if dialog is not None and dialog.isVisible():
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+        except RuntimeError:
+            dialog = None
+        dialog = ImagePreviewDialog(self._path, self._name, self.window())
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(lambda *_args: setattr(self, "_preview_dialog", None))
+        self._preview_dialog = dialog
+        dialog.show()
 
     def preferred_width(self) -> int:
         if self._type != "image":
