@@ -20,7 +20,7 @@ from local_tools import (
     AUTO_CONTINUE_TOOL_NAME,
     chat_completion_tools,
     reminder_tools_enabled,
-    responses_native_tools,
+    responses_tools,
     run_local_tool_call,
     should_prefetch_web_search,
     with_local_tool_system_hint,
@@ -694,7 +694,7 @@ def estimate_llm_request_tokens(
         prepared = with_web_search_system_hint(prepared, show_search_sources)
     total = estimate_messages_tokens(prepared)
     tools = (
-        responses_native_tools(config)
+        responses_tools(web_search if use_tools else False, config if use_tools else {})
         if responses_api
         else chat_completion_tools(web_search if use_tools else False, config if use_tools else {})
     )
@@ -1068,6 +1068,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
 
 class ResponsesStreamWorker(_CancelableNetworkWorker):
     chunk_received = Signal(str, str)
+    auto_continue_boundary = Signal(str, str, list)
     finished = Signal(str, str, list)
     error = Signal(str)
 
@@ -1080,12 +1081,20 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         self._model_id = model_id
         self._messages = messages
         self._enable_thinking = enable_thinking
-        self._web_search = web_search
+        self._web_search = bool(web_search)
         self._show_search_sources = bool(show_search_sources)
         self._tool_config = dict(tool_config or {})
+        self._tool_config["_cancel_event"] = self._cancel_event
         self._full_text = ""
         self._reasoning_text = ""
+        self._stream_tool_calls = []
+        self._search_sources = []
+        self._response_id = ""
         self._usage = normalize_token_usage({})
+        self._round_usage = None
+        self._round_usage_merged = False
+        self._round_output_text = ""
+        self._round_text_seen = False
 
     @property
     def token_usage(self) -> dict:
@@ -1094,75 +1103,152 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
     def run(self):
         try:
             messages = [dict(message) for message in self._messages]
-            if (
+            use_tools = (
                 self._web_search
                 or self._tool_config.get("llm_web_fetch_enabled", False)
+                or self._tool_config.get("llm_auto_continue_enabled", False)
+                or reminder_tools_enabled(self._tool_config)
                 or self._tool_config.get("llm_mcp_enabled", False)
                 or self._tool_config.get("computer_use_enabled", False)
-            ):
-                messages = with_local_tool_system_hint(messages, self._tool_config)
-            instructions, input_items = _messages_to_responses_input(messages)
-            body = {
-                "model": self._model_id,
-                "input": input_items,
-                "stream": True,
-            }
-            if instructions:
-                body["instructions"] = instructions
-            tools = []
-            tools.extend(responses_native_tools(self._tool_config))
-            if tools:
-                body["tools"] = tools
-            _apply_responses_thinking_options(body, self._enable_thinking)
-            data = json.dumps(body).encode("utf-8")
-
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            }
-
-            req = urllib.request.Request(
-                self._api_url, data=data, headers=headers, method="POST"
             )
+            if use_tools:
+                messages = with_local_tool_system_hint(messages, self._tool_config)
+            if use_tools and self._web_search:
+                messages = with_web_search_system_hint(messages, self._show_search_sources)
+                prefetch_context = self._prefetch_web_search_context()
+                if prefetch_context:
+                    self._remember_search_sources(prefetch_context)
+                    messages.append({"role": "system", "content": prefetch_context})
+            instructions, input_items = _messages_to_responses_input(messages)
+            tools = responses_tools(
+                self._web_search if use_tools else False,
+                self._tool_config if use_tools else {},
+            )
+            auto_continue_limit = self._auto_continue_limit()
+            auto_continue_call_limit = max(0, auto_continue_limit - 1)
+            max_tool_rounds = max(
+                8 if self._tool_config.get("computer_use_enabled", False) else 3,
+                auto_continue_limit,
+            )
+            auto_continue_count = 0
+            previous_response_id = ""
 
-            resp = self._open_response(req, 180)
-            if resp is None:
-                return
-            try:
-                with resp:
-                    buffer = b""
-                    for chunk in iter(lambda: resp.read(4096), b""):
-                        if self._cancelled:
-                            break
-                        buffer += chunk
-                        while b"\n" in buffer:
-                            line, buffer = buffer.split(b"\n", 1)
-                            self._process_line(line.decode("utf-8", errors="replace"))
-                    if not self._cancelled and buffer.strip():
-                        self._process_line(buffer.decode("utf-8", errors="replace"))
-            finally:
-                self._release_response(resp)
+            for round_index in range(max_tool_rounds + 1):
+                self._stream_tool_calls = []
+                self._response_id = ""
+                self._stream_once(
+                    input_items,
+                    instructions,
+                    tools,
+                    previous_response_id,
+                )
+                if self._cancelled:
+                    return
+                tool_calls = _normalize_stream_tool_calls(self._stream_tool_calls)
+                if not use_tools or not tool_calls:
+                    break
+                if round_index >= max_tool_rounds:
+                    break
+
+                executable_tool_calls = []
+                for tool_call in tool_calls:
+                    function = tool_call.get("function", {})
+                    if function.get("name") == AUTO_CONTINUE_TOOL_NAME:
+                        if auto_continue_count >= auto_continue_call_limit:
+                            continue
+                        auto_continue_count += 1
+                    executable_tool_calls.append(tool_call)
+                if not executable_tool_calls:
+                    break
+
+                segment_text = self._full_text
+                segment_reasoning = self._reasoning_text
+                has_auto_continue = any(
+                    (tool_call.get("function") or {}).get("name")
+                    == AUTO_CONTINUE_TOOL_NAME
+                    for tool_call in executable_tool_calls
+                )
+                if has_auto_continue:
+                    if segment_text.strip() or segment_reasoning.strip():
+                        content, reasoning = split_thinking_text(
+                            segment_text,
+                            segment_reasoning,
+                        )
+                        parsed_content, inline_sources = extract_inline_search_sources(content)
+                        if self._show_search_sources:
+                            self._remember_search_source_items(inline_sources)
+                            content = parsed_content
+                        self.auto_continue_boundary.emit(
+                            content,
+                            reasoning,
+                            list(self._search_sources),
+                        )
+                    self._full_text = ""
+                    self._reasoning_text = ""
+
+                next_input = []
+                for tool_call in executable_tool_calls:
+                    if self._cancelled:
+                        return
+                    function = tool_call.get("function", {})
+                    tool_config = dict(self._tool_config)
+                    tool_config["_cancel_event"] = self._cancel_event
+                    if function.get("name") == AUTO_CONTINUE_TOOL_NAME:
+                        tool_config["_auto_continue_count"] = auto_continue_count
+                    tool_result = run_local_tool_call(
+                        function.get("name", ""),
+                        function.get("arguments", "{}"),
+                        tool_config,
+                    )
+                    tool_content = str(tool_result.get("content", "") or "")
+                    self._remember_search_sources(tool_content)
+                    next_input.append({
+                        "type": "function_call_output",
+                        "call_id": tool_call.get("id") or f"call_{round_index}",
+                        "output": tool_content,
+                    })
+                    extra_messages = [
+                        message
+                        for message in tool_result.get("extra_messages", []) or []
+                        if isinstance(message, dict)
+                    ]
+                    if extra_messages:
+                        extra_instructions, extra_input = _messages_to_responses_input(
+                            extra_messages
+                        )
+                        if extra_instructions:
+                            instructions = (
+                                instructions + "\n\n" + extra_instructions
+                            ).strip()
+                        next_input.extend(extra_input)
+
+                if self._response_id:
+                    previous_response_id = self._response_id
+                    input_items = next_input
+                else:
+                    input_items = input_items + [
+                        {
+                            "type": "function_call",
+                            "call_id": call.get("id") or f"call_{index}",
+                            "name": (call.get("function") or {}).get("name", ""),
+                            "arguments": (call.get("function") or {}).get(
+                                "arguments", "{}"
+                            ),
+                        }
+                        for index, call in enumerate(executable_tool_calls)
+                    ] + next_input
 
             if self._cancelled:
                 return
-            if not self._usage["total_tokens"]:
-                estimated = {
-                    "input_tokens": estimate_messages_tokens(messages)
-                    + estimate_value_tokens(body.get("tools", [])),
-                    "output_tokens": estimate_text_tokens(
-                        self._full_text + self._reasoning_text
-                    ),
-                    "estimated": True,
-                }
-                estimated["total_tokens"] = estimated["input_tokens"] + estimated["output_tokens"]
-                self._usage = normalize_token_usage(estimated)
             content, reasoning = split_thinking_text(
                 self._full_text,
                 self._reasoning_text,
             )
-            content, sources = extract_inline_search_sources(content)
-            self.finished.emit(content, reasoning, sources if self._show_search_sources else [])
+            parsed_content, inline_sources = extract_inline_search_sources(content)
+            if self._show_search_sources:
+                self._remember_search_source_items(inline_sources)
+                content = parsed_content
+            self.finished.emit(content, reasoning, list(self._search_sources))
         except urllib.error.HTTPError as e:
             if self._cancelled:
                 return
@@ -1177,6 +1263,103 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
             if not self._cancelled:
                 self.error.emit(str(e))
 
+    def _auto_continue_limit(self) -> int:
+        if not self._tool_config.get("llm_auto_continue_enabled", False):
+            return 0
+        try:
+            return max(
+                1,
+                min(
+                    20,
+                    int(self._tool_config.get("llm_auto_continue_max_turns", 5)),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 5
+
+    def _prefetch_web_search_context(self) -> str:
+        latest_user_text = str(
+            self._tool_config.get("_latest_user_text", "") or ""
+        ).strip()
+        if not should_prefetch_web_search(latest_user_text):
+            return ""
+        return web_search_prefetch_context(latest_user_text, self._tool_config)
+
+    def _stream_once(
+        self,
+        input_items: list[dict],
+        instructions: str,
+        tools: list[dict],
+        previous_response_id: str = "",
+    ):
+        body = {
+            "model": self._model_id,
+            "input": input_items,
+            "stream": True,
+        }
+        if instructions:
+            body["instructions"] = instructions
+        if previous_response_id:
+            body["previous_response_id"] = previous_response_id
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        _apply_responses_thinking_options(body, self._enable_thinking)
+        data = json.dumps(body).encode("utf-8")
+
+        self._round_usage = None
+        self._round_usage_merged = False
+        self._round_output_text = ""
+        self._round_text_seen = False
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        req = urllib.request.Request(
+            self._api_url,
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        resp = self._open_response(req, 180)
+        if resp is None:
+            return
+        try:
+            with resp:
+                buffer = b""
+                for chunk in iter(lambda: resp.read(4096), b""):
+                    if self._cancelled:
+                        break
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        self._process_line(
+                            line.decode("utf-8", errors="replace")
+                        )
+                if not self._cancelled and buffer.strip():
+                    self._process_line(buffer.decode("utf-8", errors="replace"))
+        finally:
+            self._release_response(resp)
+
+        if self._cancelled:
+            return
+        if self._round_usage is not None and not self._round_usage_merged:
+            self._usage = merge_token_usage(self._usage, self._round_usage)
+            self._round_usage_merged = True
+        elif self._round_usage is None:
+            estimated = {
+                "input_tokens": estimate_value_tokens(input_items)
+                + estimate_value_tokens(tools)
+                + estimate_text_tokens(instructions),
+                "output_tokens": estimate_text_tokens(self._round_output_text),
+                "estimated": True,
+            }
+            estimated["total_tokens"] = (
+                estimated["input_tokens"] + estimated["output_tokens"]
+            )
+            self._usage = merge_token_usage(self._usage, estimated)
+
     def _process_line(self, line: str):
         line = line.strip()
         if not line.startswith("data:"):
@@ -1189,25 +1372,132 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         except json.JSONDecodeError:
             return
         event_type = data.get("type", "")
+        if event_type == "error":
+            raise RuntimeError(str(data.get("message", "") or "Responses API stream error"))
+        if event_type in ("response.failed", "response.incomplete"):
+            response = data.get("response", {})
+            error = response.get("error") or response.get("incomplete_details") or {}
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("reason")
+            else:
+                message = str(error or "")
+            raise RuntimeError(message or "Responses API did not complete the response")
+        if event_type in ("response.created", "response.queued", "response.in_progress"):
+            response = data.get("response", {})
+            self._response_id = str(response.get("id", "") or self._response_id)
+            return
         if event_type in ("response.output_text.delta", "response.text.delta"):
             content = data.get("delta", "")
             if content:
                 self._full_text += content
+                self._round_output_text += content
+                self._round_text_seen = True
                 self.chunk_received.emit(content, "")
             return
         if event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
             reasoning = data.get("delta", "")
             if reasoning:
                 self._reasoning_text += reasoning
+                self._round_output_text += reasoning
                 self.chunk_received.emit("", reasoning)
+            return
+        if event_type in (
+            "response.output_item.added",
+            "response.output_item.done",
+        ):
+            self._collect_function_call_item(
+                data.get("item") or {},
+                data.get("output_index"),
+            )
+            return
+        if event_type == "response.function_call_arguments.delta":
+            target = self._function_call_target(
+                data.get("item_id", ""),
+                data.get("output_index"),
+            )
+            arguments_delta = str(data.get("delta", "") or "")
+            target["function"]["arguments"] += arguments_delta
+            self._round_output_text += arguments_delta
+            return
+        if event_type == "response.function_call_arguments.done":
+            target = self._function_call_target(
+                data.get("item_id", ""),
+                data.get("output_index"),
+            )
+            name = str(data.get("name", "") or "")
+            arguments = str(data.get("arguments", "") or "")
+            if name:
+                target["function"]["name"] = name
+            if arguments:
+                target["function"]["arguments"] = arguments
             return
         if event_type in ("response.completed", "response.done"):
             response = data.get("response", {})
+            self._response_id = str(response.get("id", "") or self._response_id)
+            for output_index, item in enumerate(response.get("output", []) or []):
+                self._collect_function_call_item(item, output_index)
             output_text = _extract_response_output_text(response)
-            if output_text and not self._full_text:
-                self._full_text = output_text
+            if output_text and not self._round_text_seen:
+                self._full_text += output_text
+                self._round_output_text += output_text
             if isinstance(response.get("usage"), dict):
-                self._usage = normalize_token_usage(response["usage"])
+                self._round_usage = normalize_token_usage(response["usage"])
+                if not self._round_usage_merged:
+                    self._usage = merge_token_usage(self._usage, self._round_usage)
+                    self._round_usage_merged = True
+
+    def _function_call_target(self, item_id, output_index):
+        item_id = str(item_id or "")
+        try:
+            index = int(output_index)
+        except (TypeError, ValueError):
+            index = len(self._stream_tool_calls)
+        for target in self._stream_tool_calls:
+            if item_id and target.get("_item_id") == item_id:
+                return target
+            if target.get("_output_index") == index:
+                return target
+        target = {
+            "id": "",
+            "type": "function",
+            "function": {"name": "", "arguments": ""},
+            "_item_id": item_id,
+            "_output_index": index,
+        }
+        self._stream_tool_calls.append(target)
+        return target
+
+    def _collect_function_call_item(self, item: dict, output_index):
+        if not isinstance(item, dict) or item.get("type") != "function_call":
+            return
+        target = self._function_call_target(item.get("id", ""), output_index)
+        call_id = str(item.get("call_id", "") or "")
+        name = str(item.get("name", "") or "")
+        arguments = str(item.get("arguments", "") or "")
+        if call_id:
+            target["id"] = call_id
+        if name:
+            target["function"]["name"] = name
+        if arguments:
+            target["function"]["arguments"] = arguments
+
+    def _remember_search_sources(self, text: str):
+        for source in _extract_search_sources(text):
+            if source["url"] and all(
+                item["url"] != source["url"] for item in self._search_sources
+            ):
+                self._search_sources.append(source)
+
+    def _remember_search_source_items(self, sources: list[dict]):
+        for source in sources or []:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url", "") or "").strip()
+            if url and all(
+                item["url"] != url for item in self._search_sources
+            ):
+                title = str(source.get("title", "") or "").strip() or url
+                self._search_sources.append({"title": title, "url": url})
 
 
 class NonStreamWorker(_CancelableNetworkWorker):

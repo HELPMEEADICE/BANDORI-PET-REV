@@ -38,7 +38,7 @@ _APP_DIR = Path(app_base_dir()).resolve()
 _BUNDLED_STDIO_MCP_SCRIPT = (_APP_DIR / "filesystem_mcp_server.py").resolve()
 
 
-def mcp_proxy_tools(config: dict) -> list[dict]:
+def mcp_proxy_tools(config: dict, exclude_native: bool = False) -> list[dict]:
     if not _mcp_enabled(config):
         return []
     tools = []
@@ -46,6 +46,8 @@ def mcp_proxy_tools(config: dict) -> list[dict]:
     cancel_event = config.get("_cancel_event")
     for server in _enabled_servers(config):
         if _is_native_only(server):
+            continue
+        if exclude_native and _can_use_native_server(config, server):
             continue
         try:
             for item in _list_server_tools(server, cancel_event):
@@ -77,18 +79,10 @@ def mcp_native_tools(config: dict) -> list[dict]:
         return []
     native_tools = []
     for server in _enabled_servers(config):
-        if server.get("transport") == "stdio":
+        if not _can_use_native_server(config, server):
             continue
         url = str(server.get("url", "") or "").strip()
         connector_id = str(server.get("connector_id", "") or "").strip()
-        if not url and not connector_id:
-            continue
-        require_approval = str(server.get("require_approval", "always") or "always").lower()
-        if require_approval != "never":
-            # This app does not yet provide an interactive mcp_approval_response
-            # UI loop for native provider calls. Skip instead of returning an
-            # approval request that the chat renderer cannot complete.
-            continue
         item = {
             "type": "mcp",
             "server_label": str(server.get("label", "") or "mcp"),
@@ -111,6 +105,20 @@ def mcp_native_tools(config: dict) -> list[dict]:
             item["allowed_tools"] = [str(name) for name in allowed if str(name)]
         native_tools.append(item)
     return native_tools
+
+
+def _can_use_native_server(config: dict, server: dict) -> bool:
+    if not bool(config.get("llm_mcp_use_native", True)):
+        return False
+    if server.get("transport") == "stdio":
+        return False
+    url = str(server.get("url", "") or "").strip()
+    connector_id = str(server.get("connector_id", "") or "").strip()
+    if not url and not connector_id:
+        return False
+    require_approval = str(server.get("require_approval", "always") or "always").lower()
+    # This app has no interactive mcp_approval_response UI loop yet.
+    return require_approval == "never"
 
 
 def test_mcp_servers(config: dict) -> tuple[bool, str]:

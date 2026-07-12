@@ -5467,23 +5467,19 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self._is_group_chat:
             tool_config["llm_auto_continue_enabled"] = False
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
-        web_fetch = bool(self._cfg.get("llm_web_fetch_enabled", False))
         show_search_sources = True
-        use_reminder_tools = reminder_tools_enabled(tool_config)
-        if self._use_responses_api(api_url) and not web_search and not web_fetch and not use_reminder_tools:
+        if self._use_responses_api(api_url):
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                False,
+                web_search,
                 show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
         else:
-            if self._use_responses_api(api_url):
-                api_url = self._chat_completions_api_url(api_url)
             self._worker = LLMStreamWorker(
                 api_url,
                 api_key,

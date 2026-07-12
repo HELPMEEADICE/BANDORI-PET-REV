@@ -798,24 +798,20 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             latest_user_text=text,
         )
         web_search = bool(self._cfg.get("llm_web_search_enabled", False)) if self._cfg else False
-        web_fetch = bool(self._cfg.get("llm_web_fetch_enabled", False)) if self._cfg else False
         show_sources = bool(self._cfg.get("llm_web_search_show_sources", True)) if self._cfg else True
-        use_reminder_tools = reminder_tools_enabled(tool_config)
-        if self._use_responses_api(api_url) and not web_search and not web_fetch and not use_reminder_tools:
+        if self._use_responses_api(api_url):
             self._worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
                 messages,
                 enable_thinking,
-                False,
+                web_search,
                 self,
                 show_search_sources=show_sources,
                 tool_config=tool_config,
             )
         else:
-            if self._use_responses_api(api_url):
-                api_url = self._chat_completions_api_url(api_url)
             self._worker = LLMStreamWorker(
                 api_url,
                 api_key,

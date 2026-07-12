@@ -245,7 +245,12 @@ def web_search_system_hint(include_sources: bool = True) -> str:
     )
 
 
-def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
+def chat_completion_tools(
+    web_search_enabled: bool,
+    tool_config: dict | None = None,
+    *,
+    mcp_exclude_native: bool = False,
+) -> list[dict]:
     tools = [CHAT_COMPLETIONS_WEB_SEARCH_TOOL] if web_search_enabled else []
     config = tool_config or {}
     if config.get("llm_web_fetch_enabled", False):
@@ -255,7 +260,7 @@ def chat_completion_tools(web_search_enabled: bool, tool_config: dict | None = N
     if reminder_tools_enabled(config):
         tools.extend(CHAT_COMPLETIONS_REMINDER_TOOLS)
     tools.append(CHAT_COMPLETIONS_POKE_USER_TOOL)
-    tools.extend(mcp_proxy_tools(config))
+    tools.extend(mcp_proxy_tools(config, exclude_native=mcp_exclude_native))
     tools.extend(computer_tools(config))
     return tools
 
@@ -264,10 +269,33 @@ def reminder_tools_enabled(tool_config: dict | None = None) -> bool:
     return True
 
 
-def responses_native_tools(tool_config: dict | None = None) -> list[dict]:
-    return mcp_native_tools(tool_config or {})
+def responses_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
+    config = tool_config or {}
+    chat_tools = chat_completion_tools(
+        web_search_enabled,
+        config,
+        mcp_exclude_native=True,
+    )
+    tools = []
+    for item in chat_tools:
+        if item.get("type") != "function":
+            continue
+        function = item.get("function") or {}
+        name = str(function.get("name", "") or "").strip()
+        if not name:
+            continue
+        tools.append({
+            "type": "function",
+            "name": name,
+            "description": str(function.get("description", "") or ""),
+            "parameters": function.get("parameters") or {
+                "type": "object",
+                "properties": {},
+            },
+        })
 
-
+    tools.extend(mcp_native_tools(config))
+    return tools
 def local_tool_system_hint(tool_config: dict | None = None) -> str:
     config = tool_config or {}
     hints = []
