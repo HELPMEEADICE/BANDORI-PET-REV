@@ -149,7 +149,11 @@ def _read_text_file(path: Path, max_chars: int) -> str:
         raise FileNotFoundError(str(path))
     if not path.is_file():
         raise IsADirectoryError(str(path))
-    data = path.read_text(encoding="utf-8", errors="replace")
+    # Read at most max_chars + 1 characters instead of the whole file, so a
+    # multi-gigabyte target cannot exhaust memory; the extra character only
+    # tells us whether the truncation notice is needed.
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        data = handle.read(max_chars + 1)
     if len(data) > max_chars:
         return data[:max_chars] + f"\n\n[truncated to {max_chars} characters]"
     return data
