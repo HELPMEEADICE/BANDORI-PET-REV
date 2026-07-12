@@ -62,6 +62,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._render_w = 1
         self._render_h = 1
         self._render_pipeline = render_pipeline_for_model(None)
+        self._renderer_target_size = None
         self._ssaa_fbo = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAutoFillBackground(False)
@@ -84,6 +85,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
                 self._model.ApplyTextureQuality(profile)
                 if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                     self._ssaa_fbo.dispose()
+                self._sync_renderer_target_size(force=True)
             finally:
                 self.doneCurrent()
             self._static_render_done = False
@@ -173,10 +175,11 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
     def _sync_render_size(self, w: int | None = None, h: int | None = None, *, force: bool = False):
         render_w, render_h = self._physical_render_size(w, h)
         changed = force or render_w != self._render_w or render_h != self._render_h
+        self._render_w, self._render_h = render_w, render_h
         if self._model and changed:
             self._model.Resize(render_w, render_h)
+            self._sync_renderer_target_size(force=True)
             self._static_render_done = False
-        self._render_w, self._render_h = render_w, render_h
         gl.glViewport(0, 0, render_w, render_h)
 
     def _render_ssaa_scale(self) -> int:
@@ -184,10 +187,22 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             return 1
         return self._render_pipeline.ssaa_scale(self._quality_profile)
 
+    def _sync_renderer_target_size(self, *, force: bool = False):
+        model = self._model
+        if not model or getattr(model, "renderer_format", "") != "moc3":
+            self._renderer_target_size = None
+            return
+        scale = self._render_ssaa_scale()
+        target_size = (self._render_w * scale, self._render_h * scale)
+        if force or target_size != self._renderer_target_size:
+            model.ResizeRenderer(*target_size)
+            self._renderer_target_size = target_size
+
     def _dispose_model(self):
         model = self._model
         self._model = None
         self._render_pipeline = render_pipeline_for_model(None)
+        self._renderer_target_size = None
         if self._ssaa_fbo is not None:
             self._ssaa_fbo.dispose()
             self._ssaa_fbo = None
@@ -233,14 +248,10 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
             gl.glViewport(0, 0, self._render_w * ssaa_scale, self._render_h * ssaa_scale)
             gl.glClearColor(*self._clear_color)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-            if hasattr(self._model, "ResizeRenderer"):
-                self._model.ResizeRenderer(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
         try:
             self._model.Draw()
         finally:
             if using_ssaa:
-                if hasattr(self._model, "ResizeRenderer"):
-                    self._model.ResizeRenderer(self._render_w, self._render_h)
                 self._ssaa_fbo.release()
         if using_ssaa:
             if not self._ssaa_fbo.blit_to_default(self.defaultFramebufferObject(), self._render_w, self._render_h, self._clear_color):

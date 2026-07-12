@@ -410,6 +410,7 @@ class LuaLive2DRuntimeBase:
         self._initialized = False
         self._load_model = None
         self._resize = None
+        self._resize_renderer = None
         self._draw = None
         self._render_frame = None
         self._drag = None
@@ -440,6 +441,7 @@ class LuaLive2DRuntimeBase:
                 pass
         self._load_model = None
         self._resize = None
+        self._resize_renderer = None
         self._draw = None
         self._render_frame = None
         self._drag = None
@@ -499,6 +501,11 @@ class LuaLive2DRuntimeBase:
             b"function(renderer, path, w, h, opts) return renderer:load_model(path, w, h, opts) end"
         )
         self._resize = lua.eval(b"function(renderer, w, h) return renderer:resize(w, h) end")
+        self._resize_renderer = lua.eval(
+            b"function(renderer, w, h) "
+            b"if renderer.resize_renderer ~= nil then return renderer:resize_renderer(w, h) end; "
+            b"return renderer:resize(w, h) end"
+        )
         self._draw = lua.eval(b"function(renderer, opts) return renderer:draw(opts) end")
         self._drag = lua.eval(b"function(renderer, x, y) return renderer:drag(x, y) end")
         self._hit_test = lua.eval(b"function(renderer, x, y) return renderer:hit_test(x, y) end")
@@ -707,7 +714,11 @@ class LuaLAppModelBase:
 
     def ResizeRenderer(self, width: int, height: int):
         if self._renderer is not None:
-            self._module._resize(self._renderer, max(int(width), 1), max(int(height), 1))
+            self._module._resize_renderer(
+                self._renderer,
+                max(int(width), 1),
+                max(int(height), 1),
+            )
 
     def Draw(self):
         if self._renderer is None:

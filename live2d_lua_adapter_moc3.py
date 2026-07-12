@@ -24,6 +24,7 @@ end
 def _patch_lua_moc3_pet_embed_delta(module_name: str, chunk: bytes) -> bytes:
     if module_name != "live2d_moc3_pet_embed":
         return chunk
+    chunk = chunk.replace(b"\r\n", b"\n")
     insert_after = b"local GL_COLOR_BUFFER_BIT = 0x00004000\n"
     if b"compute_delta_seconds" not in chunk and insert_after in chunk:
         chunk = chunk.replace(insert_after, insert_after + _MOC3_PET_DELTA_HELPER, 1)
@@ -36,7 +37,79 @@ def _patch_lua_moc3_pet_embed_delta(module_name: str, chunk: bytes) -> bytes:
         b"    self.last_time_msec = time_msec\n"
     )
     new_delta = b"    local delta = compute_delta_seconds(self, opts.time_msec)\n"
-    return chunk.replace(old_delta, new_delta, 1)
+    chunk = chunk.replace(old_delta, new_delta, 1)
+
+    if b"function Renderer:resize_renderer" in chunk:
+        return chunk
+
+    size_fields = (
+        b"        height = math.max(tonumber(height) or 1, 1),\n"
+        b"        offset_x = 0,\n"
+    )
+    render_size_fields = (
+        b"        height = math.max(tonumber(height) or 1, 1),\n"
+        b"        render_width = math.max(tonumber(width) or 1, 1),\n"
+        b"        render_height = math.max(tonumber(height) or 1, 1),\n"
+        b"        offset_x = 0,\n"
+    )
+    chunk = chunk.replace(size_fields, render_size_fields, 1)
+
+    old_resize = (
+        b"function Renderer:resize(width, height)\n"
+        b"    self.width = math.max(tonumber(width) or self.width or 1, 1)\n"
+        b"    self.height = math.max(tonumber(height) or self.height or 1, 1)\n"
+        b"    gl.glViewport(0, 0, self.width, self.height)\n"
+        b"    local runtime = self.renderer and self.renderer:get_runtime() or nil\n"
+        b"    self.projection = new_projection(self.width, self.height, runtime, self.offset_x, self.offset_y, self.scale)\n"
+        b"    return self\n"
+        b"end\n"
+    )
+    new_resize = (
+        b"function Renderer:resize(width, height)\n"
+        b"    self.width = math.max(tonumber(width) or self.width or 1, 1)\n"
+        b"    self.height = math.max(tonumber(height) or self.height or 1, 1)\n"
+        b"    return self:resize_renderer(self.width, self.height)\n"
+        b"end\n\n"
+        b"function Renderer:resize_renderer(width, height)\n"
+        b"    self.render_width = math.max(tonumber(width) or self.render_width or self.width or 1, 1)\n"
+        b"    self.render_height = math.max(tonumber(height) or self.render_height or self.height or 1, 1)\n"
+        b"    gl.glViewport(0, 0, self.render_width, self.render_height)\n"
+        b"    local runtime = self.renderer and self.renderer:get_runtime() or nil\n"
+        b"    self.projection = new_projection(self.render_width, self.render_height, runtime, self.offset_x, self.offset_y, self.scale)\n"
+        b"    return self\n"
+        b"end\n"
+    )
+    chunk = chunk.replace(old_resize, new_resize, 1)
+
+    old_offset = (
+        b"function Renderer:set_offset(x, y)\n"
+        b"    self.offset_x = tonumber(x) or 0\n"
+        b"    self.offset_y = tonumber(y) or 0\n"
+        b"    return self:resize(self.width, self.height)\n"
+        b"end\n"
+    )
+    new_offset = (
+        b"function Renderer:set_offset(x, y)\n"
+        b"    self.offset_x = tonumber(x) or 0\n"
+        b"    self.offset_y = tonumber(y) or 0\n"
+        b"    return self:resize_renderer(self.render_width, self.render_height)\n"
+        b"end\n"
+    )
+    chunk = chunk.replace(old_offset, new_offset, 1)
+
+    old_scale = (
+        b"function Renderer:set_scale(scale)\n"
+        b"    self.scale = tonumber(scale) or 1\n"
+        b"    return self:resize(self.width, self.height)\n"
+        b"end\n"
+    )
+    new_scale = (
+        b"function Renderer:set_scale(scale)\n"
+        b"    self.scale = tonumber(scale) or 1\n"
+        b"    return self:resize_renderer(self.render_width, self.render_height)\n"
+        b"end\n"
+    )
+    return chunk.replace(old_scale, new_scale, 1)
 
 
 class LuaLive2DModuleMOC3(LuaLive2DRuntimeBase):

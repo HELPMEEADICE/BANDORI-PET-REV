@@ -1202,7 +1202,7 @@ class PetWindow(QWidget):
     def _is_pet_opaque_at_global(self, global_pos: QPoint) -> bool:
         if self._pixel_mode:
             return self._pixel_widget.is_sprite_hit_at_global(global_pos)
-        return self._live2d_widget.is_model_opaque_at_global(global_pos, sync=True)
+        return self._live2d_widget.is_model_opaque_at_global(global_pos)
 
     @staticmethod
     def _mouse_interaction_in_progress() -> bool:
@@ -1216,7 +1216,7 @@ class PetWindow(QWidget):
             child_pos = self._pixel_widget.mapFrom(self, local_pos)
             return self._pixel_widget.is_sprite_opaque_at_local(child_pos.x(), child_pos.y())
         child_pos = self._live2d_widget.mapFrom(self, local_pos)
-        return self._live2d_widget.is_model_opaque_at_local(child_pos.x(), child_pos.y(), sync=True)
+        return self._live2d_widget.is_model_opaque_at_local(child_pos.x(), child_pos.y())
 
     def _should_passthrough_at(self, global_pos: QPoint) -> bool:
         if not self._mouse_passthrough_supported() or not self.isVisible():
@@ -2785,16 +2785,20 @@ class PetWindow(QWidget):
 
     def _click_motion_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
-        visible_bounds = self._live2d_widget.visible_model_bounds()
         if area_name in {"head", "face"}:
-            return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
-        if area_name in {"body", "hit", ""}:
             return (
-                visible_bounds
-                or self._live2d_widget.hit_area_bounds("body")
+                self._live2d_widget.hit_area_bounds(area_name)
                 or self._live2d_widget.hit_area_union_bounds()
             )
-        return visible_bounds or self._live2d_widget.hit_area_bounds(area_name)
+        if area_name in {"body", "hit", ""}:
+            return (
+                self._live2d_widget.hit_area_bounds("body")
+                or self._live2d_widget.hit_area_union_bounds()
+            )
+        return (
+            self._live2d_widget.hit_area_bounds(area_name)
+            or self._live2d_widget.hit_area_union_bounds()
+        )
 
     def _configured_click_motion_feedback(self, region: str) -> dict[str, str]:
         from live2d_click_actions import normalize_click_motion_actions
@@ -3650,11 +3654,11 @@ class PetWindow(QWidget):
                 if self._compact_ai_drag_bounds is None:
                     self._compact_ai_drag_bounds = (
                         self._compact_ai_bounds_cache
-                        or self._live2d_widget.visible_model_bounds()
+                        or self._live2d_widget.hit_area_union_bounds()
                     )
                 bounds = self._compact_ai_drag_bounds
             else:
-                bounds = self._live2d_widget.visible_model_bounds()
+                bounds = self._live2d_widget.hit_area_union_bounds()
                 if bounds:
                     self._compact_ai_bounds_cache = bounds
                 self._compact_ai_drag_bounds = None
@@ -3921,7 +3925,7 @@ class PetWindow(QWidget):
         model_bounds = None
         if not self._pixel_mode:
             try:
-                model_bounds = self._live2d_widget.visible_model_bounds()
+                model_bounds = self._live2d_widget.hit_area_union_bounds()
             except Exception:
                 model_bounds = None
 

@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QPoint, QRect
 
+import live2d_widget_base
 from live2d_widget import Live2DWidget
 from pet_window import PetWindow
 
@@ -71,8 +72,40 @@ class HitHarness:
         self._last_confirmed_hit_pos = None
         self.hit = False
 
-    def _hit_state_at_sync(self, _x, _y):
+    def _hit_state_at(self, _x, _y):
         return self.hit
+
+
+class PixelHitHarness:
+    _hit_state_at = Live2DWidget._hit_state_at
+
+    def __init__(self, alpha):
+        self._model = type("Model", (), {"HitTest": lambda *_args: "hit"})()
+        self._hit_alpha_threshold = 8
+        self.alpha = alpha
+
+    def _read_alpha_at(self, _x, _y):
+        return self.alpha
+
+
+class AlphaReadHarness:
+    _read_alpha_at = Live2DWidget._read_alpha_at
+
+    def __init__(self):
+        self._initialized_gl = True
+        self._model = object()
+        self._cache_w = 100
+        self._cache_h = 80
+        self._system_scale = 1.5
+        self._perf_probe = _PerfProbe()
+
+    @staticmethod
+    def _safe_make_current():
+        pass
+
+    @staticmethod
+    def defaultFramebufferObject():
+        return 7
 
 
 class MousePassthroughTest(unittest.TestCase):
@@ -189,13 +222,47 @@ class MousePassthroughTest(unittest.TestCase):
         harness = HitHarness()
         harness.hit = True
         harness._hit_clock.now = 1000
-        self.assertTrue(harness._is_model_hit_at(50, 50, sync=True))
+        self.assertTrue(harness._is_model_hit_at(50, 50))
 
         harness.hit = False
         harness._hit_clock.now = 1050
-        self.assertTrue(harness._is_model_hit_at(50, 50, sync=True))
+        self.assertTrue(harness._is_model_hit_at(50, 50))
         harness._hit_clock.now = 1121
-        self.assertFalse(harness._is_model_hit_at(50, 50, sync=True))
+        self.assertFalse(harness._is_model_hit_at(50, 50))
+
+    def test_transparent_pixel_does_not_use_live2d_geometry_fallback(self):
+        self.assertFalse(PixelHitHarness(alpha=0)._hit_state_at(50, 50))
+        self.assertTrue(PixelHitHarness(alpha=9)._hit_state_at(50, 50))
+
+    def test_alpha_hit_reads_exactly_one_physical_pixel(self):
+        calls = []
+
+        class FakeGL:
+            GL_FRAMEBUFFER = 1
+            GL_RGBA = 2
+            GL_UNSIGNED_BYTE = 3
+
+            @staticmethod
+            def glBindFramebuffer(target, framebuffer):
+                calls.append(("bind", target, framebuffer))
+
+            @staticmethod
+            def glReadPixels(x, y, width, height, format_, type_, pixel):
+                calls.append(("read", x, y, width, height, format_, type_))
+                pixel[3] = 9
+
+        harness = AlphaReadHarness()
+        with patch.object(live2d_widget_base, "gl", FakeGL):
+            alpha = harness._read_alpha_at(10, 20)
+
+        self.assertEqual(9, alpha)
+        self.assertEqual(
+            [
+                ("bind", FakeGL.GL_FRAMEBUFFER, 7),
+                ("read", 15, 88, 1, 1, FakeGL.GL_RGBA, FakeGL.GL_UNSIGNED_BYTE),
+            ],
+            calls,
+        )
 
 
 if __name__ == "__main__":
