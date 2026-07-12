@@ -1,7 +1,4 @@
-import sys
-
 from live2d_lua_adapter_base import (
-    LIVE2D_LUA_DIR,
     MODEL_FORMAT_MOC,
     LuaLAppModelBase,
     LuaLive2DRuntimeBase,
@@ -11,51 +8,37 @@ from live2d_lua_adapter_base import (
 
 class LuaLive2DModuleMOC(LuaLive2DRuntimeBase):
 
+    def _configure_runtime(self, lua):
+        _require_bundled_lua_module(lua, "live2d_platform_manager_override")
+        lua.execute(
+            b"local target, source = ...; package.loaded[target] = package.loaded[source]",
+            b"live2d.platform_manager",
+            b"live2d_platform_manager_override",
+        )
+
     def _ensure_runtime(self):
         if self._initialized:
             return
         super()._ensure_runtime()
-        lua = self._lua
-        self._embed = lua.execute(b'return require("live2d_embed")')
-        self._embed.init()
-
-    def dispose(self):
-        if self._embed is not None:
-            try:
-                self._embed.dispose()
-            except Exception:
-                pass
-        super().dispose()
-
-    def _new_renderer(self, width: int, height: int):
-        self._ensure_runtime()
-        return self._embed.new(width, height)
+        try:
+            self._embed = self._lua.execute(b'return require("live2d_embed")')
+            self._embed.init()
+        except Exception:
+            super().dispose()
+            raise
 
     def LAppModel(self):
+        self._ensure_runtime()
         return LuaLAppModelMOC(self)
 
 
 class LuaLAppModelMOC(LuaLAppModelBase):
 
+    def __init__(self, module: LuaLive2DRuntimeBase):
+        super().__init__(module, MODEL_FORMAT_MOC)
+
     def LoadModelJson(self, model_json_path: str):
-        self._dispose_renderer()
-        self._renderer_format = MODEL_FORMAT_MOC
-        self._renderer = self._module._new_renderer(self._width, self._height)
-        opts = self._module._new_options(model_json_path, decode_textures=False)
-        from live2d_lua_adapter_base import _normalize_lua_path
-        self._module._load_model(
-            self._renderer,
-            _normalize_lua_path(model_json_path).encode("utf-8"),
-            self._width,
-            self._height,
-            opts,
-        )
-        info = self._module._model_info(self._renderer)
-        from live2d_lua_adapter_base import _ModelSetting
-        self.modelSetting = _ModelSetting(info)
-        self.expressions = self._read_expression_names(info)
-        from platform_patch import get_live2d_texture_quality
-        self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
+        self._load_model_json(model_json_path, decode_textures=False)
 
 
 live2d_moc = LuaLive2DModuleMOC()

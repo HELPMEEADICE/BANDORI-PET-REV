@@ -7,7 +7,7 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from qt_gl import gl
 from settings_window.constants import *
-from live2d_widget import DEFAULT_MOC3_RENDER_SCALE, Live2DSSAAFramebuffer, Live2DWidget, MOC3_BALANCED_SSAA_SCALE
+from live2d_widget import Live2DWidget, render_pipeline_for_model
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -61,7 +61,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._static_render_done = False
         self._render_w = 1
         self._render_h = 1
-        self._ssaa_fbo = Live2DSSAAFramebuffer()
+        self._render_pipeline = render_pipeline_for_model(None)
+        self._ssaa_fbo = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setAutoFillBackground(False)
 
@@ -80,8 +81,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         if self._model and self._live2d:
             self.makeCurrent()
             try:
-                self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
-                if self._moc3_ssaa_scale() <= 1:
+                self._model.ApplyTextureQuality(profile)
+                if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                     self._ssaa_fbo.dispose()
             finally:
                 self.doneCurrent()
@@ -123,22 +124,23 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
                 clear_virtual_byte_cache()
                 prefetch_virtual_model_resources(model_json_path)
             set_live2d_texture_quality(self._quality_profile)
+            self._dispose_model()
             model = self._live2d.LAppModel()
             try:
                 model.LoadModelJson(model_json_path)
             finally:
                 if virtual:
                     clear_virtual_byte_cache()
-            if getattr(model, "renderer_format", "") == "moc3":
-                model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
             self._model = model
-            if self._moc3_ssaa_scale() <= 1:
+            self._render_pipeline = render_pipeline_for_model(model)
+            self._render_pipeline.prepare_model(model)
+            if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._model_path = model_json_path
             self._sync_render_size(force=True)
         except Exception as e:
             print(f"Failed to load Live2D preview model: {e}", file=sys.stderr)
-            self._model = None
+            self._dispose_model()
             self._model_path = ""
         finally:
             if not already_current:
@@ -177,10 +179,36 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._render_w, self._render_h = render_w, render_h
         gl.glViewport(0, 0, render_w, render_h)
 
-    def _moc3_ssaa_scale(self) -> int:
-        if self._quality_profile != "balanced" or not self._model:
+    def _render_ssaa_scale(self) -> int:
+        if not self._model:
             return 1
-        return MOC3_BALANCED_SSAA_SCALE if getattr(self._model, "renderer_format", "") == "moc3" else 1
+        return self._render_pipeline.ssaa_scale(self._quality_profile)
+
+    def _dispose_model(self):
+        model = self._model
+        self._model = None
+        self._render_pipeline = render_pipeline_for_model(None)
+        if self._ssaa_fbo is not None:
+            self._ssaa_fbo.dispose()
+            self._ssaa_fbo = None
+        if model is not None:
+            dispose = getattr(model, "_dispose_renderer", None)
+            if callable(dispose):
+                try:
+                    dispose()
+                except Exception:
+                    pass
+
+    def closeEvent(self, event):
+        if self._initialized_gl:
+            self.makeCurrent()
+            try:
+                self._dispose_model()
+                if self._ssaa_fbo is not None:
+                    self._ssaa_fbo.dispose()
+            finally:
+                self.doneCurrent()
+        super().closeEvent(event)
 
     def paintGL(self):
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
@@ -193,8 +221,14 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._sync_render_size()
         if self._static_render_done:
             return
-        ssaa_scale = self._moc3_ssaa_scale()
-        using_ssaa = ssaa_scale > 1 and self._ssaa_fbo.bind(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
+        ssaa_scale = self._render_ssaa_scale()
+        if ssaa_scale > 1 and self._ssaa_fbo is None:
+            self._ssaa_fbo = self._render_pipeline.create_framebuffer()
+        using_ssaa = (
+            ssaa_scale > 1
+            and self._ssaa_fbo is not None
+            and self._ssaa_fbo.bind(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
+        )
         if using_ssaa:
             gl.glViewport(0, 0, self._render_w * ssaa_scale, self._render_h * ssaa_scale)
             gl.glClearColor(*self._clear_color)

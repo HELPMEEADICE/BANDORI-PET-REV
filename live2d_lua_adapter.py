@@ -1,89 +1,119 @@
-import sys
+"""Public Live2D adapter with lazy, format-isolated renderer runtimes.
+
+The application-facing API stays compatible with the previous ``live2d``
+module.  A model manifest is inspected only when it is loaded; the selected
+Cubism 2 or Cubism 3 adapter then owns the Lua runtime, embed module and model
+renderer for that model.
+"""
 
 from live2d_lua_adapter_base import (
     LIVE2D_PROFILE_ENABLED,
     MODEL_FORMAT_MOC,
     MODEL_FORMAT_MOC3,
     MotionPriority,
-    LuaLAppModelBase,
-    LuaLive2DRuntimeBase,
-    _first_error_line,
     _model_manifest_format,
 )
-from live2d_lua_adapter_moc3 import _patch_lua_moc3_pet_embed_delta
+from live2d_lua_adapter_moc import live2d_moc
+from live2d_lua_adapter_moc3 import (
+    _patch_lua_moc3_pet_embed_delta,
+    live2d_moc3,
+)
+
+__all__ = [
+    "LIVE2D_PROFILE_ENABLED",
+    "MODEL_FORMAT_MOC",
+    "MODEL_FORMAT_MOC3",
+    "LuaLAppModel",
+    "LuaLive2DModule",
+    "MotionPriority",
+    "_patch_lua_moc3_pet_embed_delta",
+    "live2d",
+]
 
 
-class LuaLive2DModule(LuaLive2DRuntimeBase):
-    def __init__(self):
-        super().__init__()
-        self._moc3_embed = None
-        self._moc3_error = ""
+class LuaLive2DModule:
+    """Compatibility facade that dispatches models to isolated runtimes."""
 
-    def _get_extra_module_patch(self):
-        return _patch_lua_moc3_pet_embed_delta
+    MotionPriority = MotionPriority
 
-    def _ensure_runtime(self):
-        if self._initialized:
-            return
-        super()._ensure_runtime()
-        lua = self._lua
-        self._embed = lua.execute(b'return require("live2d_embed")')
-        self._embed.init()
-        try:
-            self._moc3_embed = lua.execute(b'return require("live2d_moc3_pet_embed")')
-            self._moc3_embed.init()
-            self._moc3_error = ""
-        except Exception as exc:
-            self._moc3_embed = None
-            self._moc3_error = _first_error_line(exc)
-            print(
-                f"[Live2D] MOC3 renderer unavailable; Cubism 2 models remain enabled: {self._moc3_error}",
-                file=sys.stderr,
-                flush=True,
-            )
+    def __init__(self, moc_runtime=None, moc3_runtime=None):
+        self._moc_runtime = live2d_moc if moc_runtime is None else moc_runtime
+        self._moc3_runtime = live2d_moc3 if moc3_runtime is None else moc3_runtime
+
+    def glInit(self):
+        """Keep initialization lazy until the model format is known.
+
+        This method is intentionally a no-op.  ``LAppModel.LoadModelJson``
+        initializes exactly one runtime while the widget's GL context is
+        current.
+        """
 
     def dispose(self):
-        self._moc3_embed = None
-        self._moc3_error = ""
-        super().dispose()
+        disposed = set()
+        for runtime in (self._moc_runtime, self._moc3_runtime):
+            runtime_id = id(runtime)
+            if runtime_id in disposed:
+                continue
+            disposed.add(runtime_id)
+            runtime.dispose()
 
     def LAppModel(self):
         return LuaLAppModel(self)
 
-    def _new_renderer(self, width: int, height: int, model_format: str = MODEL_FORMAT_MOC):
-        self._ensure_runtime()
+    def _runtime_for_format(self, model_format: str):
         if model_format == MODEL_FORMAT_MOC3:
-            if self._moc3_embed is None:
-                detail = f": {self._moc3_error}" if self._moc3_error else ""
-                raise RuntimeError(f"Live2D MOC3 renderer is unavailable{detail}")
-            embed = self._moc3_embed
-        else:
-            embed = self._embed
-        return embed.new(width, height)
+            return self._moc3_runtime
+        return self._moc_runtime
 
 
-class LuaLAppModel(LuaLAppModelBase):
+class LuaLAppModel:
+    """Thin model proxy whose delegate belongs to one renderer runtime."""
+
+    def __init__(self, module: LuaLive2DModule):
+        self._module = module
+        self._delegate = None
+        self._width = 1
+        self._height = 1
 
     def LoadModelJson(self, model_json_path: str):
         self._dispose_renderer()
-        self._renderer_format = _model_manifest_format(model_json_path)
-        self._renderer = self._module._new_renderer(self._width, self._height, self._renderer_format)
-        from live2d_lua_adapter_base import _normalize_lua_path
-        decode_textures = self._renderer_format == MODEL_FORMAT_MOC3
-        opts = self._module._new_options(model_json_path, decode_textures=decode_textures)
-        self._module._load_model(
-            self._renderer,
-            _normalize_lua_path(model_json_path).encode("utf-8"),
-            self._width,
-            self._height,
-            opts,
-        )
-        info = self._module._model_info(self._renderer)
-        from live2d_lua_adapter_base import _ModelSetting
-        self.modelSetting = _ModelSetting(info)
-        self.expressions = self._read_expression_names(info)
-        from platform_patch import get_live2d_texture_quality
-        self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
+        model_format = _model_manifest_format(model_json_path)
+        runtime = self._module._runtime_for_format(model_format)
+        delegate = runtime.LAppModel()
+        delegate.Resize(self._width, self._height)
+        self._delegate = delegate
+        try:
+            delegate.LoadModelJson(model_json_path)
+        except Exception:
+            try:
+                self._dispose_renderer()
+            except Exception:
+                pass
+            raise
+
+    @property
+    def renderer_format(self) -> str:
+        if self._delegate is None:
+            return ""
+        return self._delegate.renderer_format
+
+    def Resize(self, width: int, height: int):
+        self._width = max(int(width), 1)
+        self._height = max(int(height), 1)
+        if self._delegate is not None:
+            self._delegate.Resize(self._width, self._height)
+
+    def _dispose_renderer(self):
+        delegate = self._delegate
+        self._delegate = None
+        if delegate is not None:
+            delegate._dispose_renderer()
+
+    def __getattr__(self, name):
+        delegate = self.__dict__.get("_delegate")
+        if delegate is None:
+            raise AttributeError(f"Live2D model is not loaded; attribute {name!r} is unavailable")
+        return getattr(delegate, name)
 
 
 live2d = LuaLive2DModule()

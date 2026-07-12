@@ -460,7 +460,7 @@ class LuaLive2DRuntimeBase:
         self._initialized = False
 
     def LAppModel(self):
-        return LuaLAppModelBase(self)
+        raise NotImplementedError
 
     def _ensure_runtime(self):
         if self._initialized:
@@ -475,12 +475,7 @@ class LuaLive2DRuntimeBase:
             b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
             base_dir,
         )
-        _require_bundled_lua_module(lua, "live2d_platform_manager_override")
-        lua.execute(
-            b"local target, source = ...; package.loaded[target] = package.loaded[source]",
-            b"live2d.platform_manager",
-            b"live2d_platform_manager_override",
-        )
+        self._configure_runtime(lua)
         lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
         lua.execute(
             b"local root = ...; "
@@ -493,6 +488,9 @@ class LuaLive2DRuntimeBase:
 
     def _get_extra_module_patch(self):
         return None
+
+    def _configure_runtime(self, lua: LuaRuntime):
+        del lua
 
     def _load_lua_runtime_functions(self, lua: LuaRuntime):
         self._load_model = lua.eval(
@@ -509,11 +507,11 @@ class LuaLive2DRuntimeBase:
         self._set_scale = lua.eval(b"function(renderer, scale) return renderer:set_scale(scale) end")
         self._apply_texture_quality = lua.eval(
             b"(function() "
-            b"local gl = require('live2d.core.live2d_gl_wrapper'); "
             b"local GL_NEAREST = 0x2600; "
             b"local GL_LINEAR_MIPMAP_LINEAR = 0x2703; "
             b"return function(renderer, profile) "
             b"if renderer.apply_texture_quality ~= nil then return renderer:apply_texture_quality(profile) end; "
+            b"local gl = require('live2d.core.live2d_gl_wrapper'); "
             b"local model = renderer:get_model(); "
             b"if model == nil or model.live2DModel == nil or model.live2DModel.drawParamGL == nil then return end; "
             b"local textures = model.live2DModel.drawParamGL.textures or {}; "
@@ -641,10 +639,10 @@ class LuaLive2DRuntimeBase:
 
 
 class LuaLAppModelBase:
-    def __init__(self, module: LuaLive2DRuntimeBase):
+    def __init__(self, module: LuaLive2DRuntimeBase, renderer_format: str):
         self._module = module
         self._renderer = None
-        self._renderer_format = MODEL_FORMAT_MOC
+        self._renderer_format = renderer_format
         self._width = 1
         self._height = 1
         self.modelSetting = None
@@ -658,23 +656,31 @@ class LuaLAppModelBase:
         self.last_lua_update_draw_seconds = 0.0
         self.last_lua_gc_seconds = 0.0
 
-    def LoadModelJson(self, model_json_path: str):
+    def _load_model_json(self, model_json_path: str, *, decode_textures: bool):
         self._dispose_renderer()
-        self._renderer_format = _model_manifest_format(model_json_path)
         self._renderer = self._module._new_renderer(self._width, self._height)
-        decode_textures = self._renderer_format == MODEL_FORMAT_MOC3
-        opts = self._module._new_options(model_json_path, decode_textures=decode_textures)
-        self._module._load_model(
-            self._renderer,
-            _normalize_lua_path(model_json_path).encode("utf-8"),
-            self._width,
-            self._height,
-            opts,
-        )
-        info = self._module._model_info(self._renderer)
-        self.modelSetting = _ModelSetting(info)
-        self.expressions = self._read_expression_names(info)
-        self._module._apply_texture_quality(self._renderer, get_live2d_texture_quality().encode("utf-8"))
+        try:
+            opts = self._module._new_options(model_json_path, decode_textures=decode_textures)
+            self._module._load_model(
+                self._renderer,
+                _normalize_lua_path(model_json_path).encode("utf-8"),
+                self._width,
+                self._height,
+                opts,
+            )
+            info = self._module._model_info(self._renderer)
+            self.modelSetting = _ModelSetting(info)
+            self.expressions = self._read_expression_names(info)
+            self._module._apply_texture_quality(
+                self._renderer,
+                get_live2d_texture_quality().encode("utf-8"),
+            )
+        except Exception:
+            self._dispose_renderer()
+            raise
+
+    def LoadModelJson(self, model_json_path: str):
+        raise NotImplementedError
 
     @property
     def renderer_format(self) -> str:
@@ -684,6 +690,11 @@ class LuaLAppModelBase:
         if self._renderer is None or self._module._set_scale is None:
             return
         self._module._set_scale(self._renderer, float(scale))
+
+    def ApplyTextureQuality(self, profile: str):
+        if self._renderer is None or self._module._apply_texture_quality is None:
+            return
+        self._module._apply_texture_quality(self._renderer, str(profile).encode("utf-8"))
 
     def Resize(self, width: int, height: int):
         self._width = max(int(width), 1)

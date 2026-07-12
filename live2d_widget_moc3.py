@@ -75,15 +75,22 @@ class Live2DSSAAFramebuffer:
         model.Draw()
 
 
-class Live2DWidgetMOC3(Live2DWidgetBase):
+class Moc3RenderPipeline:
+    def prepare_model(self, model):
+        model.SetScale(DEFAULT_MOC3_RENDER_SCALE)
 
-    def _create_ssaa_fbo(self):
+    def ssaa_scale(self, quality_profile: str) -> int:
+        return MOC3_BALANCED_SSAA_SCALE if quality_profile == "balanced" else 1
+
+    def create_framebuffer(self):
         return Live2DSSAAFramebuffer()
 
-    def _default_moc3_render_scale(self) -> float:
-        return DEFAULT_MOC3_RENDER_SCALE
 
-    def _moc3_ssaa_scale(self) -> int:
-        if self._quality_profile != "balanced" or not self._model:
-            return 1
-        return MOC3_BALANCED_SSAA_SCALE if getattr(self._model, "renderer_format", "") == "moc3" else 1
+MOC3_RENDER_PIPELINE = Moc3RenderPipeline()
+
+
+class Live2DWidgetMOC3(Live2DWidgetBase):
+
+    def _render_pipeline_for_model(self, model):
+        del model
+        return MOC3_RENDER_PIPELINE

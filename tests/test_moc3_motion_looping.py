@@ -19,19 +19,38 @@ from pet_window import PetWindow
 
 class Moc3MotionLoopingTest(unittest.TestCase):
     def test_cubism2_renderer_does_not_require_moc3_bridge(self):
-        class _FakeEmbed:
-            def new(self, width, height):
-                return ("renderer", width, height)
+        moc_model = _FakeAdapterModel(MODEL_FORMAT_MOC)
+        moc_runtime = _FakeAdapterRuntime(moc_model)
+        moc3_runtime = _FailingAdapterRuntime()
+        module = LuaLive2DModule(moc_runtime, moc3_runtime)
+        module.glInit()
 
-        module = LuaLive2DModule()
-        module._initialized = True
-        module._embed = _FakeEmbed()
-        module._moc3_embed = None
-        module._moc3_error = "missing bridge"
+        self.assertEqual(0, moc_runtime.model_requests)
+        self.assertEqual(0, moc3_runtime.model_requests)
 
-        self.assertEqual(("renderer", 12, 34), module._new_renderer(12, 34, MODEL_FORMAT_MOC))
-        with self.assertRaisesRegex(RuntimeError, "MOC3 renderer is unavailable"):
-            module._new_renderer(12, 34, MODEL_FORMAT_MOC3)
+        with patch("live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC):
+            model = module.LAppModel()
+            model.Resize(12, 34)
+            model.LoadModelJson("test.model.json")
+
+        self.assertEqual(MODEL_FORMAT_MOC, model.renderer_format)
+        self.assertEqual((12, 34), moc_model.size)
+        self.assertEqual(["test.model.json"], moc_model.loaded_paths)
+        self.assertEqual(0, moc3_runtime.model_requests)
+
+    def test_moc3_model_uses_its_own_runtime(self):
+        moc_runtime = _FailingAdapterRuntime()
+        moc3_model = _FakeAdapterModel(MODEL_FORMAT_MOC3)
+        moc3_runtime = _FakeAdapterRuntime(moc3_model)
+        module = LuaLive2DModule(moc_runtime, moc3_runtime)
+
+        with patch("live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC3):
+            model = module.LAppModel()
+            model.LoadModelJson("test.model3.json")
+
+        self.assertEqual(MODEL_FORMAT_MOC3, model.renderer_format)
+        self.assertEqual(0, moc_runtime.model_requests)
+        self.assertEqual(1, moc3_runtime.model_requests)
 
     def test_looping_motion_can_be_played_once(self):
         lua = LuaRuntime(unpack_returned_tuples=True)
@@ -147,7 +166,7 @@ end
         source = Path("third_party/Live2D-v2-Lua/live2d_moc3_pet_embed.lua").read_bytes()
         patched = _patch_lua_moc3_pet_embed_delta("live2d_moc3_pet_embed", source)
         helper = re.search(
-            rb"local function compute_delta_seconds\(state, time_msec\).*?\r?\nend\r?\n",
+            rb"local function compute_delta_seconds\(state, time_msec(?:, explicit_delta)?\).*?\r?\nend\r?\n",
             patched,
             re.DOTALL,
         ).group(0)
@@ -235,6 +254,47 @@ class _MotionHarness:
         return {"default_motion": self.default_motion}
 
     def _apply_default_expression(self, _model):
+        pass
+
+
+class _FakeAdapterModel:
+    def __init__(self, renderer_format):
+        self.renderer_format = renderer_format
+        self.size = (1, 1)
+        self.loaded_paths = []
+
+    def Resize(self, width, height):
+        self.size = (width, height)
+
+    def LoadModelJson(self, path):
+        self.loaded_paths.append(path)
+
+    def _dispose_renderer(self):
+        pass
+
+
+class _FakeAdapterRuntime:
+    def __init__(self, model):
+        self.model = model
+        self.model_requests = 0
+
+    def LAppModel(self):
+        self.model_requests += 1
+        return self.model
+
+    def dispose(self):
+        pass
+
+
+class _FailingAdapterRuntime:
+    def __init__(self):
+        self.model_requests = 0
+
+    def LAppModel(self):
+        self.model_requests += 1
+        raise AssertionError("wrong renderer runtime initialized")
+
+    def dispose(self):
         pass
 
 

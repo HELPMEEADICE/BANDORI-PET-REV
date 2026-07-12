@@ -5,7 +5,6 @@ import time
 import numpy as np
 from PySide6.QtCore import Qt, QPoint, QElapsedTimer, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
-from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from process_utils import interaction_trace
 from qt_gl import gl, uses_qt_software_opengl
@@ -15,6 +14,23 @@ DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
 HIT_STABILITY_GRACE_MS = 120
 HIT_STABILITY_DISTANCE = 12
+
+
+class DirectRenderPipeline:
+    """Default framebuffer path shared by models without extra post-processing."""
+
+    def prepare_model(self, model):
+        del model
+
+    def ssaa_scale(self, quality_profile: str) -> int:
+        del quality_profile
+        return 1
+
+    def create_framebuffer(self):
+        return None
+
+
+DIRECT_RENDER_PIPELINE = DirectRenderPipeline()
 
 
 class _Live2DPerfProbe:
@@ -88,6 +104,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._pending_model = ""
         self._quality_profile = "balanced"
         self._ssaa_fbo = None
+        self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._system_scale = 1.0
         
         self._dragging = False
@@ -177,22 +194,17 @@ class Live2DWidgetBase(QOpenGLWidget):
         self.setMouseTracking(True)
 
     # --------------------------------------------------------------------------
-    # Subclass overrides for model-format-specific behavior
+    # Subclass hook for model-format-specific rendering
     # --------------------------------------------------------------------------
 
-    def _create_ssaa_fbo(self):
-        from live2d_widget_moc3 import Live2DSSAAFramebuffer
-        return Live2DSSAAFramebuffer()
+    def _render_pipeline_for_model(self, model):
+        del model
+        return DIRECT_RENDER_PIPELINE
 
-    def _default_moc3_render_scale(self) -> float:
-        from live2d_widget_moc3 import DEFAULT_MOC3_RENDER_SCALE
-        return DEFAULT_MOC3_RENDER_SCALE
-
-    def _moc3_ssaa_scale(self) -> int:
-        from live2d_widget_moc3 import MOC3_BALANCED_SSAA_SCALE
-        if self._quality_profile != "balanced" or not self._model:
+    def _render_ssaa_scale(self) -> int:
+        if not self._model:
             return 1
-        return MOC3_BALANCED_SSAA_SCALE if getattr(self._model, "renderer_format", "") == "moc3" else 1
+        return self._render_pipeline.ssaa_scale(self._quality_profile)
 
     # --------------------------------------------------------------------------
     # Base and public interface
@@ -239,9 +251,9 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._quality_profile = profile
         set_live2d_texture_quality(profile)
         if self._model:
-            self._live2d._apply_texture_quality(self._model._renderer, profile.encode("utf-8"))
+            self._model.ApplyTextureQuality(profile)
             self._clear_hit_framebuffer_cache()
-            if self._moc3_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
+            if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self.update()
 
@@ -289,6 +301,10 @@ class Live2DWidgetBase(QOpenGLWidget):
     def _dispose_model_renderer(self):
         model = self._model
         self._model = None
+        self._render_pipeline = DIRECT_RENDER_PIPELINE
+        if self._ssaa_fbo is not None:
+            self._ssaa_fbo.dispose()
+            self._ssaa_fbo = None
         if model is None:
             return
         dispose = getattr(model, "_dispose_renderer", None)
@@ -372,9 +388,9 @@ class Live2DWidgetBase(QOpenGLWidget):
                     clear_virtual_byte_cache()
             else:
                 self._model.LoadModelJson(model_json_path)
-            if getattr(self._model, "renderer_format", "") == "moc3":
-                self._model.SetScale(self._default_moc3_render_scale())
-            if self._moc3_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
+            self._render_pipeline = self._render_pipeline_for_model(self._model)
+            self._render_pipeline.prepare_model(self._model)
+            if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
             self._model.Resize(self._cache_w, self._cache_h)
@@ -771,12 +787,13 @@ class Live2DWidgetBase(QOpenGLWidget):
 
         target_w = max(1, int(self._cache_w * self._system_scale))
         target_h = max(1, int(self._cache_h * self._system_scale))
-        ssaa_scale = self._moc3_ssaa_scale()
+        ssaa_scale = self._render_ssaa_scale()
         using_ssaa = False
         if ssaa_scale > 1:
             if self._ssaa_fbo is None:
-                self._ssaa_fbo = self._create_ssaa_fbo()
-            using_ssaa = self._ssaa_fbo.bind(target_w * ssaa_scale, target_h * ssaa_scale)
+                self._ssaa_fbo = self._render_pipeline.create_framebuffer()
+            if self._ssaa_fbo is not None:
+                using_ssaa = self._ssaa_fbo.bind(target_w * ssaa_scale, target_h * ssaa_scale)
 
         if using_ssaa:
             gl.glViewport(0, 0, target_w * ssaa_scale, target_h * ssaa_scale)
