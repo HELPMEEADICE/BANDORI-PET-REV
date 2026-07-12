@@ -807,13 +807,14 @@ class LLMStreamWorker(_CancelableNetworkWorker):
             auto_continue_call_limit = max(0, auto_continue_limit - 1)
             max_tool_rounds = max(8 if self._tool_config.get("computer_use_enabled", False) else 3, auto_continue_limit)
             auto_continue_count = 0
-            for round_index in range(max_tool_rounds):
+            tools_executed = False
+            for round_index in range(max_tool_rounds + 1):
                 self._stream_tool_calls = []
                 try:
                     self._stream_once(messages, use_tools)
                 except urllib.error.HTTPError as e:
                     err_msg = _http_error_message(e)
-                    if use_tools and e.code in (400, 404, 422):
+                    if use_tools and not tools_executed and e.code in (400, 404, 422):
                         messages = [dict(message) for message in self._messages]
                         if self._web_search and not self._tool_config.get("llm_mcp_enabled", False) and not self._tool_config.get("computer_use_enabled", False):
                             self.error.emit(f"HTTP {e.code}: 当前接口不支持 Chat Completions tool calls，无法让模型自主调用联网搜索。")
@@ -823,6 +824,10 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                                 messages,
                                 self._show_search_sources,
                             )
+                        self._full_text = ""
+                        self._reasoning_text = ""
+                        self._stream_tool_calls = []
+                        self._search_sources = []
                         use_tools = False
                         continue
                     self.error.emit(f"HTTP {e.code}: {err_msg}")
@@ -831,6 +836,19 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                     return
                 tool_calls = _normalize_stream_tool_calls(self._stream_tool_calls)
                 if not use_tools or not tool_calls:
+                    break
+                if round_index >= max_tool_rounds:
+                    self._full_text = ""
+                    self._reasoning_text = ""
+                    self._stream_tool_calls = []
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "The tool-call limit has been reached. Do not call any more "
+                            "tools; answer the user now using the information already available."
+                        ),
+                    })
+                    self._stream_once(messages, False)
                     break
                 executable_tool_calls = []
                 for tool_call in tool_calls:
@@ -861,8 +879,8 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                             self._remember_search_source_items(inline_sources)
                             content = parsed_content
                         self.auto_continue_boundary.emit(content, reasoning, list(self._search_sources))
-                    self._full_text = ""
-                    self._reasoning_text = ""
+                self._full_text = ""
+                self._reasoning_text = ""
                 for tool_call in executable_tool_calls:
                     if self._cancelled:
                         return
@@ -876,6 +894,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                         function.get("arguments", "{}"),
                         tool_config,
                     )
+                    tools_executed = True
                     tool_content = str(tool_result.get("content", "") or "")
                     self._remember_search_sources(tool_content)
                     messages.append({
@@ -1148,6 +1167,21 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 if not use_tools or not tool_calls:
                     break
                 if round_index >= max_tool_rounds:
+                    self._full_text = ""
+                    self._reasoning_text = ""
+                    self._stream_tool_calls = []
+                    final_instructions = (
+                        instructions
+                        + "\n\nThe tool-call limit has been reached. Do not call any more "
+                        "tools; answer the user now using the information already available."
+                    ).strip()
+                    self._response_id = ""
+                    self._stream_once(
+                        input_items,
+                        final_instructions,
+                        [],
+                        previous_response_id,
+                    )
                     break
 
                 executable_tool_calls = []
@@ -1183,8 +1217,8 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                             reasoning,
                             list(self._search_sources),
                         )
-                    self._full_text = ""
-                    self._reasoning_text = ""
+                self._full_text = ""
+                self._reasoning_text = ""
 
                 next_input = []
                 for tool_call in executable_tool_calls:
