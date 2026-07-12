@@ -106,6 +106,33 @@ class LocalToolSafetyTests(unittest.TestCase):
         self.assertLessEqual(len(typed), computer_tools._MAX_TYPE_CHARS)
         self.assertIn("truncated", result["content"].lower())
 
+    def test_gunzip_limited_caps_decompression_bombs(self):
+        import gzip
+
+        bomb = gzip.compress(b"\0" * 64_000_000)
+        self.assertLess(len(bomb), 250_000)
+
+        result = local_tools._gunzip_limited(bomb, 1_000_000)
+        self.assertEqual(1_000_000, len(result))
+
+    def test_gunzip_limited_round_trips_normal_pages(self):
+        import gzip
+
+        page = "<html><body>你好，香澄！</body></html>".encode("utf-8")
+        self.assertEqual(page, local_tools._gunzip_limited(gzip.compress(page), 1_000_000))
+
+    def test_gunzip_limited_returns_partial_text_for_truncated_streams(self):
+        import gzip
+
+        page = b"<html>" + b"a" * 100_000 + b"</html>"
+        truncated = gzip.compress(page)[:2_000]
+
+        result = local_tools._gunzip_limited(truncated, 1_000_000)
+        self.assertTrue(result.startswith(b"<html>"))
+
+    def test_gunzip_limited_tolerates_corrupt_data(self):
+        self.assertEqual(b"", local_tools._gunzip_limited(b"not gzip at all", 1_000_000))
+
 
 if __name__ == "__main__":
     unittest.main()
