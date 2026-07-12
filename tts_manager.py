@@ -25,7 +25,11 @@ _NUMPY_MODULE = None
 _REQUESTS_MODULE = None
 _SOUNDDEVICE_MODULE = None
 _SOUNDFILE_MODULE = None
-_streaming_unavailable = False
+_streaming_unavailable_urls: set[str] = set()
+
+
+def _streaming_failure_is_incompatible(status_code) -> bool:
+    return status_code in {400, 404, 405, 406, 415, 422, 501}
 
 
 def _numpy():
@@ -458,9 +462,13 @@ class TTSRequestWorker(_CancelableTTSWorker):
             self._apply_qwen_lora(payload)
             speed_applied = self._apply_speed_factor(payload)
 
-            global _streaming_unavailable
-            try_streaming = bool(self._config.get("tts_streaming", True)) and not _streaming_unavailable
+            tts_url = self._tts_url()
+            try_streaming = (
+                bool(self._config.get("tts_streaming", True))
+                and tts_url not in _streaming_unavailable_urls
+            )
             streaming = try_streaming
+            cache_streaming_rejection = False
             last_error = ""
             session = _requests().Session()
             self._set_session(session)
@@ -479,7 +487,7 @@ class TTSRequestWorker(_CancelableTTSWorker):
                 try:
                     if self._cancelled.is_set():
                         return
-                    response = session.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                    response = session.post(tts_url, json=payload, stream=streaming, timeout=120)
                     if not self._track_response(response):
                         session.close()
                         self._release_session(session)
@@ -491,7 +499,7 @@ class TTSRequestWorker(_CancelableTTSWorker):
                             pass
                         self._release_response(response)
                         payload.pop("speed_factor", None)
-                        response = session.post(self._tts_url(), json=payload, stream=streaming, timeout=120)
+                        response = session.post(tts_url, json=payload, stream=streaming, timeout=120)
                         if not self._track_response(response):
                             session.close()
                             self._release_session(session)
@@ -499,7 +507,8 @@ class TTSRequestWorker(_CancelableTTSWorker):
                     if response.status_code != 200:
                         last_error = f"TTS HTTP {response.status_code}: {response.text[:240]}"
                         if streaming:
-                            _streaming_unavailable = True
+                            if _streaming_failure_is_incompatible(response.status_code):
+                                cache_streaming_rejection = True
                             self._release_response(response)
                             response.close()
                             response = None
@@ -507,6 +516,8 @@ class TTSRequestWorker(_CancelableTTSWorker):
                             continue
                         break
                     last_error = ""
+                    if not streaming and cache_streaming_rejection:
+                        _streaming_unavailable_urls.add(tts_url)
                     if streaming:
                         content_type = response.headers.get("Content-Type", "")
                         if "application/octet-stream" in content_type:
@@ -534,7 +545,6 @@ class TTSRequestWorker(_CancelableTTSWorker):
                         pass
                     response = None
                 if streaming:
-                    _streaming_unavailable = True
                     streaming = False
                     continue
                 break
@@ -747,7 +757,8 @@ class TTSPlayer(QObject):
             data = data.reshape(-1, 1)
         if self._stream is not None and sample_rate != self._sample_rate:
             self.stop()
-        self._ensure_stream(sample_rate, data.shape[1])
+        if not self._ensure_stream(sample_rate, data.shape[1]):
+            return
         with self._state_lock:
             visemes = self._allocate_chunk_visemes(len(data), sample_rate)
         self._queue.put_nowait((data, tuple(visemes)))
@@ -786,7 +797,7 @@ class TTSPlayer(QObject):
 
     def _ensure_stream(self, sample_rate: int, channels: int):
         if self._stream is not None:
-            return
+            return True
         self._sample_rate = sample_rate
         self._channels = max(1, channels)
         try:
@@ -800,9 +811,11 @@ class TTSPlayer(QObject):
             self._stream.start()
             if not self._level_timer.isActive():
                 self._level_timer.start()
+            return True
         except Exception as exc:
             self._stream = None
             self.error.emit(f"TTS playback failed: {exc}")
+            return False
 
     def _audio_callback(self, outdata, frames, time_info, status):
         del time_info, status

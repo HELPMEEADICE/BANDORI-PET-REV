@@ -562,8 +562,9 @@ class ReminderPageMixin:
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []))
         alarms.append(alarm)
         self._cfg.set(ALARM_CONFIG_KEY, alarms)
+        if not self._save_reminder_config(show_info=False, emit_update=True):
+            return False
         self._alarm_description.clear()
-        self._save_reminder_config(show_info=False, emit_update=True)
         self._refresh_reminder_lists()
         InfoBar.success(
             _tr("SettingsWindow.alarm_added_title", default="闹钟已添加"),
@@ -572,6 +573,7 @@ class ReminderPageMixin:
             position=InfoBarPosition.TOP,
             parent=self,
         )
+        return True
 
     def _add_pomodoro_from_form(self):
         if not self._cfg:
@@ -584,8 +586,9 @@ class ReminderPageMixin:
         pomodoros = normalize_pomodoros(self._cfg.get(POMODORO_CONFIG_KEY, []))
         pomodoros.append(pomodoro)
         self._cfg.set(POMODORO_CONFIG_KEY, pomodoros)
+        if not self._save_reminder_config(show_info=False, emit_update=True):
+            return False
         self._pomodoro_description.clear()
-        self._save_reminder_config(show_info=False, emit_update=True)
         self._refresh_reminder_lists()
         InfoBar.success(
             _tr("SettingsWindow.pomodoro_added_title", default="番茄钟已启动"),
@@ -594,6 +597,7 @@ class ReminderPageMixin:
             position=InfoBarPosition.TOP,
             parent=self,
         )
+        return True
 
     def _delete_alarm(self, alarm_id: str):
         if not self._cfg:

@@ -28,6 +28,10 @@ _LOCAL_ASR_PROCESS = None
 _LOCAL_ASR_LOCK = threading.Lock()
 
 
+class ASRInstallCancelled(RuntimeError):
+    pass
+
+
 _LOCAL_ASR_REQUIREMENTS = """fastapi
 uvicorn
 python-multipart
@@ -37,6 +41,8 @@ faster-whisper
 
 _LOCAL_ASR_SERVER = '''import os
 import tempfile
+import threading
+import time
 
 from fastapi import FastAPI, File, Form, UploadFile
 from faster_whisper import WhisperModel
@@ -47,6 +53,44 @@ DEVICE = os.environ.get("ASR_DEVICE", "cpu")
 COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "int8")
 HOST = os.environ.get("ASR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ASR_PORT", "8000"))
+try:
+    OWNER_PID = int(os.environ.get("ASR_OWNER_PID", "0") or "0")
+except ValueError:
+    OWNER_PID = 0
+
+
+def _owner_process_is_alive():
+    if OWNER_PID <= 0:
+        return True
+    if os.name == "nt":
+        import ctypes
+
+        synchronize = 0x00100000
+        wait_timeout = 0x00000102
+        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, OWNER_PID)
+        if not handle:
+            return False
+        try:
+            return ctypes.windll.kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(OWNER_PID, 0)
+        return True
+    except PermissionError:
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def _monitor_owner():
+    while _owner_process_is_alive():
+        time.sleep(1.0)
+    os._exit(0)
+
+
+if OWNER_PID > 0:
+    threading.Thread(target=_monitor_owner, name="asr-owner-watchdog", daemon=True).start()
 
 app = FastAPI()
 model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
@@ -264,23 +308,68 @@ def _write_local_asr_files() -> None:
     (ASR_LOCAL_SERVER_DIR / "start_asr_server.ps1").write_text(_LOCAL_ASR_START_PS1, encoding="utf-8")
 
 
-def _run_command(command: list[str], cwd: Path, timeout: float | None = None) -> str:
+def _terminate_subprocess(process) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        try:
+            process.kill()
+            process.wait(timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def _run_command(
+    command: list[str],
+    cwd: Path,
+    timeout: float | None = None,
+    *,
+    cancel_event: threading.Event | None = None,
+    process_callback=None,
+) -> str:
+    if cancel_event is not None and cancel_event.is_set():
+        raise ASRInstallCancelled()
     startupinfo = None
     if sys.platform == "win32":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    result = subprocess.run(
+    process = subprocess.Popen(
         command,
         cwd=str(cwd),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        timeout=timeout,
+        stdin=subprocess.DEVNULL,
         startupinfo=startupinfo,
     )
-    output = (result.stdout or "").strip()
-    if result.returncode != 0:
-        raise RuntimeError(output or f"Command failed with exit code {result.returncode}: {' '.join(command)}")
+    if callable(process_callback):
+        process_callback(process)
+    started = time.monotonic()
+    output = ""
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                _terminate_subprocess(process)
+                raise ASRInstallCancelled()
+            if timeout is not None and time.monotonic() - started >= timeout:
+                _terminate_subprocess(process)
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                output, _stderr = process.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if callable(process_callback):
+            process_callback(None)
+    if cancel_event is not None and cancel_event.is_set():
+        raise ASRInstallCancelled()
+    output = (output or "").strip()
+    if process.returncode != 0:
+        raise RuntimeError(output or f"Command failed with exit code {process.returncode}: {' '.join(command)}")
     return output
 
 
@@ -293,14 +382,16 @@ def _tail_local_asr_log(max_chars: int = 1800) -> str:
     return text[-max_chars:].strip()
 
 
-def _launch_local_asr_server() -> tuple[bool, str]:
+def _launch_local_asr_server(cancel_event=None, process_callback=None) -> tuple[bool, str]:
     global _LOCAL_ASR_PROCESS
     with _LOCAL_ASR_LOCK:
-        return _launch_local_asr_server_locked()
+        return _launch_local_asr_server_locked(cancel_event, process_callback)
 
 
-def _launch_local_asr_server_locked() -> tuple[bool, str]:
+def _launch_local_asr_server_locked(cancel_event=None, process_callback=None) -> tuple[bool, str]:
     global _LOCAL_ASR_PROCESS
+    if cancel_event is not None and cancel_event.is_set():
+        raise ASRInstallCancelled()
     host, port = _local_asr_runtime_endpoint()
     connect_host = _local_asr_connect_host(host)
     if _is_local_asr_port_open(connect_host, port):
@@ -316,6 +407,9 @@ def _launch_local_asr_server_locked() -> tuple[bool, str]:
     env.setdefault("ASR_COMPUTE_TYPE", ASR_LOCAL_COMPUTE_TYPE)
     env.setdefault("ASR_HOST", host)
     env.setdefault("ASR_PORT", str(port))
+    owner_pid = str(os.environ.get("BANDORI_PET_MAIN_PID", "") or "").strip()
+    if owner_pid.isdigit() and int(owner_pid) > 0:
+        env["ASR_OWNER_PID"] = owner_pid
     log = _local_asr_log_path().open("a", encoding="utf-8", errors="replace")
     creationflags = 0
     if sys.platform == "win32":
@@ -330,16 +424,58 @@ def _launch_local_asr_server_locked() -> tuple[bool, str]:
             stdin=subprocess.DEVNULL,
             creationflags=creationflags,
         )
+        if callable(process_callback):
+            process_callback(_LOCAL_ASR_PROCESS)
     finally:
         log.close()
-    for _ in range(80):
-        if _is_local_asr_port_open(connect_host, port, timeout=0.15):
-            return True, "ASR local server is ready."
-        if _LOCAL_ASR_PROCESS.poll() is not None:
-            detail = _tail_local_asr_log()
-            raise RuntimeError(detail or "Local ASR server exited before it became ready.")
-        time.sleep(0.25)
-    return False, "ASR local server started. The first model load may still be downloading."
+    try:
+        for _ in range(80):
+            if cancel_event is not None and cancel_event.is_set():
+                _terminate_subprocess(_LOCAL_ASR_PROCESS)
+                raise ASRInstallCancelled()
+            if _is_local_asr_port_open(connect_host, port, timeout=0.15):
+                return True, "ASR local server is ready."
+            if _LOCAL_ASR_PROCESS.poll() is not None:
+                detail = _tail_local_asr_log()
+                raise RuntimeError(detail or "Local ASR server exited before it became ready.")
+            if cancel_event is not None and cancel_event.wait(0.25):
+                _terminate_subprocess(_LOCAL_ASR_PROCESS)
+                raise ASRInstallCancelled()
+            if cancel_event is None:
+                time.sleep(0.25)
+        return False, "ASR local server started. The first model load may still be downloading."
+    finally:
+        if callable(process_callback):
+            process_callback(None)
+
+
+def _is_managed_local_asr_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(str(url or "").strip())
+        host = str(parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return False
+    expected_host, expected_port = _local_asr_runtime_endpoint()
+    expected_host = _local_asr_connect_host(expected_host).lower()
+    loopback_hosts = {"127.0.0.1", "localhost", "::1"}
+    host_matches = host == expected_host or host in loopback_hosts and expected_host in loopback_hosts
+    return bool(
+        parsed.scheme == "http"
+        and host_matches
+        and port == expected_port
+        and parsed.path.rstrip("/") == "/v1/audio/transcriptions"
+    )
+
+
+def _ensure_managed_local_asr_running(url: str, cancel_event=None) -> None:
+    if not _is_managed_local_asr_url(url):
+        return
+    python = _local_asr_python()
+    server = ASR_LOCAL_SERVER_DIR / "server.py"
+    if not python.exists() or not server.exists():
+        return
+    _launch_local_asr_server(cancel_event)
 
 
 class ASRLocalServerInstallWorker(QThread):
@@ -347,24 +483,53 @@ class ASRLocalServerInstallWorker(QThread):
     installed = Signal(dict)
     error = Signal(str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelled = threading.Event()
+        self._process_lock = threading.Lock()
+        self._active_process = None
+
+    def cancel(self):
+        self._cancelled.set()
+        self.requestInterruption()
+        with self._process_lock:
+            process = self._active_process
+        _terminate_subprocess(process)
+
+    def _set_active_process(self, process):
+        with self._process_lock:
+            self._active_process = process
+
+    def _run_install_command(self, command: list[str], cwd: Path):
+        return _run_command(
+            command,
+            cwd,
+            cancel_event=self._cancelled,
+            process_callback=self._set_active_process,
+        )
+
     def run(self):
         try:
             self.progress.emit("正在准备本地 ASR 服务目录...")
+            if self._cancelled.is_set():
+                return
             _write_local_asr_files()
 
             python = _local_asr_python()
             if not python.exists():
                 self.progress.emit("正在创建独立 Python 环境...")
-                _run_command(_venv_create_command(), app_base_dir())
+                self._run_install_command(_venv_create_command(), app_base_dir())
 
             self.progress.emit("正在安装 ASR 后端依赖，首次可能需要几分钟...")
-            _run_command(
+            self._run_install_command(
                 [str(python), "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"],
                 ASR_LOCAL_SERVER_DIR,
             )
 
             self.progress.emit("正在启动本地 ASR 服务...")
-            ready, message = _launch_local_asr_server()
+            ready, message = _launch_local_asr_server(self._cancelled, self._set_active_process)
+            if self._cancelled.is_set():
+                return
             host, port = _local_asr_runtime_endpoint()
             self.installed.emit({
                 "api_url": _local_asr_api_url(host, port),
@@ -372,6 +537,8 @@ class ASRLocalServerInstallWorker(QThread):
                 "ready": ready,
                 "message": message,
             })
+        except ASRInstallCancelled:
+            return
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -593,6 +760,12 @@ class ASRRequestWorker(_CancelableASRWorker):
         files = {
             "file": ("speech.wav", self._audio, self._media_type),
         }
+        try:
+            _ensure_managed_local_asr_running(url, self._cancelled)
+        except Exception as exc:
+            if not self._cancelled.is_set():
+                self.error.emit(f"本地 ASR 启动失败: {exc}")
+            return
         session = _requests().Session()
         self._set_session(session)
         response = None

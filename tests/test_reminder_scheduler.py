@@ -42,12 +42,30 @@ class ReminderSchedulerTest(unittest.TestCase):
     def test_persist_config_accepts_successful_save(self):
         scheduler = SimpleNamespace(
             _cfg=SimpleNamespace(save=Mock(return_value=True)),
-            _persist_failure_reported=False,
+            _persist_failure_reported=True,
             _report_persist_failure=Mock(),
         )
 
         self.assertTrue(ReminderScheduler._persist_config(scheduler, "tick"))
+        self.assertFalse(scheduler._persist_failure_reported)
         scheduler._report_persist_failure.assert_not_called()
+
+    def test_pending_reminders_fill_available_generation_slots(self):
+        scheduler = SimpleNamespace(
+            _stopped=False,
+            _pending_contexts=[{"id": index} for index in range(6)],
+            _active_generations={},
+            _max_concurrent_generations=4,
+            _start_generation_context=Mock(),
+        )
+        scheduler._start_generation_context.side_effect = (
+            lambda context: scheduler._active_generations.__setitem__(context["id"], context)
+        )
+
+        ReminderScheduler._drain_pending_contexts(scheduler)
+
+        self.assertEqual(4, scheduler._start_generation_context.call_count)
+        self.assertEqual([{"id": 4}, {"id": 5}], scheduler._pending_contexts)
 
     def test_running_cancelled_worker_is_retained_until_it_stops(self):
         worker = Mock()

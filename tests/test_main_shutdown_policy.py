@@ -1,6 +1,11 @@
 from pathlib import Path
 
 
+def test_main_process_exports_its_pid_to_owned_helpers():
+    source = Path("main.py").read_text(encoding="utf-8")
+    assert 'os.environ["BANDORI_PET_MAIN_PID"] = str(os.getpid())' in source
+
+
 def test_tray_exit_defers_quit_until_context_menu_unwinds():
     source = Path("main.py").read_text(encoding="utf-8")
     assert "exit_action.triggered.connect(lambda: QTimer.singleShot(0, quit_all))" in source

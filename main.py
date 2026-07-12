@@ -70,6 +70,8 @@ class AiEventBridge(QObject):
 
 
 def main():
+    os.environ["BANDORI_PET_MAIN_PID"] = str(os.getpid())
+
     def refresh_ipc_session_name():
         os.environ.pop("BANDORI_PET_IPC_SERVER_NAME", None)
         os.environ["BANDORI_PET_IPC_SERVER_NAME"] = (

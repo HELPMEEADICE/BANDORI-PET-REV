@@ -74,10 +74,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             self._tts_player.playback_finished.connect(self._on_tts_playback_finished)
             self._tts_player.error.connect(self._on_tts_error)
         self._pending_contexts: list[dict] = []
-        self._text_generation_busy = False
-        self._active_worker: NonStreamWorker | None = None
-        self._active_context: dict | None = None
-        self._watchdog_timer: QTimer | None = None
+        self._active_generations: dict[NonStreamWorker, tuple[dict, QTimer]] = {}
+        self._max_concurrent_generations = 4
         self._screen_awareness_worker: ScreenAwarenessVisionWorker | None = None
         self._next_screen_awareness_at = None
         self._persist_failure_reported = False
@@ -116,6 +114,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             _log.error("ReminderScheduler %s: failed to persist config: %s", operation, exc)
             saved = False
         if saved is not False:
+            self._persist_failure_reported = False
             return True
         if not self._persist_failure_reported:
             self._persist_failure_reported = True
@@ -175,8 +174,9 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._stopped = True
         self._timer.stop()
         self._pending_contexts.clear()
-        self._text_generation_busy = False
-        self._clear_watchdog()
+        for _context, watchdog in self._active_generations.values():
+            watchdog.stop()
+        self._active_generations.clear()
         for worker in list(self._workers):
             if worker.isRunning():
                 self._ignored_workers.add(worker)
@@ -611,21 +611,20 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._drain_pending_contexts()
 
     def _drain_pending_contexts(self):
-        if getattr(self, "_stopped", False) or self._text_generation_busy or not self._pending_contexts:
+        if getattr(self, "_stopped", False):
             return
-        self._text_generation_busy = True
-        context = self._pending_contexts.pop(0)
+        limit = max(1, int(getattr(self, "_max_concurrent_generations", 4) or 4))
+        while self._pending_contexts and len(self._active_generations) < limit:
+            context = self._pending_contexts.pop(0)
+            self._start_generation_context(context)
+
+    def _start_generation_context(self, context: dict):
         character = context.get("character", "")
         is_screen_awareness = context.get("kind") == "screen_awareness"
         api_url, api_key, model_id = self._main_api_config() if is_screen_awareness else self._api_config()
         if not api_url or not api_key or not model_id:
-            if context.get("kind") == "screen_awareness":
-                self._text_generation_busy = False
-                QTimer.singleShot(500, self._drain_pending_contexts)
-                return
-            self._show_reminder(context, self._fallback_text(context), "surprised")
-            self._text_generation_busy = False
-            QTimer.singleShot(500, self._drain_pending_contexts)
+            if context.get("kind") != "screen_awareness":
+                self._show_reminder(context, self._fallback_text(context), "surprised")
             return
 
         display_name = self._display_name(character)
@@ -701,14 +700,13 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             lambda _error, worker=worker, context=dict(context):
                 self._on_text_generation_failed(worker, context)
         )
-        worker.start()
-        self._active_worker = worker
-        self._active_context = dict(context)
         remaining_ms = self._watchdog_remaining_ms(context)
-        self._watchdog_timer = QTimer(self)
-        self._watchdog_timer.setSingleShot(True)
-        self._watchdog_timer.timeout.connect(self._on_watchdog_timeout)
-        self._watchdog_timer.start(remaining_ms)
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.timeout.connect(lambda worker=worker: self._on_watchdog_timeout(worker))
+        self._active_generations[worker] = (dict(context), watchdog)
+        watchdog.start(remaining_ms)
+        worker.start()
 
     def _watchdog_remaining_ms(self, context: dict) -> int:
         triggered_at = parse_iso_datetime(context.get("triggered_at"))
@@ -717,71 +715,60 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         elapsed = max(0.0, (local_now() - triggered_at).total_seconds())
         return max(1000, int((50.0 - elapsed) * 1000))
 
-    def _on_watchdog_timeout(self):
-        worker = self._active_worker
-        if worker is None or not self._text_generation_busy:
+    def _on_watchdog_timeout(self, worker: NonStreamWorker):
+        active = self._active_generations.pop(worker, None)
+        if active is None:
             return
         _log.warning("ReminderScheduler: watchdog fired, forcing fallback")
-        context = dict(self._active_context) if self._active_context else {}
+        context, watchdog = active
+        watchdog.stop()
         self._ignored_workers.add(worker)
         if worker.isRunning():
             self._cancel_worker(worker)
-        self._active_worker = None
-        self._active_context = None
-        if self._watchdog_timer is not None:
-            self._watchdog_timer.stop()
-            self._watchdog_timer = None
         self._forget_worker(worker)
         if context.get("kind") != "screen_awareness":
             self._show_reminder(context, self._fallback_text(context), "surprised")
-        self._text_generation_busy = False
         QTimer.singleShot(300, self._drain_pending_contexts)
 
-    def _clear_watchdog(self):
-        if self._watchdog_timer is not None:
-            self._watchdog_timer.stop()
-            self._watchdog_timer = None
-        self._active_worker = None
-        self._active_context = None
+    def _finish_generation(self, worker: NonStreamWorker):
+        active = self._active_generations.pop(worker, None)
+        if active is not None:
+            _context, watchdog = active
+            watchdog.stop()
 
     def _on_text_generated(self, worker: NonStreamWorker, context: dict, text: str):
         if worker in self._ignored_workers:
             self._forget_worker(worker)
             return
-        self._clear_watchdog()
+        self._finish_generation(worker)
         self._forget_worker(worker)
         actions = parse_action_tags(text)
         clean = strip_action_tags(text).strip()
         if context.get("kind") == "screen_awareness" and clean.upper().strip(" 。.!！") == "NO_SPEAK":
             self._record_care_policy_skip("screen_awareness", {"reason": "model_no_speak"}, local_now())
-            self._text_generation_busy = False
             QTimer.singleShot(300, self._drain_pending_contexts)
             return
         if not clean:
             clean = self._fallback_text(context)
         if context.get("kind") == "screen_awareness" and clean.upper().strip(" 。.!！") == "NO_SPEAK":
             self._record_care_policy_skip("screen_awareness", {"reason": "model_no_speak"}, local_now())
-            self._text_generation_busy = False
             QTimer.singleShot(300, self._drain_pending_contexts)
             return
         self._show_reminder(context, clean, actions[0] if actions else "surprised")
         if context.get("kind") == "screen_awareness":
             self._record_care_policy_success("screen_awareness", local_now())
-        self._text_generation_busy = False
         QTimer.singleShot(300, self._drain_pending_contexts)
 
     def _on_text_generation_failed(self, worker: NonStreamWorker, context: dict):
         if worker in self._ignored_workers:
             self._forget_worker(worker)
             return
-        self._clear_watchdog()
+        self._finish_generation(worker)
         self._forget_worker(worker)
         if context.get("kind") == "screen_awareness":
-            self._text_generation_busy = False
             QTimer.singleShot(300, self._drain_pending_contexts)
             return
         self._show_reminder(context, self._fallback_text(context), "surprised")
-        self._text_generation_busy = False
         QTimer.singleShot(300, self._drain_pending_contexts)
 
     def _forget_worker(self, worker: NonStreamWorker):

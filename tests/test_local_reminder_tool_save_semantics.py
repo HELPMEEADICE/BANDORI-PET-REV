@@ -1,7 +1,9 @@
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import local_tools
+from reminder_core import create_alarm
 
 
 class _Config:
@@ -23,6 +25,14 @@ class _Config:
 
 
 class LocalReminderToolSaveSemanticsTest(unittest.TestCase):
+    def test_explicit_past_alarm_date_is_rejected(self):
+        with self.assertRaises(ValueError):
+            create_alarm(
+                "09:00",
+                date_text="2026-07-10",
+                now=datetime(2026, 7, 12, 12, 0, 0),
+            )
+
     def test_create_alarm_save_failure_does_not_publish_or_report_success(self):
         cfg = _Config(False)
         publish = Mock()

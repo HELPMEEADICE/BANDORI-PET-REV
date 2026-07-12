@@ -196,11 +196,9 @@ def compute_next_alarm_at(time_text: str, repeat_days=None, after: datetime | No
         try:
             date = datetime.strptime(str(date_text).strip(), "%Y-%m-%d").date()
         except ValueError:
-            date = None
-        if date:
-            candidate = datetime.combine(date, datetime.min.time()).replace(hour=hour, minute=minute)
-            if candidate > after:
-                return candidate
+            return None
+        candidate = datetime.combine(date, datetime.min.time()).replace(hour=hour, minute=minute)
+        return candidate if candidate > after else None
 
     for offset in range(0, 15):
         date = (after + timedelta(days=offset)).date()
