@@ -115,6 +115,7 @@ from .widgets import (
     ComposerAttachmentCard,
 )
 from .message_bubble import MessageBubble
+from .reply_stream import ReplyStreamBinding
 
 _CHAT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
 _REMOTE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
@@ -328,6 +329,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._cancelled_workers = []
         self._close_waiting_for_workers = False
         self._current_bubble: MessageBubble | None = None
+        self._reply_stream_generation = 0
+        self._active_reply_stream: ReplyStreamBinding | None = None
+        self._stream_buffer_owner: ReplyStreamBinding | None = None
         self._pending_actions: list[str] = []
         self._pending_action_character = character
         self._seen_actions: set[str] = set()
@@ -2632,6 +2636,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._clear_active_reply_stream()
         self._current_bubble = None
         self._group_queue = []
         self._group_spoken = []
@@ -3731,6 +3736,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._current_bubble.set_text(current_text or _tr("ChatWindow.response_interrupted", default="已中断当前回复。"))
         elif interrupted:
             self._composer_hint.setText(_tr("ChatWindow.response_interrupted", default="已中断当前回复。"))
+        self._clear_active_reply_stream()
+        self._stream_buffer_owner = None
         self._current_bubble = None
         self._reset_tts_stream()
         self._set_busy(False)
@@ -5625,6 +5632,41 @@ class ChatWindow(ChatWindowMixin, QWidget):
             result.extend(character for character in self._group_characters if character != priority_character)
         return result[:6]
 
+    def _activate_reply_stream(self, character: str, worker, bubble: MessageBubble) -> ReplyStreamBinding:
+        previous = self._active_reply_stream
+        if previous is not None:
+            self._clear_active_reply_stream(previous)
+        self._reply_stream_generation += 1
+        stream = ReplyStreamBinding(
+            generation=self._reply_stream_generation,
+            character=character,
+            worker=worker,
+            bubble=bubble,
+        )
+        self._active_reply_stream = stream
+        self._stream_buffer_owner = stream
+        return stream
+
+    def _is_active_reply_stream(self, stream: ReplyStreamBinding | None) -> bool:
+        return bool(
+            stream is not None
+            and stream.owns(
+                self._active_reply_stream,
+                self._worker,
+                self._current_bubble,
+            )
+        )
+
+    def _clear_active_reply_stream(self, stream: ReplyStreamBinding | None = None) -> bool:
+        active = self._active_reply_stream
+        if active is None or (stream is not None and stream is not active):
+            return False
+        self._active_reply_stream = None
+        if self._stream_buffer_owner is active:
+            self._stream_buffer_owner = None
+        active.detach()
+        return True
+
     def _start_response_for_character(self, character: str, spoken_names: list[str]):
         self._set_busy(True, planning=False)
         api_url = self._cfg.get("llm_api_url", "")
@@ -5669,7 +5711,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         web_search = bool(self._cfg.get("llm_web_search_enabled", False))
         show_search_sources = True
         if self._use_responses_api(api_url):
-            self._worker = ResponsesStreamWorker(
+            worker = ResponsesStreamWorker(
                 api_url,
                 api_key,
                 model_id,
@@ -5680,7 +5722,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 tool_config=tool_config,
             )
         else:
-            self._worker = LLMStreamWorker(
+            worker = LLMStreamWorker(
                 api_url,
                 api_key,
                 model_id,
@@ -5690,14 +5732,32 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 show_search_sources=show_search_sources,
                 tool_config=tool_config,
             )
-        self._worker.chunk_received.connect(self._on_chunk_received)
-        if hasattr(self._worker, "auto_continue_boundary"):
-            self._worker.auto_continue_boundary.connect(self._on_auto_continue_boundary)
-        self._worker.finished.connect(self._on_response_finished)
-        self._worker.error.connect(self._on_response_error)
-        self._worker.start()
+        self._worker = worker
+        reply_stream = self._activate_reply_stream(character, worker, self._current_bubble)
+        worker.chunk_received.connect(
+            lambda text, reasoning, stream=reply_stream: self._on_chunk_received(stream, text, reasoning)
+        )
+        if hasattr(worker, "auto_continue_boundary"):
+            worker.auto_continue_boundary.connect(
+                lambda full_text, reasoning_text, actions, stream=reply_stream:
+                self._on_auto_continue_boundary(stream, full_text, reasoning_text, actions)
+            )
+        worker.finished.connect(
+            lambda full_text, reasoning_text, actions, stream=reply_stream:
+            self._on_response_finished(stream, full_text, reasoning_text, actions)
+        )
+        worker.error.connect(
+            lambda error_msg, stream=reply_stream: self._on_response_error(stream, error_msg)
+        )
+        worker.start()
 
     def _start_next_group_response(self):
+        if self._active_reply_stream is not None:
+            return
+        if self._group_plan_worker is not None and self._group_plan_worker.isRunning():
+            return
+        if self._vision_fallback_worker is not None and self._vision_fallback_worker.isRunning():
+            return
         if not self._group_queue:
             self._clear_raw_image_inline_state()
             if self._auto_active:
@@ -5719,15 +5779,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._reasoning_stream_text = ""
         self._start_response_for_character(character, list(self._group_spoken))
 
-    def _on_chunk_received(self, text: str, reasoning: str):
-        if self.sender() is not self._worker:
+    def _on_chunk_received(self, stream: ReplyStreamBinding, text: str, reasoning: str):
+        if not self._is_active_reply_stream(stream):
             return
         if reasoning:
             self._reasoning_stream_text += reasoning
-            if self._current_bubble:
-                self._current_bubble.set_reasoning(self._reasoning_stream_text)
-                self._current_bubble.set_streaming(True)
-                self._scroll_to_bottom_for_stream()
+            stream.bubble.set_reasoning(self._reasoning_stream_text)
+            stream.bubble.set_streaming(True)
+            self._scroll_to_bottom_for_stream()
 
         text = self._extract_stream_search_sources(text)
         chunk_actions, self._action_tag_stream_buffer = consume_stream_action_tags(
@@ -5745,20 +5804,22 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 self._visible_stream_text + self._stream_buffer + tts_clean,
                 self._current_response_actions,
             )
-            self._enqueue_tts_text(tts_clean, self._active_response_character)
+            self._enqueue_tts_text(tts_clean, stream.character)
 
         clean = strip_action_tags(text)
         if clean:
             self._stream_buffer += clean
-            if self._current_bubble:
-                self._current_bubble.set_streaming(True)
+            self._stream_buffer_owner = stream
+            stream.bubble.set_streaming(True)
             if not self._stream_flush_timer.isActive():
                 self._stream_flush_timer.start()
 
     def _flush_stream_text(self):
-        if not self._current_bubble:
+        stream = self._stream_buffer_owner
+        if not self._is_active_reply_stream(stream):
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
+            self._stream_buffer_owner = None
             return
         if not self._stream_buffer:
             self._stream_flush_timer.stop()
@@ -5767,17 +5828,24 @@ class ChatWindow(ChatWindowMixin, QWidget):
         take = max(1, min(4, len(self._stream_buffer)))
         self._visible_stream_text += self._stream_buffer[:take]
         self._stream_buffer = self._stream_buffer[take:]
-        self._current_bubble.set_text(self._visible_stream_text)
+        stream.bubble.set_text(self._visible_stream_text)
         self._scroll_to_bottom_for_stream()
 
-    def _on_auto_continue_boundary(self, full_text: str, reasoning_text: str, actions: list):
-        if self.sender() is not self._worker:
+    def _on_auto_continue_boundary(
+        self,
+        stream: ReplyStreamBinding,
+        full_text: str,
+        reasoning_text: str,
+        actions: list,
+    ):
+        if not self._is_active_reply_stream(stream):
             return
-        self._finalize_current_response_segment(full_text, reasoning_text, actions)
-        self._start_auto_continue_bubble(self._active_response_character)
+        self._finalize_current_response_segment(stream, full_text, reasoning_text, actions)
+        self._start_auto_continue_bubble(stream)
 
     def _finalize_current_response_segment(
         self,
+        stream: ReplyStreamBinding,
         full_text: str,
         reasoning_text: str,
         actions: list,
@@ -5792,42 +5860,43 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._action_tag_stream_buffer = ""
         behavior = infer_emotion_behavior(full_text, acts)
         if behavior and (not self._cfg or self._cfg.get("emotion_behavior_enabled", True)):
-            publish_emotion_behavior(self._active_response_character, behavior)
+            publish_emotion_behavior(stream.character, behavior)
         self._current_tts_rate = emotion_tts_rate(full_text, acts)
-        self._pending_action_character = self._active_response_character
+        self._pending_action_character = stream.character
         self._pending_actions.extend(acts)
         self._flush_actions()
 
         clean, inline_sources = extract_inline_search_sources(full_text)
         self._merge_search_sources(inline_sources)
         clean = strip_action_tags(clean)
-        clean = self._sanitize_group_assistant_reply(self._active_response_character, clean)
+        clean = self._sanitize_group_assistant_reply(stream.character, clean)
         clean, text_poke_user = self._consume_poke_user_stage_directions(
             clean,
-            self._active_response_character,
+            stream.character,
         )
         if text_poke_user:
             try:
                 publish_user_poke(
-                    self._active_response_character,
+                    stream.character,
                     source="assistant_text",
                     direction="to_user",
                 )
             except Exception:
                 pass
         reasoning_clean = strip_action_tags(reasoning_text)
-        self._flush_tts_text(self._active_response_character)
-        if self._current_bubble:
+        self._flush_tts_text(stream.character, stream.bubble)
+        if self._is_active_reply_stream(stream):
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
+            self._stream_buffer_owner = None
             self._visible_stream_text = clean
             self._reasoning_stream_text = reasoning_clean
-            self._current_bubble.set_streaming(False)
-            self._current_bubble.set_reasoning(reasoning_clean)
-            self._current_bubble.set_search_sources(self._stream_search_sources if self._show_search_sources() else [])
-            self._current_bubble.set_text(clean)
+            stream.bubble.set_streaming(False)
+            stream.bubble.set_reasoning(reasoning_clean)
+            stream.bubble.set_search_sources(self._stream_search_sources if self._show_search_sources() else [])
+            stream.bubble.set_text(clean)
 
-        stored = self._assistant_content(self._active_response_character, clean)
+        stored = self._assistant_content(stream.character, clean)
         tool_trace = {}
         if self._stream_search_sources:
             tool_trace["web_search_sources"] = self._stream_search_sources
@@ -5860,7 +5929,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             except Exception:
                 pass
             try:
-                self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
+                self._apply_relationship_update(stream.character, self._last_user_text, clean, acts)
             except Exception as exc:
                 self._composer_hint.setText(_tr(
                     "ChatWindow.relationship_update_failed",
@@ -5869,7 +5938,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 ))
         return clean
 
-    def _start_auto_continue_bubble(self, character: str):
+    def _start_auto_continue_bubble(self, stream: ReplyStreamBinding):
+        if not self._is_active_reply_stream(stream):
+            return
+        character = stream.character
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
@@ -5894,13 +5966,22 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._msg_layout.insertWidget(self._msg_layout.count() - 1, self._current_bubble)
         self._relayout_message_bubbles()
         self._scroll_to_bottom_for_stream()
+        stream.retarget(self._current_bubble)
+        self._stream_buffer_owner = stream
 
-    def _on_response_finished(self, full_text: str, reasoning_text: str, actions: list):
-        if self.sender() is not self._worker:
+    def _on_response_finished(
+        self,
+        stream: ReplyStreamBinding,
+        full_text: str,
+        reasoning_text: str,
+        actions: list,
+    ):
+        if not self._is_active_reply_stream(stream):
             return
-        usage = getattr(self._worker, "token_usage", None)
-        tool_calls = getattr(self._worker, "tool_trace", None)
+        usage = getattr(stream.worker, "token_usage", None)
+        tool_calls = getattr(stream.worker, "tool_trace", None)
         self._finalize_current_response_segment(
+            stream,
             full_text,
             reasoning_text,
             actions,
@@ -5909,7 +5990,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         )
 
         if self._is_group_chat:
-            self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
+            self._group_spoken.append(self._model_manager.get_display_name(stream.character))
+            self._clear_active_reply_stream(stream)
             self._worker = None
             self._current_bubble = None
             if self._response_save_error_message:
@@ -5925,21 +6007,24 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 self._composer_hint.setText(self._response_save_error_message)
             self._input.setFocus()
             self._sync_input_height()
+            self._clear_active_reply_stream(stream)
             self._worker = None
             self._current_bubble = None
             self._scroll_to_bottom_for_stream()
 
-    def _on_response_error(self, error_msg: str):
-        if self.sender() is not self._worker:
+    def _on_response_error(self, stream: ReplyStreamBinding, error_msg: str):
+        if not self._is_active_reply_stream(stream):
             return
-        if self._current_bubble:
-            self._current_bubble.set_streaming(False)
-            self._current_bubble.set_text(format_llm_error_message(error_msg))
+        stream.bubble.set_streaming(False)
+        stream.bubble.set_text(format_llm_error_message(error_msg))
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
+        self._stream_buffer_owner = None
         self._action_tag_stream_buffer = ""
         self._current_response_actions = []
         self._reset_tts_stream(stop_player=False)
+        self._group_queue = []
+        self._group_spoken = []
         if self._auto_active:
             self._auto_active = False
             self._auto_round = 0
@@ -5948,6 +6033,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._set_busy(False)
         self._input.setFocus()
         self._sync_input_height()
+        self._clear_active_reply_stream(stream)
         self._worker = None
         self._current_bubble = None
 
@@ -6001,7 +6087,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._tts_request_allowed = True
         self._tts_text_buffer += text
 
-    def _flush_tts_text(self, character: str):
+    def _flush_tts_text(self, character: str, bubble: MessageBubble | None = None):
         if not self._tts_enabled() or not self._tts_request_allowed:
             return
         self._tts_tag_buffer = ""
@@ -6010,8 +6096,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if text:
             sequence = self._tts_next_sequence
             self._tts_next_sequence += 1
-            if self._current_bubble:
-                self._tts_bubbles[sequence] = self._current_bubble
+            target_bubble = bubble if bubble is not None else self._current_bubble
+            if target_bubble:
+                self._tts_bubbles[sequence] = target_bubble
             self._tts_characters[sequence] = character
             self._queue_tts_request(sequence, text, character)
         self._start_next_tts_request()
