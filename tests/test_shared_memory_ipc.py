@@ -129,6 +129,22 @@ def test_main_resends_latest_settings_to_new_ipc_peers():
     assert "if is_new_peer and latest_settings_line:" in source
 
 
+def test_main_registers_new_ipc_peer_before_touching_heartbeat():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+    read_flow = source.split("    def read_ipc_messages", 1)[1].split(
+        "    def touch_ipc_peer", 1
+    )[0]
+
+    register_check = 'if envelope.line.startswith("REGISTER\\t"):'
+    assert register_check in read_flow
+    assert 'handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)' in read_flow
+    assert read_flow.index(register_check) < read_flow.index(
+        "touch_ipc_peer(envelope.sender_id)"
+    )
+
+
 def test_ipc_envelope_round_trips_sender_and_exclusion():
     from shared_memory_ipc import decode_ipc_envelope, encode_ipc_envelope
 

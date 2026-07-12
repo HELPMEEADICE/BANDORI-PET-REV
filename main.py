@@ -838,6 +838,9 @@ def main():
             envelope = decode_ipc_envelope(raw_line)
             if not envelope.line:
                 continue
+            if envelope.line.startswith("REGISTER\t"):
+                handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
+                continue
             touch_ipc_peer(envelope.sender_id)
             handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
 
