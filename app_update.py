@@ -39,6 +39,7 @@ _PORTABLE_UPDATE_PROTECTED_FILES = (
     "models",
     "chat_attachments",
 )
+_MANAGED_FILES_MANIFEST = ".bandoripet-managed-files"
 _UPDATE_DISK_MARGIN_BYTES = 256 * 1024 * 1024
 
 
@@ -805,8 +806,26 @@ def _portable_zip_layout(archive_path: Path) -> tuple[int, set[str]]:
     return unpacked_size, names
 
 
+def _installed_managed_names(target_dir: Path) -> set[str]:
+    manifest = Path(target_dir) / _MANAGED_FILES_MANIFEST
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return set()
+    protected = set(_PORTABLE_UPDATE_PROTECTED_FILES)
+    return {
+        name
+        for raw_name in lines
+        if (name := raw_name.strip())
+        and name not in {".", ".."}
+        and Path(name).name == name
+        and name not in protected
+    }
+
+
 def _check_portable_update_space(archive_path: Path, target_dir: Path) -> None:
     unpacked_size, names = _portable_zip_layout(archive_path)
+    names.update(_installed_managed_names(target_dir))
     backup_size = sum(_path_size(target_dir / name) for name in names)
     temp_required = backup_size + (2 * unpacked_size) + _UPDATE_DISK_MARGIN_BYTES
     temp_dir = Path(tempfile.gettempdir())
@@ -874,6 +893,7 @@ $app = {_ps_quote(app_exe)}
 $log = {_ps_quote(log_path)}
 $processNames = @({process_names})
 $protectedFiles = @({protected_files})
+$manifestName = {_ps_quote(_MANAGED_FILES_MANIFEST)}
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetUpdate-' + [guid]::NewGuid().ToString())
 $backup = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetBackup-' + [guid]::NewGuid().ToString())
 $replacementStarted = $false
@@ -897,13 +917,44 @@ try {{
             Copy-Item -LiteralPath $existing -Destination $backup -Recurse -Force
         }}
     }}
+    $obsoleteNames = @()
+    $newManifest = Join-Path $source $manifestName
+    $oldManifest = Join-Path $target $manifestName
+    if ((Test-Path -LiteralPath $newManifest -PathType Leaf) -and
+        (Test-Path -LiteralPath $oldManifest -PathType Leaf)) {{
+        $newManaged = @(Get-Content -LiteralPath $newManifest -Encoding utf8 |
+            Where-Object {{ $_ -and ([IO.Path]::GetFileName($_) -eq $_) }})
+        $oldManaged = @(Get-Content -LiteralPath $oldManifest -Encoding utf8 |
+            Where-Object {{
+                $_ -and ([IO.Path]::GetFileName($_) -eq $_) -and
+                (-not ($protectedFiles -contains $_))
+            }})
+        $obsoleteNames = @($oldManaged | Where-Object {{ $newManaged -notcontains $_ }})
+        foreach ($name in $obsoleteNames) {{
+            $updateNames += $name
+            $existing = Join-Path $target $name
+            if (Test-Path -LiteralPath $existing) {{
+                Copy-Item -LiteralPath $existing -Destination $backup -Recurse -Force
+            }}
+        }}
+    }}
     Start-Sleep -Seconds 1
+    $targetPrefix = $target.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     Get-Process -ErrorAction SilentlyContinue |
-        Where-Object {{ $processNames -contains $_.ProcessName }} |
+        Where-Object {{
+            $processNames -contains $_.ProcessName -and $_.Path -and
+            $_.Path.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)
+        }} |
         Stop-Process -Force -ErrorAction SilentlyContinue
     $processesStopped = $true
     Start-Sleep -Seconds 2
     $replacementStarted = $true
+    foreach ($name in $obsoleteNames) {{
+        $existing = Join-Path $target $name
+        if (Test-Path -LiteralPath $existing) {{
+            Remove-Item -LiteralPath $existing -Recurse -Force
+        }}
+    }}
     foreach ($item in $updateItems) {{
         $existing = Join-Path $target $item.Name
         if (Test-Path -LiteralPath $existing) {{
@@ -984,6 +1035,7 @@ processes_stopped=0
 replacement_started=0
 rollback_failed=0
 declare -a update_names=()
+declare -a obsolete_names=()
 
 log_error() {{
     printf '%s\n' "$*" >>"$log"
@@ -1065,13 +1117,49 @@ for item in "${{update_items[@]}}"; do
     fi
 done
 
+new_manifest="$source_dir/{_MANAGED_FILES_MANIFEST}"
+old_manifest="$target/{_MANAGED_FILES_MANIFEST}"
+if [[ -f "$new_manifest" && -f "$old_manifest" ]]; then
+    mapfile -t new_managed < "$new_manifest"
+    while IFS= read -r name || [[ -n "$name" ]]; do
+        [[ -n "$name" && "$name" != "." && "$name" != ".." && "$name" != */* ]] || continue
+        case "$name" in
+            "models"|"chat_attachments"|"config.json"|"data.db"|"data.db-shm"|"data.db-wal") continue ;;
+        esac
+        found=0
+        for new_name in "${{new_managed[@]}}"; do
+            if [[ "$new_name" == "$name" ]]; then
+                found=1
+                break
+            fi
+        done
+        [[ "$found" -eq 0 ]] || continue
+        obsolete_names+=("$name")
+        update_names+=("$name")
+        existing="$target/$name"
+        if [[ -e "$existing" ]]; then
+            cp -a -- "$existing" "$backup/"
+        fi
+    done < "$old_manifest"
+fi
+
 sleep 2
 for process_name in {process_names}; do
-    pkill -x "$process_name" >/dev/null 2>&1 || true
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        executable="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+        case "$executable" in
+            "$target"/*) kill "$pid" >/dev/null 2>&1 || true ;;
+        esac
+    done < <(pgrep -x "$process_name" 2>/dev/null || true)
 done
 processes_stopped=1
 sleep 1
 replacement_started=1
+
+for name in "${{obsolete_names[@]}}"; do
+    rm -rf -- "$target/$name"
+done
 
 for item in "${{update_items[@]}}"; do
     name="$(basename "$item")"
@@ -1115,8 +1203,12 @@ $log = {_ps_quote(log_path)}
 $processNames = @({process_names})
 try {{
     Start-Sleep -Seconds 1
+    $targetPrefix = $target.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     Get-Process -ErrorAction SilentlyContinue |
-        Where-Object {{ $processNames -contains $_.ProcessName }} |
+        Where-Object {{
+            $processNames -contains $_.ProcessName -and $_.Path -and
+            $_.Path.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)
+        }} |
         Stop-Process -Force -ErrorAction SilentlyContinue
     $installerProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList {_ps_quote(args)} -Verb RunAs -Wait -PassThru
     if (@(0, 1641, 3010) -notcontains $installerProcess.ExitCode) {{
@@ -1153,8 +1245,12 @@ $log = {_ps_quote(log_path)}
 $processNames = @({process_names})
 try {{
     Start-Sleep -Seconds 1
+    $targetPrefix = $target.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     Get-Process -ErrorAction SilentlyContinue |
-        Where-Object {{ $processNames -contains $_.ProcessName }} |
+        Where-Object {{
+            $processNames -contains $_.ProcessName -and $_.Path -and
+            $_.Path.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)
+        }} |
         Stop-Process -Force -ErrorAction SilentlyContinue
     $startArgs = @{{
         FilePath = $installer
@@ -1291,7 +1387,13 @@ if [[ -z "$available_kb" || "$available_kb" -lt "$required_kb" ]]; then
 fi
 
 for process_name in {process_names}; do
-    /usr/bin/pkill -x "$process_name" >/dev/null 2>&1 || true
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        executable="$(/bin/ps -p "$pid" -o comm= 2>/dev/null || true)"
+        case "$executable" in
+            "$target"/Contents/MacOS/*) /bin/kill "$pid" >/dev/null 2>&1 || true ;;
+        esac
+    done < <(/usr/bin/pgrep -x "$process_name" 2>/dev/null || true)
 done
 /bin/sleep 2
 

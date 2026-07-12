@@ -236,8 +236,7 @@ fi
 # LuaJIT 自查（漏了会导致 Live2D 启动崩溃）
 find "$APP" -ipath '*luajit21*' | grep -q . || {
   echo "包内找不到 lupa.luajit21，停止打包。" >&2; exit 1; }
-codesign --verify --deep --strict "$APP" 2>/dev/null \
-  || echo "  ⚠ codesign 校验未通过，发布前请手动 ad-hoc 重签（见打包指南）"
+codesign --verify --deep --strict --verbose=2 "$APP"
 
 # ---------------------------------------------------------------------------
 # 5. 组装 dmg（含首次打开辅助文件 + Applications 快捷方式）

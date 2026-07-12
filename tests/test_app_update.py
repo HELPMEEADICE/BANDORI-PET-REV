@@ -143,7 +143,9 @@ class AppUpdateTests(unittest.TestCase):
         self.assertIn("target_existed=0", helper)
         self.assertIn('"$target_existed" -ne 1', helper)
         self.assertIn("required_kb=", helper)
-        self.assertLess(helper.index("required_kb="), helper.index("/usr/bin/pkill"))
+        self.assertLess(helper.index("required_kb="), helper.index("/usr/bin/pgrep"))
+        self.assertIn('"$target"/Contents/MacOS/*)', helper)
+        self.assertIn('/bin/ps -p "$pid" -o comm=', helper)
         popen.assert_called_once()
 
     def test_update_space_check_rejects_insufficient_capacity(self):
@@ -151,6 +153,26 @@ class AppUpdateTests(unittest.TestCase):
         with patch.object(app_update.shutil, "disk_usage", return_value=usage):
             with self.assertRaisesRegex(RuntimeError, "Insufficient disk space"):
                 app_update._ensure_update_space(Path("."), 200, "testing")
+
+    def test_portable_space_check_includes_obsolete_managed_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "app"
+            target.mkdir()
+            (target / "obsolete.bin").write_bytes(b"x" * 100)
+            (target / app_update._MANAGED_FILES_MANIFEST).write_text(
+                "obsolete.bin\n../outside.bin\nconfig.json\n",
+                encoding="utf-8",
+            )
+            package = root / "update.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("new.bin", b"new")
+                archive.writestr(app_update._MANAGED_FILES_MANIFEST, "new.bin\n")
+            with patch.object(app_update, "_ensure_update_space") as ensure:
+                app_update._check_portable_update_space(package, target)
+
+        required = ensure.call_args_list[0].args[1]
+        self.assertGreaterEqual(required, app_update._UPDATE_DISK_MARGIN_BYTES + 100)
 
     def test_macos_zip_checks_unpacked_temp_space(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -324,6 +346,10 @@ class AppUpdateTests(unittest.TestCase):
         self.assertIn("Backup retained at: $backup", script)
         self.assertIn("if ($processesStopped -and (-not $rollbackFailed)", script)
         self.assertIn("Start-Process -FilePath $app", script)
+        self.assertIn("$oldManifest", script)
+        self.assertIn("$obsoleteNames", script)
+        self.assertIn("$targetPrefix", script)
+        self.assertIn("$_.Path.StartsWith($targetPrefix", script)
 
     def test_linux_updater_script_backs_up_rolls_back_and_preserves_user_data(self):
         with (
@@ -347,6 +373,10 @@ class AppUpdateTests(unittest.TestCase):
         self.assertIn("rollback_failed=0", script)
         self.assertIn('cp -a -- "$existing" "$backup/"', script)
         self.assertIn('if [[ "$processes_stopped" -eq 1 && "$rollback_failed" -eq 0', script)
+        self.assertIn('old_manifest="$target/.bandoripet-managed-files"', script)
+        self.assertIn('obsolete_names+=("$name")', script)
+        self.assertIn('readlink -f "/proc/$pid/exe"', script)
+        self.assertIn('"$target"/*) kill "$pid"', script)
         popen.assert_called_once()
 
     def test_download_rejects_sha256_mismatch_and_removes_partial_file(self):

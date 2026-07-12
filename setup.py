@@ -40,6 +40,7 @@ USER_DATA_FILENAMES = (
     "data.db-shm",
     "data.db-wal",
 )
+MANAGED_FILES_MANIFEST = ".bandoripet-managed-files"
 PYOPENGL_PLATFORM_MODULES = (
     "OpenGL.platform.win32",
     "OpenGL.platform.baseplatform",
@@ -70,6 +71,17 @@ class BuildExeWithEmptyModels(build_exe):
                 path.unlink()
         models_dir = Path(self.build_exe) / "models"
         models_dir.mkdir(parents=True, exist_ok=True)
+        managed_names = sorted(
+            entry.name
+            for entry in build_dir.iterdir()
+            if entry.name not in USER_DATA_FILENAMES
+            and entry.name not in {"models", "chat_attachments", MANAGED_FILES_MANIFEST}
+        )
+        managed_names.append(MANAGED_FILES_MANIFEST)
+        (build_dir / MANAGED_FILES_MANIFEST).write_text(
+            "\n".join(managed_names) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _force_msi_database_codepage(db, installer_name: str, codepage: int) -> None:
@@ -341,10 +353,11 @@ class BuildInnoAlias(Command):
         subprocess.run([iscc, "/Q", str(iss_path)], check=True)
 
         installer_path = output_dir / f"{output_filename}.exe"
-        if installer_path.exists():
-            print(f"Inno Setup installer created: {installer_path}")
-        else:
-            print(f"Warning: Expected installer not found at {installer_path}")
+        if not installer_path.is_file() or installer_path.stat().st_size <= 0:
+            raise RuntimeError(
+                f"Inno Setup completed without creating a valid installer: {installer_path}"
+            )
+        print(f"Inno Setup installer created: {installer_path}")
 
 
 def include_if_exists(path: str) -> tuple[str, str] | None:
