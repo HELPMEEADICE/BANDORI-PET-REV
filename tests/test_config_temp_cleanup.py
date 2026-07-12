@@ -42,6 +42,18 @@ class ConfigTempCleanupTest(unittest.TestCase):
 
             self.assertFalse(Path(str(config_path) + ".lock").exists())
 
+    def test_config_file_lock_is_removed_when_protected_operation_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            lock_path = Path(str(config_path) + ".lock")
+
+            with self.assertRaisesRegex(OSError, "write failed"):
+                with _config_file_lock(config_path):
+                    self.assertTrue(lock_path.exists())
+                    raise OSError("write failed")
+
+            self.assertFalse(lock_path.exists())
+
     def test_flush_save_removes_runtime_temp_and_lock_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"

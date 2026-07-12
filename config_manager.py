@@ -59,39 +59,44 @@ def _unlink_if_possible(path: Path) -> bool:
 def _config_file_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "a+b") as lock_file:
-        deadline = time.monotonic() + CONFIG_FILE_LOCK_TIMEOUT_SECONDS
-        if os.name == "nt":
-            import msvcrt
-            while True:
+    try:
+        with open(lock_path, "a+b") as lock_file:
+            deadline = time.monotonic() + CONFIG_FILE_LOCK_TIMEOUT_SECONDS
+            if os.name == "nt":
+                import msvcrt
+                while True:
+                    try:
+                        lock_file.seek(0)
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                        time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
                 try:
+                    yield
+                finally:
                     lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
-                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            while True:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                while True:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                        time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
                 try:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
-                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    _unlink_if_possible(lock_path)
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        # The protected read/write can fail during shutdown (for example if a
+        # peer process is replacing config.json).  Keep cleanup outside the
+        # normal-return path so an unlocked marker is not left behind.
+        _unlink_if_possible(lock_path)
 
 
 BASE_DIR = app_data_dir()
