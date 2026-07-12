@@ -474,7 +474,7 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
             if not lower.endswith(".zip"):
                 continue
         elif channel == "portable":
-            if not lower.endswith(".zip") and not lower.endswith(".msi"):
+            if not lower.endswith(".zip"):
                 continue
         else:
             continue
@@ -511,7 +511,7 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
 
 def _asset_action(asset_name: str, channel: str) -> str:
     lower = asset_name.lower()
-    if lower.endswith(".msi"):
+    if lower.endswith(".msi") and channel == "msi":
         return "install_msi"
     if lower.endswith(".exe") and channel == "inno":
         return "install_inno"

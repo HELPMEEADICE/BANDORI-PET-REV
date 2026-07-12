@@ -26,7 +26,7 @@ class AppUpdateTests(unittest.TestCase):
         self.assertIn("settings_process", app_update._PROCESS_NAMES)
         self.assertIn("chat_process", app_update._PROCESS_NAMES)
 
-    def test_windows_portable_update_does_not_select_macos_zip(self):
+    def test_windows_portable_update_does_not_fall_back_to_msi(self):
         assets = [
             _asset("BandoriPet-3.1.0-mac.zip"),
             _asset("BandoriPet-3.1.0-win64.msi"),
@@ -35,7 +35,22 @@ class AppUpdateTests(unittest.TestCase):
         with patch.object(app_update.sys, "platform", "win32"):
             selected = app_update._select_release_asset(assets, "portable")
 
-        self.assertEqual(selected["name"], "BandoriPet-3.1.0-win64.msi")
+        self.assertIsNone(selected)
+        self.assertEqual("", app_update._asset_action(assets[1]["name"], "portable"))
+
+    def test_windows_portable_update_selects_zip_instead_of_msi(self):
+        assets = [
+            _asset("BandoriPet-3.1.0-WIN-AMD64.msi"),
+            _asset("BandoriPet-3.1.0-WIN-AMD64.zip"),
+        ]
+
+        with (
+            patch.object(app_update.sys, "platform", "win32"),
+            patch.object(app_update.platform, "machine", return_value="amd64"),
+        ):
+            selected = app_update._select_release_asset(assets, "portable")
+
+        self.assertEqual("BandoriPet-3.1.0-WIN-AMD64.zip", selected["name"])
 
     def test_macos_update_selects_matching_arm64_dmg(self):
         assets = [
