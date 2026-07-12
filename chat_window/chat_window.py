@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
-from process_utils import app_base_dir
+from process_utils import app_base_dir, app_data_dir
 from network_worker import CancelableNetworkWorker
 from app_theme import (
     BANDORI_PRIMARY_SOFT,
@@ -62,6 +62,7 @@ from chat_config_snapshots import (
 )
 from local_tools import reminder_tools_enabled
 from chat_commands import handle_command as _handle_chat_command
+from chat_attachment_manager import chat_attachment_dir
 from token_usage import (
     estimate_messages_tokens,
     estimate_untracked_history_usage,
@@ -1760,7 +1761,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return ""
 
     def _avatar_storage_dir(self) -> Path:
-        return Path(app_base_dir()) / ".runtime" / "chat_avatars"
+        return Path(app_data_dir()) / ".runtime" / "chat_avatars"
 
     def _safe_avatar_name(self, character: str, ext: str) -> str:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", character).strip("._")
@@ -4052,7 +4053,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return prompt
 
     def _chat_attachment_dir(self) -> Path:
-        path = app_base_dir() / "chat_attachments"
+        path = chat_attachment_dir()
         path.mkdir(parents=True, exist_ok=True)
         return path
 

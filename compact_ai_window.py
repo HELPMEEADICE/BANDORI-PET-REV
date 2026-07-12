@@ -183,6 +183,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._cancelled_workers = []
         self._close_waiting_for_workers = False
         self._memory_workers: list[NonStreamWorker] = []
+        self._memory_generation = 0
         self._conv_id: int | None = None
         self._chat_user_key = user_key_from_config(self._cfg)
         self._history = []
@@ -616,6 +617,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         if character == self._character:
             return
         self._reset_tts()
+        self._memory_generation += 1
         self._character = character
         self._conv_id = None
         self._last_user_message_id = None
@@ -1145,17 +1147,36 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         return False
 
     def _apply_relationship_update(self, assistant_text: str, actions: list[str]):
-        if not self._last_user_text.strip():
+        character = self._character
+        if not self._last_user_text.strip() or not character:
             return
         user_key = self._user_memory_key()
         fallback_analysis = analyze_interaction(self._last_user_text, actions=actions)
-        if self._start_memory_extraction(user_key, self._last_user_text, assistant_text, self._last_user_message_id, fallback_analysis):
+        if self._start_memory_extraction(
+            character,
+            user_key,
+            self._last_user_text,
+            assistant_text,
+            self._last_user_message_id,
+            fallback_analysis,
+        ):
             return
-        self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
+        self._apply_relationship_analysis(
+            character,
+            user_key,
+            fallback_analysis,
+            "compact_chat",
+        )
 
-    def _apply_relationship_analysis(self, user_key: str, analysis: dict, event_type: str):
+    def _apply_relationship_analysis(
+        self,
+        character: str,
+        user_key: str,
+        analysis: dict,
+        event_type: str,
+    ):
         self._db.apply_relationship_delta(
-            self._character,
+            character,
             user_key,
             affection_delta=analysis["affection_delta"],
             trust_delta=analysis["trust_delta"],
@@ -1168,6 +1189,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
 
     def _start_memory_extraction(
         self,
+        character: str,
         user_key: str,
         user_text: str,
         assistant_text: str,
@@ -1181,25 +1203,42 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         )
         if not api_url or not api_key or not model_id:
             return False
-        existing = self._db.get_character_memories(self._character, user_key, limit=12)
+        existing = self._db.get_character_memories(character, user_key, limit=12)
         global_existing = self._db.get_character_memories(GLOBAL_MEMORY_CHARACTER, user_key, limit=12)
         messages = build_memory_extraction_messages(
             user_text,
             assistant_text,
             existing,
             global_memories=global_existing,
-            character_name=self._model_manager.get_display_name(self._character),
+            character_name=self._model_manager.get_display_name(character),
         )
         worker = NonStreamWorker(api_url, api_key, model_id, messages, None)
+        generation = self._memory_generation
         self._memory_workers.append(worker)
         worker.finished.connect(
-            lambda content, _reasoning, _actions, worker=worker, user_key=user_key,
-            source_message_id=source_message_id, fallback_analysis=fallback_analysis:
-                self._on_memory_extraction_finished(worker, user_key, content, source_message_id, fallback_analysis)
+            lambda content, _reasoning, _actions, worker=worker, character=character,
+            user_key=user_key, source_message_id=source_message_id,
+            fallback_analysis=fallback_analysis, generation=generation:
+                self._on_memory_extraction_finished(
+                    worker,
+                    character,
+                    user_key,
+                    content,
+                    source_message_id,
+                    fallback_analysis,
+                    generation,
+                )
         )
         worker.error.connect(
-            lambda _error, worker=worker, user_key=user_key, fallback_analysis=fallback_analysis:
-                self._on_memory_extraction_error(worker, user_key, fallback_analysis)
+            lambda _error, worker=worker, character=character, user_key=user_key,
+            fallback_analysis=fallback_analysis, generation=generation:
+                self._on_memory_extraction_error(
+                    worker,
+                    character,
+                    user_key,
+                    fallback_analysis,
+                    generation,
+                )
         )
         worker.start()
         return True
@@ -1207,21 +1246,26 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     def _on_memory_extraction_finished(
         self,
         worker: NonStreamWorker,
+        character: str,
         user_key: str,
         content: str,
         source_message_id: int | None,
         fallback_analysis: dict,
+        generation: int,
     ):
         self._forget_memory_worker(worker)
+        if generation != self._memory_generation:
+            return
         relationship_analysis = parse_relationship_analysis_response(content) or fallback_analysis
         self._apply_relationship_analysis(
+            character,
             user_key,
             relationship_analysis,
             "compact_chat_model",
         )
         store_extracted_memories(
             self._db,
-            self._character,
+            character,
             user_key,
             content,
             source_message_id=source_message_id,
@@ -1233,11 +1277,20 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     def _on_memory_extraction_error(
         self,
         worker: NonStreamWorker,
+        character: str,
         user_key: str,
         fallback_analysis: dict,
+        generation: int,
     ):
         self._forget_memory_worker(worker)
-        self._apply_relationship_analysis(user_key, fallback_analysis, "compact_chat")
+        if generation != self._memory_generation:
+            return
+        self._apply_relationship_analysis(
+            character,
+            user_key,
+            fallback_analysis,
+            "compact_chat",
+        )
 
     def _tts_enabled(self) -> bool:
         return is_tts_enabled(_TTS_AVAILABLE, self._cfg)
@@ -1325,6 +1378,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._park_cancelled_worker(self._worker)
             self._worker = None
         self._reset_tts()
+        self._memory_generation += 1
         workers_to_wait = []
         for worker in list(self._cancelled_workers):
             if worker is not None and worker.isRunning():

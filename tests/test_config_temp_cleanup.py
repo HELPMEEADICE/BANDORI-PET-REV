@@ -63,7 +63,11 @@ class ConfigTempCleanupTest(unittest.TestCase):
             db = DatabaseManager(str(db_path))
             db.close()
 
-            self.assertFalse(Path(str(db_path) + ".lock").exists())
+            lock_exists = Path(str(db_path) + ".lock").exists()
+            if os.name == "nt":
+                self.assertFalse(lock_exists)
+            else:
+                self.assertTrue(lock_exists)
 
 
 if __name__ == "__main__":

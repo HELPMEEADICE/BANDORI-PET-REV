@@ -2,14 +2,14 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from process_utils import app_base_dir
+from process_utils import app_data_dir
 
 
 _ATTACHMENT_NAME_TIME_RE = re.compile(r"^(?P<stamp>\d{14})-[0-9a-fA-F]+")
 
 
 def chat_attachment_dir() -> Path:
-    return app_base_dir() / "chat_attachments"
+    return app_data_dir() / "chat_attachments"
 
 
 def clamp_attachment_retention_days(value) -> int:

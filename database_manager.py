@@ -41,6 +41,12 @@ def _unlink_if_possible(path: Path) -> bool:
         return False
 
 
+def _remove_database_lock_on_close() -> bool:
+    # POSIX flock locks an inode. Unlinking the path while another process is
+    # waiting can let a third process create and lock a different inode.
+    return os.name == "nt"
+
+
 def _migrate_legacy_database(db_path: str) -> None:
     target = Path(db_path)
     if target != Path(DB_PATH) or LEGACY_BASE_DIR == BASE_DIR or target.exists():
@@ -137,7 +143,8 @@ class _DatabaseFileLock:
         file = getattr(self, "_file", None)
         if file is not None and not file.closed:
             file.close()
-        _unlink_if_possible(self._lock_path)
+        if _remove_database_lock_on_close():
+            _unlink_if_possible(self._lock_path)
 
     def _lock_file(self):
         if self._file is None or self._file.closed:
@@ -329,15 +336,19 @@ def _group_message_speaker(content: str) -> str:
 def _state_row_dict(row) -> dict:
     if not row:
         return {}
+    affection = _db_int(row[3])
+    trust = _db_int(row[4])
+    familiarity = _db_int(row[5])
+    mood_intensity = _db_int(row[7])
     return {
         "id": _db_int(row[0]) or 0,
         "character": _db_text(row[1]),
         "user_key": _db_text(row[2]),
-        "affection": _db_int(row[3]) or 50,
-        "trust": _db_int(row[4]) or 50,
-        "familiarity": _db_int(row[5]) or 0,
+        "affection": 50 if affection is None else affection,
+        "trust": 50 if trust is None else trust,
+        "familiarity": 0 if familiarity is None else familiarity,
         "mood": _db_text(row[6], "calm") or "calm",
-        "mood_intensity": _db_int(row[7]) or 20,
+        "mood_intensity": 20 if mood_intensity is None else mood_intensity,
         "summary": _db_text(row[8]),
         "updated_at": _db_text(row[9]),
     }
@@ -1130,7 +1141,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         kind = (kind or "note").strip() or "note"
         importance = _clamp_int(importance, 1, 100, 50)
         now = _now_text()
-        cur = self._conn.execute(
+        self._conn.execute(
             "INSERT INTO character_memories "
             "(character, user_key, kind, content, importance, source_message_id, source_group_message_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -1152,8 +1163,6 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             ),
         )
         self._conn.commit()
-        if cur.lastrowid:
-            return cur.lastrowid
         row = self._conn.execute(
             "SELECT id FROM character_memories WHERE character=? AND user_key=? AND content=?",
             (character, user_key, content),
@@ -2461,7 +2470,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
     def _character_display_aliases(character: str) -> set[str]:
         aliases = {str(character or "").strip()}
         try:
-            data = json.loads((BASE_DIR / "outfit.json").read_text(encoding="utf-8"))
+            data = json.loads((LEGACY_BASE_DIR / "outfit.json").read_text(encoding="utf-8"))
             info = data.get("characters", {}).get(character, {})
             display = str(info.get("display", "") or "").strip()
             if display:

@@ -1,6 +1,6 @@
 import time
 
-from process_utils import clamp_int
+from process_utils import app_data_dir, clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -3740,7 +3740,7 @@ class SettingsWindow(
         return BANDORI_PRIMARY
 
     def _avatar_storage_dir(self):
-        return app_base_dir() / ".runtime" / "chat_avatars"
+        return app_data_dir() / ".runtime" / "chat_avatars"
 
     def _choose_user_avatar(self):
         path, _ = QFileDialog.getOpenFileName(
