@@ -3,7 +3,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QBuffer, QIODevice, QThread, Qt, Signal
+from PySide6.QtCore import QBuffer, QIODevice, Qt, Signal
 
 from vision_fallback import analyze_images_with_aux_model
 from network_worker import CancelableNetworkWorker

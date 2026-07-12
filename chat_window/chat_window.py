@@ -5,7 +5,7 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -24,7 +24,7 @@ from app_theme import (
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, INTERRUPT_COMMANDS, CommandCompleter, is_interrupt_command
+from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, CommandCompleter, is_interrupt_command
 from win32_dwm import apply_windows_11_border_fix
 
 import base64
@@ -385,7 +385,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._memory_generation = 0
         self._pending_vision_send: tuple[str, list[dict], MessageBubble | None] | None = None
         self._plan_divider = None
-        self._active_response_character = character
         self._last_user_text = ""
         self._pending_interaction_context = ""
         self._last_user_message_id: int | None = None
@@ -2676,7 +2675,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         else:
             self._character = normalized[0]
             self._group_characters = []
-        self._active_response_character = self._character
         self._pending_action_character = self._character
         self._conversation_key = next_key
         self._display_name = self._chat_display_name()
@@ -5672,7 +5670,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
         model_id = self._cfg.get("llm_model_id", "")
-        self._active_response_character = character
         self._pending_action_character = character
         self._seen_actions.clear()
         self._current_response_actions = []

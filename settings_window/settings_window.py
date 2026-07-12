@@ -114,7 +114,6 @@ class SettingsWindow(
         self._model_detail_metadata_timer.setSingleShot(True)
         self._model_detail_metadata_timer.timeout.connect(self._flush_queued_model_detail_metadata_load)
         self._model_download_running = False
-        self._wizard_pages: dict[str, QWidget] = {}
         self._theme_widgets: list[QWidget] = []
         self._theme_connections = []
         self._pages: dict[str, QWidget] = {}

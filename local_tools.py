@@ -13,6 +13,7 @@ from html import unescape
 from computer_tools import computer_tools, is_computer_tool_name, run_computer_tool
 from mcp_bridge import call_mcp_tool, is_mcp_tool_name, mcp_native_tools, mcp_proxy_tools
 from process_utils import log_swallowed, run_off_gui_thread
+from tool_arguments import parse_tool_arguments
 from reminder_core import (
     ALARM_CONFIG_KEY,
     POMODORO_CONFIG_KEY,
@@ -24,17 +25,6 @@ from reminder_core import (
     normalize_pomodoros,
     repeat_days_label,
 )
-
-
-def _parse_arguments(arguments, fallback_key: str | None = None):
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {fallback_key: arguments} if fallback_key else {}
-    if not isinstance(arguments, dict):
-        arguments = {}
-    return arguments
 
 
 def _validate_tool_arguments(arguments) -> tuple[dict | None, str]:
@@ -59,13 +49,6 @@ AUTO_CONTINUE_TOOL_NAME = "continue_conversation"
 CREATE_ALARM_TOOL_NAME = "create_alarm"
 START_POMODORO_TOOL_NAME = "start_pomodoro"
 POKE_USER_TOOL_NAME = "poke_user"
-_FORCE_WEB_SEARCH_PATTERN = re.compile(
-    r"(联网|上网|搜(?:索|一下)?|查(?:一下|找)?|帮我(?:搜|查|找)|"
-    r"最新|实时|现在|当前|今天|今日|昨天|明天|新闻|价格|股价|汇率|"
-    r"日程|赛程|天气|版本|发布|公告|官网|文档|API|api|"
-    r"latest|current|today|news|price|version|release|weather|schedule)",
-    re.IGNORECASE,
-)
 _MAX_PAGE_EXCERPT_CHARS = 700
 
 WEB_SEARCH_ENGINE_LABELS = {
@@ -424,7 +407,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
         if is_computer_tool_name(name):
             return run_computer_tool(name, arguments, tool_config or {})
         return {"content": f"Unsupported tool: {name}", "extra_messages": []}
-    arguments = _parse_arguments(arguments, fallback_key="query")
+    arguments = parse_tool_arguments(arguments, fallback_key="query")
     query = _normalize_web_search_query(
         arguments.get("query", ""),
         (tool_config or {}).get("_latest_user_text", ""),
@@ -439,7 +422,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
 
 
 def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict:
-    arguments = _parse_arguments(arguments, fallback_key="url")
+    arguments = parse_tool_arguments(arguments, fallback_key="url")
     url = str(arguments.get("url", "") or "").strip()
     try:
         max_chars = int(arguments.get("max_chars", 6000) or 6000)
@@ -450,7 +433,7 @@ def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict
 
 
 def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
-    arguments = _parse_arguments(arguments)
+    arguments = parse_tool_arguments(arguments)
     try:
         from config_manager import ConfigManager
         from settings_bus import publish_settings
@@ -525,7 +508,7 @@ def _run_reminder_tool_call(name: str, arguments, tool_config: dict | None = Non
 
 
 def _run_poke_user_tool_call(arguments, tool_config: dict | None = None) -> dict:
-    arguments = _parse_arguments(arguments)
+    arguments = parse_tool_arguments(arguments)
     character = str((tool_config or {}).get("_active_character", "") or "").strip()
     message = str(arguments.get("message", "") or "").strip()
     try:

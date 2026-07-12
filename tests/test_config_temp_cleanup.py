@@ -33,16 +33,16 @@ class ConfigTempCleanupTest(unittest.TestCase):
             self.assertTrue(lock_file.exists())
             self.assertTrue(config_path.exists())
 
-    def test_config_file_lock_is_removed_after_release(self):
+    def test_config_file_lock_marker_persists_after_release(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
 
             with _config_file_lock(config_path):
                 self.assertTrue(Path(str(config_path) + ".lock").exists())
 
-            self.assertFalse(Path(str(config_path) + ".lock").exists())
+            self.assertTrue(Path(str(config_path) + ".lock").exists())
 
-    def test_config_file_lock_is_removed_when_protected_operation_fails(self):
+    def test_config_file_lock_marker_persists_when_protected_operation_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
             lock_path = Path(str(config_path) + ".lock")
@@ -52,9 +52,9 @@ class ConfigTempCleanupTest(unittest.TestCase):
                     self.assertTrue(lock_path.exists())
                     raise OSError("write failed")
 
-            self.assertFalse(lock_path.exists())
+            self.assertTrue(lock_path.exists())
 
-    def test_flush_save_removes_runtime_temp_and_lock_files(self):
+    def test_flush_save_does_not_remove_other_process_artifacts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
             runtime_tmp = Path(temp_dir) / "config.json.x14ibzhp.tmp"
@@ -65,8 +65,8 @@ class ConfigTempCleanupTest(unittest.TestCase):
             config = ConfigManager(config_path)
             config.flush_save()
 
-            self.assertFalse(runtime_tmp.exists())
-            self.assertFalse(lock_file.exists())
+            self.assertTrue(runtime_tmp.exists())
+            self.assertTrue(lock_file.exists())
 
     def test_database_lock_is_removed_after_close(self):
         with tempfile.TemporaryDirectory() as temp_dir:

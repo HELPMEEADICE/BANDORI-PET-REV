@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import computer_tools
 import local_tools
+from tool_arguments import parse_tool_arguments
 
 
 class LocalToolSafetyTests(unittest.TestCase):
@@ -72,6 +73,12 @@ class LocalToolSafetyTests(unittest.TestCase):
 
         web_search.assert_called_once_with("Bandori", max_results=2, engine="bing_cn")
         self.assertEqual("result", result["content"])
+
+    def test_tool_argument_normalizer_is_shared_and_preserves_fallbacks(self):
+        self.assertEqual({"value": 1}, parse_tool_arguments('{"value":1}'))
+        self.assertEqual({}, parse_tool_arguments("{broken"))
+        self.assertEqual({"query": "raw text"}, parse_tool_arguments("raw text", "query"))
+        self.assertEqual({}, parse_tool_arguments(["not", "an", "object"]))
 
     def test_computer_wait_is_cancelled_without_sleeping_full_duration(self):
         cancelled = threading.Event()

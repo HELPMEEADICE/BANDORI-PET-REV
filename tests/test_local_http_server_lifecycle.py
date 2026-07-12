@@ -1,19 +1,60 @@
+import json
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
 def test_local_http_request_threads_do_not_block_server_close():
-    from ai_status_server import _LocalThreadingHTTPServer as AiServer
-    from chat_integration_server import _LocalThreadingHTTPServer as ChatServer
+    from local_http_server import LocalThreadingHTTPServer
 
-    assert AiServer.daemon_threads is True
-    assert ChatServer.daemon_threads is True
+    assert LocalThreadingHTTPServer.daemon_threads is True
 
 
 def test_local_http_request_body_reads_have_a_timeout():
+    base_source = Path("local_http_server.py").read_text(encoding="utf-8")
+    assert "self.connection.settimeout(" in base_source
     for file_name in ("ai_status_server.py", "chat_integration_server.py"):
         source = Path(file_name).read_text(encoding="utf-8")
-        assert "self.connection.settimeout(" in source
         assert "except TimeoutError:" in source
+
+
+def test_shared_http_base_preserves_auth_and_cors_behavior():
+    from ai_status_server import AiStatusHttpServer
+
+    events = []
+    server = AiStatusHttpServer(0, "secret", events.append)
+    server.start()
+    port = server._server.server_address[1]
+    try:
+        health = urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)
+        assert health.status == 200
+        assert health.headers["Access-Control-Allow-Origin"] == "http://127.0.0.1"
+
+        body = json.dumps({"kind": "test"}).encode("utf-8")
+        unauthorized = urllib.request.Request(
+            f"http://127.0.0.1:{port}/ai-event",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(unauthorized, timeout=2)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 401
+        else:
+            raise AssertionError("missing token must be rejected")
+
+        authorized = urllib.request.Request(
+            f"http://127.0.0.1:{port}/ai-event",
+            data=body,
+            headers={"Content-Type": "application/json", "X-Bandori-Token": "secret"},
+            method="POST",
+        )
+        response = urllib.request.urlopen(authorized, timeout=2)
+        assert response.status == 200
+        assert events == [{"kind": "test"}]
+    finally:
+        server.stop()
 
 
 def test_chat_overlay_queue_acceptance_does_not_clear_persisted_unread():

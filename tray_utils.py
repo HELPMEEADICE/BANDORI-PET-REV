@@ -2,7 +2,7 @@ import os
 import sys
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from process_utils import app_base_dir
@@ -45,37 +45,6 @@ def keep_tray_icon_visible(tray_icon, attempts: int = 8, interval_ms: int = 350)
         timer.timeout.connect(lambda: reshow(0))
         timer.start()
         tray_icon._bandori_visibility_timer = timer
-
-
-def _icon_from_image(path: str) -> QIcon:
-    if QApplication.instance() is None:
-        return QIcon(path)
-    image = QImage(path)
-    if image.isNull():
-        return QIcon(path)
-    size = 22
-    content_size = 17
-    dpr = _device_pixel_ratio()
-    pixel_size = int(round(size * dpr))
-    content_pixels = int(round(content_size * dpr))
-    image = image.scaled(
-        content_pixels,
-        content_pixels,
-        Qt.AspectRatioMode.KeepAspectRatio,
-        Qt.TransformationMode.SmoothTransformation,
-    )
-    pixmap = QPixmap(pixel_size, pixel_size)
-    pixmap.setDevicePixelRatio(dpr)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.drawImage(
-        QRectF((size - content_size) * 0.5, (size - content_size) * 0.5, content_size, content_size),
-        image,
-    )
-    painter.end()
-    icon = QIcon()
-    icon.addPixmap(pixmap)
-    return icon
 
 
 def _device_pixel_ratio() -> float:

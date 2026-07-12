@@ -7,26 +7,16 @@ renderer for that model.
 """
 
 from live2d_lua_adapter_base import (
-    LIVE2D_PROFILE_ENABLED,
-    MODEL_FORMAT_MOC,
     MODEL_FORMAT_MOC3,
     MotionPriority,
     _model_manifest_format,
 )
 from live2d_lua_adapter_moc import live2d_moc
-from live2d_lua_adapter_moc3 import (
-    _patch_lua_moc3_pet_embed_delta,
-    live2d_moc3,
-)
+from live2d_lua_adapter_moc3 import live2d_moc3
 
 __all__ = [
-    "LIVE2D_PROFILE_ENABLED",
-    "MODEL_FORMAT_MOC",
-    "MODEL_FORMAT_MOC3",
     "LuaLAppModel",
     "LuaLive2DModule",
-    "MotionPriority",
-    "_patch_lua_moc3_pet_embed_delta",
     "live2d",
 ]
 

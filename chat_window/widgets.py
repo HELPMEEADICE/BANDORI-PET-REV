@@ -4,7 +4,7 @@ import urllib.error
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve,
+    Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
     QRectF, QSize, QUrl,
 )
 from PySide6.QtGui import (

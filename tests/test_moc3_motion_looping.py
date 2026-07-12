@@ -8,12 +8,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from lupa import LuaRuntime
 
-from live2d_lua_adapter import (
-    MODEL_FORMAT_MOC,
-    MODEL_FORMAT_MOC3,
-    LuaLive2DModule,
-    _patch_lua_moc3_pet_embed_delta,
-)
+from live2d_lua_adapter import LuaLive2DModule
+from live2d_lua_adapter_base import MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3
+from live2d_lua_adapter_moc3 import _patch_lua_moc3_pet_embed_delta
 from pet_window import PetWindow
 
 

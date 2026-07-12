@@ -1,14 +1,8 @@
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from local_http_server import LocalHttpServer, LocalJsonRequestHandler
 from onebot_message import normalize_onebot_event
-from process_utils import token_matches
-
-
-class _LocalThreadingHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
 
 
 def _prepare_chat_event_batch(events, normalize_event) -> list[dict | None]:
@@ -22,56 +16,22 @@ def _prepare_chat_event_batch(events, normalize_event) -> list[dict | None]:
     return [normalize_event(event) for event in events]
 
 
-class ChatIntegrationHttpServer:
+class ChatIntegrationHttpServer(LocalHttpServer):
+    thread_name_prefix = "BandoriChatIntegrationHttp"
+
     def __init__(self, port: int, token: str, on_message, on_read=None):
-        self._port = int(port)
-        self._token = str(token or "")
+        super().__init__(port, token)
         self._on_message = on_message
         self._on_read = on_read
-        self._server = None
-        self._thread = None
-
-    @property
-    def port(self) -> int:
-        return self._port
-
-    def start(self):
-        handler = self._handler_class()
-        self._server = _LocalThreadingHTTPServer(("127.0.0.1", self._port), handler)
-        self._thread = threading.Thread(
-            target=self._server.serve_forever,
-            name=f"BandoriChatIntegrationHttp:{self._port}",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def stop(self):
-        if self._server is None:
-            return
-        self._server.shutdown()
-        self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-        self._server = None
-        self._thread = None
 
     def _handler_class(self):
-        token = self._token
+        handler_token = self._token
         on_message = self._on_message
         on_read = self._on_read
 
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(LocalJsonRequestHandler):
             server_version = "BandoriChatIntegration/1.0"
-
-            def setup(self):
-                super().setup()
-                self.connection.settimeout(5.0)
-
-            def log_message(self, _format, *_args):
-                return
-
-            def do_OPTIONS(self):
-                self._send_json({"ok": True}, status=204)
+            auth_token = handler_token
 
             def do_GET(self):
                 parsed = urlparse(self.path)
@@ -235,28 +195,5 @@ class ChatIntegrationHttpServer:
 
             def _normalize_event(self, event: dict) -> dict | None:
                 return normalize_onebot_event(event)
-
-            def _authorized(self, parsed) -> bool:
-                if not token:
-                    return True
-                auth = self.headers.get("Authorization", "")
-                if token_matches(f"Bearer {token}", auth):
-                    return True
-                if token_matches(token, self.headers.get("X-Bandori-Token", "")):
-                    return True
-                query_token = parse_qs(parsed.query).get("token", [""])[0]
-                return token_matches(token, query_token)
-
-            def _send_json(self, data: dict, status: int = 200):
-                payload = b"" if status == 204 else json.dumps(data, ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Bandori-Token")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                if payload:
-                    self.wfile.write(payload)
 
         return Handler

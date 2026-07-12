@@ -254,10 +254,8 @@ class RadialMenu(QWidget):
 
         self._items: list[_ItemData] = []
         self._is_showing = False
-        self._center = QPoint(0, 0)
         self._radius = 110
         self._anim_group = None
-        self._fps = 120
         self._locked = False
         self._center_hover = False
         self._center_opacity = 1.0
@@ -428,9 +426,6 @@ class RadialMenu(QWidget):
         self._lock_anim = anim
         anim.start()
 
-    def set_animation_fps(self, fps: int):
-        self._fps = max(30, min(fps, 240))
-
     def _show_duration(self):
         # Keep the popup interaction snappy even when the pet itself is running
         # at a low FPS; Qt animation duration is wall-clock time, not frame count.
@@ -486,7 +481,6 @@ class RadialMenu(QWidget):
             self.hide()
             self._is_showing = False
 
-        self._center = center
         self._is_showing = True
         interaction_trace(
             "radial_menu",

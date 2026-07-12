@@ -81,7 +81,6 @@ def _build_menu(payload: dict, actions: list[str]) -> RadialMenu:
             glyph=glyph,
             enabled=enabled,
         )
-    menu.set_animation_fps(int(payload.get("fps", 120)))
     menu.set_locked(bool(payload.get("locked", False)))
     menu.prepare_for_show()
     return menu
@@ -108,7 +107,6 @@ def _update_menu(menu: RadialMenu, payload: dict, actions: list[str]) -> bool:
         )
 
     actions[:] = next_actions
-    menu.set_animation_fps(int(payload.get("fps", 120)))
     menu.set_locked(bool(payload.get("locked", False)))
     menu.prepare_for_show()
     return True
@@ -175,7 +173,6 @@ def main():
         menu.lock_toggled.connect(on_lock_toggled)
 
     def show_payload(payload: dict):
-        nonlocal menu
         interaction_trace(
             "radial_process",
             "show_payload",

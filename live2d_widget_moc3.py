@@ -1,7 +1,6 @@
 import sys
 from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from qt_gl import gl
-from live2d_widget_base import Live2DWidgetBase
 
 
 DEFAULT_MOC3_RENDER_SCALE = 1.35
@@ -90,10 +89,3 @@ class Moc3RenderPipeline:
 
 
 MOC3_RENDER_PIPELINE = Moc3RenderPipeline()
-
-
-class Live2DWidgetMOC3(Live2DWidgetBase):
-
-    def _render_pipeline_for_model(self, model):
-        del model
-        return MOC3_RENDER_PIPELINE

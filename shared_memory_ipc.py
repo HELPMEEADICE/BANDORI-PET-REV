@@ -99,14 +99,12 @@ class SharedMemoryLineQueue:
         slot_count: int,
         slot_size: int,
         cursor: int,
-        owner: bool,
     ):
         self.key = key
         self.slot_count = int(slot_count)
         self.slot_size = int(slot_size)
         self._memory = memory
         self._cursor = int(cursor)
-        self._owner = bool(owner)
 
     @classmethod
     def create(
@@ -146,7 +144,6 @@ class SharedMemoryLineQueue:
                     slot_count=candidate_count,
                     slot_size=slot_size,
                     cursor=0,
-                    owner=True,
                 )
                 queue._initialize()
                 return queue
@@ -164,7 +161,7 @@ class SharedMemoryLineQueue:
         memory = QSharedMemory(key)
         if not memory.attach():
             raise RuntimeError(f"Failed to attach shared memory '{key}': {memory.errorString()}")
-        queue = cls(key, memory, slot_count=1, slot_size=64, cursor=0, owner=False)
+        queue = cls(key, memory, slot_count=1, slot_size=64, cursor=0)
         magic, _version, slot_count, slot_size, next_seq = queue._read_header_locked()
         if magic != _MAGIC:
             memory.detach()

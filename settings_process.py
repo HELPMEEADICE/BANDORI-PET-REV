@@ -4,7 +4,6 @@ import os
 import sys
 
 from process_utils import (
-    app_base_dir,
     app_icon_path,
     bootstrap_app,
     ensure_taskbar_icon_identity,

@@ -18,6 +18,14 @@ def test_only_cubism2_runtime_installs_platform_manager_override():
     assert LuaLive2DModuleMOC3._configure_runtime is LuaLive2DRuntimeBase._configure_runtime
 
 
+def test_live2d_widget_has_no_redundant_head_tracking_timer():
+    source = Path("live2d_widget_base.py").read_text(encoding="utf-8")
+
+    assert "_head_track_timer" not in source
+    assert "_poll_head_tracking" not in source
+    assert "self._track_current_head_target()" in source
+
+
 def test_render_pipeline_is_selected_once_at_format_boundary():
     moc_model = type("Model", (), {"renderer_format": "moc"})()
     moc3_model = type("Model", (), {"renderer_format": "moc3"})()

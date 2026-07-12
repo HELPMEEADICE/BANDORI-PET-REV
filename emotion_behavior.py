@@ -1,22 +1,6 @@
 import re
 
 
-EMOTION_MOODS = {
-    "calm",
-    "happy",
-    "excited",
-    "soft",
-    "concerned",
-    "sad",
-    "hurt",
-    "annoyed",
-    "angry",
-    "shy",
-    "thoughtful",
-    "surprised",
-    "tired",
-}
-
 ACTION_EMOTION = {
     "smile": "happy",
     "f": "happy",

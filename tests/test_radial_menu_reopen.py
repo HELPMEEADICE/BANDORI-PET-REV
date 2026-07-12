@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -180,6 +181,18 @@ class RadialMenuReopenTest(unittest.TestCase):
         self.assertEqual([False], harness.broadcasts)
         self.assertTrue(harness.ipc_closed)
         self.assertTrue(process.deleted)
+
+    def test_radial_menu_payload_has_no_ineffective_fps_setting(self):
+        pet_source = Path("pet_window.py").read_text(encoding="utf-8")
+        process_source = Path("radial_menu_process.py").read_text(encoding="utf-8")
+        menu_source = Path("radial_menu.py").read_text(encoding="utf-8")
+
+        payload = pet_source.split("    def _radial_menu_payload", 1)[1].split(
+            "    def _ensure_radial_menu_process", 1
+        )[0]
+        self.assertNotIn('"fps"', payload)
+        self.assertNotIn("set_animation_fps", process_source)
+        self.assertNotIn("set_animation_fps", menu_source)
 
 
 if __name__ == "__main__":

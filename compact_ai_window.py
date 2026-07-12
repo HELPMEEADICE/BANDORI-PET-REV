@@ -63,7 +63,7 @@ from relationship_memory import (
     user_key_from_config,
 )
 from action_bus import publish_emotion_behavior, publish_lip_sync
-from ui_helpers import FluentContextTextEdit, INTERRUPT_COMMANDS, is_interrupt_command
+from ui_helpers import FluentContextTextEdit, is_interrupt_command
 from win32_dwm import apply_windows_11_border_fix
 
 if sys.platform == "darwin":

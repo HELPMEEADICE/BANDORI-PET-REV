@@ -15,6 +15,7 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 from i18n_manager import tr as _tr
 from app_info import APP_NAME
 from process_utils import app_base_dir, hidden_subprocess_kwargs, run_off_gui_thread
+from tool_arguments import parse_tool_arguments
 
 _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
@@ -23,19 +24,9 @@ _CLIENTS: dict[str, "StdioMcpClient"] = {}
 _HTTP_SESSIONS: dict[str, dict] = {}
 
 
-def _parse_arguments(arguments):
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
-    return arguments
 _LOCK = threading.RLock()
 _thread_local = threading.local()
 _APP_DIR = Path(app_base_dir()).resolve()
-_BUNDLED_STDIO_MCP_SCRIPT = (_APP_DIR / "filesystem_mcp_server.py").resolve()
 
 
 def mcp_proxy_tools(config: dict, exclude_native: bool = False) -> list[dict]:
@@ -195,7 +186,7 @@ def is_mcp_tool_name(name: str) -> bool:
 
 
 def call_mcp_tool(public_name: str, arguments, cancel_event=None) -> str:
-    arguments = _parse_arguments(arguments)
+    arguments = parse_tool_arguments(arguments)
     with _LOCK:
         server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
     if not server or not tool_name:

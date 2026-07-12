@@ -149,11 +149,6 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._render_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._render_timer.timeout.connect(self.update)
         
-        self._head_track_timer = QTimer(self)
-        self._head_track_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._head_track_timer.setInterval(round(1000 / 30))
-        self._head_track_timer.timeout.connect(self._poll_head_tracking)
-
         self._cache_w = 1
         self._cache_h = 1
         self._cache_w_half = 0.5
@@ -465,11 +460,9 @@ class Live2DWidgetBase(QOpenGLWidget):
     def _update_render_timer(self):
         if not self._initialized_gl or self._static_render or not self._model or not self.isVisible():
             self._render_timer.stop()
-            self._head_track_timer.stop()
             return
         self._sync_timer_type()
         self._render_timer.start(self._frame_interval_ms())
-        self._head_track_timer.stop()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -477,7 +470,6 @@ class Live2DWidgetBase(QOpenGLWidget):
 
     def hideEvent(self, event):
         self._render_timer.stop()
-        self._head_track_timer.stop()
         super().hideEvent(event)
 
     # --------------------------------------------------------------------------
@@ -672,9 +664,6 @@ class Live2DWidgetBase(QOpenGLWidget):
             
         self._model.Drag(local_x, local_y)
         self._perf_probe.add("head_track", self._perf_probe.now() - t0)
-
-    def _poll_head_tracking(self):
-        self._track_current_head_target()
 
     def _track_current_head_target(self):
         if self._gaze_target is not None:

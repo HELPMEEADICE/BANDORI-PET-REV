@@ -19,6 +19,28 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
 
         self.assertEqual(1, load_json.call_count)
 
+    def test_scans_do_not_preflight_model_directories(self):
+        manager = ModelManager.__new__(ModelManager)
+        manager._model_paths = {}
+        manager._character_images = {}
+        manager._characters = {}
+
+        with mock.patch("model_manager.models_dir_exists", side_effect=AssertionError("preflight")), \
+             mock.patch("model_manager.model_search_dirs", return_value=[]):
+            manager._scan_model_keys()
+            manager._scan()
+
+    def test_missing_character_image_uses_scan_cache_without_disk_fallback(self):
+        manager = ModelManager.__new__(ModelManager)
+        manager._character_images = {}
+
+        with mock.patch.object(
+            manager,
+            "_find_dir_character_image",
+            side_effect=AssertionError("unexpected disk lookup"),
+        ):
+            self.assertEqual("", manager.get_character_image_path("missing"))
+
 
 if __name__ == "__main__":
     unittest.main()

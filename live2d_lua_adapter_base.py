@@ -356,14 +356,6 @@ def _decode_lua_string(value) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
-def _first_error_line(exc: BaseException) -> str:
-    for line in str(exc).splitlines():
-        line = line.strip()
-        if line:
-            return line
-    return exc.__class__.__name__
-
-
 def _lua_array(table) -> list[str]:
     return [_decode_lua_string(table[index]) for index in range(1, len(table) + 1) if table[index]]
 

@@ -374,6 +374,11 @@ class _CancelableTTSWorker(QThread):
             if self._active_session is session:
                 self._active_session = None
 
+    def _should_translate(self, text_language: str) -> bool:
+        if not self._config.get("tts_translate_to_selected_language", True):
+            return False
+        return text_language not in {"Chinese", "zh", "中文"}
+
 
 class TTSTranslationWorker(_CancelableTTSWorker):
     translated = Signal(int, int, str, str)
@@ -406,11 +411,6 @@ class TTSTranslationWorker(_CancelableTTSWorker):
             text = strip_tts_action_tags(self._text)
             if text:
                 self.translated.emit(self.sequence, self.generation, text, self._character)
-
-    def _should_translate(self, text_language: str) -> bool:
-        if not self._config.get("tts_translate_to_selected_language", True):
-            return False
-        return text_language not in {"Chinese", "zh", "中文"}
 
 class TTSRequestWorker(_CancelableTTSWorker):
     audio_ready = Signal(int, int, bytes, str)
@@ -681,11 +681,6 @@ class TTSRequestWorker(_CancelableTTSWorker):
             if ref_char in members:
                 return str(group.get("lora_id", "") or "").strip()
         return ""
-
-    def _should_translate(self, text_language: str) -> bool:
-        if not self._config.get("tts_translate_to_selected_language", True):
-            return False
-        return text_language not in {"Chinese", "zh", "中文"}
 
 class TTSPlayer(QObject):
     error = Signal(str)

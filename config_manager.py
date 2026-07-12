@@ -5,7 +5,6 @@ import re
 import copy
 import shutil
 import tempfile
-import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -59,44 +58,38 @@ def _unlink_if_possible(path: Path) -> bool:
 def _config_file_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(lock_path, "a+b") as lock_file:
-            deadline = time.monotonic() + CONFIG_FILE_LOCK_TIMEOUT_SECONDS
-            if os.name == "nt":
-                import msvcrt
-                while True:
-                    try:
-                        lock_file.seek(0)
-                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-                        break
-                    except OSError:
-                        if time.monotonic() >= deadline:
-                            raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
-                        time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
+    with open(lock_path, "a+b") as lock_file:
+        deadline = time.monotonic() + CONFIG_FILE_LOCK_TIMEOUT_SECONDS
+        if os.name == "nt":
+            import msvcrt
+            while True:
                 try:
-                    yield
-                finally:
                     lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                while True:
-                    try:
-                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError:
-                        if time.monotonic() >= deadline:
-                            raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
-                        time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            while True:
                 try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    finally:
-        # The protected read/write can fail during shutdown (for example if a
-        # peer process is replacing config.json).  Keep cleanup outside the
-        # normal-return path so an unlocked marker is not left behind.
-        _unlink_if_possible(lock_path)
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for config lock: {lock_path}")
+                    time.sleep(CONFIG_FILE_LOCK_RETRY_SECONDS)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 BASE_DIR = app_data_dir()
@@ -651,16 +644,10 @@ class ConfigManager:
         self._data = dict(DEFAULTS)
         self._loaded_data = copy.deepcopy(self._data)
         self._loaded_from_file = False
-        self._save_generation = 0
-        self._save_pending = threading.Event()
-        self._save_done = threading.Event()
-        self._save_data_snapshot = None
-        self._save_result = None
         cleanup_stale_config_temp_files(self._path)
         self.load()
 
     def load(self):
-        self._flush_pending_save()
         loaded = None
         has_action_settings = False
         next_data = dict(DEFAULTS)
@@ -1016,57 +1003,9 @@ class ConfigManager:
             self._data["costume"] = first["costume"]
 
     def save(self) -> bool:
-        self._flush_pending_save()
         try:
             with _config_file_lock(self._path):
                 data_to_save = self._merged_data_for_save()
-                self._data = copy.deepcopy(data_to_save)
-        except (OSError, ValueError) as exc:
-            logging.warning("Config save skipped because existing config could not be merged: %s", exc)
-            return False
-        self._save_generation += 1
-        self._save_data_snapshot = copy.deepcopy(data_to_save)
-        self._save_result = None
-        self._save_pending.set()
-        self._save_done.clear()
-        try:
-            threading.Thread(
-                target=self._async_write_file,
-                args=(self._save_generation,),
-                daemon=True,
-            ).start()
-        except Exception as exc:
-            logging.warning("Config save failed to start: %s", exc)
-            self._save_result = False
-            self._save_pending.clear()
-            self._save_done.set()
-            return False
-        self._flush_pending_save()
-        return self._save_result is True
-
-    def flush_save(self):
-        self._flush_pending_save()
-        cleanup_stale_config_temp_files(self._path, max_age_seconds=0)
-        _unlink_if_possible(self._path.with_suffix(self._path.suffix + ".lock"))
-
-    def _flush_pending_save(self):
-        gen = self._save_generation
-        while self._save_pending.is_set():
-            self._save_done.wait(timeout=5.0)
-            if self._save_generation != gen:
-                gen = self._save_generation
-
-    def _async_write_file(self, gen):
-        result = False
-        try:
-            if gen != self._save_generation:
-                return
-            data = self._save_data_snapshot
-            if data is None:
-                return
-            with _config_file_lock(self._path):
-                if gen != self._save_generation:
-                    return
                 self._path.parent.mkdir(parents=True, exist_ok=True)
                 fd, tmp_path = tempfile.mkstemp(
                     prefix=self._path.name + ".",
@@ -1075,37 +1014,30 @@ class ConfigManager:
                 )
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2, ensure_ascii=False)
+                        json.dump(data_to_save, f, indent=2, ensure_ascii=False)
                         f.flush()
                         os.fsync(f.fileno())
                     last_error = None
                     for attempt in range(25):
                         last_error = _try_replace_file(tmp_path, self._path)
                         if last_error is None:
-                            self._loaded_data = copy.deepcopy(data)
+                            self._data = data_to_save
+                            self._loaded_data = copy.deepcopy(data_to_save)
                             self._loaded_from_file = True
-                            result = True
-                            return
-                        time.sleep(min(0.02 * (attempt + 1), 0.2))
-                    if last_error is not None:
-                        logging.warning("Config save failed after retries: %s", last_error)
-                        try:
-                            os.unlink(tmp_path)
-                        except OSError:
-                            pass
-                except Exception as exc:
-                    logging.warning("Config save failed: %s", exc)
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
+                            return True
+                        if attempt < 24:
+                            time.sleep(min(0.02 * (attempt + 1), 0.2))
+                    logging.warning("Config save failed after retries: %s", last_error)
+                finally:
+                    _unlink_if_possible(Path(tmp_path))
+        except (OSError, ValueError) as exc:
+            logging.warning("Config save skipped because existing config could not be merged: %s", exc)
         except Exception as exc:
             logging.warning("Config save failed: %s", exc)
-        finally:
-            if gen == self._save_generation:
-                self._save_result = result
-                self._save_pending.clear()
-                self._save_done.set()
+        return False
+
+    def flush_save(self):
+        """Compatibility hook; saves are already synchronous and durable."""
 
     def _merged_data_for_save(self) -> dict:
         try:

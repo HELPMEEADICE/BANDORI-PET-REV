@@ -1,9 +1,9 @@
 import ctypes
-import json
 import os
 import time
 
 from screen_capture import _int, capture_screenshot_data_url, desktop_bounds
+from tool_arguments import parse_tool_arguments
 from vision_fallback import analyze_images_with_aux_model
 
 
@@ -11,17 +11,6 @@ _TOOL_PREFIX = "computer_"
 _LAST_SCREENSHOT_METRICS: dict[str, int] = {}
 _MAX_TYPE_CHARS = 2000
 _TYPE_CHUNK_SIZE = 50
-
-
-def _parse_arguments(arguments):
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments or "{}")
-        except json.JSONDecodeError:
-            arguments = {}
-    if not isinstance(arguments, dict):
-        arguments = {}
-    return arguments
 
 
 def computer_tools(config: dict) -> list[dict]:
@@ -112,7 +101,7 @@ def is_computer_tool_name(name: str) -> bool:
 
 
 def run_computer_tool(name: str, arguments, config: dict) -> dict:
-    arguments = _parse_arguments(arguments)
+    arguments = parse_tool_arguments(arguments)
     if not bool(config.get("computer_use_enabled", False)):
         return _result("Computer Use is disabled in settings.")
     cancel_event = config.get("_cancel_event")

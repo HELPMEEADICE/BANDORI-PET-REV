@@ -98,8 +98,6 @@ class ModelManager:
     def _scan_model_keys(self):
         self._model_paths = {}
         self._character_images = {}
-        if not models_dir_exists():
-            return
         for root in model_search_dirs():
             if not root.is_dir():
                 continue
@@ -115,8 +113,6 @@ class ModelManager:
                 self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=override)
 
             for entry in entries:
-                if entry.name.startswith("_"):
-                    continue
                 if not (entry.is_file() and entry.suffix.lower() == ".zst"):
                     continue
                 character = entry.stem
@@ -154,8 +150,6 @@ class ModelManager:
     def _scan(self):
         self._model_paths = {}
         self._character_images = {}
-        if not models_dir_exists():
-            return
         for root in model_search_dirs():
             if not root.is_dir():
                 continue
@@ -360,13 +354,7 @@ class ModelManager:
 
     def get_character_image_path(self, character: str) -> str:
         image_path = self._character_images.get(character, "")
-        if image_path:
-            return "" if is_virtual_path(image_path) else image_path
-        for root in model_lookup_dirs():
-            image_path = self._find_dir_character_image(root / character)
-            if image_path:
-                return image_path
-        return ""
+        return "" if is_virtual_path(image_path) else image_path
 
     def get_character_image_data(self, character: str) -> bytes:
         image_path = self._character_images.get(character, "")

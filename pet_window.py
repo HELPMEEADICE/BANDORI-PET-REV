@@ -2397,93 +2397,9 @@ class PetWindow(QWidget):
                 return name
         return ""
 
-    def _apply_settings(self, data: dict):
+    def _apply_settings(self, data: dict, previous_models_signature=None):
         if data.get("language"):
             set_language(str(data["language"]))
-        compact_keys = {
-            "compact_ai_window_enabled",
-            "compact_ai_window_opacity",
-            "compact_ai_window_font_size",
-            "compact_ai_window_background_color",
-            "compact_ai_window_text_color",
-            "ai_event_overlay_enabled",
-            "chat_integration_enabled",
-            "chat_integration_overlay_enabled",
-            "chat_integration_include_context",
-            "chat_integration_port",
-            "chat_integration_token",
-            "user_avatar_color",
-            "user_avatar_path",
-            "language",
-            "chat_window_normal_window",
-            "obs_window_capture_compatible",
-            "hide_live2d_model",
-            "live2d_idle_actions_enabled",
-            "live2d_random_actions_enabled",
-            "live2d_head_tracking_enabled",
-            "live2d_mutual_gaze_enabled",
-            "emotion_behavior_enabled",
-            "poke_motion",
-            "poke_expression",
-            "move_all_roles_together",
-        }
-
-        if self._cfg and any(key in data for key in compact_keys):
-            self._cfg.load()
-            if "compact_ai_window_enabled" in data:
-                self._cfg.set("compact_ai_window_enabled", bool(data["compact_ai_window_enabled"]))
-            if "compact_ai_window_opacity" in data:
-                self._cfg.set("compact_ai_window_opacity", data["compact_ai_window_opacity"])
-            if "compact_ai_window_font_size" in data:
-                self._cfg.set("compact_ai_window_font_size", data["compact_ai_window_font_size"])
-            if "compact_ai_window_background_color" in data:
-                self._cfg.set("compact_ai_window_background_color", data["compact_ai_window_background_color"])
-            if "compact_ai_window_text_color" in data:
-                self._cfg.set("compact_ai_window_text_color", data["compact_ai_window_text_color"])
-            if "ai_event_overlay_enabled" in data:
-                self._cfg.set("ai_event_overlay_enabled", bool(data["ai_event_overlay_enabled"]))
-            if "chat_integration_overlay_enabled" in data:
-                self._cfg.set("chat_integration_overlay_enabled", bool(data["chat_integration_overlay_enabled"]))
-            if "chat_integration_enabled" in data:
-                self._cfg.set("chat_integration_enabled", bool(data["chat_integration_enabled"]))
-            if "chat_integration_include_context" in data:
-                self._cfg.set("chat_integration_include_context", bool(data["chat_integration_include_context"]))
-            if "chat_integration_port" in data:
-                self._cfg.set("chat_integration_port", data["chat_integration_port"])
-            if "chat_integration_token" in data:
-                self._cfg.set("chat_integration_token", data["chat_integration_token"])
-            if "chat_window_normal_window" in data:
-                self._cfg.set("chat_window_normal_window", bool(data["chat_window_normal_window"]))
-            if "obs_window_capture_compatible" in data:
-                self._cfg.set(
-                    "obs_window_capture_compatible",
-                    bool(data["obs_window_capture_compatible"]),
-                )
-            if "hide_live2d_model" in data:
-                self._cfg.set("hide_live2d_model", bool(data["hide_live2d_model"]))
-            if "live2d_idle_actions_enabled" in data:
-                self._cfg.set("live2d_idle_actions_enabled", bool(data["live2d_idle_actions_enabled"]))
-            if "live2d_random_actions_enabled" in data:
-                self._cfg.set("live2d_random_actions_enabled", bool(data["live2d_random_actions_enabled"]))
-            if "live2d_head_tracking_enabled" in data:
-                self._cfg.set("live2d_head_tracking_enabled", bool(data["live2d_head_tracking_enabled"]))
-            if "live2d_mutual_gaze_enabled" in data:
-                self._cfg.set("live2d_mutual_gaze_enabled", bool(data["live2d_mutual_gaze_enabled"]))
-            if "emotion_behavior_enabled" in data:
-                self._cfg.set("emotion_behavior_enabled", bool(data["emotion_behavior_enabled"]))
-            if "poke_motion" in data:
-                self._cfg.set("poke_motion", str(data["poke_motion"] or ""))
-            if "poke_expression" in data:
-                self._cfg.set("poke_expression", str(data["poke_expression"] or ""))
-            if "move_all_roles_together" in data:
-                self._cfg.set("move_all_roles_together", bool(data["move_all_roles_together"]))
-            if "user_avatar_color" in data:
-                self._cfg.set("user_avatar_color", data["user_avatar_color"])
-            if "user_avatar_path" in data:
-                self._cfg.set("user_avatar_path", data["user_avatar_path"])
-            if data.get("language"):
-                self._cfg.set("language", str(data["language"]))
-            self._persist_runtime_config()
         if "compact_ai_window_enabled" in data:
             self._compact_ai_window_enabled = bool(data["compact_ai_window_enabled"])
             if not self._compact_ai_window_enabled:
@@ -2547,12 +2463,7 @@ class PetWindow(QWidget):
             )
             self._live2d_widget.set_lip_sync_max_open(self._live2d_lip_sync_max_open)
         self._sync_compact_ai_window(allow_create=True)
-        if self._cfg and ("models" in data or "model_action_settings" in data):
-            self._cfg.load()
-        if "model_action_settings" in data and self._cfg:
-            self._cfg.set("model_action_settings", data["model_action_settings"])
         if "models" in data and self._cfg:
-            previous_models_signature = self._models_runtime_signature(self._cfg.get("models", []))
             self._settings_models_updated = True
             next_group_characters = self._chat_group_characters_from_models(data["models"])
             if next_group_characters:
@@ -2560,9 +2471,11 @@ class PetWindow(QWidget):
                 self._ensure_current_character_in_group()
                 self._restore_layer_order_from_config()
                 self._layer_index = self._compute_layer_index()
-            self._cfg.set("models", data["models"])
-            self._persist_runtime_config()
-            models_runtime_changed = self._models_runtime_signature(data["models"]) != previous_models_signature
+            models_runtime_changed = (
+                previous_models_signature is not None
+                and self._models_runtime_signature(data["models"])
+                != previous_models_signature
+            )
         else:
             models_runtime_changed = False
         if models_runtime_changed:
@@ -2575,7 +2488,8 @@ class PetWindow(QWidget):
             )
         if data.get("reset_pet_positions"):
             self.reset_position()
-        self._save_config()
+            self._position_save_timer.stop()
+            self._save_position_config()
 
     def _live2d_size(self):
         scale = self._live2d_scale / 100.0
@@ -2969,7 +2883,6 @@ class PetWindow(QWidget):
         return {
             "x": int(gx),
             "y": int(gy),
-            "fps": int(self._fps),
             "locked": bool(self._live2d_widget._drag_locked),
             "items": [
                 {
@@ -3377,11 +3290,20 @@ class PetWindow(QWidget):
                 pass
         elif line.startswith("SETTINGS\t"):
             try:
-                if self._cfg:
-                    self._cfg.load()
-                self._apply_settings(json.loads(line.split("\t", 1)[1]))
+                data = json.loads(line.split("\t", 1)[1])
             except json.JSONDecodeError:
                 pass
+            else:
+                if not isinstance(data, dict):
+                    return
+                previous_models_signature = None
+                if self._cfg:
+                    if "models" in data:
+                        previous_models_signature = self._models_runtime_signature(
+                            self._cfg.get("models", [])
+                        )
+                    self._cfg.load()
+                self._apply_settings(data, previous_models_signature)
         elif line.startswith("AI_EVENT\t"):
             try:
                 self._handle_ai_event(json.loads(line.split("\t", 1)[1]))

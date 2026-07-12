@@ -715,6 +715,22 @@ def _tool_support_is_required(web_search: bool, tool_config: dict | None = None)
     )
 
 
+def _auto_continue_limit(tool_config: dict) -> int:
+    if not tool_config.get("llm_auto_continue_enabled", False):
+        return 0
+    try:
+        return max(1, min(20, int(tool_config.get("llm_auto_continue_max_turns", 5))))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _prefetch_web_search_context(tool_config: dict) -> str:
+    latest_user_text = str(tool_config.get("_latest_user_text", "") or "").strip()
+    if not should_prefetch_web_search(latest_user_text):
+        return ""
+    return web_search_prefetch_context(latest_user_text, tool_config)
+
+
 class _CancelableNetworkWorker(QThread):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -836,11 +852,11 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 messages = with_local_tool_system_hint(messages, self._tool_config)
             if use_tools and self._web_search:
                 messages = with_web_search_system_hint(messages, self._show_search_sources)
-                prefetch_context = self._prefetch_web_search_context()
+                prefetch_context = _prefetch_web_search_context(self._tool_config)
                 if prefetch_context:
                     self._remember_search_sources(prefetch_context)
                     messages.append({"role": "system", "content": prefetch_context})
-            auto_continue_limit = self._auto_continue_limit()
+            auto_continue_limit = _auto_continue_limit(self._tool_config)
             auto_continue_call_limit = max(0, auto_continue_limit - 1)
             max_tool_rounds = max(8 if self._tool_config.get("computer_use_enabled", False) else 3, auto_continue_limit)
             auto_continue_count = 0
@@ -973,20 +989,6 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         except Exception as e:
             if not self._cancelled:
                 self.error.emit(self._error_with_tool_context(str(e)))
-
-    def _auto_continue_limit(self) -> int:
-        if not self._tool_config.get("llm_auto_continue_enabled", False):
-            return 0
-        try:
-            return max(1, min(20, int(self._tool_config.get("llm_auto_continue_max_turns", 5))))
-        except (TypeError, ValueError):
-            return 5
-
-    def _prefetch_web_search_context(self) -> str:
-        latest_user_text = str(self._tool_config.get("_latest_user_text", "") or "").strip()
-        if not should_prefetch_web_search(latest_user_text):
-            return ""
-        return web_search_prefetch_context(latest_user_text, self._tool_config)
 
     def _stream_once(self, messages: list[dict], use_tools: bool):
         body = {
@@ -1196,7 +1198,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 messages = with_local_tool_system_hint(messages, self._tool_config)
             if use_tools and self._web_search:
                 messages = with_web_search_system_hint(messages, self._show_search_sources)
-                prefetch_context = self._prefetch_web_search_context()
+                prefetch_context = _prefetch_web_search_context(self._tool_config)
                 if prefetch_context:
                     self._remember_search_sources(prefetch_context)
                     messages.append({"role": "system", "content": prefetch_context})
@@ -1205,7 +1207,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 self._web_search if use_tools else False,
                 self._tool_config if use_tools else {},
             )
-            auto_continue_limit = self._auto_continue_limit()
+            auto_continue_limit = _auto_continue_limit(self._tool_config)
             auto_continue_call_limit = max(0, auto_continue_limit - 1)
             max_tool_rounds = max(
                 8 if self._tool_config.get("computer_use_enabled", False) else 3,
@@ -1366,28 +1368,6 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         except Exception as e:
             if not self._cancelled:
                 self.error.emit(self._error_with_tool_context(str(e)))
-
-    def _auto_continue_limit(self) -> int:
-        if not self._tool_config.get("llm_auto_continue_enabled", False):
-            return 0
-        try:
-            return max(
-                1,
-                min(
-                    20,
-                    int(self._tool_config.get("llm_auto_continue_max_turns", 5)),
-                ),
-            )
-        except (TypeError, ValueError):
-            return 5
-
-    def _prefetch_web_search_context(self) -> str:
-        latest_user_text = str(
-            self._tool_config.get("_latest_user_text", "") or ""
-        ).strip()
-        if not should_prefetch_web_search(latest_user_text):
-            return ""
-        return web_search_prefetch_context(latest_user_text, self._tool_config)
 
     def _stream_once(
         self,
