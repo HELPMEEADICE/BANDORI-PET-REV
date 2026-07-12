@@ -27,6 +27,20 @@ def _queue_memory_size(slot_count: int, slot_size: int) -> int:
     return _HEADER.size + int(slot_count) * (_SLOT_HEADER.size + int(slot_size))
 
 
+def _reclaim_stale_segment(key: str) -> bool:
+    # A force-killed owner leaves the System V segment behind on macOS/Linux:
+    # the kernel detaches it but never removes it, so the next create() fails
+    # with AlreadyExists forever. Attaching and detaching once triggers Qt's
+    # cleanup, which destroys the segment when the attach count drops to zero.
+    # A segment still attached by a live process survives the detach, so this
+    # never tears down a queue that is actually in use.
+    memory = QSharedMemory(key)
+    if not memory.attach():
+        return False
+    memory.detach()
+    return True
+
+
 @dataclass(frozen=True)
 class IpcEnvelope:
     sender_id: str
@@ -117,7 +131,15 @@ class SharedMemoryLineQueue:
         for candidate_count in candidates:
             memory = QSharedMemory(key)
             size = _queue_memory_size(candidate_count, slot_size)
-            if memory.create(size):
+            created = memory.create(size)
+            if (
+                not created
+                and memory.error() == QSharedMemory.SharedMemoryError.AlreadyExists
+                and _reclaim_stale_segment(key)
+            ):
+                memory = QSharedMemory(key)
+                created = memory.create(size)
+            if created:
                 queue = cls(
                     key,
                     memory,
