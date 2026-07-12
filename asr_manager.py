@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from process_utils import app_runtime_dir
+from process_utils import app_base_dir, app_runtime_dir
 
 
 _NUMPY_MODULE = None
