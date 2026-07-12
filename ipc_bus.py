@@ -86,7 +86,7 @@ def attach_main_ipc_queues(ipc: dict) -> bool:
             ipc["control"] = SharedMemoryLineQueue.attach(ipc_control_queue_key())
         return True
     except Exception:
-        for key in ("inbound", "broadcast"):
+        for key in ("inbound", "broadcast", "control"):
             queue = ipc.get(key)
             if queue is not None:
                 queue.close()
