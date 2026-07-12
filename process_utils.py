@@ -237,6 +237,49 @@ def app_data_dir() -> Path:
     return path
 
 
+_FROZEN_RUNTIME_PATHS_CONFIGURED = False
+_FROZEN_DLL_DIRECTORY_HANDLES = []
+
+
+def configure_frozen_runtime_paths() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    global _FROZEN_RUNTIME_PATHS_CONFIGURED
+    if _FROZEN_RUNTIME_PATHS_CONFIGURED:
+        return
+    _FROZEN_RUNTIME_PATHS_CONFIGURED = True
+
+    base_dir = app_base_dir()
+    lib_dir = base_dir / "lib"
+    pyside_dir = lib_dir / "PySide6"
+    shiboken_dir = lib_dir / "shiboken6"
+    candidate_dirs = [base_dir, lib_dir, pyside_dir, shiboken_dir]
+    existing_dirs = [str(path) for path in candidate_dirs if path.is_dir()]
+
+    if existing_dirs:
+        current_path = os.environ.get("PATH", "")
+        path_parts = [part for part in current_path.split(os.pathsep) if part]
+        known = {part.lower() for part in path_parts}
+        prepend = [part for part in existing_dirs if part.lower() not in known]
+        if prepend:
+            os.environ["PATH"] = (
+                os.pathsep.join([*prepend, current_path])
+                if current_path
+                else os.pathsep.join(prepend)
+            )
+
+    if os.name == "nt" and hasattr(os, "add_dll_directory"):
+        for directory in existing_dirs:
+            try:
+                _FROZEN_DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(directory))
+            except OSError:
+                pass
+
+    qt_plugins = pyside_dir / "plugins"
+    if qt_plugins.is_dir():
+        os.environ.setdefault("QT_PLUGIN_PATH", str(qt_plugins))
+
+
 def app_runtime_dir(base_dir: Path | str | None = None, *, create: bool = True) -> Path:
     if base_dir is not None and (not getattr(sys, "frozen", False) or sys.platform != "darwin"):
         root = Path(base_dir)
@@ -546,6 +589,7 @@ def run_off_gui_thread(fn):
 def bootstrap_app() -> tuple[str, object]:
     """Common startup preamble: debug logging, base dir, GPU config."""
     configure_debug_logging()
+    configure_frozen_runtime_paths()
     base_dir = str(app_base_dir())
     from config_manager import ConfigManager
     from gpu_acceleration import configure_qt_opengl_environment, is_gpu_acceleration_enabled

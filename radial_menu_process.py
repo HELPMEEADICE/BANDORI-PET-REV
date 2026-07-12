@@ -4,9 +4,18 @@ import os
 import select
 import sys
 
-from process_utils import app_base_dir, configure_debug_logging, ensure_xwayland, install_parent_death_watch, interaction_trace, set_windows_app_user_model_id
+from process_utils import (
+    app_base_dir,
+    configure_debug_logging,
+    configure_frozen_runtime_paths,
+    ensure_xwayland,
+    install_parent_death_watch,
+    interaction_trace,
+    set_windows_app_user_model_id,
+)
 
 configure_debug_logging()
+configure_frozen_runtime_paths()
 
 BASE_DIR = str(app_base_dir())
 

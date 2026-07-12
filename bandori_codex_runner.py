@@ -7,9 +7,10 @@ from typing import Any
 
 from ai_event_bus import publish_ai_event
 from i18n_manager import detect_system_language, set_language, tr as _tr
-from process_utils import app_base_dir, configure_debug_logging
+from process_utils import app_base_dir, configure_debug_logging, configure_frozen_runtime_paths
 
 configure_debug_logging()
+configure_frozen_runtime_paths()
 
 
 def _build_parser() -> argparse.ArgumentParser:

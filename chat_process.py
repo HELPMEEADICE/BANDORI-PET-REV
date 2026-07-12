@@ -6,6 +6,7 @@ import sys
 from process_utils import (
     app_base_dir,
     app_icon_path,
+    configure_frozen_runtime_paths,
     configure_debug_logging,
     ensure_taskbar_icon_identity,
     install_parent_death_watch,
@@ -13,6 +14,7 @@ from process_utils import (
 )
 
 configure_debug_logging()
+configure_frozen_runtime_paths()
 
 BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")

@@ -3,9 +3,10 @@ import json
 import sys
 
 from ai_event_bus import publish_ai_event
-from process_utils import configure_debug_logging
+from process_utils import configure_debug_logging, configure_frozen_runtime_paths
 
 configure_debug_logging()
+configure_frozen_runtime_paths()
 
 
 def _build_parser() -> argparse.ArgumentParser:

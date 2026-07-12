@@ -521,6 +521,7 @@ build_exe_options = {
         "lupa",
         "PySide6.QtCore",
         "PySide6.QtGui",
+        "PySide6.QtNetwork",
         "PySide6.QtOpenGL",
         "PySide6.QtOpenGLWidgets",
         "PySide6.QtWidgets",

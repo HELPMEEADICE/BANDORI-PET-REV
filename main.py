@@ -16,11 +16,11 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from config_manager import DEFAULTS
 from startup_manager import repair_startup_command
 from app_info import APP_NAME
 
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
+from config_manager import DEFAULTS
 APP_AUMID = APP_NAME
 try:
     repair_startup_command()
