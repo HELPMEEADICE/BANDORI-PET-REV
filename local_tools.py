@@ -1,5 +1,4 @@
 import base64
-import gzip
 import ipaddress
 import json
 import re
@@ -7,6 +6,7 @@ import socket
 import urllib.parse
 import urllib.request
 import urllib.error
+import zlib
 from datetime import datetime
 from html import unescape
 
@@ -848,6 +848,17 @@ def _open_public_url(request, timeout: int):
     ).open(request, timeout=timeout)
 
 
+def _gunzip_limited(data: bytes, max_bytes: int) -> bytes:
+    # A hostile server can send a small gzip body that inflates to hundreds of
+    # megabytes, so never trust the payload's decompressed size. Truncating is
+    # safe here: downstream extraction keeps at most a few thousand characters.
+    decompressor = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+    try:
+        return decompressor.decompress(data, max(1, int(max_bytes)))
+    except zlib.error:
+        return b""
+
+
 def _fetch_page_text(url: str, max_chars: int = 6000) -> str:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in ("http", "https"):
@@ -872,9 +883,10 @@ def _fetch_page_text(url: str, max_chars: int = 6000) -> str:
             if content_type and not any(token in content_type for token in ("text/", "html", "xml", "json")):
                 return ""
             charset = resp.headers.get_content_charset() or "utf-8"
-            raw = resp.read(max(250_000, max_chars * 40))
+            read_cap = max(250_000, max_chars * 40)
+            raw = resp.read(read_cap)
             if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
-                raw = gzip.decompress(raw)
+                raw = _gunzip_limited(raw, read_cap * 16)
             return raw.decode(charset, errors="replace")
 
     return run_off_gui_thread(fetch)
@@ -945,7 +957,7 @@ def _fetch_page_excerpt(url: str) -> str:
             charset = resp.headers.get_content_charset() or "utf-8"
             raw = resp.read(250_000)
             if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
-                raw = gzip.decompress(raw)
+                raw = _gunzip_limited(raw, 4_000_000)
         text = raw.decode(charset, errors="replace")
     except (OSError, UnicodeError, urllib.error.URLError, urllib.error.HTTPError):
         return ""
