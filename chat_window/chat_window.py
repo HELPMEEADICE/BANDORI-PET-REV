@@ -379,7 +379,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._vision_fallback_worker = None
         self._memory_workers: list[NonStreamWorker] = []
         self._memory_generation = 0
-        self._pending_vision_send: tuple[str, list[dict]] | None = None
+        self._pending_vision_send: tuple[str, list[dict], MessageBubble | None] | None = None
         self._plan_divider = None
         self._active_response_character = character
         self._last_user_text = ""
@@ -388,6 +388,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._last_group_user_message_id: int | None = None
         self._raw_image_inline_message_id: int | None = None
         self._raw_image_inline_group_message_id: int | None = None
+        self._response_save_error_message = ""
         self._closing = False
         self._immediate_shutdown = False
         self._close_animating = False
@@ -3508,6 +3509,73 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._relayout_message_bubbles()
         self._scroll_to_bottom()
 
+    def _remove_message_bubble(self, bubble: MessageBubble | None):
+        if bubble is None:
+            return
+        try:
+            self._msg_layout.removeWidget(bubble)
+            bubble.setParent(None)
+            bubble.deleteLater()
+            self._relayout_message_bubbles()
+        except RuntimeError:
+            pass
+
+    def _restore_unsaved_user_draft(self, text: str, attachments: list[dict]):
+        self._input.setPlainText(text)
+        cursor = self._input.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self._input.setTextCursor(cursor)
+        self._pending_attachments = [dict(item) for item in attachments if isinstance(item, dict)]
+        self._refresh_attachment_previews()
+        self._update_attachment_hint()
+        self._input.setFocus()
+
+    def _handle_user_message_save_failed(
+        self,
+        error: Exception,
+        text: str,
+        attachments: list[dict] | None = None,
+        bubble: MessageBubble | None = None,
+        *,
+        restore_draft: bool = True,
+    ):
+        self._hide_plan_divider()
+        self._pending_vision_send = None
+        self._remove_message_bubble(bubble)
+        self._last_user_message_id = None
+        self._last_group_user_message_id = None
+        self._last_user_text = ""
+        self._pending_interaction_context = ""
+        self._clear_raw_image_inline_state()
+        self._set_busy(False)
+        if restore_draft:
+            self._restore_unsaved_user_draft(text, list(attachments or []))
+        if restore_draft:
+            message = _tr(
+                "ChatWindow.user_message_save_failed",
+                default="消息保存失败，已恢复到输入框，尚未发送给模型：{error}",
+                error=str(error),
+            )
+        else:
+            message = _tr(
+                "ChatWindow.user_message_save_failed_no_draft",
+                default="消息保存失败，尚未发送给模型：{error}",
+                error=str(error),
+            )
+        self._composer_hint.setText(message)
+
+    def _handle_assistant_message_save_failed(self, error: Exception):
+        self._response_save_error_message = _tr(
+            "ChatWindow.assistant_message_save_failed",
+            default="回复已显示，但保存到聊天记录失败，重启后可能看不到这条回复：{error}",
+            error=str(error),
+        )
+        self._composer_hint.setText(self._response_save_error_message)
+        try:
+            self._refresh_group_list()
+        except Exception:
+            pass
+
     def _connect_message_bubble(self, bubble: MessageBubble):
         bubble.avatar_double_clicked.connect(self._on_message_avatar_double_clicked)
 
@@ -3545,6 +3613,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._response_save_error_message = ""
         try:
             publish_user_poke(character, source="chat")
         except Exception:
@@ -3564,27 +3633,27 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._scroll_to_bottom_for_stream()
 
         if self._is_group_chat:
-            self._last_group_user_message_id = self._db.add_group_message(
-                self._conversation_key,
-                self._ensure_group_conversation_id(),
-                "user",
+            if self._commit_user_message(
                 text,
-                user_key=self._chat_user_key,
-            )
-            self._last_user_message_id = None
-            self._last_user_text = text
-            self._refresh_group_list()
-            self._group_spoken = []
-            self._start_group_plan(text, priority_character=character)
+                [],
+                start_response=False,
+                user_bubble=user_bubble,
+                restore_draft_on_failure=False,
+                clear_pending_attachments=False,
+            ):
+                self._group_spoken = []
+                self._start_group_plan(text, priority_character=character)
             return
 
-        if self._conv_id is None:
-            self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
-        self._last_user_message_id = self._db.add_message(self._conv_id, "user", text)
-        self._last_group_user_message_id = None
-        self._last_user_text = text
-        self._refresh_group_list()
-        self._start_response_for_character(character, [])
+        if self._commit_user_message(
+            text,
+            [],
+            start_response=False,
+            user_bubble=user_bubble,
+            restore_draft_on_failure=False,
+            clear_pending_attachments=False,
+        ):
+            self._start_response_for_character(character, [])
 
     def _generation_busy(self) -> bool:
         return bool(
@@ -3618,6 +3687,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._auto_round = 0
 
         vision_worker = self._vision_fallback_worker
+        vision_pending = self._pending_vision_send
         if vision_worker is not None:
             vision_worker.requestInterruption()
             vision_worker.quit()
@@ -3627,6 +3697,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._pending_vision_send = None
         self._hide_plan_divider()
         self._clear_raw_image_inline_state()
+        if vision_pending:
+            try:
+                _text, _attachments, user_bubble = vision_pending
+            except ValueError:
+                user_bubble = None
+            self._remove_message_bubble(user_bubble)
 
         self._stream_flush_timer.stop()
         current_text = (self._visible_stream_text + self._stream_buffer).strip()
@@ -3644,6 +3720,16 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._set_busy(False)
         if clear_input:
             self._input.clear()
+        if vision_pending:
+            try:
+                text, attachments, _user_bubble = vision_pending
+                self._restore_unsaved_user_draft(text, list(attachments or []))
+                self._composer_hint.setText(_tr(
+                    "ChatWindow.pending_send_interrupted",
+                    default="已取消发送，消息已恢复到输入框。",
+                ))
+            except ValueError:
+                pass
         self._input.setFocus()
 
     def _relationship_status_text(self, sections: tuple[str, ...] | None = None) -> str:
@@ -4404,6 +4490,31 @@ class ChatWindow(ChatWindowMixin, QWidget):
         except (OSError, RuntimeError):
             pass
 
+    def _cleanup_unsent_pending_attachments(
+        self,
+        extra_attachments: list[dict] | None = None,
+        include_current: bool = True,
+        include_vision_pending: bool = True,
+    ):
+        pending = list(getattr(self, "_pending_attachments", []) or []) if include_current else []
+        if extra_attachments:
+            pending.extend(extra_attachments)
+        vision_pending = getattr(self, "_pending_vision_send", None) if include_vision_pending else None
+        if vision_pending:
+            pending.extend(list(vision_pending[1] or []))
+            self._pending_vision_send = None
+        if include_current:
+            self._pending_attachments = []
+        seen: set[str] = set()
+        for attachment in pending:
+            if not isinstance(attachment, dict):
+                continue
+            path = str(attachment.get("path", "") or "")
+            if path in seen:
+                continue
+            seen.add(path)
+            self._delete_pending_attachment_copy(attachment)
+
     def _message_search_sources(self, tool_trace) -> list[dict]:
         if not self._show_search_sources():
             return []
@@ -5160,6 +5271,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._response_save_error_message = ""
 
         user_bubble = MessageBubble(
             text,
@@ -5176,10 +5288,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._scroll_to_bottom_for_stream()
 
         if self._attachments_need_aux_vision(attachments):
-            self._start_aux_vision_fallback(text, attachments)
+            self._start_aux_vision_fallback(text, attachments, user_bubble)
             return
 
-        self._commit_user_message(text, attachments)
+        self._commit_user_message(text, attachments, user_bubble=user_bubble)
 
     def _on_send_button_clicked(self):
         if self._generation_busy():
@@ -5187,7 +5299,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         self._send_message()
 
-    def _start_aux_vision_fallback(self, text: str, attachments: list[dict]):
+    def _start_aux_vision_fallback(self, text: str, attachments: list[dict], user_bubble: MessageBubble | None = None):
         data_urls = []
         normalized = self._normalize_attachments(attachments)
         for item in normalized:
@@ -5197,10 +5309,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
             if data_url:
                 data_urls.append(data_url)
         if not data_urls:
-            self._commit_user_message(text, attachments)
+            self._commit_user_message(text, attachments, user_bubble=user_bubble)
             return
         self._show_aux_vision_divider()
-        self._pending_vision_send = (text, [dict(item) for item in attachments])
+        self._pending_vision_send = (text, [dict(item) for item in attachments], user_bubble)
         self._vision_fallback_worker = AuxVisionFallbackWorker(
             {
                 "llm_api_url": self._cfg.get("llm_api_url", ""),
@@ -5236,7 +5348,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not pending:
             self._set_busy(False)
             return
-        text, attachments = pending
+        text, attachments, user_bubble = pending
         summary = str(summary or "").strip()
         if summary:
             attachments = [
@@ -5248,9 +5360,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         else:
             empty_note = _tr("ChatWindow.vision_fallback_empty", default="快速视觉模型没有返回图片观察结果。")
             self._composer_hint.setText(empty_note)
-            self._commit_user_message(text, attachments)
+            self._commit_user_message(text, attachments, user_bubble=user_bubble)
             return
-        self._commit_user_message(text, attachments)
+        self._commit_user_message(text, attachments, user_bubble=user_bubble)
 
     def _on_aux_vision_error(self, error_msg: str):
         if self.sender() is not self._vision_fallback_worker:
@@ -5262,47 +5374,89 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not pending:
             self._set_busy(False)
             return
-        text, attachments = pending
+        text, attachments, user_bubble = pending
         error_note = _tr("ChatWindow.vision_fallback_failed", default="快速视觉模型看图失败：{error}", error=error_msg)
         self._composer_hint.setText(error_note)
-        self._commit_user_message(text, attachments)
+        self._commit_user_message(text, attachments, user_bubble=user_bubble)
 
-    def _commit_user_message(self, text: str, attachments: list[dict], start_response: bool = True):
-        favorite_phrase, favorite_source_message, favorite_source_character = self._favorite_request_target(text)
-        if self._is_group_chat:
-            self._last_group_user_message_id = self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "user", text, attachments=attachments, user_key=self._chat_user_key)
-            self._last_user_message_id = None
-            if self._attachments_have_raw_images(attachments):
-                self._raw_image_inline_group_message_id = self._last_group_user_message_id
-                self._raw_image_inline_message_id = None
+    def _commit_user_message(
+        self,
+        text: str,
+        attachments: list[dict],
+        start_response: bool = True,
+        user_bubble: MessageBubble | None = None,
+        restore_draft_on_failure: bool = True,
+        clear_pending_attachments: bool = True,
+    ) -> bool:
+        attachments = [dict(item) for item in attachments if isinstance(item, dict)]
+        try:
+            favorite_phrase, favorite_source_message, favorite_source_character = self._favorite_request_target(text)
+        except Exception:
+            favorite_phrase, favorite_source_message, favorite_source_character = "", None, ""
+        try:
+            if self._is_group_chat:
+                self._last_group_user_message_id = self._db.add_group_message(
+                    self._conversation_key,
+                    self._ensure_group_conversation_id(),
+                    "user",
+                    text,
+                    attachments=attachments,
+                    user_key=self._chat_user_key,
+                )
+                self._last_user_message_id = None
+                if self._attachments_have_raw_images(attachments):
+                    self._raw_image_inline_group_message_id = self._last_group_user_message_id
+                    self._raw_image_inline_message_id = None
+                else:
+                    self._clear_raw_image_inline_state()
             else:
-                self._clear_raw_image_inline_state()
-        else:
-            if self._conv_id is None:
-                self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
-            self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
-            self._last_group_user_message_id = None
-            if self._attachments_have_raw_images(attachments):
-                self._raw_image_inline_message_id = self._last_user_message_id
-                self._raw_image_inline_group_message_id = None
-            else:
-                self._clear_raw_image_inline_state()
-        self._store_requested_favorite(
-            favorite_phrase,
-            favorite_source_message,
-            favorite_source_character,
-            self._last_user_message_id,
-            self._last_group_user_message_id,
-        )
+                if self._conv_id is None:
+                    self._conv_id = self._db.create_conversation(self._conversation_key, user_key=self._chat_user_key)
+                self._last_user_message_id = self._db.add_message(self._conv_id, "user", text, attachments=attachments)
+                self._last_group_user_message_id = None
+                if self._attachments_have_raw_images(attachments):
+                    self._raw_image_inline_message_id = self._last_user_message_id
+                    self._raw_image_inline_group_message_id = None
+                else:
+                    self._clear_raw_image_inline_state()
+        except Exception as exc:
+            self._handle_user_message_save_failed(
+                exc,
+                text,
+                attachments,
+                user_bubble,
+                restore_draft=restore_draft_on_failure,
+            )
+            return False
+        try:
+            self._store_requested_favorite(
+                favorite_phrase,
+                favorite_source_message,
+                favorite_source_character,
+                self._last_user_message_id,
+                self._last_group_user_message_id,
+            )
+        except Exception as exc:
+            self._composer_hint.setText(_tr(
+                "ChatWindow.favorite_save_failed",
+                default="消息已发送，但收藏到回忆相册失败：{error}",
+                error=str(exc),
+            ))
+        if clear_pending_attachments:
+            self._pending_attachments = []
         self._last_user_text = text
-        self._refresh_group_list()
+        try:
+            self._refresh_group_list()
+        except Exception:
+            pass
         if not start_response:
-            return
+            return True
         if self._is_group_chat:
             self._group_spoken = []
             self._start_group_plan(text)
         else:
             self._start_response_for_character(self._character, [])
+        return True
 
     def _start_group_plan(self, user_text: str, priority_character: str = ""):
         self._show_plan_divider()
@@ -5634,13 +5788,37 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if llm_usage:
             tool_trace["llm_usage"] = llm_usage
         tool_trace = tool_trace or None
-        if self._is_group_chat:
-            self._db.add_group_message(self._conversation_key, self._ensure_group_conversation_id(), "assistant", stored, reasoning_clean, tool_trace=tool_trace, user_key=self._chat_user_key)
-            self._refresh_group_list()
-        elif self._conv_id:
-            self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
-            self._refresh_group_list()
-        self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
+        saved_response = False
+        try:
+            if self._is_group_chat:
+                self._db.add_group_message(
+                    self._conversation_key,
+                    self._ensure_group_conversation_id(),
+                    "assistant",
+                    stored,
+                    reasoning_clean,
+                    tool_trace=tool_trace,
+                    user_key=self._chat_user_key,
+                )
+                saved_response = True
+            elif self._conv_id:
+                self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
+                saved_response = True
+        except Exception as exc:
+            self._handle_assistant_message_save_failed(exc)
+        if saved_response:
+            try:
+                self._refresh_group_list()
+            except Exception:
+                pass
+            try:
+                self._apply_relationship_update(self._active_response_character, self._last_user_text, clean, acts)
+            except Exception as exc:
+                self._composer_hint.setText(_tr(
+                    "ChatWindow.relationship_update_failed",
+                    default="回复已保存，但关系/记忆更新失败：{error}",
+                    error=str(exc),
+                ))
         return clean
 
     def _start_auto_continue_bubble(self, character: str):
@@ -5684,6 +5862,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._group_spoken.append(self._model_manager.get_display_name(self._active_response_character))
             self._worker = None
             self._current_bubble = None
+            if self._response_save_error_message:
+                self._composer_hint.setText(self._response_save_error_message)
             if self._auto_active:
                 QTimer.singleShot(self._auto_delay_ms, self._start_next_group_response)
             else:
@@ -5691,6 +5871,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         else:
             self._clear_raw_image_inline_state()
             self._set_busy(False)
+            if self._response_save_error_message:
+                self._composer_hint.setText(self._response_save_error_message)
             self._input.setFocus()
             self._sync_input_height()
             self._worker = None
@@ -6141,6 +6323,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._memory_workers.clear()
         self._stream_flush_timer.stop()
         self._tts_player.stop()
+        self._cleanup_unsent_pending_attachments()
         self._db.close()
         self._save_window_geometry_config(getattr(self, "_pre_close_geometry", None))
         self.closed.emit()

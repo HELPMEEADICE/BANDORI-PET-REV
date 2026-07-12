@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from database_manager import DatabaseManager
+from settings_window.pages.chat_history import ChatHistoryModel, ChatHistoryPageMixin
 
 
 class ChatHistoryPaginationTest(unittest.TestCase):
@@ -81,6 +83,59 @@ class ChatHistoryPaginationTest(unittest.TestCase):
             [message["id"] for message in older],
             first_user_ids[-20:-10],
         )
+
+    def test_load_more_ignores_stale_generation_results(self):
+        harness = SimpleNamespace(
+            _history_search_generation=2,
+            _history_loading_more=True,
+            _history_data_model=ChatHistoryModel(),
+            _history_keyword_edit=SimpleNamespace(text=lambda: "new"),
+            _history_delegate=SimpleNamespace(set_keyword=lambda _keyword: None),
+            _history_qmodel=SimpleNamespace(append_items=lambda _items: (_ for _ in ()).throw(AssertionError("stale result appended"))),
+            _history_list_view=SimpleNamespace(set_has_more=lambda _value: None),
+            _build_chat_history_query_params=lambda offset=0, skip_count=False: {"keyword": "new"},
+            _enrich_record=lambda record: record,
+            _update_summary_label=lambda: None,
+        )
+        harness._chat_history_query_signature = ChatHistoryPageMixin._chat_history_query_signature
+
+        ChatHistoryPageMixin._on_load_more_finished(
+            harness,
+            {"records": [{"id": 1}], "has_more": True},
+            generation=1,
+            offset=0,
+            signature=("old", "", "", "", "", "", ""),
+        )
+
+        self.assertTrue(harness._history_loading_more)
+        self.assertEqual([], harness._history_data_model.records)
+
+    def test_load_more_ignores_stale_filter_signature_and_allows_retry(self):
+        harness = SimpleNamespace(
+            _history_search_generation=3,
+            _history_loading_more=True,
+            _history_data_model=ChatHistoryModel(),
+            _history_keyword_edit=SimpleNamespace(text=lambda: "new"),
+            _history_delegate=SimpleNamespace(set_keyword=lambda _keyword: None),
+            _history_qmodel=SimpleNamespace(append_items=lambda _items: (_ for _ in ()).throw(AssertionError("stale result appended"))),
+            _history_list_view=SimpleNamespace(set_has_more=lambda _value: None),
+            _build_chat_history_query_params=lambda offset=0, skip_count=False: {"keyword": "new"},
+            _enrich_record=lambda record: record,
+            _update_summary_label=lambda: None,
+        )
+        harness._history_data_model.records = [{"id": 0}]
+        harness._chat_history_query_signature = ChatHistoryPageMixin._chat_history_query_signature
+
+        ChatHistoryPageMixin._on_load_more_finished(
+            harness,
+            {"records": [{"id": 1}], "has_more": True},
+            generation=3,
+            offset=1,
+            signature=("old", "", "", "", "", "", ""),
+        )
+
+        self.assertFalse(harness._history_loading_more)
+        self.assertEqual([{"id": 0}], harness._history_data_model.records)
 
 
 if __name__ == "__main__":

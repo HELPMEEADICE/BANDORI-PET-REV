@@ -1031,6 +1031,8 @@ class DataManagementPageMixin:
 
 
     def _import_chat_database(self):
+        if self._chat_database_import_blocked_by_open_chat():
+            return
         path, _selected_filter = self._get_data_open_file_name(
             _tr("SettingsWindow.chat_data_import_dialog"),
             str(app_base_dir()),
@@ -1072,6 +1074,28 @@ class DataManagementPageMixin:
             )
         except Exception as exc:
             self._show_chat_data_error(exc)
+
+
+    def _chat_database_import_blocked_by_open_chat(self) -> bool:
+        try:
+            from chat_runtime import chat_window_is_active
+
+            active = chat_window_is_active()
+        except Exception:
+            active = False
+        if not active:
+            return False
+        InfoBar.warning(
+            _tr("SettingsWindow.chat_data_import_blocked_title", default="请先关闭聊天窗口"),
+            _tr(
+                "SettingsWindow.chat_data_import_blocked_content",
+                default="聊天数据库导入会覆盖当前记录。请先关闭所有聊天窗口，再重新导入。",
+            ),
+            duration=4500,
+            position=InfoBarPosition.TOP,
+            parent=self,
+        )
+        return True
 
 
     def _show_chat_data_error(self, exc: Exception):

@@ -6,11 +6,9 @@ import sys
 from process_utils import (
     app_base_dir,
     app_icon_path,
-    app_runtime_dir,
     configure_debug_logging,
     ensure_taskbar_icon_identity,
     install_parent_death_watch,
-    ipc_server_name,
     set_windows_app_user_model_id,
 )
 
@@ -26,6 +24,7 @@ from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
+from chat_runtime import chat_lock_path
 from chat_window import ChatWindow
 from config_manager import ConfigManager
 from ipc_bus import (
@@ -78,13 +77,6 @@ def _parse_group_characters(value: str, valid_characters: set[str], current_char
     except json.JSONDecodeError:
         return []
     return _normalize_characters(parsed, valid_characters, current_character)
-
-
-def _chat_lock_path() -> str:
-    runtime_dir = app_runtime_dir()
-    server_name = ipc_server_name() or APP_NAME
-    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in server_name)
-    return str(runtime_dir / f"{safe_name}-chat.lock")
 
 
 def _send_ipc_line(line: str):
@@ -149,7 +141,7 @@ def main():
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
 
-    chat_lock = QLockFile(_chat_lock_path())
+    chat_lock = QLockFile(str(chat_lock_path()))
     if not chat_lock.tryLock(100):
         _send_ipc_line("FOCUS_CHAT")
         return 0

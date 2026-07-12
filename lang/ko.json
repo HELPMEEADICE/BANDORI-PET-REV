@@ -1,4 +1,4 @@
-﻿{
+{
   "Reminder.save_failed_title": "알림 상태 저장 실패",
   "Reminder.save_failed_content": "이번 세션에서는 계속 실행되지만 재시작 후 이전 상태로 돌아갈 수 있습니다. 설정 파일 권한 또는 사용 중인지 확인하세요.",
   "PetWindow.runtime_save_failed_title": "화면 상태 저장 실패",
@@ -444,7 +444,7 @@
   "SettingsWindow.compact_window_saved_title": "저장됨",
   "SettingsWindow.compact_window_saved_content": "플로팅 창 설정이 저장되었습니다.",
   "SettingsWindow.chat_data_title": "채팅 데이터",
-  "SettingsWindow.chat_data_hint": "내보내기는 SQLite 데이터베이스를 백업합니다. 가져오기는 채팅 기록을 대체합니다. 먼저 채팅 창을 닫으세요.",
+  "SettingsWindow.chat_data_hint": "내보내기는 SQLite 데이터베이스를 백업합니다. 가져오기는 채팅 기록을 대체하므로 먼저 채팅 창을 닫아야 합니다.",
   "SettingsWindow.chat_data_export": "채팅 데이터베이스 내보내기",
   "SettingsWindow.chat_data_import": "채팅 데이터베이스 가져오기",
   "SettingsWindow.chat_data_export_dialog": "채팅 데이터베이스 내보내기",
@@ -453,9 +453,11 @@
   "SettingsWindow.chat_data_export_title": "내보내기 완료",
   "SettingsWindow.chat_data_export_content": "{conversations}개 대화, {messages}개 DM, {group_messages}개 그룹 메시지를 내보냈습니다.",
   "SettingsWindow.chat_data_import_confirm_title": "가져오기 확인",
-  "SettingsWindow.chat_data_import_confirm_content": "가져오면 현재 채팅 기록이 대체됩니다. 먼저 채팅 창을 닫으세요. 계속하시겠습니까?",
+  "SettingsWindow.chat_data_import_confirm_content": "가져오면 현재 채팅 기록이 대체됩니다. 모든 채팅 창을 닫았는지 확인한 뒤 계속하세요.",
   "SettingsWindow.chat_data_import_title": "가져오기 완료",
   "SettingsWindow.chat_data_import_content": "{conversations}개 대화, {messages}개 DM, {group_messages}개 그룹 메시지를 가져왔습니다. 변경 사항을 적용하려면 채팅 창을 다시 여세요.",
+  "SettingsWindow.chat_data_import_blocked_title": "먼저 채팅 창을 닫으세요",
+  "SettingsWindow.chat_data_import_blocked_content": "채팅 데이터베이스 가져오기는 현재 기록을 대체합니다. 모든 채팅 창을 닫은 뒤 다시 가져오세요.",
   "SettingsWindow.chat_data_failed_title": "작업 실패",
   "SettingsWindow.attachment_files_title": "채팅 파일 관리",
   "SettingsWindow.attachment_files_hint": "채팅에서 업로드된 이미지 및 파일을 관리합니다. 정리된 첨부 파일은 채팅 기록에서 더 이상 열 수 없습니다.",

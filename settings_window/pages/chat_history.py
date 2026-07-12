@@ -630,6 +630,7 @@ class ChatHistoryPageMixin:
         self._history_filter_cache = None
         self._history_loading_widget = None
         self._history_search_generation = 0
+        self._history_loading_more = False
         self._history_search_timer = QTimer(page)
         self._history_search_timer.setSingleShot(True)
         self._history_search_timer.setInterval(350)
@@ -848,6 +849,18 @@ class ChatHistoryPageMixin:
             "skip_count": skip_count,
         }
 
+    @staticmethod
+    def _chat_history_query_signature(params: dict) -> tuple:
+        return (
+            params.get("keyword", ""),
+            params.get("date_from", ""),
+            params.get("date_to", ""),
+            params.get("character", ""),
+            params.get("user_key", ""),
+            params.get("role", ""),
+            params.get("source", ""),
+        )
+
     def _start_history_worker(self, params: dict, *, on_result, on_error=None):
         if self._history_worker is not None and self._history_worker.isRunning():
             self._history_worker.finished.disconnect()
@@ -939,6 +952,7 @@ class ChatHistoryPageMixin:
         self._history_search_generation += 1
         gen = self._history_search_generation
         params = self._build_chat_history_query_params(offset=0, skip_count=True)
+        self._history_loading_more = False
         self._history_data_model.clear()
         self._history_qmodel.clear()
         self._show_history_loading()
@@ -971,6 +985,8 @@ class ChatHistoryPageMixin:
             self._update_summary_label()
 
     def _load_more_chat_history(self):
+        if self._history_loading_more:
+            return
         if not self._history_data_model.has_more:
             return
         if self._history_data_model.total >= 0 and self._history_data_model.shown_count >= self._history_data_model.total:
@@ -979,12 +995,40 @@ class ChatHistoryPageMixin:
         params = self._build_chat_history_query_params(
             offset=self._history_data_model.shown_count, skip_count=True,
         )
+        generation = self._history_search_generation
+        offset = self._history_data_model.shown_count
+        signature = self._chat_history_query_signature(params)
+        self._history_loading_more = True
         self._start_history_worker(
             params,
-            on_result=self._on_load_more_finished,
+            on_result=lambda result, _gen=generation, _offset=offset, _sig=signature: self._on_load_more_finished(
+                result,
+                _gen,
+                _offset,
+                _sig,
+            ),
+            on_error=lambda msg, _gen=generation: self._on_load_more_error(msg, _gen),
         )
 
-    def _on_load_more_finished(self, result):
+    def _on_load_more_error(self, msg: str, generation: int):
+        if generation == self._history_search_generation:
+            self._history_loading_more = False
+            self._on_history_query_error(msg)
+
+    def _on_load_more_finished(self, result, generation: int, offset: int, signature: tuple):
+        current_params = self._build_chat_history_query_params(
+            offset=self._history_data_model.shown_count,
+            skip_count=True,
+        )
+        if (
+            generation != self._history_search_generation
+            or offset != self._history_data_model.shown_count
+            or signature != self._chat_history_query_signature(current_params)
+        ):
+            if generation == self._history_search_generation:
+                self._history_loading_more = False
+            return
+        self._history_loading_more = False
         keyword = self._history_keyword_edit.text().strip()
         records = result["records"]
         self._history_data_model.total = result.get("total", self._history_data_model.total)

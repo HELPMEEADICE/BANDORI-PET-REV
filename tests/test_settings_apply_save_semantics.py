@@ -317,6 +317,25 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
         self.assertFalse(harness.emitted_settings)
         self.assertTrue(error_bar.called)
 
+    def test_chat_database_import_blocks_when_chat_window_is_active(self):
+        harness = _DataHarness()
+        opened_dialog = False
+
+        def mark_opened(*_args, **_kwargs):
+            nonlocal opened_dialog
+            opened_dialog = True
+            return "", ""
+
+        harness._get_data_open_file_name = mark_opened
+        with (
+            patch("chat_runtime.chat_window_is_active", return_value=True),
+            patch("settings_window.pages.data.InfoBar.warning") as warning_bar,
+        ):
+            harness._import_chat_database()
+
+        self.assertFalse(opened_dialog)
+        self.assertTrue(warning_bar.called)
+
     def test_apply_failure_does_not_emit_or_close(self):
         harness = _ApplyHarness()
         harness.fail_llm = True
