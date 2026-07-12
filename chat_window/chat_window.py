@@ -5782,6 +5782,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         reasoning_text: str,
         actions: list,
         llm_usage: dict | None = None,
+        tool_calls: list[dict] | None = None,
     ) -> str:
         self._merge_search_sources(actions)
         acts = merged_action_tags(
@@ -5832,6 +5833,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
             tool_trace["web_search_sources"] = self._stream_search_sources
         if llm_usage:
             tool_trace["llm_usage"] = llm_usage
+        if tool_calls:
+            tool_trace["tool_calls"] = tool_calls
         tool_trace = tool_trace or None
         saved_response = False
         try:
@@ -5896,11 +5899,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self.sender() is not self._worker:
             return
         usage = getattr(self._worker, "token_usage", None)
+        tool_calls = getattr(self._worker, "tool_trace", None)
         self._finalize_current_response_segment(
             full_text,
             reasoning_text,
             actions,
             llm_usage=usage,
+            tool_calls=tool_calls,
         )
 
         if self._is_group_chat:

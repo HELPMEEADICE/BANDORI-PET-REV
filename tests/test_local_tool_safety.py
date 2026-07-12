@@ -27,6 +27,52 @@ class LocalToolSafetyTests(unittest.TestCase):
     def test_web_fetch_rejects_invalid_port_without_raising(self):
         self.assertEqual("", local_tools._normalize_fetch_url("http://example.com:bad/path"))
 
+    def test_web_search_prefetch_is_disabled_in_favor_of_explicit_tool_calls(self):
+        self.assertFalse(local_tools.should_prefetch_web_search("search latest news"))
+        self.assertFalse(local_tools.should_prefetch_web_search("今天天气"))
+
+    def test_invalid_json_never_reaches_side_effecting_tool_handlers(self):
+        invalid = '{"value":'
+        with (
+            patch("local_tools._run_reminder_tool_call") as reminder,
+            patch("local_tools.call_mcp_tool") as mcp,
+            patch("local_tools.run_computer_tool") as computer,
+            patch("local_tools.web_search") as web_search,
+        ):
+            results = [
+                local_tools.run_local_tool_call(local_tools.CREATE_ALARM_TOOL_NAME, invalid),
+                local_tools.run_local_tool_call("mcp__server__tool", invalid),
+                local_tools.run_local_tool_call("computer_click", invalid),
+                local_tools.run_local_tool_call(local_tools.WEB_SEARCH_TOOL_NAME, invalid),
+            ]
+
+        reminder.assert_not_called()
+        mcp.assert_not_called()
+        computer.assert_not_called()
+        web_search.assert_not_called()
+        for result in results:
+            self.assertIn("was not executed", result["content"])
+            self.assertIn("invalid JSON", result["content"])
+
+    def test_non_object_tool_arguments_are_rejected(self):
+        for arguments in ('["value"]', '42', ['value'], None):
+            with self.subTest(arguments=arguments):
+                result = local_tools.run_local_tool_call(
+                    local_tools.POKE_USER_TOOL_NAME,
+                    arguments,
+                )
+                self.assertIn("must be a JSON object", result["content"])
+
+    def test_valid_json_object_is_dispatched_as_parsed_arguments(self):
+        with patch("local_tools.web_search", return_value="result") as web_search:
+            result = local_tools.run_local_tool_call(
+                local_tools.WEB_SEARCH_TOOL_NAME,
+                '{"query":"Bandori","max_results":2}',
+            )
+
+        web_search.assert_called_once_with("Bandori", max_results=2, engine="bing_cn")
+        self.assertEqual("result", result["content"])
+
     def test_computer_wait_is_cancelled_without_sleeping_full_duration(self):
         cancelled = threading.Event()
         cancelled.set()

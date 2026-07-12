@@ -1,14 +1,116 @@
 import json
 import io
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import ANY, patch
 
-from llm_manager import ResponsesStreamWorker
+from llm_manager import (
+    LLMStreamWorker,
+    ResponsesStreamWorker,
+    _normalize_stream_tool_calls,
+    _tool_support_is_required,
+)
 from local_tools import responses_tools
 
 
 class ResponsesToolRuntimeTests(unittest.TestCase):
+    def test_missing_tool_call_ids_are_unique_across_calls_and_rounds(self):
+        calls = [
+            {"function": {"name": "first", "arguments": "{}"}},
+            {"function": {"name": "second", "arguments": "{}"}},
+        ]
+
+        first_round = _normalize_stream_tool_calls(calls, id_prefix="call_0_")
+        second_round = _normalize_stream_tool_calls(calls, id_prefix="call_1_")
+
+        self.assertEqual(["call_0_0", "call_0_1"], [call["id"] for call in first_round])
+        self.assertEqual(["call_1_0", "call_1_1"], [call["id"] for call in second_round])
+        self.assertEqual(4, len({call["id"] for call in first_round + second_round}))
+
+    def test_provider_tool_call_id_is_preserved(self):
+        calls = [{
+            "id": "provider_call_id",
+            "function": {"name": "first", "arguments": "{}"},
+        }]
+
+        normalized = _normalize_stream_tool_calls(calls, id_prefix="call_3_")
+
+        self.assertEqual("provider_call_id", normalized[0]["id"])
+
+    def test_user_facing_tool_features_require_tool_support(self):
+        self.assertTrue(_tool_support_is_required(False, {}))
+        self.assertTrue(_tool_support_is_required(True, {}))
+        for config in (
+            {"llm_web_fetch_enabled": True},
+            {"llm_reminder_tools_enabled": True},
+            {"llm_mcp_enabled": True},
+            {"computer_use_enabled": True},
+        ):
+            self.assertTrue(_tool_support_is_required(False, config), config)
+        self.assertTrue(_tool_support_is_required(
+            False,
+            {"llm_auto_continue_enabled": True},
+        ))
+
+    def test_always_available_tools_do_not_silently_fallback(self):
+        worker = LLMStreamWorker(
+            "https://example.com/v1",
+            "key",
+            "model",
+            [{"role": "user", "content": "hello"}],
+            tool_config={"llm_auto_continue_enabled": True},
+        )
+        requests = []
+        errors = []
+
+        def fake_stream_once(_messages, use_tools):
+            requests.append(use_tools)
+            raise urllib.error.HTTPError(
+                "https://example.com/v1/chat/completions",
+                400,
+                "bad request",
+                {},
+                io.BytesIO(b'{"error":{"message":"tools unsupported"}}'),
+            )
+
+        worker._stream_once = fake_stream_once
+        worker.error.connect(errors.append)
+        worker.run()
+
+        self.assertEqual([True], requests)
+        self.assertEqual(1, len(errors))
+        self.assertIn("不支持 Chat Completions 工具调用", errors[0])
+
+    def test_required_tool_feature_does_not_silently_fallback(self):
+        worker = LLMStreamWorker(
+            "https://example.com/v1",
+            "key",
+            "model",
+            [{"role": "user", "content": "search"}],
+            tool_config={"llm_mcp_enabled": True},
+        )
+        requests = []
+        errors = []
+
+        def fake_stream_once(_messages, use_tools):
+            requests.append(use_tools)
+            raise urllib.error.HTTPError(
+                "https://example.com/v1/chat/completions",
+                400,
+                "bad request",
+                {},
+                io.BytesIO(b'{"error":{"message":"tools unsupported"}}'),
+            )
+
+        worker._stream_once = fake_stream_once
+        worker.error.connect(errors.append)
+        worker.run()
+
+        self.assertEqual([True], requests)
+        self.assertEqual(1, len(errors))
+        self.assertIn("不支持 Chat Completions 工具调用", errors[0])
+
     def test_responses_tools_flatten_local_function_schemas(self):
         tools = responses_tools(True, {})
 
@@ -49,6 +151,51 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
         self.assertEqual("call_1", call["id"])
         self.assertEqual("web_search", call["function"]["name"])
         self.assertEqual({"query": "news"}, json.loads(call["function"]["arguments"]))
+
+    def test_malformed_sse_json_is_not_silently_ignored(self):
+        for worker in (
+            LLMStreamWorker("https://example.com/v1", "key", "model", []),
+            ResponsesStreamWorker("https://example.com/v1/responses", "key", "model", []),
+        ):
+            with self.subTest(worker=type(worker).__name__):
+                with self.assertRaisesRegex(RuntimeError, "Invalid JSON"):
+                    worker._process_line('data: {"broken":')
+
+    def test_incomplete_tool_stream_is_rejected_before_execution(self):
+        chat = LLMStreamWorker("https://example.com/v1", "key", "model", [])
+        chat._open_response = lambda *_args: io.BytesIO(
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"name":"poke_user","arguments":"{}"}}]}}]}\n'
+        )
+        with self.assertRaisesRegex(RuntimeError, "completion marker"):
+            chat._stream_once([], True)
+
+        responses = ResponsesStreamWorker(
+            "https://example.com/v1/responses", "key", "model", []
+        )
+        responses._open_response = lambda *_args: io.BytesIO(
+            b'data: {"type":"response.output_item.added","output_index":0,'
+            b'"item":{"id":"fc_1","call_id":"call_1",'
+            b'"type":"function_call","name":"poke_user","arguments":"{}"}}\n'
+        )
+        with self.assertRaisesRegex(RuntimeError, "completion event"):
+            responses._stream_once([], "", [], "")
+
+    def test_tool_trace_records_arguments_results_and_failure_context(self):
+        worker = LLMStreamWorker("https://example.com/v1", "key", "model", [])
+        tool_call = {
+            "id": "call_1",
+            "function": {"name": "create_alarm", "arguments": '{"time":"08:00"}'},
+        }
+
+        worker._record_tool_call(tool_call, "alarm created")
+
+        self.assertEqual("create_alarm", worker.tool_trace[0]["name"])
+        self.assertEqual('{"time":"08:00"}', worker.tool_trace[0]["arguments"])
+        self.assertEqual("alarm created", worker.tool_trace[0]["result"])
+        error = worker._error_with_tool_context("follow-up failed")
+        self.assertIn("create_alarm", error)
+        self.assertIn("not rolled back", error)
 
     def test_local_function_result_is_sent_in_follow_up_response(self):
         worker = ResponsesStreamWorker(

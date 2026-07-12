@@ -703,6 +703,18 @@ def estimate_llm_request_tokens(
     return total
 
 
+def _tool_support_is_required(web_search: bool, tool_config: dict | None = None) -> bool:
+    """Return whether disabling tools would drop a user-facing capability."""
+    config = tool_config or {}
+    return (
+        bool(web_search)
+        or bool(config.get("llm_web_fetch_enabled", False))
+        or reminder_tools_enabled(config)
+        or bool(config.get("llm_mcp_enabled", False))
+        or bool(config.get("computer_use_enabled", False))
+    )
+
+
 class _CancelableNetworkWorker(QThread):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -710,6 +722,30 @@ class _CancelableNetworkWorker(QThread):
         self._cancel_event = threading.Event()
         self._response_lock = threading.Lock()
         self._active_response = None
+        self._tool_trace = []
+
+    @property
+    def tool_trace(self) -> list[dict]:
+        return [dict(item) for item in self._tool_trace]
+
+    def _record_tool_call(self, tool_call: dict, result: str):
+        function = tool_call.get("function") or {}
+        self._tool_trace.append({
+            "id": str(tool_call.get("id", "") or ""),
+            "name": str(function.get("name", "") or ""),
+            "arguments": str(function.get("arguments", "{}") or "{}")[:2000],
+            "result": str(result or "")[:2000],
+        })
+
+    def _error_with_tool_context(self, message: str) -> str:
+        names = [item.get("name", "") for item in self._tool_trace if item.get("name")]
+        if not names:
+            return message
+        return (
+            f"{message} Tools completed before this error: "
+            + ", ".join(dict.fromkeys(names))
+            + ". Their effects were not rolled back."
+        )
 
     def cancel(self):
         self._cancelled = True
@@ -779,6 +815,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         self._round_usage_seen = False
         self._round_usage = None
         self._round_output_text = ""
+        self._round_stream_completed = False
 
     @property
     def token_usage(self) -> dict:
@@ -815,6 +852,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 except urllib.error.HTTPError as e:
                     err_msg = _http_error_message(e)
                     if use_tools and not tools_executed and e.code in (400, 404, 422):
+                        if _tool_support_is_required(self._web_search, self._tool_config):
+                            self.error.emit(
+                                f"HTTP {e.code}: 当前接口不支持 Chat Completions 工具调用，"
+                                "已启用的联网、提醒、MCP 或电脑操作功能无法使用。"
+                            )
+                            return
                         messages = [dict(message) for message in self._messages]
                         if self._web_search and not self._tool_config.get("llm_mcp_enabled", False) and not self._tool_config.get("computer_use_enabled", False):
                             self.error.emit(f"HTTP {e.code}: 当前接口不支持 Chat Completions tool calls，无法让模型自主调用联网搜索。")
@@ -830,11 +873,14 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                         self._search_sources = []
                         use_tools = False
                         continue
-                    self.error.emit(f"HTTP {e.code}: {err_msg}")
+                    self.error.emit(self._error_with_tool_context(f"HTTP {e.code}: {err_msg}"))
                     return
                 if self._cancelled:
                     return
-                tool_calls = _normalize_stream_tool_calls(self._stream_tool_calls)
+                tool_calls = _normalize_stream_tool_calls(
+                    self._stream_tool_calls,
+                    id_prefix=f"call_{round_index}_",
+                )
                 if not use_tools or not tool_calls:
                     break
                 if round_index >= max_tool_rounds:
@@ -881,7 +927,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                         self.auto_continue_boundary.emit(content, reasoning, list(self._search_sources))
                 self._full_text = ""
                 self._reasoning_text = ""
-                for tool_call in executable_tool_calls:
+                for call_index, tool_call in enumerate(executable_tool_calls):
                     if self._cancelled:
                         return
                     function = tool_call.get("function", {})
@@ -896,10 +942,13 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                     )
                     tools_executed = True
                     tool_content = str(tool_result.get("content", "") or "")
+                    self._record_tool_call(tool_call, tool_content)
                     self._remember_search_sources(tool_content)
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.get("id") or f"call_{round_index}",
+                        "tool_call_id": (
+                            tool_call.get("id") or f"call_{round_index}_{call_index}"
+                        ),
                         "content": tool_content,
                     })
                     for extra_message in tool_result.get("extra_messages", []) or []:
@@ -918,10 +967,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
             self.finished.emit(content, reasoning, list(self._search_sources))
         except urllib.error.HTTPError as e:
             if not self._cancelled:
-                self.error.emit(f"HTTP {e.code}: {_http_error_message(e)}")
+                self.error.emit(self._error_with_tool_context(
+                    f"HTTP {e.code}: {_http_error_message(e)}"
+                ))
         except Exception as e:
             if not self._cancelled:
-                self.error.emit(str(e))
+                self.error.emit(self._error_with_tool_context(str(e)))
 
     def _auto_continue_limit(self) -> int:
         if not self._tool_config.get("llm_auto_continue_enabled", False):
@@ -955,6 +1006,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         self._round_usage_seen = False
         self._round_usage = None
         self._round_output_text = ""
+        self._round_stream_completed = False
 
         headers = {
             "Content-Type": "application/json",
@@ -983,6 +1035,8 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                     self._process_line(buffer.decode("utf-8", errors="replace"))
         finally:
             self._release_response(resp)
+        if self._stream_tool_calls and not self._round_stream_completed:
+            raise RuntimeError("Tool-call stream ended before a completion marker was received.")
         if self._round_usage_seen:
             self._usage = merge_token_usage(self._usage, self._round_usage or {})
         else:
@@ -1001,6 +1055,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
             return
         data_str = line[5:].strip()
         if data_str == "[DONE]":
+            self._round_stream_completed = True
             return
         try:
             data = json.loads(data_str)
@@ -1011,6 +1066,8 @@ class LLMStreamWorker(_CancelableNetworkWorker):
             if not choices:
                 return
             delta = choices[0].get("delta", {})
+            if choices[0].get("finish_reason") is not None:
+                self._round_stream_completed = True
             self._collect_tool_call_delta(delta)
             reasoning = _extract_reasoning(delta)
             if reasoning:
@@ -1022,8 +1079,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 self._full_text += content
                 self._round_output_text += content
                 self.chunk_received.emit(content, "")
-        except (json.JSONDecodeError, KeyError, IndexError):
-            pass
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid JSON in Chat Completions stream at column {exc.colno}."
+            ) from exc
+        except (KeyError, IndexError):
+            return
 
     def _collect_tool_call_delta(self, delta: dict):
         for call_delta in delta.get("tool_calls") or []:
@@ -1057,7 +1118,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         if isinstance(function_call, dict):
             if not self._stream_tool_calls:
                 self._stream_tool_calls.append({
-                    "id": "call_0",
+                    "id": "",
                     "type": "function",
                     "function": {"name": "", "arguments": ""},
                 })
@@ -1114,6 +1175,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         self._round_usage_merged = False
         self._round_output_text = ""
         self._round_text_seen = False
+        self._round_stream_completed = False
 
     @property
     def token_usage(self) -> dict:
@@ -1163,7 +1225,10 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 )
                 if self._cancelled:
                     return
-                tool_calls = _normalize_stream_tool_calls(self._stream_tool_calls)
+                tool_calls = _normalize_stream_tool_calls(
+                    self._stream_tool_calls,
+                    id_prefix=f"call_{round_index}_",
+                )
                 if not use_tools or not tool_calls:
                     break
                 if round_index >= max_tool_rounds:
@@ -1221,7 +1286,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 self._reasoning_text = ""
 
                 next_input = []
-                for tool_call in executable_tool_calls:
+                for call_index, tool_call in enumerate(executable_tool_calls):
                     if self._cancelled:
                         return
                     function = tool_call.get("function", {})
@@ -1235,10 +1300,13 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                         tool_config,
                     )
                     tool_content = str(tool_result.get("content", "") or "")
+                    self._record_tool_call(tool_call, tool_content)
                     self._remember_search_sources(tool_content)
                     next_input.append({
                         "type": "function_call_output",
-                        "call_id": tool_call.get("id") or f"call_{round_index}",
+                        "call_id": (
+                            tool_call.get("id") or f"call_{round_index}_{call_index}"
+                        ),
                         "output": tool_content,
                     })
                     extra_messages = [
@@ -1263,7 +1331,9 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                     input_items = input_items + [
                         {
                             "type": "function_call",
-                            "call_id": call.get("id") or f"call_{index}",
+                            "call_id": (
+                                call.get("id") or f"call_{round_index}_{index}"
+                            ),
                             "name": (call.get("function") or {}).get("name", ""),
                             "arguments": (call.get("function") or {}).get(
                                 "arguments", "{}"
@@ -1292,10 +1362,10 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 msg = err_json.get("error", {}).get("message", str(e))
             except Exception:
                 msg = err_body[:300] or str(e)
-            self.error.emit(f"HTTP {e.code}: {msg}")
+            self.error.emit(self._error_with_tool_context(f"HTTP {e.code}: {msg}"))
         except Exception as e:
             if not self._cancelled:
-                self.error.emit(str(e))
+                self.error.emit(self._error_with_tool_context(str(e)))
 
     def _auto_continue_limit(self) -> int:
         if not self._tool_config.get("llm_auto_continue_enabled", False):
@@ -1345,6 +1415,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         self._round_usage_merged = False
         self._round_output_text = ""
         self._round_text_seen = False
+        self._round_stream_completed = False
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self._api_key}",
@@ -1378,6 +1449,8 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
 
         if self._cancelled:
             return
+        if self._stream_tool_calls and not self._round_stream_completed:
+            raise RuntimeError("Tool-call stream ended before a completion event was received.")
         if self._round_usage is not None and not self._round_usage_merged:
             self._usage = merge_token_usage(self._usage, self._round_usage)
             self._round_usage_merged = True
@@ -1403,8 +1476,10 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
             return
         try:
             data = json.loads(data_str)
-        except json.JSONDecodeError:
-            return
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid JSON in Responses API stream at column {exc.colno}."
+            ) from exc
         event_type = data.get("type", "")
         if event_type == "error":
             raise RuntimeError(str(data.get("message", "") or "Responses API stream error"))
@@ -1466,6 +1541,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 target["function"]["arguments"] = arguments
             return
         if event_type in ("response.completed", "response.done"):
+            self._round_stream_completed = True
             response = data.get("response", {})
             self._response_id = str(response.get("id", "") or self._response_id)
             for output_index, item in enumerate(response.get("output", []) or []):
@@ -1677,7 +1753,11 @@ def _http_error_message(error: urllib.error.HTTPError) -> str:
         return err_body[:300] or str(error)
 
 
-def _normalize_stream_tool_calls(tool_calls: list[dict]) -> list[dict]:
+def _normalize_stream_tool_calls(
+    tool_calls: list[dict],
+    *,
+    id_prefix: str = "call_",
+) -> list[dict]:
     normalized = []
     for index, call in enumerate(tool_calls or []):
         function = call.get("function") or {}
@@ -1685,7 +1765,7 @@ def _normalize_stream_tool_calls(tool_calls: list[dict]) -> list[dict]:
         if not name:
             continue
         arguments = str(function.get("arguments", "") or "").strip() or "{}"
-        call_id = str(call.get("id", "") or "").strip() or f"call_{index}"
+        call_id = str(call.get("id", "") or "").strip() or f"{id_prefix}{index}"
         normalized.append({
             "id": call_id,
             "type": "function",

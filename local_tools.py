@@ -37,6 +37,22 @@ def _parse_arguments(arguments, fallback_key: str | None = None):
     return arguments
 
 
+def _validate_tool_arguments(arguments) -> tuple[dict | None, str]:
+    if isinstance(arguments, str):
+        raw = arguments.strip()
+        if not raw:
+            return {}, ""
+        try:
+            arguments = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return None, (
+                f"invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+            )
+    if not isinstance(arguments, dict):
+        return None, "arguments must be a JSON object"
+    return arguments, ""
+
+
 WEB_SEARCH_TOOL_NAME = "web_search"
 WEB_FETCH_TOOL_NAME = "web_fetch"
 AUTO_CONTINUE_TOOL_NAME = "continue_conversation"
@@ -385,6 +401,15 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     cancel_event = tool_config.get("_cancel_event")
     if cancel_event is not None and cancel_event.is_set():
         return {"content": "Tool call cancelled.", "extra_messages": []}
+    arguments, argument_error = _validate_tool_arguments(arguments)
+    if argument_error:
+        return {
+            "content": (
+                f"Tool call {name or '(unknown)'} was not executed because its "
+                f"arguments are invalid: {argument_error}."
+            ),
+            "extra_messages": [],
+        }
     if name == AUTO_CONTINUE_TOOL_NAME:
         return _run_auto_continue_tool_call(arguments, tool_config)
     if name == POKE_USER_TOOL_NAME:
@@ -568,10 +593,9 @@ def _resolve_reminder_character(value: str, cfg) -> str:
 
 
 def should_prefetch_web_search(text: str) -> bool:
-    text = str(text or "").strip()
-    if not text:
-        return False
-    return bool(_FORCE_WEB_SEARCH_PATTERN.search(text))
+    # Let the model choose an explicit query through web_search. Keyword-based
+    # prefetching can search the wrong subject and duplicates the model's call.
+    return False
 
 
 def web_search_prefetch_context(latest_user_text: str, tool_config: dict | None = None, max_results: int = 5) -> str:
