@@ -94,6 +94,5 @@ def error(request_id, code: int, message: str) -> dict:
 
 def write_message(message: dict):
     payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
-    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.write(payload + b"\n")
     sys.stdout.buffer.flush()

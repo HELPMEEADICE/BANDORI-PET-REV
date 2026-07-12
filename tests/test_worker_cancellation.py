@@ -18,6 +18,19 @@ class _ClosableResponse:
 
 
 class WorkerCancellationTests(unittest.TestCase):
+    def test_group_planner_interrupt_uses_network_cancel(self):
+        from pathlib import Path
+
+        source = Path("chat_window/chat_window.py").read_text(encoding="utf-8")
+        interrupt = source.split("    def _interrupt_generation", 1)[1].split(
+            "    def _park_cancelled_worker", 1
+        )[0]
+        planner_block = interrupt.split("planner = self._group_plan_worker", 1)[1].split(
+            "self._group_plan_worker = None", 1
+        )[0]
+
+        self.assertIn("planner.cancel()", planner_block)
+        self.assertNotIn("planner.requestInterruption()", planner_block)
     def test_stream_workers_close_the_active_response_when_cancelled(self):
         for worker in (
             LLMStreamWorker("https://example.com/v1", "key", "model", []),

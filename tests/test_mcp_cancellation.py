@@ -1,5 +1,9 @@
 import threading
 import unittest
+import io
+import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import mcp_bridge
@@ -18,11 +22,102 @@ class McpCancellationTests(unittest.TestCase):
         client._responses = __import__("queue").Queue()
         client._process = type("Process", (), {"poll": lambda self: None})()
         client._write = lambda _message: None
+        client._notify = unittest.mock.Mock()
+        client.close = unittest.mock.Mock()
         cancelled = threading.Event()
         cancelled.set()
 
         with self.assertRaises(InterruptedError):
             client._request("tools/call", {}, cancelled)
+
+        client._notify.assert_called_once_with(
+            "notifications/cancelled",
+            {"requestId": 1, "reason": "User requested cancellation"},
+        )
+        client.close.assert_called_once()
+
+    def test_stdio_cancel_still_closes_when_notification_write_fails(self):
+        client = object.__new__(mcp_bridge.StdioMcpClient)
+        client._server = {"timeout_seconds": 30}
+        client._lock = threading.RLock()
+        client._next_id = 1
+        client._reader_error = None
+        client._responses = __import__("queue").Queue()
+        client._process = type("Process", (), {"poll": lambda self: None})()
+        client._write = lambda _message: None
+        client._notify = unittest.mock.Mock(side_effect=BrokenPipeError("closed"))
+        client.close = unittest.mock.Mock()
+        cancelled = threading.Event()
+        cancelled.set()
+
+        with self.assertRaises(InterruptedError):
+            client._request("tools/call", {}, cancelled)
+
+        client.close.assert_called_once()
+
+    def test_stdio_messages_use_standard_json_lines(self):
+        client = object.__new__(mcp_bridge.StdioMcpClient)
+        stdin = io.BytesIO()
+        client._process = type("Process", (), {"stdin": stdin})()
+
+        client._write({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+
+        payload = stdin.getvalue()
+        self.assertNotIn(b"Content-Length:", payload)
+        self.assertTrue(payload.endswith(b"\n"))
+
+    def test_stdio_close_terminates_process_before_closing_stdout(self):
+        events = []
+
+        class Stream:
+            def __init__(self, name):
+                self.name = name
+
+            def close(self):
+                if self.name == "stdout":
+                    self.assert_process_stopped()
+                events.append(f"close:{self.name}")
+
+            def assert_process_stopped(self):
+                self_test.assertIn("terminate", events)
+
+        class Process:
+            stdin = Stream("stdin")
+            stdout = Stream("stdout")
+
+            def poll(self):
+                return None if "terminate" not in events else 0
+
+            def terminate(self):
+                events.append("terminate")
+
+            def wait(self, timeout):
+                events.append(f"wait:{timeout}")
+                return 0
+
+        self_test = self
+        client = object.__new__(mcp_bridge.StdioMcpClient)
+        client._lock = threading.RLock()
+        client._process = Process()
+        client._reader = None
+
+        client.close()
+
+        self.assertLess(events.index("terminate"), events.index("close:stdout"))
+
+    def test_stdio_validation_accepts_user_configured_python_server(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            script = Path(temp_dir) / "server.py"
+            script.write_text("print('server')", encoding="utf-8")
+            command, args, cwd = mcp_bridge._validated_stdio_command({
+                "command": sys.executable,
+                "args": [str(script)],
+                "cwd": temp_dir,
+            })
+
+        self.assertEqual(Path(command).resolve(), Path(sys.executable).resolve())
+        self.assertEqual(args, [str(script)])
+        self.assertEqual(Path(cwd).resolve(), Path(temp_dir).resolve())
 
     def test_http_transport_failure_is_not_retried_as_initialization(self):
         with patch("mcp_bridge._request_http_json", side_effect=OSError("offline")) as request:
@@ -31,10 +126,10 @@ class McpCancellationTests(unittest.TestCase):
 
         self.assertEqual(request.call_count, 1)
 
-    def test_http_initialization_retry_requires_explicit_server_error(self):
+    def test_http_transport_initializes_before_first_tool_request(self):
         responses = [
-            {"error": {"code": -32002, "message": "Server not initialized"}},
-            {"result": {}},
+            {"result": {"protocolVersion": "2025-06-18"}},
+            {},
             {"result": {"tools": []}},
         ]
         with patch("mcp_bridge._request_http_json", side_effect=responses) as request:
@@ -46,6 +141,20 @@ class McpCancellationTests(unittest.TestCase):
 
         self.assertEqual(response, {"result": {"tools": []}})
         self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[0].args[1]["method"], "initialize")
+        self.assertEqual(request.call_args_list[1].args[1]["method"], "notifications/initialized")
+        self.assertEqual(request.call_args_list[2].args[1]["method"], "tools/list")
+
+    def test_http_event_stream_selects_response_matching_request_id(self):
+        raw = "\n\n".join((
+            'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}',
+            'event: message\ndata: {"jsonrpc":"2.0","id":7,"result":{"tools":[]}}',
+        ))
+
+        self.assertEqual(
+            {"jsonrpc": "2.0", "id": 7, "result": {"tools": []}},
+            mcp_bridge._parse_http_response(raw, expected_id=7),
+        )
 
     def test_tool_discovery_stops_on_cancellation(self):
         cancelled = threading.Event()

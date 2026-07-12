@@ -887,6 +887,10 @@ class ConfigManager:
                 "allowed_tools": allowed_tools,
                 "require_approval": require_approval,
                 "timeout_seconds": max(3, min(120, _int_value(item.get("timeout_seconds", 30), 30))),
+                "env": {
+                    str(key): str(value)
+                    for key, value in (item.get("env", {}) if isinstance(item.get("env"), dict) else {}).items()
+                },
             })
         self._data["llm_mcp_servers"] = normalized
 

@@ -9,6 +9,8 @@ from vision_fallback import analyze_images_with_aux_model
 
 _TOOL_PREFIX = "computer_"
 _LAST_SCREENSHOT_METRICS: dict[str, int] = {}
+_MAX_TYPE_CHARS = 2000
+_TYPE_CHUNK_SIZE = 50
 
 
 def _parse_arguments(arguments):
@@ -113,6 +115,9 @@ def run_computer_tool(name: str, arguments, config: dict) -> dict:
     arguments = _parse_arguments(arguments)
     if not bool(config.get("computer_use_enabled", False)):
         return _result("Computer Use is disabled in settings.")
+    cancel_event = config.get("_cancel_event")
+    if cancel_event is not None and cancel_event.is_set():
+        return _result("Computer tool call cancelled.")
 
     try:
         if name == "computer_screenshot":
@@ -143,9 +148,11 @@ def run_computer_tool(name: str, arguments, config: dict) -> dict:
             return _after_action(config, f"{_mapped_action_text('Scrolled', sx, sy, x, y)} Delta: {delta}.")
         if name == "computer_type":
             _require(config, "computer_use_allow_keyboard", "keyboard input")
-            text = str(arguments.get("text", "") or "")
-            _type_text(text)
-            return _after_action(config, f"Typed {len(text)} characters.")
+            raw_text = str(arguments.get("text", "") or "")
+            text = raw_text[:_MAX_TYPE_CHARS]
+            _type_text(text, cancel_event=cancel_event)
+            suffix = " Input was truncated to the safety limit." if len(raw_text) > len(text) else ""
+            return _after_action(config, f"Typed {len(text)} characters.{suffix}")
         if name == "computer_key":
             _require(config, "computer_use_allow_keyboard", "keyboard input")
             keys = str(arguments.get("keys", "") or "").strip()
@@ -159,9 +166,15 @@ def run_computer_tool(name: str, arguments, config: dict) -> dict:
         if name == "computer_wait":
             _require(config, "computer_use_allow_wait", "wait")
             seconds = max(0.1, min(10.0, float(arguments.get("seconds", 2) or 2)))
-            time.sleep(seconds)
+            if cancel_event is not None:
+                if cancel_event.wait(seconds):
+                    return _result("Computer wait cancelled.")
+            else:
+                time.sleep(seconds)
             return _after_action(config, f"Waited {seconds:.1f} seconds.")
         return _result(f"Unsupported computer tool: {name}")
+    except InterruptedError:
+        return _result("Computer tool call cancelled.")
     except Exception as exc:
         return _result(f"Computer tool failed: {exc}")
 
@@ -336,8 +349,12 @@ def _scroll(x: int, y: int, delta: int):
             raise
 
 
-def _type_text(text: str):
-    _pyautogui().write(text, interval=0.01)
+def _type_text(text: str, cancel_event=None):
+    keyboard = _pyautogui()
+    for offset in range(0, len(text), _TYPE_CHUNK_SIZE):
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("Computer typing cancelled")
+        keyboard.write(text[offset:offset + _TYPE_CHUNK_SIZE], interval=0.01)
 
 
 def _press_keys(keys: str):

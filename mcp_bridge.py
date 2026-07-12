@@ -20,6 +20,7 @@ _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
 _TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
 _CLIENTS: dict[str, "StdioMcpClient"] = {}
+_HTTP_SESSIONS: dict[str, dict] = {}
 
 
 def _parse_arguments(arguments):
@@ -35,7 +36,6 @@ _LOCK = threading.RLock()
 _thread_local = threading.local()
 _APP_DIR = Path(app_base_dir()).resolve()
 _BUNDLED_STDIO_MCP_SCRIPT = (_APP_DIR / "filesystem_mcp_server.py").resolve()
-_ALLOWED_STDIO_PYTHON_COMMANDS = {"python", "python.exe", "pythonw.exe", "py", "py.exe"}
 
 
 def mcp_proxy_tools(config: dict) -> list[dict]:
@@ -314,7 +314,30 @@ def _list_server_tools(server: dict, cancel_event=None) -> list[dict]:
 
 def _client_key(server: dict) -> str:
     args = " ".join(_server_args(server))
-    return f"{server.get('label','')}|{server.get('command','')}|{args}|{server.get('cwd','')}"
+    env = json.dumps(server.get("env", {}), ensure_ascii=False, sort_keys=True)
+    return f"{server.get('label','')}|{server.get('command','')}|{args}|{server.get('cwd','')}|{env}"
+
+
+def _http_session_key(server: dict) -> str:
+    return "|".join((
+        str(server.get("url", "") or "").strip(),
+        str(server.get("authorization", "") or "").strip(),
+    ))
+
+
+def _http_session(server: dict) -> dict:
+    key = _http_session_key(server)
+    with _LOCK:
+        return _HTTP_SESSIONS.setdefault(key, {
+            "initialized": False,
+            "session_id": "",
+            "protocol_version": _PROTOCOL_VERSION,
+        })
+
+
+def _reset_http_session(server: dict):
+    with _LOCK:
+        _HTTP_SESSIONS.pop(_http_session_key(server), None)
 
 
 def _server_args(server: dict) -> list[str]:
@@ -356,39 +379,11 @@ def _validated_stdio_command(server: dict) -> tuple[str, list[str], str]:
     if not command:
         raise ValueError(_tr("McpBridge.stdio_command_empty", default="stdio MCP command is empty"))
     command = _resolve_command(command)
-    command_name = os.path.basename(command).lower()
-    if command_name not in _ALLOWED_STDIO_PYTHON_COMMANDS:
-        raise ValueError(_tr(
-            "McpBridge.stdio_command_not_allowed",
-            default="stdio MCP command is not allowed: {command}",
-            command=server.get("command", ""),
-        ))
-
     args = _server_args(server)
-    script_index = 0
-    if command_name in {"py", "py.exe"} and args and re.fullmatch(r"-\d+(\.\d+)?", args[0]):
-        script_index = 1
-    if len(args) <= script_index:
-        raise ValueError(_tr(
-            "McpBridge.stdio_script_missing",
-            default="stdio MCP script is missing.",
-        ))
-
-    script_path = Path(args[script_index]).expanduser()
-    if not script_path.is_absolute():
-        cwd = Path(str(server.get("cwd", "") or _APP_DIR)).expanduser()
-        script_path = cwd / script_path
-    script_path = script_path.resolve()
-    if script_path != _BUNDLED_STDIO_MCP_SCRIPT:
-        raise ValueError(_tr(
-            "McpBridge.stdio_script_not_allowed",
-            default="stdio MCP script is not allowed: {script}",
-            script=str(args[script_index]),
-        ))
-
-    args = list(args)
-    args[script_index] = str(_BUNDLED_STDIO_MCP_SCRIPT)
-    return command, args, str(_APP_DIR)
+    cwd = Path(str(server.get("cwd", "") or _APP_DIR)).expanduser().resolve()
+    if not cwd.is_dir():
+        raise NotADirectoryError(str(cwd))
+    return command, args, str(cwd)
 
 
 def _stdio_client(server: dict) -> "StdioMcpClient":
@@ -426,6 +421,15 @@ def _request_http_json_direct(server: dict, payload: dict, cancel_event=None) ->
     if auth:
         auth_val = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
         request.setRawHeader(b"Authorization", auth_val.encode("utf-8"))
+    state = _http_session(server)
+    if payload.get("method") != "initialize":
+        request.setRawHeader(
+            b"MCP-Protocol-Version",
+            str(state.get("protocol_version") or _PROTOCOL_VERSION).encode("ascii", errors="ignore"),
+        )
+        session_id = str(state.get("session_id", "") or "")
+        if session_id:
+            request.setRawHeader(b"Mcp-Session-Id", session_id.encode("ascii", errors="ignore"))
     request.setTransferTimeout(timeout * 1000)
 
     nam = _thread_nam()
@@ -448,51 +452,85 @@ def _request_http_json_direct(server: dict, payload: dict, cancel_event=None) ->
     if cancel_event is not None and cancel_event.is_set():
         reply.abort()
         reply.deleteLater()
+        if payload.get("method") != "initialize":
+            _send_http_cancel_notification(server, payload.get("id"))
         raise InterruptedError("MCP request cancelled")
 
     error_code = reply.error()
     status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute) or 0
+    error_string = reply.errorString()
+    session_header = bytes(reply.rawHeader("Mcp-Session-Id")).decode("ascii", errors="ignore").strip()
+    if payload.get("method") == "initialize" and session_header:
+        state["session_id"] = session_header
 
     if error_code != QNetworkReply.NoError or int(status_code) >= 400:
         raw_bytes = bytes(reply.readAll()) if reply.isOpen() else b""
         raw_text = raw_bytes.decode("utf-8", errors="replace")
         reply.deleteLater()
+        if error_code == QNetworkReply.NetworkError.TimeoutError and payload.get("method") != "initialize":
+            _send_http_cancel_notification(server, payload.get("id"))
         if int(status_code) >= 400:
             raise urllib.error.HTTPError(
-                url, int(status_code), raw_text or reply.errorString(),
+                url, int(status_code), raw_text or error_string,
                 dict(reply.rawHeaderPairs()), None,
             )
-        raise urllib.error.URLError(reply.errorString())
+        raise urllib.error.URLError(error_string)
 
     raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
     reply.deleteLater()
 
     raw = raw.strip()
-    if raw.startswith("event:") or "\ndata:" in raw or raw.startswith("data:"):
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data and data != "[DONE]":
-                return json.loads(data)
-        raise ValueError(_tr("McpBridge.http_empty_event_stream", default="HTTP MCP server returned empty event stream"))
-    return json.loads(raw)
+    if not raw:
+        return {}
+    return _parse_http_response(raw, expected_id=payload.get("id"))
+
+
+def _send_http_cancel_notification(server: dict, request_id):
+    if request_id is None:
+        return
+    cancellation = {
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {
+            "requestId": request_id,
+            "reason": "User requested cancellation or request timeout",
+        },
+    }
+    retry_server = dict(server)
+    retry_server["timeout_seconds"] = min(2, int(server.get("timeout_seconds", 30) or 30))
+    try:
+        _request_http_json_direct(retry_server, cancellation, None)
+    except Exception:
+        pass
+
+
+def _parse_http_response(raw: str, expected_id=None) -> dict:
+    raw = str(raw or "").strip()
+    if not (raw.startswith("event:") or "\ndata:" in raw or raw.startswith("data:")):
+        return json.loads(raw)
+    for block in raw.replace("\r\n", "\n").split("\n\n"):
+        data = "\n".join(
+            line.split(":", 1)[1].lstrip()
+            for line in block.splitlines()
+            if line.startswith("data:")
+        ).strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            message = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if expected_id is None or message.get("id") == expected_id:
+            return message
+    raise ValueError(_tr("McpBridge.http_empty_event_stream", default="HTTP MCP server returned no matching response event"))
 
 
 def _http_request_with_init(server: dict, method: str, params: dict | None = None, cancel_event=None) -> dict:
-    req_id = int(time.time() * 1000) % 1_000_000_000
-    payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
-    if params is not None:
-        payload["params"] = params
-    response = _request_http_json(server, payload, cancel_event)
-    error = response.get("error") if isinstance(response, dict) else None
-    error_text = json.dumps(error, ensure_ascii=False).lower() if error else ""
-    error_code = error.get("code") if isinstance(error, dict) else None
-    if error_code == -32002 or "initializ" in error_text:
+    state = _http_session(server)
+    if method != "initialize" and not state.get("initialized", False):
         init = {
             "jsonrpc": "2.0",
-            "id": req_id + 1,
+            "id": int(time.time() * 1000) % 1_000_000_000,
             "method": "initialize",
             "params": {
                 "protocolVersion": _PROTOCOL_VERSION,
@@ -500,9 +538,31 @@ def _http_request_with_init(server: dict, method: str, params: dict | None = Non
                 "clientInfo": {"name": APP_NAME, "version": "1.0"},
             },
         }
-        _request_http_json(server, init, cancel_event)
+        init_response = _request_http_json(server, init, cancel_event)
+        if init_response.get("error"):
+            raise RuntimeError(init_response["error"])
+        init_result = init_response.get("result", {}) if isinstance(init_response, dict) else {}
+        if isinstance(init_result, dict) and init_result.get("protocolVersion"):
+            state["protocol_version"] = str(init_result["protocolVersion"])
+        initialized = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
+        _request_http_json(server, initialized, cancel_event)
+        state["initialized"] = True
+
+    req_id = int(time.time() * 1000) % 1_000_000_000
+    payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    try:
         return _request_http_json(server, payload, cancel_event)
-    return response
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404 or not state.get("session_id"):
+            raise
+        _reset_http_session(server)
+        return _http_request_with_init(server, method, params, cancel_event)
 
 
 def _list_http_tools(server: dict, cancel_event=None) -> list[dict]:
@@ -565,6 +625,7 @@ class StdioMcpClient:
             cwd=cwd,
             text=False,
             bufsize=0,
+            env=self._process_environment(),
             **hidden_subprocess_kwargs(),
         )
         self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
@@ -587,12 +648,11 @@ class StdioMcpClient:
     def close(self):
         with self._lock:
             process = self._process
-            for stream in (process.stdin, process.stdout):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except Exception:
-                    pass
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except Exception:
+                pass
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -600,6 +660,21 @@ class StdioMcpClient:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=2)
+            try:
+                if process.stdout is not None:
+                    process.stdout.close()
+            except Exception:
+                pass
+        reader = getattr(self, "_reader", None)
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=0.5)
+
+    def _process_environment(self) -> dict:
+        environment = os.environ.copy()
+        configured = self._server.get("env", {})
+        if isinstance(configured, dict):
+            environment.update({str(key): str(value) for key, value in configured.items()})
+        return environment
 
     def __enter__(self):
         return self
@@ -662,6 +737,7 @@ class StdioMcpClient:
                 if self._reader_error is not None:
                     raise RuntimeError(str(self._reader_error))
                 if cancel_event is not None and cancel_event.is_set():
+                    self._cancel_inflight(req_id, "User requested cancellation")
                     raise InterruptedError("MCP request cancelled")
                 try:
                     response = self._responses.get(timeout=max(0.05, min(0.1, deadline - time.monotonic())))
@@ -672,7 +748,19 @@ class StdioMcpClient:
                 if response.get("error"):
                     raise RuntimeError(response["error"])
                 return response.get("result", {})
+            self._cancel_inflight(req_id, f"MCP request timed out: {method}")
             raise TimeoutError(_tr("McpBridge.request_timeout", default="MCP request timed out: {method}", method=method))
+
+    def _cancel_inflight(self, request_id: int, reason: str):
+        try:
+            self._notify("notifications/cancelled", {
+                "requestId": request_id,
+                "reason": reason,
+            })
+        except Exception:
+            pass
+        finally:
+            self.close()
 
     def _notify(self, method: str, params: dict | None = None):
         message = {"jsonrpc": "2.0", "method": method}
@@ -685,8 +773,7 @@ class StdioMcpClient:
         if stdin is None:
             raise RuntimeError(_tr("McpBridge.stdin_closed", default="MCP server stdin is closed"))
         payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
-        stdin.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
-        stdin.write(payload)
+        stdin.write(payload + b"\n")
         stdin.flush()
 
 
@@ -695,6 +782,7 @@ def close_mcp_clients():
         clients = list(_CLIENTS.values())
         _CLIENTS.clear()
         _TOOL_NAME_MAP.clear()
+        _HTTP_SESSIONS.clear()
     for client in clients:
         try:
             client.close()

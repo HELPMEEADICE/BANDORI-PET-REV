@@ -1,7 +1,9 @@
 import base64
 import gzip
+import ipaddress
 import json
 import re
+import socket
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -742,13 +744,56 @@ def _normalize_fetch_url(url: str) -> str:
     url = str(url or "").strip()
     if not url:
         return ""
-    parsed = urllib.parse.urlsplit(url)
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return ""
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
     host = (parsed.hostname or "").strip().lower()
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+    if not host or not _host_resolves_publicly(host, port):
         return ""
     return urllib.parse.urlunsplit(parsed)
+
+
+def _host_resolves_publicly(host: str, port: int) -> bool:
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    resolved = set()
+    for item in addresses:
+        try:
+            resolved.add(ipaddress.ip_address(item[4][0].split("%", 1)[0]))
+        except (IndexError, ValueError):
+            return False
+    return bool(resolved) and all(address.is_global for address in resolved)
+
+
+class _PublicOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _normalize_fetch_url(newurl):
+            raise urllib.error.HTTPError(
+                newurl,
+                403,
+                "Redirect to a private network address was blocked",
+                headers,
+                fp,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_public_url(request, timeout: int):
+    url = getattr(request, "full_url", request)
+    if not _normalize_fetch_url(str(url)):
+        raise ValueError("URL resolves to a private or non-public network address")
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _PublicOnlyRedirectHandler(),
+    ).open(request, timeout=timeout)
 
 
 def _fetch_page_text(url: str, max_chars: int = 6000) -> str:
@@ -770,7 +815,7 @@ def _fetch_page_text(url: str, max_chars: int = 6000) -> str:
                 "Accept-Encoding": "identity",
             },
         )
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with _open_public_url(req, timeout=12) as resp:
             content_type = (resp.headers.get("Content-Type") or "").lower()
             if content_type and not any(token in content_type for token in ("text/", "html", "xml", "json")):
                 return ""
@@ -821,6 +866,9 @@ def _enrich_results_with_page_excerpts(results: list[dict], max_pages: int = 2):
 
 
 def _fetch_page_excerpt(url: str) -> str:
+    url = _normalize_fetch_url(url)
+    if not url:
+        return ""
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in ("http", "https"):
         return ""
@@ -838,7 +886,7 @@ def _fetch_page_excerpt(url: str) -> str:
                 "Accept-Encoding": "identity",
             },
         )
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with _open_public_url(req, timeout=4) as resp:
             content_type = (resp.headers.get("Content-Type") or "").lower()
             if content_type and not any(token in content_type for token in ("text/", "html", "xml", "json")):
                 return ""

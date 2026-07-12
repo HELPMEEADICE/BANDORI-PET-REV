@@ -3607,7 +3607,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
         planner = self._group_plan_worker
         if planner is not None:
-            planner.requestInterruption()
+            planner.cancel()
             planner.quit()
             self._park_cancelled_worker(planner)
             interrupted = True
