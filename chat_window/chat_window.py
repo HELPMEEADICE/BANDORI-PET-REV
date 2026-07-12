@@ -1585,7 +1585,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return found_current
 
     def _show_new_chat_picker(self):
-        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+        if self._chat_context_change_blocked():
             return
         characters = self._chat_picker_characters()
         if not characters:
@@ -2389,7 +2389,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._send_poke_to_character(target)
 
     def _show_conversation_history(self):
-        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+        if self._chat_context_change_blocked():
             return
         menu = QMenu(self)
         _prepare_rounded_menu(menu)
@@ -2614,13 +2614,19 @@ class ChatWindow(ChatWindowMixin, QWidget):
             QTimer.singleShot(0, lambda value=value: self._delete_group_conversation(value))
 
     def _switch_group_chat(self, characters: list[str]):
-        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+        if self._chat_context_change_blocked():
             return
         normalized = self._normalize_group_characters(characters)
         if not normalized:
             return
         self._switch_chat_members(normalized)
 
+    def _chat_context_change_blocked(self) -> bool:
+        return bool(
+            (self._worker is not None and self._worker.isRunning())
+            or (self._group_plan_worker is not None and self._group_plan_worker.isRunning())
+            or (self._vision_fallback_worker is not None and self._vision_fallback_worker.isRunning())
+        )
     def _reset_chat_switch_state(self):
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
@@ -2684,7 +2690,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _switch_group_conversation(self, conversation_id: str):
         if conversation_id == self._group_conv_id:
             return
-        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+        if self._chat_context_change_blocked():
             return
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
@@ -2823,6 +2829,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._refresh_group_list()
 
     def _delete_chat_entry(self, characters: list[str]):
+        if self._chat_context_change_blocked():
+            return
         characters = self._normalize_group_characters(characters)
         if not characters:
             return
@@ -2870,7 +2878,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _switch_conversation(self, conv_id: int):
         if conv_id == self._conv_id:
             return
-        if self._worker and self._worker.isRunning():
+        if self._chat_context_change_blocked():
             return
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
@@ -2883,7 +2891,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._input.setFocus()
 
     def _delete_conversation(self, conv_id: int):
-        if self._worker and self._worker.isRunning():
+        if self._chat_context_change_blocked():
             return
         was_current = conv_id == self._conv_id
         self._db.delete_conversation(conv_id)
@@ -2907,7 +2915,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._input.setFocus()
 
     def _delete_group_conversation(self, conversation_id: str):
-        if (self._worker and self._worker.isRunning()) or (self._group_plan_worker and self._group_plan_worker.isRunning()):
+        if self._chat_context_change_blocked():
             return
         was_current = conversation_id == self._group_conv_id
         self._db.delete_group_conversation(self._conversation_key, conversation_id, self._chat_user_key)
@@ -3199,7 +3207,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._load_messages()
 
     def _new_conversation(self):
-        if self._worker and self._worker.isRunning():
+        if self._chat_context_change_blocked():
             return
         if self._is_group_chat:
             self._stream_flush_timer.stop()
