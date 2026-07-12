@@ -222,3 +222,59 @@ def test_main_relaunches_active_pet_when_model_message_changes_selection():
 
     assert "def has_active_pet_processes()" in source
     assert "model_changed and has_active_pet_processes()" in source
+
+
+def test_create_reclaims_stale_segment_left_by_killed_owner():
+    import os
+    import subprocess
+    import sys
+
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("stale")
+    # Simulate a force-killed owner: the child creates the queue and exits via
+    # os._exit, skipping detach, so the System V segment is left behind with
+    # zero attaches (the kernel detaches on death but never removes).
+    script = (
+        "import os, sys\n"
+        "from shared_memory_ipc import SharedMemoryLineQueue\n"
+        f"SharedMemoryLineQueue.create({key!r}, slot_count=2, slot_size=256)\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=os.getcwd(),
+        check=True,
+        timeout=30,
+    )
+
+    # Without reclamation this raises AlreadyExists; with it the stale
+    # segment is destroyed and the queue is recreated with a fresh header.
+    writer = SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)
+    reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    try:
+        assert writer.publish("RECOVERED")
+        assert reader.read_available() == ["RECOVERED"]
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_create_does_not_tear_down_live_segment():
+    import pytest
+
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    key = _unique_key("live")
+    writer = SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)
+    reader = SharedMemoryLineQueue.attach(key, start_at_tail=False)
+    try:
+        with pytest.raises(RuntimeError):
+            SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)
+
+        # The failed create must not have destroyed or reset the live queue.
+        assert writer.publish("STILL\tALIVE")
+        assert reader.read_available() == ["STILL\tALIVE"]
+    finally:
+        reader.close()
+        writer.close()
