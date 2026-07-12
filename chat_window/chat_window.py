@@ -2839,7 +2839,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
             character = characters[0]
             was_current = not self._is_group_chat and character == self._character
             for conv in self._db.get_conversations(character, self._chat_user_key):
+                attachments = self._conversation_attachments(conv["id"])
                 self._db.delete_conversation(conv["id"])
+                self._delete_saved_attachment_copies(attachments)
             self._chat_display_names.pop(character, None)
             self._save_chat_display_names()
             if was_current:
@@ -2856,7 +2858,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         else:
             was_current = self._is_group_chat and chat_key == self._conversation_key
             for conv in self._db.get_group_conversations(chat_key, self._chat_user_key):
+                attachments = self._group_conversation_attachments(chat_key, conv["conversation_id"])
                 self._db.delete_group_conversation(chat_key, conv["conversation_id"], self._chat_user_key)
+                self._delete_saved_attachment_copies(attachments)
             self._db.set_group_display_name(chat_key, "")
             if was_current:
                 self._stream_flush_timer.stop()
@@ -2894,7 +2898,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self._chat_context_change_blocked():
             return
         was_current = conv_id == self._conv_id
+        attachments = self._conversation_attachments(conv_id)
         self._db.delete_conversation(conv_id)
+        self._delete_saved_attachment_copies(attachments)
         self._refresh_group_list()
 
         if not was_current:
@@ -2918,7 +2924,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self._chat_context_change_blocked():
             return
         was_current = conversation_id == self._group_conv_id
+        attachments = self._group_conversation_attachments(self._conversation_key, conversation_id)
         self._db.delete_group_conversation(self._conversation_key, conversation_id, self._chat_user_key)
+        self._delete_saved_attachment_copies(attachments)
         self._refresh_group_list()
 
         if not was_current:
@@ -4497,6 +4505,35 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 resolved.unlink()
         except (OSError, RuntimeError):
             pass
+
+    def _conversation_attachments(self, conversation_id: int) -> list[dict]:
+        return [
+            attachment
+            for message in self._db.get_messages(conversation_id)
+            for attachment in self._normalize_attachments(message.get("attachments_json"))
+        ]
+
+    def _group_conversation_attachments(self, group_key: str, conversation_id: str) -> list[dict]:
+        return [
+            attachment
+            for message in self._db.get_group_messages(
+                group_key,
+                conversation_id,
+                user_key=self._chat_user_key,
+            )
+            for attachment in self._normalize_attachments(message.get("attachments_json"))
+        ]
+
+    def _delete_saved_attachment_copies(self, attachments: list[dict]):
+        seen: set[str] = set()
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            path = str(attachment.get("path", "") or "")
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            self._delete_pending_attachment_copy(attachment)
 
     def _cleanup_unsent_pending_attachments(
         self,
