@@ -147,7 +147,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             item["next_at"] = isoformat(compute_next_proactive_at(item, now))
 
     def trigger_screen_awareness_now(self) -> bool:
-        if not self._screen_awareness_enabled():
+        if getattr(self, "_stopped", False) or not self._screen_awareness_enabled():
             return False
         if self._screen_awareness_worker is not None and self._screen_awareness_worker.isRunning():
             return False
@@ -155,6 +155,19 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._schedule_next_screen_awareness(now)
         self._start_screen_awareness_capture(now, bypass_policy=True)
         return True
+
+    @staticmethod
+    def _cancel_worker(worker, wait_ms: int = 250):
+        if worker is None or not worker.isRunning():
+            return
+        cancel = getattr(worker, "cancel", None)
+        if callable(cancel):
+            cancel()
+        else:
+            worker.requestInterruption()
+        worker.quit()
+        if wait_ms > 0:
+            worker.wait(wait_ms)
 
     def stop(self):
         if self._stopped:
@@ -167,24 +180,18 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         for worker in list(self._workers):
             if worker.isRunning():
                 self._ignored_workers.add(worker)
-                worker.requestInterruption()
-                worker.quit()
-                worker.wait(250)
+                self._cancel_worker(worker)
             if not worker.isRunning():
                 self._forget_worker(worker)
         self._reset_tts()
         if self._screen_awareness_worker is not None and self._screen_awareness_worker.isRunning():
-            self._screen_awareness_worker.requestInterruption()
-            self._screen_awareness_worker.quit()
-            self._screen_awareness_worker.wait(250)
+            self._cancel_worker(self._screen_awareness_worker)
         if self._screen_awareness_worker is not None and not self._screen_awareness_worker.isRunning():
             delete_thread_when_stopped(self._screen_awareness_worker)
             self._screen_awareness_worker = None
         for worker in list(self._cancelled_tts_workers):
             if worker is not None and worker.isRunning():
-                worker.requestInterruption()
-                worker.quit()
-                worker.wait(250)
+                self._cancel_worker(worker)
         self._prune_cancelled_tts_workers()
         self._db.close()
 
@@ -197,7 +204,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         return any(worker is not None and worker.isRunning() for worker in workers)
 
     def _tick(self):
-        if not self._cfg:
+        if getattr(self, "_stopped", False) or not self._cfg:
             return
         now = local_now()
         alarms = normalize_alarms(self._cfg.get(ALARM_CONFIG_KEY, []), now)
@@ -296,6 +303,8 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         self._start_screen_awareness_capture(now)
 
     def _start_screen_awareness_capture(self, trigger_now, bypass_policy: bool = False):
+        if getattr(self, "_stopped", False):
+            return
         character = self._screen_awareness_character()
         worker = ScreenAwarenessVisionWorker(dict(getattr(self._cfg, "_data", {}) or {}), self)
         worker._bandori_bypass_care_policy = bool(bypass_policy)
@@ -315,7 +324,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return
         self._screen_awareness_worker = None
         delete_thread_when_stopped(worker)
-        if self._stopped:
+        if getattr(self, "_stopped", False):
             return
         result = result if isinstance(result, dict) else {}
         summary = str(result.get("screen_observation", "") or "").strip()
@@ -596,11 +605,13 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         )
 
     def _start_text_generation(self, context: dict):
+        if self._stopped:
+            return
         self._pending_contexts.append(dict(context))
         self._drain_pending_contexts()
 
     def _drain_pending_contexts(self):
-        if self._text_generation_busy or not self._pending_contexts:
+        if getattr(self, "_stopped", False) or self._text_generation_busy or not self._pending_contexts:
             return
         self._text_generation_busy = True
         context = self._pending_contexts.pop(0)
@@ -714,9 +725,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         context = dict(self._active_context) if self._active_context else {}
         self._ignored_workers.add(worker)
         if worker.isRunning():
-            worker.requestInterruption()
-            worker.quit()
-            worker.wait(250)
+            self._cancel_worker(worker)
         self._active_worker = None
         self._active_context = None
         if self._watchdog_timer is not None:
@@ -861,7 +870,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
         worker = self._tts_worker
         self._tts_worker = None
         if worker is not None and worker.isRunning():
-            worker.requestInterruption()
+            worker.cancel()
             self._park_cancelled_tts_worker(worker)
         if self._tts_player is not None:
             self._tts_player.stop()

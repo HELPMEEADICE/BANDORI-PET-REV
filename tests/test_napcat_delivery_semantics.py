@@ -8,6 +8,17 @@ from napcat_adapter import NapcatClient
 
 
 class NapcatDeliverySemanticsTest(unittest.TestCase):
+    def test_main_does_not_auto_reply_to_duplicate_saved_messages(self):
+        from pathlib import Path
+
+        source = Path("main.py").read_text(encoding="utf-8")
+        handler = source.split("    def handle_napcat_message", 1)[1].split(
+            "    def _napcat_generate_reply", 1
+        )[0]
+
+        self.assertIn('duplicate = bool(stored.get("duplicate"))', handler)
+        self.assertIn("if not duplicate and _napcat_should_reply(event):", handler)
+
     def test_access_token_is_encoded_as_query_item(self):
         socket = Mock()
         client = SimpleNamespace(

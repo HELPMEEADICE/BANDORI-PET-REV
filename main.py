@@ -680,16 +680,18 @@ def main():
             print(f"NapCat retention cleanup failed: {exc}")
 
     def handle_napcat_message(event: dict):
+        duplicate = False
         if _napcat_should_save(_napcat_chat_type(event)):
             try:
-                handle_chat_integration_message(event)
+                stored = handle_chat_integration_message(event)
+                duplicate = bool(stored.get("duplicate"))
             except Exception as exc:
                 print(f"NapCat message handling failed: {exc}")
                 return
             _napcat_apply_retention()
         else:
             broadcast_napcat_transient_overlay(event)
-        if _napcat_should_reply(event):
+        if not duplicate and _napcat_should_reply(event):
             _napcat_generate_reply(event)
 
     def _napcat_generate_reply(event: dict):

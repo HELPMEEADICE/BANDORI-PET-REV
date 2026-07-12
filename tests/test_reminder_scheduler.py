@@ -7,6 +7,26 @@ from alarm_manager import ReminderScheduler
 
 
 class ReminderSchedulerTest(unittest.TestCase):
+    def test_stopped_scheduler_ignores_late_tick(self):
+        scheduler = SimpleNamespace(
+            _stopped=True,
+            _cfg=Mock(),
+        )
+
+        ReminderScheduler._tick(scheduler)
+
+        scheduler._cfg.get.assert_not_called()
+
+    def test_network_worker_cancellation_uses_worker_cancel(self):
+        worker = Mock()
+        worker.isRunning.return_value = True
+
+        ReminderScheduler._cancel_worker(worker)
+
+        worker.cancel.assert_called_once()
+        worker.requestInterruption.assert_not_called()
+        worker.wait.assert_called_once_with(250)
+
     def test_persist_config_reports_false_result_once(self):
         scheduler = SimpleNamespace(
             _cfg=SimpleNamespace(save=Mock(return_value=False)),
