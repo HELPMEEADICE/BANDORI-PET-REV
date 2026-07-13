@@ -52,9 +52,37 @@ def test_shared_memory_queue_overflow_returns_recent_complete_messages():
         writer.publish("three")
 
         assert reader.read_available() == ["two", "three"]
+        assert reader.dropped_messages == 1
     finally:
         reader.close()
         writer.close()
+
+
+def test_reliable_and_lossy_lanes_keep_reliable_commands_during_lossy_overflow():
+    from shared_memory_ipc import SharedMemoryLineQueue
+
+    lossy_key = _unique_key("lossy-lane")
+    reliable_key = _unique_key("reliable-lane")
+    lossy_writer = SharedMemoryLineQueue.create(lossy_key, slot_count=2, slot_size=256)
+    reliable_writer = SharedMemoryLineQueue.create(
+        reliable_key, slot_count=4, slot_size=256
+    )
+    lossy_reader = SharedMemoryLineQueue.attach(lossy_key, start_at_tail=False)
+    reliable_reader = SharedMemoryLineQueue.attach(reliable_key, start_at_tail=False)
+    try:
+        for number in range(10):
+            assert lossy_writer.publish(f"PEER_POS\t{number}")
+        assert reliable_writer.publish("SETTINGS\t{}")
+        assert reliable_writer.publish("CHAT_EVENT\t{}")
+
+        assert reliable_reader.read_available() == ["SETTINGS\t{}", "CHAT_EVENT\t{}"]
+        assert lossy_reader.read_available() == ["PEER_POS\t8", "PEER_POS\t9"]
+        assert lossy_reader.dropped_messages == 8
+    finally:
+        reliable_reader.close()
+        lossy_reader.close()
+        reliable_writer.close()
+        lossy_writer.close()
 
 
 def test_default_shared_memory_queue_accepts_large_settings_payloads():
@@ -115,8 +143,28 @@ def test_main_uses_a_separate_control_queue_for_reliable_commands():
     pet_source = Path("pet_window.py").read_text(encoding="utf-8")
 
     assert "def ipc_control_queue_key()" in bus_source
+    assert "def ipc_reliable_inbound_queue_key()" in bus_source
+    assert "def is_reliable_ipc_line" in bus_source
     assert 'ipc_ref.get("control")' in main_source
+    assert 'ipc_ref.get("reliable_inbound")' in main_source
     assert '"_ipc_control_queue"' in pet_source
+    assert '"_ipc_reliable_inbound_queue"' in pet_source
+
+
+def test_reliable_classifier_covers_control_and_user_visible_events():
+    from ipc_bus import is_reliable_ipc_line
+
+    for line in (
+        "REGISTER\tPET\tkasumi",
+        "SETTINGS\t{}",
+        "MODEL\tkasumi",
+        "CHAT_EVENT\t{}",
+        "REMINDER_EVENT\t{}",
+        "POKE_USER\tkasumi",
+    ):
+        assert is_reliable_ipc_line(line)
+
+    assert not is_reliable_ipc_line("PEER_POS\t{}")
 
 
 def test_main_resends_latest_settings_to_new_ipc_peers():

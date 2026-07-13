@@ -1,6 +1,5 @@
 import sys
 import json
-import secrets
 import signal
 import threading
 import os
@@ -54,7 +53,9 @@ from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
     ipc_inbound_queue_key,
+    ipc_reliable_inbound_queue_key,
     is_control_ipc_line,
+    is_reliable_ipc_line,
 )
 from shared_memory_ipc import (
     SharedMemoryLineQueue,
@@ -222,19 +223,26 @@ def main():
     def init_ipc_server():
         def create_ipc_queues():
             inbound = SharedMemoryLineQueue.create(ipc_inbound_queue_key())
+            reliable_inbound = SharedMemoryLineQueue.create(
+                ipc_reliable_inbound_queue_key(), slot_count=32, slot_size=65536
+            )
             try:
                 outbound = SharedMemoryLineQueue.create(ipc_broadcast_queue_key())
-                control = SharedMemoryLineQueue.create(ipc_control_queue_key())
+                control = SharedMemoryLineQueue.create(
+                    ipc_control_queue_key(), slot_count=16, slot_size=65536
+                )
             except RuntimeError:
                 inbound.close()
+                reliable_inbound.close()
                 if "outbound" in locals():
                     outbound.close()
                 raise
-            return inbound, outbound, control
+            return inbound, reliable_inbound, outbound, control
 
-        def start_ipc_polling(inbound, outbound, control):
+        def start_ipc_polling(inbound, reliable_inbound, outbound, control):
             with ipc_ref["lock"]:
                 ipc_ref["inbound"] = inbound
+                ipc_ref["reliable_inbound"] = reliable_inbound
                 ipc_ref["outbound"] = outbound
                 ipc_ref["control"] = control
             poll_timer = QTimer(app)
@@ -249,17 +257,17 @@ def main():
             ipc_ref["cleanup_timer"] = cleanup_timer
 
         try:
-            inbound, outbound, control = create_ipc_queues()
+            inbound, reliable_inbound, outbound, control = create_ipc_queues()
         except RuntimeError as exc:
             first_error = str(exc)
             refresh_ipc_session_name()
             try:
-                inbound, outbound, control = create_ipc_queues()
+                inbound, reliable_inbound, outbound, control = create_ipc_queues()
             except RuntimeError as retry_exc:
                 exc = retry_exc
             else:
                 print(f"Shared-memory IPC recovered with a fresh session name after: {first_error}")
-                start_ipc_polling(inbound, outbound, control)
+                start_ipc_polling(inbound, reliable_inbound, outbound, control)
                 return
             error = str(exc)
             message = (
@@ -277,12 +285,13 @@ def main():
                 ),
             )
             return
-        start_ipc_polling(inbound, outbound, control)
+        start_ipc_polling(inbound, reliable_inbound, outbound, control)
 
     def stop_ipc_server():
         with ipc_ref["lock"]:
             queues = [
                 ipc_ref.pop("inbound", None),
+                ipc_ref.pop("reliable_inbound", None),
                 ipc_ref.pop("outbound", None),
                 ipc_ref.pop("control", None),
             ]
@@ -297,14 +306,19 @@ def main():
                 queue.close()
 
     def broadcast_ipc_line(line: str, exclude_peer_id: str = ""):
+        reliable = is_reliable_ipc_line(line)
         with ipc_ref["lock"]:
-            if is_control_ipc_line(line):
-                queue = ipc_ref.get("control")
-            else:
-                queue = ipc_ref.get("outbound")
+            queue = ipc_ref.get("control") if reliable else ipc_ref.get("outbound")
         if queue is None:
             return False
-        return queue.publish(encode_ipc_envelope(main_peer_id, line, exclude_peer_id=exclude_peer_id))
+        return queue.publish(
+            encode_ipc_envelope(
+                main_peer_id,
+                line,
+                exclude_peer_id=exclude_peer_id,
+                reliable=reliable,
+            )
+        )
 
     ai_event_bridge.line_received.connect(broadcast_ipc_line)
 
@@ -831,10 +845,14 @@ def main():
 
     def read_ipc_messages():
         with ipc_ref["lock"]:
+            reliable_queue = ipc_ref.get("reliable_inbound")
             queue = ipc_ref.get("inbound")
-        if queue is None:
+        if reliable_queue is None or queue is None:
             return
-        for raw_line in queue.read_available(max_messages=200):
+        dropped_before = queue.dropped_messages
+        raw_lines = reliable_queue.read_available(max_messages=200)
+        raw_lines += queue.read_available(max_messages=200)
+        for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if not envelope.line:
                 continue
@@ -843,6 +861,8 @@ def main():
                 continue
             touch_ipc_peer(envelope.sender_id)
             handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
+        if queue.dropped_messages > dropped_before:
+            print(f"IPC inbound queue dropped {queue.dropped_messages - dropped_before} messages")
 
     def touch_ipc_peer(peer_id: str):
         if not peer_id:

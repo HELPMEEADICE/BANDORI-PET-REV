@@ -26,6 +26,7 @@ from live2d_widget import Live2DWidget
 from gpu_acceleration import configure_qt_gpu_acceleration
 from ipc_bus import (
     attach_main_ipc_queues,
+    is_reliable_ipc_line,
     start_ipc_heartbeat,
 )
 from shared_memory_ipc import (
@@ -82,7 +83,7 @@ def main():
     apply_app_theme(cfg.get("dark_theme", False))
 
     ipc_peer_id = make_peer_id("settings")
-    ipc = {"inbound": None, "broadcast": None, "control": None}
+    ipc = {"inbound": None, "reliable_inbound": None, "broadcast": None, "control": None}
     ipc_queue = []
 
     def _stdout_fallback_line(line: str):
@@ -94,7 +95,11 @@ def main():
             return False
         while ipc_queue:
             line = ipc_queue.pop(0)
-            if not ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line)):
+            queue_key = "reliable_inbound" if is_reliable_ipc_line(line) else "inbound"
+            queue = ipc.get(queue_key)
+            if queue is None or not queue.publish(
+                encode_ipc_envelope(ipc_peer_id, line, reliable=is_reliable_ipc_line(line))
+            ):
                 ipc_queue.insert(0, line)
                 return False
         return True
@@ -104,10 +109,6 @@ def main():
             line += "\tRELAUNCH"
         ipc_queue.append(line)
         if not flush_ipc_queue():
-            try:
-                ipc_queue.remove(line)
-            except ValueError:
-                pass
             _stdout_fallback_line(line)
 
     mgr = ModelManager()

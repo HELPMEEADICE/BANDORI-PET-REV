@@ -39,6 +39,8 @@ from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
     ipc_inbound_queue_key,
+    ipc_reliable_inbound_queue_key,
+    is_reliable_ipc_line,
     radial_command_queue_key,
     radial_event_queue_key,
 )
@@ -464,6 +466,7 @@ class PetWindow(QWidget):
         self._context_idle_timer.timeout.connect(self._tick_context_idle_behavior)
         self._ipc_peer_id = make_peer_id("pet")
         self._ipc_inbound_queue = None
+        self._ipc_reliable_inbound_queue = None
         self._ipc_broadcast_queue = None
         self._ipc_control_queue = None
         self._ipc_registered = False
@@ -3209,15 +3212,23 @@ class PetWindow(QWidget):
 
     def _send_ipc(self, msg: str) -> bool:
         self._connect_ipc_bus()
-        queue = self._ipc_inbound_queue
+        reliable = is_reliable_ipc_line(msg)
+        queue = self._ipc_reliable_inbound_queue if reliable else self._ipc_inbound_queue
         if queue is None or not queue.is_attached():
             return False
-        return queue.publish(encode_ipc_envelope(self._ipc_peer_id, msg))
+        return queue.publish(encode_ipc_envelope(self._ipc_peer_id, msg, reliable=reliable))
 
     def _connect_ipc_bus(self):
         try:
             if self._ipc_inbound_queue is None or not self._ipc_inbound_queue.is_attached():
                 self._ipc_inbound_queue = SharedMemoryLineQueue.attach(ipc_inbound_queue_key())
+            if (
+                self._ipc_reliable_inbound_queue is None
+                or not self._ipc_reliable_inbound_queue.is_attached()
+            ):
+                self._ipc_reliable_inbound_queue = SharedMemoryLineQueue.attach(
+                    ipc_reliable_inbound_queue_key()
+                )
             if self._ipc_broadcast_queue is None or not self._ipc_broadcast_queue.is_attached():
                 self._ipc_broadcast_queue = SharedMemoryLineQueue.attach(ipc_broadcast_queue_key())
             if self._ipc_control_queue is None or not self._ipc_control_queue.is_attached():
@@ -3231,7 +3242,12 @@ class PetWindow(QWidget):
             self._schedule_ipc_reconnect()
 
     def _close_ipc_bus(self):
-        for attr in ("_ipc_inbound_queue", "_ipc_broadcast_queue", "_ipc_control_queue"):
+        for attr in (
+            "_ipc_inbound_queue",
+            "_ipc_reliable_inbound_queue",
+            "_ipc_broadcast_queue",
+            "_ipc_control_queue",
+        ):
             queue = getattr(self, attr, None)
             if queue is not None:
                 queue.close()

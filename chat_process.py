@@ -31,6 +31,7 @@ from chat_window import ChatWindow
 from config_manager import ConfigManager
 from ipc_bus import (
     attach_main_ipc_queues,
+    is_reliable_ipc_line,
     send_ipc_message,
     start_ipc_heartbeat,
 )
@@ -187,14 +188,22 @@ def main():
     window.closed.connect(app.quit)
 
     ipc_peer_id = make_peer_id("chat")
-    ipc = {"inbound": None, "broadcast": None, "control": None}
+    ipc = {"inbound": None, "reliable_inbound": None, "broadcast": None, "control": None}
 
     def focus_window():
         focus_chat_window(window)
 
     def send_ipc_line(line: str):
+        queue_key = "reliable_inbound" if is_reliable_ipc_line(line) else "inbound"
         if attach_main_ipc_queues(ipc):
-            ipc["inbound"].publish(encode_ipc_envelope(ipc_peer_id, line))
+            queue = ipc.get(queue_key)
+        else:
+            queue = None
+        if queue is not None and queue.publish(
+            encode_ipc_envelope(ipc_peer_id, line, reliable=is_reliable_ipc_line(line))
+        ):
+            return True
+        return send_ipc_message(line + "\n")
 
     def read_shutdown_messages():
         if not attach_main_ipc_queues(ipc):

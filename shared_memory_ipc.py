@@ -14,10 +14,6 @@ _MAGIC = b"BDIPC01!"
 _VERSION = 1
 _HEADER = struct.Struct("<8sIIIQ")
 _SLOT_HEADER = struct.Struct("<QI")
-# Keep the default queues small enough for macOS's conservative System V shared
-# memory budget while still allowing large SETTINGS payloads in a single slot.
-# macOS commonly caps total System V shared memory near 4MB, so leave headroom
-# for the radial-menu queues and for stale segments left by forced quits.
 _DEFAULT_SLOT_COUNT = 8
 _DEFAULT_SLOT_SIZE = 65536
 _DEFAULT_FALLBACK_SLOT_COUNTS = (8, 4, 2)
@@ -28,12 +24,6 @@ def _queue_memory_size(slot_count: int, slot_size: int) -> int:
 
 
 def _reclaim_stale_segment(key: str) -> bool:
-    # A force-killed owner leaves the System V segment behind on macOS/Linux:
-    # the kernel detaches it but never removes it, so the next create() fails
-    # with AlreadyExists forever. Attaching and detaching once triggers Qt's
-    # cleanup, which destroys the segment when the attach count drops to zero.
-    # A segment still attached by a live process survives the detach, so this
-    # never tears down a queue that is actually in use.
     memory = QSharedMemory(key)
     if not memory.attach():
         return False
@@ -46,6 +36,8 @@ class IpcEnvelope:
     sender_id: str
     line: str
     exclude_peer_id: str = ""
+    message_id: str = ""
+    reliable: bool = False
 
 
 def normalize_ipc_line(line: str) -> str:
@@ -64,12 +56,20 @@ def make_peer_id(prefix: str = "peer") -> str:
     return f"{prefix}-{os.getpid()}-{uuid.uuid4().hex[:12]}"
 
 
-def encode_ipc_envelope(sender_id: str, line: str, exclude_peer_id: str = "") -> str:
+def encode_ipc_envelope(
+    sender_id: str,
+    line: str,
+    exclude_peer_id: str = "",
+    message_id: str = "",
+    reliable: bool = False,
+) -> str:
     return json.dumps(
         {
             "sender": str(sender_id or ""),
             "exclude": str(exclude_peer_id or ""),
             "line": normalize_ipc_line(line),
+            "message_id": str(message_id or ""),
+            "reliable": bool(reliable),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -80,40 +80,31 @@ def decode_ipc_envelope(value: str) -> IpcEnvelope:
     try:
         data = json.loads(value)
     except (TypeError, json.JSONDecodeError):
-        return IpcEnvelope("", normalize_ipc_line(value), "")
+        return IpcEnvelope("", normalize_ipc_line(value))
     if not isinstance(data, dict):
-        return IpcEnvelope("", normalize_ipc_line(value), "")
+        return IpcEnvelope("", normalize_ipc_line(value))
     return IpcEnvelope(
         str(data.get("sender", "") or ""),
         normalize_ipc_line(str(data.get("line", "") or "")),
         str(data.get("exclude", "") or ""),
+        str(data.get("message_id", "") or ""),
+        bool(data.get("reliable", False)),
     )
 
 
+
 class SharedMemoryLineQueue:
-    def __init__(
-        self,
-        key: str,
-        memory: QSharedMemory,
-        *,
-        slot_count: int,
-        slot_size: int,
-        cursor: int,
-    ):
+    def __init__(self, key: str, memory: QSharedMemory, *, slot_count: int, slot_size: int, cursor: int):
         self.key = key
         self.slot_count = int(slot_count)
         self.slot_size = int(slot_size)
         self._memory = memory
         self._cursor = int(cursor)
+        self.dropped_messages = 0
+        self.last_publish_error = ""
 
     @classmethod
-    def create(
-        cls,
-        key: str,
-        *,
-        slot_count: int | None = None,
-        slot_size: int | None = None,
-    ) -> "SharedMemoryLineQueue":
+    def create(cls, key: str, *, slot_count: int | None = None, slot_size: int | None = None) -> "SharedMemoryLineQueue":
         using_default_slot_count = slot_count is None
         slot_count = _DEFAULT_SLOT_COUNT if slot_count is None else slot_count
         slot_size = _DEFAULT_SLOT_SIZE if slot_size is None else slot_size
@@ -130,34 +121,18 @@ class SharedMemoryLineQueue:
             memory = QSharedMemory(key)
             size = _queue_memory_size(candidate_count, slot_size)
             created = memory.create(size)
-            if (
-                not created
-                and memory.error() == QSharedMemory.SharedMemoryError.AlreadyExists
-                and _reclaim_stale_segment(key)
-            ):
+            if not created and memory.error() == QSharedMemory.SharedMemoryError.AlreadyExists and _reclaim_stale_segment(key):
                 memory = QSharedMemory(key)
                 created = memory.create(size)
             if created:
-                queue = cls(
-                    key,
-                    memory,
-                    slot_count=candidate_count,
-                    slot_size=slot_size,
-                    cursor=0,
-                )
+                queue = cls(key, memory, slot_count=candidate_count, slot_size=slot_size, cursor=0)
                 queue._initialize()
                 return queue
             errors.append(f"{size} bytes: {memory.errorString()}")
-        detail = "; ".join(errors) if errors else "no attempts made"
-        raise RuntimeError(f"Failed to create shared memory '{key}': {detail}")
+        raise RuntimeError(f"Failed to create shared memory '{key}': {'; '.join(errors) or 'no attempts made'}")
 
     @classmethod
-    def attach(
-        cls,
-        key: str,
-        *,
-        start_at_tail: bool = True,
-    ) -> "SharedMemoryLineQueue":
+    def attach(cls, key: str, *, start_at_tail: bool = True) -> "SharedMemoryLineQueue":
         memory = QSharedMemory(key)
         if not memory.attach():
             raise RuntimeError(f"Failed to attach shared memory '{key}': {memory.errorString()}")
@@ -183,19 +158,25 @@ class SharedMemoryLineQueue:
     def publish(self, line: str) -> bool:
         payload = normalize_ipc_line(line).encode("utf-8")
         if not payload or len(payload) > self.slot_size:
+            self.last_publish_error = "empty payload" if not payload else f"payload exceeds {self.slot_size} bytes"
             return False
+        self.last_publish_error = ""
         if not self.is_attached():
+            self.last_publish_error = "queue is detached"
             return False
         memory = self._memory
         if memory is None or not memory.lock():
+            self.last_publish_error = "queue lock failed"
             return False
         try:
             data = memory.data()
             if data is None:
+                self.last_publish_error = "queue memory is unavailable"
                 return False
             view = memoryview(data)
             magic, version, slot_count, slot_size, next_seq = self._read_header(view)
             if magic != _MAGIC or version != _VERSION:
+                self.last_publish_error = "queue header is invalid"
                 return False
             slot_index = next_seq % slot_count
             offset = _HEADER.size + slot_index * (_SLOT_HEADER.size + slot_size)
@@ -227,6 +208,7 @@ class SharedMemoryLineQueue:
                 return []
             first_available = max(0, next_seq - slot_count)
             if self._cursor < first_available:
+                self.dropped_messages += first_available - self._cursor
                 self._cursor = first_available
             messages = []
             seq = self._cursor
@@ -234,12 +216,9 @@ class SharedMemoryLineQueue:
                 slot_index = seq % slot_count
                 offset = _HEADER.size + slot_index * (_SLOT_HEADER.size + slot_size)
                 slot_seq, length = _SLOT_HEADER.unpack_from(view, offset)
-                if slot_seq != seq or length <= 0 or length > slot_size:
-                    seq += 1
-                    continue
-                payload_start = offset + _SLOT_HEADER.size
-                raw = bytes(view[payload_start:payload_start + length])
-                messages.append(raw.decode("utf-8", errors="replace"))
+                if slot_seq == seq and 0 < length <= slot_size:
+                    payload_start = offset + _SLOT_HEADER.size
+                    messages.append(bytes(view[payload_start:payload_start + length]).decode("utf-8", errors="replace"))
                 seq += 1
             self._cursor = seq
             return messages
@@ -250,8 +229,7 @@ class SharedMemoryLineQueue:
         if not self._memory.lock():
             raise RuntimeError(f"Failed to lock shared memory '{self.key}'")
         try:
-            view = memoryview(self._memory.data())
-            self._write_header(view, self.slot_count, self.slot_size, 0)
+            self._write_header(memoryview(self._memory.data()), self.slot_count, self.slot_size, 0)
         finally:
             self._memory.unlock()
 
