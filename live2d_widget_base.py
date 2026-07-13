@@ -17,6 +17,17 @@ MAX_CONSECUTIVE_DRAW_FAILURES = 3
 DRAW_FAILURE_LOG_INTERVAL_SECONDS = 5.0
 
 
+def _apply_windows_swap_interval(enabled: bool) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        from OpenGL.WGL.EXT.swap_control import wglSwapIntervalEXT
+
+        return bool(wglSwapIntervalEXT(1 if enabled else 0))
+    except Exception:
+        return False
+
+
 class DirectRenderPipeline:
     """Default framebuffer path shared by models without extra post-processing."""
 
@@ -83,15 +94,16 @@ class Live2DWidgetBase(QOpenGLWidget):
     model_loaded = Signal()
 
     @staticmethod
-    def configure_default_surface_format():
+    def configure_default_surface_format(vsync: bool | None = None):
         from PySide6.QtGui import QSurfaceFormat
 
-        fmt = QSurfaceFormat()
+        fmt = QSurfaceFormat(QSurfaceFormat.defaultFormat())
         fmt.setAlphaBufferSize(8)
         fmt.setSamples(0)
         fmt.setDepthBufferSize(0)
         fmt.setStencilBufferSize(8)
-        fmt.setSwapInterval(1)
+        if vsync is not None:
+            fmt.setSwapInterval(1 if bool(vsync) else 0)
         fmt.setVersion(2, 1)
         fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
         fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
@@ -220,15 +232,12 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._update_render_timer()
 
     def set_vsync(self, enabled: bool):
-        self._vsync = enabled
+        self._vsync = bool(enabled)
         if not self._initialized_gl:
             return
-        self._safe_make_current()
-        try:
-            from OpenGL.WGL.EXT.swap_control import wglSwapIntervalEXT
-            wglSwapIntervalEXT(1 if self._vsync else 0)
-        except Exception:
-            pass
+        if os.name == "nt":
+            self._safe_make_current()
+            _apply_windows_swap_interval(self._vsync)
         self._update_render_timer()
         if not self._static_render:
             self.update()

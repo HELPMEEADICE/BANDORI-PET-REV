@@ -91,7 +91,7 @@ def main():
     set_language(lang)
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format()
+    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
     icon_path = os.path.join(BASE_DIR, "logo.ico")
     ensure_windows_app_user_model_shortcut(APP_AUMID, APP_NAME, icon_path)
     set_windows_app_user_model_id(APP_AUMID)
@@ -1186,9 +1186,13 @@ def main():
             else old_models_signature
         )
         models_runtime_changed = "models" in data and new_models_signature != old_models_signature
+        old_vsync = bool(cfg.get("vsync", True))
+        requested_vsync = bool(data.get("vsync", old_vsync))
+        vsync_changed = "vsync" in data and requested_vsync != old_vsync
         pet_relaunch_requested = has_active_pet_processes() and (
             selected_model_changed
             or models_runtime_changed
+            or vsync_changed
         )
         if selected_char and selected_costume:
             char = selected_char

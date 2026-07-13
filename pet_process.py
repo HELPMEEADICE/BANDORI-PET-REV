@@ -133,7 +133,7 @@ def main():
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format()
+    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
     set_windows_app_user_model_id(APP_NAME)
 
     app = QApplication(sys.argv)
