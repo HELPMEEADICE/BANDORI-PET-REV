@@ -13,6 +13,8 @@ DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
 HIT_STABILITY_GRACE_MS = 120
 HIT_STABILITY_DISTANCE = 12
+MAX_CONSECUTIVE_DRAW_FAILURES = 3
+DRAW_FAILURE_LOG_INTERVAL_SECONDS = 5.0
 
 
 class DirectRenderPipeline:
@@ -129,6 +131,9 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._vsync = True
         self._static_render = False
         self._static_render_done = False
+        self._consecutive_draw_failures = 0
+        self._render_failure_suspended = False
+        self._last_draw_failure_log_at = 0.0
         self._clear_color = (0.0, 0.0, 0.0, 0.0)
         self._lip_sync_level = 0.0
         self._lip_sync_target = 0.0
@@ -242,6 +247,8 @@ class Live2DWidgetBase(QOpenGLWidget):
             if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._sync_renderer_target_size(force=True)
+            self._reset_render_failure_state()
+            self._update_render_timer()
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -386,6 +393,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._update_custom_hit_area_projection()
             
             self._model_path = model_json_path
+            self._reset_render_failure_state()
             self._update_render_timer()
             self.model_loaded.emit()
         except Exception as e:
@@ -458,14 +466,25 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._render_timer.setTimerType(timer_type)
 
     def _update_render_timer(self):
-        if not self._initialized_gl or self._static_render or not self._model or not self.isVisible():
+        if (
+            not self._initialized_gl
+            or self._static_render
+            or not self._model
+            or not self.isVisible()
+            or self._render_failure_suspended
+        ):
             self._render_timer.stop()
             return
         self._sync_timer_type()
         self._render_timer.start(self._frame_interval_ms())
 
+    def _reset_render_failure_state(self):
+        self._consecutive_draw_failures = 0
+        self._render_failure_suspended = False
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._reset_render_failure_state()
         self._update_render_timer()
 
     def hideEvent(self, event):
@@ -690,6 +709,7 @@ class Live2DWidgetBase(QOpenGLWidget):
 
             self._system_scale = self._current_device_pixel_ratio()
             self._initialized_gl = True
+            self._reset_render_failure_state()
             self._cache_w, self._cache_h = self.width(), self.height()
             self._cache_w_half, self._cache_h_half = self._cache_w * 0.5, self._cache_h * 0.5
             self._update_global_pos_cache()
@@ -757,7 +777,12 @@ class Live2DWidgetBase(QOpenGLWidget):
             return 1.0
 
     def paintGL(self):
-        if (self._static_render and self._static_render_done) or not self._live2d or not self._model:
+        if (
+            self._render_failure_suspended
+            or (self._static_render and self._static_render_done)
+            or not self._live2d
+            or not self._model
+        ):
             return
 
         self._track_current_head_target()
@@ -804,12 +829,28 @@ class Live2DWidgetBase(QOpenGLWidget):
                     self._ssaa_fbo.release()
                 except Exception:
                     pass
-            print(f"Live2D draw failed: {exc}", file=sys.stderr)
+            self._consecutive_draw_failures += 1
+            now = time.monotonic()
+            if (
+                self._consecutive_draw_failures == 1
+                and now - self._last_draw_failure_log_at >= DRAW_FAILURE_LOG_INTERVAL_SECONDS
+            ):
+                self._last_draw_failure_log_at = now
+                print(f"Live2D draw failed: {exc}", file=sys.stderr)
+            if self._consecutive_draw_failures >= MAX_CONSECUTIVE_DRAW_FAILURES:
+                self._render_failure_suspended = True
+                self._render_timer.stop()
+                print(
+                    "Live2D rendering suspended after "
+                    f"{self._consecutive_draw_failures} consecutive draw failures",
+                    file=sys.stderr,
+                )
             gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
             return
+        self._consecutive_draw_failures = 0
         if self._perf_probe.enabled:
             draw_elapsed = self._perf_probe.now() - draw_start
             self._perf_probe.add("draw_py", draw_elapsed)
