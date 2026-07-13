@@ -40,6 +40,37 @@ def test_shared_memory_queue_readers_have_independent_cursors():
         writer.close()
 
 
+def test_peer_position_batches_keep_only_the_latest_update_per_character():
+    from shared_memory_ipc import (
+        coalesce_latest_peer_positions,
+        encode_ipc_envelope,
+    )
+
+    kasumi_old = encode_ipc_envelope(
+        "pet-kasumi", 'PEER_POS\t{"character":"kasumi","x":1,"y":2}'
+    )
+    action = encode_ipc_envelope("pet-kasumi", "ACTION\tkasumi\twave")
+    ran_old = encode_ipc_envelope(
+        "pet-ran", 'PEER_POS\t{"character":"ran","x":3,"y":4}'
+    )
+    malformed = encode_ipc_envelope("pet-bad", "PEER_POS\tnot-json")
+    kasumi_new = encode_ipc_envelope(
+        "pet-kasumi", 'PEER_POS\t{"character":"kasumi","x":5,"y":6}'
+    )
+    ran_new = encode_ipc_envelope(
+        "pet-ran", 'PEER_POS\t{"character":"ran","x":7,"y":8}'
+    )
+
+    assert coalesce_latest_peer_positions([
+        kasumi_old,
+        action,
+        ran_old,
+        malformed,
+        kasumi_new,
+        ran_new,
+    ]) == [action, malformed, kasumi_new, ran_new]
+
+
 def test_shared_memory_queue_overflow_returns_recent_complete_messages():
     from shared_memory_ipc import SharedMemoryLineQueue
 

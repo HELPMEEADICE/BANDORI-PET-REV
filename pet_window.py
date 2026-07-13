@@ -46,6 +46,7 @@ from ipc_bus import (
 )
 from shared_memory_ipc import (
     SharedMemoryLineQueue,
+    coalesce_latest_peer_positions,
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -228,6 +229,7 @@ TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 MOUSE_PASSTHROUGH_INTERVAL_MS = 16
+PEER_POS_BROADCAST_INTERVAL_MS = 200
 MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS = 0.08
 MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE = 12
@@ -352,8 +354,9 @@ class PetWindow(QWidget):
         ) if config_manager else False
         self._user_hidden_live2d_model = False
         self._peer_window_positions = {}  # {character: (x, y)}
+        self._last_peer_pos_sent = None
         self._peer_pos_broadcast_timer = QTimer(self)
-        self._peer_pos_broadcast_timer.setInterval(200)
+        self._peer_pos_broadcast_timer.setInterval(PEER_POS_BROADCAST_INTERVAL_MS)
         self._peer_pos_broadcast_timer.timeout.connect(self._broadcast_window_position)
         self._live2d_quality = "balanced"
         self._live2d_scale = 100
@@ -1453,7 +1456,9 @@ class PetWindow(QWidget):
         if enabled and self._live2d_head_tracking_enabled:
             self.set_live2d_head_tracking_enabled(False)
         if enabled:
+            self._last_peer_pos_sent = None
             self._peer_pos_broadcast_timer.start()
+            self._broadcast_window_position()
             self._update_mutual_gaze()
         else:
             self._peer_pos_broadcast_timer.stop()
@@ -1462,12 +1467,16 @@ class PetWindow(QWidget):
     def _broadcast_window_position(self):
         """广播自己的窗口位置给其他角色"""
         center = self.geometry().center()
+        current_position = (self._current_char, center.x(), center.y())
+        if current_position == self._last_peer_pos_sent:
+            return
         payload = json.dumps({
-            "character": self._current_char,
-            "x": center.x(),
-            "y": center.y(),
+            "character": current_position[0],
+            "x": current_position[1],
+            "y": current_position[2],
         }, ensure_ascii=False)
-        self._send_ipc(f"PEER_POS\t{payload}")
+        if self._send_ipc(f"PEER_POS\t{payload}"):
+            self._last_peer_pos_sent = current_position
 
     def _handle_peer_pos(self, data: dict):
         """处理其他角色的窗口位置信息"""
@@ -3253,13 +3262,17 @@ class PetWindow(QWidget):
                 queue.close()
             setattr(self, attr, None)
         self._ipc_registered = False
+        self._last_peer_pos_sent = None
 
     def _schedule_ipc_reconnect(self):
         if not self._ipc_reconnect_timer.isActive():
             self._ipc_reconnect_timer.start()
 
     def _send_ipc_registration(self):
-        self._send_ipc(f"REGISTER\tPET\t{self._current_char}")
+        if self._send_ipc(f"REGISTER\tPET\t{self._current_char}"):
+            # Refresh once after each registration heartbeat so newly joined
+            # or reconnected peers receive a stationary pet's position too.
+            self._last_peer_pos_sent = None
 
     def _read_ipc_messages(self):
         self._connect_ipc_bus()
@@ -3271,7 +3284,9 @@ class PetWindow(QWidget):
         ):
             return
         raw_lines = control_queue.read_available(max_messages=200)
-        raw_lines += broadcast_queue.read_available(max_messages=200)
+        raw_lines += coalesce_latest_peer_positions(
+            broadcast_queue.read_available(max_messages=200)
+        )
         for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == self._ipc_peer_id:

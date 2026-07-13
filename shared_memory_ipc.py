@@ -92,6 +92,30 @@ def decode_ipc_envelope(value: str) -> IpcEnvelope:
     )
 
 
+def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
+    """Keep only the newest valid PEER_POS envelope for each character."""
+    classified: list[tuple[str, str]] = []
+    latest_index: dict[str, int] = {}
+    for index, raw_line in enumerate(raw_lines):
+        envelope = decode_ipc_envelope(raw_line)
+        character = ""
+        if envelope.line.startswith("PEER_POS\t"):
+            try:
+                payload = json.loads(envelope.line.split("\t", 1)[1])
+            except (IndexError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, dict):
+                character = str(payload.get("character", "") or "").strip()
+        classified.append((raw_line, character))
+        if character:
+            latest_index[character] = index
+
+    return [
+        raw_line
+        for index, (raw_line, character) in enumerate(classified)
+        if not character or latest_index[character] == index
+    ]
+
 
 class SharedMemoryLineQueue:
     def __init__(self, key: str, memory: QSharedMemory, *, slot_count: int, slot_size: int, cursor: int):

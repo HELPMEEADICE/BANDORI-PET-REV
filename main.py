@@ -59,6 +59,7 @@ from ipc_bus import (
 )
 from shared_memory_ipc import (
     SharedMemoryLineQueue,
+    coalesce_latest_peer_positions,
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -849,9 +850,10 @@ def main():
             queue = ipc_ref.get("inbound")
         if reliable_queue is None or queue is None:
             return
-        dropped_before = queue.dropped_messages
         raw_lines = reliable_queue.read_available(max_messages=200)
-        raw_lines += queue.read_available(max_messages=200)
+        raw_lines += coalesce_latest_peer_positions(
+            queue.read_available(max_messages=200)
+        )
         for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if not envelope.line:
@@ -861,9 +863,6 @@ def main():
                 continue
             touch_ipc_peer(envelope.sender_id)
             handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
-        if queue.dropped_messages > dropped_before:
-            print(f"IPC inbound queue dropped {queue.dropped_messages - dropped_before} messages")
-
     def touch_ipc_peer(peer_id: str):
         if not peer_id:
             return
