@@ -46,6 +46,10 @@ def is_reliable_ipc_line(line: str) -> bool:
     normalized = normalize_ipc_line(line)
     return is_control_ipc_line(normalized) or normalized.startswith((
         "REGISTER\t",
+        "UNREGISTER\t",
+        "PEER_OFFLINE\t",
+        "RADIAL_MENU_OPEN\t",
+        "RADIAL_MENU_CLOSED\t",
         "MODEL\t",
         "LAUNCH",
         "EXIT",
@@ -54,6 +58,23 @@ def is_reliable_ipc_line(line: str) -> bool:
         "CHAT_EVENT\t",
         "REMINDER_EVENT\t",
     ))
+
+
+def pet_characters_without_active_peers(removed_peers, active_peers) -> list[str]:
+    active_pet_characters = {
+        str(peer.get("character", "") or "").strip()
+        for peer in active_peers
+        if isinstance(peer, dict)
+        and str(peer.get("kind", "") or "").upper() == "PET"
+    }
+    return sorted({
+        character
+        for peer in removed_peers
+        if isinstance(peer, dict)
+        and str(peer.get("kind", "") or "").upper() == "PET"
+        if (character := str(peer.get("character", "") or "").strip())
+        and character not in active_pet_characters
+    })
 
 
 def radial_command_queue_key(name: str) -> str:

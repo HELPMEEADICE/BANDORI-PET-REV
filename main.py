@@ -56,6 +56,7 @@ from ipc_bus import (
     ipc_reliable_inbound_queue_key,
     is_control_ipc_line,
     is_reliable_ipc_line,
+    pet_characters_without_active_peers,
 )
 from shared_memory_ipc import (
     SharedMemoryLineQueue,
@@ -858,7 +859,7 @@ def main():
             envelope = decode_ipc_envelope(raw_line)
             if not envelope.line:
                 continue
-            if envelope.line.startswith("REGISTER\t"):
+            if envelope.line.startswith(("REGISTER\t", "UNREGISTER\t")):
                 handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
                 continue
             touch_ipc_peer(envelope.sender_id)
@@ -867,8 +868,9 @@ def main():
         if not peer_id:
             return
         with ipc_ref["lock"]:
-            peer = ipc_ref.setdefault("peers", {}).setdefault(peer_id, {})
-            peer["last_seen"] = time.monotonic()
+            peer = ipc_ref.setdefault("peers", {}).get(peer_id)
+            if peer is not None:
+                peer["last_seen"] = time.monotonic()
 
     def register_ipc_peer(line: str, peer_id: str):
         if not peer_id:
@@ -888,6 +890,33 @@ def main():
             broadcast_ipc_line(latest_settings_line)
         return is_new_peer
 
+    def remove_ipc_peers(peer_ids) -> list[str]:
+        peer_ids = {str(peer_id or "") for peer_id in peer_ids if peer_id}
+        if not peer_ids:
+            return []
+        with ipc_ref["lock"]:
+            peers = ipc_ref.setdefault("peers", {})
+            removed = [
+                peers.pop(peer_id)
+                for peer_id in peer_ids
+                if peer_id in peers
+            ]
+            offline_characters = pet_characters_without_active_peers(
+                removed,
+                peers.values(),
+            )
+        return offline_characters
+
+    def broadcast_offline_pet_characters(characters) -> None:
+        for character in characters:
+            payload = json.dumps({"character": character}, ensure_ascii=False)
+            broadcast_ipc_line(f"PEER_OFFLINE\t{payload}")
+
+    def unregister_ipc_peer(peer_id: str) -> bool:
+        offline_characters = remove_ipc_peers([peer_id])
+        broadcast_offline_pet_characters(offline_characters)
+        return bool(offline_characters)
+
     def prune_ipc_peers(max_age_seconds: float = 8.0):
         now = time.monotonic()
         with ipc_ref["lock"]:
@@ -897,8 +926,7 @@ def main():
                 for peer_id, peer in peers.items()
                 if now - float(peer.get("last_seen", 0.0)) > max_age_seconds
             ]
-            for peer_id in stale:
-                peers.pop(peer_id, None)
+        broadcast_offline_pet_characters(remove_ipc_peers(stale))
 
     def clear_ipc_peers(kind: str = ""):
         normalized = str(kind or "").upper()
@@ -923,9 +951,19 @@ def main():
                 for peer in ipc_ref.get("peers", {}).values()
             )
 
+    def is_registered_pet_peer(peer_id: str) -> bool:
+        if not peer_id:
+            return False
+        with ipc_ref["lock"]:
+            peer = ipc_ref.setdefault("peers", {}).get(peer_id)
+            return bool(peer and str(peer.get("kind", "") or "").upper() == "PET")
+
     def handle_ipc_line(line: str, source_peer_id: str = ""):
         if line.startswith("REGISTER\t"):
             register_ipc_peer(line, source_peer_id)
+            return
+        if line.startswith("UNREGISTER\t"):
+            unregister_ipc_peer(source_peer_id)
             return
         if line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
@@ -938,17 +976,22 @@ def main():
         elif line.startswith("REMINDER_EVENT\t"):
             broadcast_ipc_line(line)
         elif line.startswith("PEER_POS\t"):
-            broadcast_ipc_line(line)
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("PEER_DRAG\t"):
-            broadcast_ipc_line(line)
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("PREVIEW_MOTION\t"):
             broadcast_ipc_line(line)
         elif line.startswith("LAYER_ORDER\t"):
-            broadcast_ipc_line(line)
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("RADIAL_MENU_OPEN\t"):
-            broadcast_ipc_line(line)
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("RADIAL_MENU_CLOSED\t"):
-            broadcast_ipc_line(line)
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("OUTFIT_DESCRIPTION\t"):
             try:
                 entry = json.loads(line.split("\t", 1)[1])

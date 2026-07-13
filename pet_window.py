@@ -1480,12 +1480,27 @@ class PetWindow(QWidget):
 
     def _handle_peer_pos(self, data: dict):
         """处理其他角色的窗口位置信息"""
+        if not isinstance(data, dict):
+            return
         char = data.get("character", "")
         if not char or char == self._current_char:
             return
         x, y = data.get("x", 0), data.get("y", 0)
         self._peer_window_positions[char] = (x, y)
         self._update_mutual_gaze()
+
+    def _handle_peer_offline(self, data: dict):
+        if not isinstance(data, dict):
+            return
+        char = str(data.get("character", "") or "").strip()
+        if not char or char == self._current_char:
+            return
+        self._peer_window_positions.pop(char, None)
+        menu_state_removed = char in self._peers_with_radial_menu
+        self._peers_with_radial_menu.discard(char)
+        self._update_mutual_gaze()
+        if menu_state_removed:
+            self._tick_windows_topmost_guard()
 
     def _broadcast_peer_drag(self, dx: int, dy: int):
         if not self._move_all_roles_together:
@@ -1609,6 +1624,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._send_ipc_unregistration()
         self._close_ipc_bus()
         self._save_position_config()
         super().closeEvent(event)
@@ -3274,6 +3290,14 @@ class PetWindow(QWidget):
             # or reconnected peers receive a stationary pet's position too.
             self._last_peer_pos_sent = None
 
+    def _send_ipc_unregistration(self):
+        if not self._ipc_registered:
+            return False
+        sent = self._send_ipc(f"UNREGISTER\tPET\t{self._current_char}")
+        if sent:
+            self._ipc_registered = False
+        return sent
+
     def _read_ipc_messages(self):
         self._connect_ipc_bus()
         broadcast_queue = self._ipc_broadcast_queue
@@ -3283,10 +3307,13 @@ class PetWindow(QWidget):
             or control_queue is None or not control_queue.is_attached()
         ):
             return
-        raw_lines = control_queue.read_available(max_messages=200)
-        raw_lines += coalesce_latest_peer_positions(
+        raw_lines = coalesce_latest_peer_positions(
             broadcast_queue.read_available(max_messages=200)
         )
+        # Ordinary position updates are older than any later reliable offline
+        # notification. Process them first so stale coordinates cannot be
+        # restored after a peer has been removed.
+        raw_lines += control_queue.read_available(max_messages=200)
         for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == self._ipc_peer_id:
@@ -3358,6 +3385,11 @@ class PetWindow(QWidget):
         elif line.startswith("PEER_DRAG\t"):
             try:
                 self._handle_peer_drag(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+        elif line.startswith("PEER_OFFLINE\t"):
+            try:
+                self._handle_peer_offline(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
         elif line.startswith("OPEN_CHAT"):
@@ -4672,6 +4704,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._send_ipc_unregistration()
         self._close_ipc_bus()
         if self._tray_icon is not None:
             self._tray_icon.hide()
