@@ -5,8 +5,8 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QPoint, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QImageReader, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QScrollArea, QSizePolicy, QToolButton, QMenu,
@@ -19,6 +19,7 @@ from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, Progr
 from qfluentwidgets.common.config import qconfig
 from process_utils import app_base_dir, app_data_dir
 from network_worker import CancelableNetworkWorker
+from public_network import open_public_url
 from app_theme import (
     BANDORI_PRIMARY_SOFT,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
@@ -35,7 +36,6 @@ import sys
 import uuid
 import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime
 import json
 import re
@@ -119,6 +119,14 @@ from .reply_stream import ReplyStreamBinding
 
 _CHAT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
 _REMOTE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+_REMOTE_IMAGE_MAX_PIXELS = 25_000_000
+_REMOTE_IMAGE_FORMATS = {
+    "gif": (".gif", "image/gif"),
+    "jpeg": (".jpg", "image/jpeg"),
+    "jpg": (".jpg", "image/jpeg"),
+    "png": (".png", "image/png"),
+    "webp": (".webp", "image/webp"),
+}
 _FILE_ATTACHMENT_INLINE_BYTES = 256 * 1024
 _FILE_ATTACHMENT_INLINE_CHARS = 120_000
 _POKE_WINDOW_SHAKE_DURATION_MS = 360
@@ -244,28 +252,40 @@ class AttachmentImportWorker(CancelableNetworkWorker):
         }
 
     def _import_remote(self, job: dict, index: int, job_count: int) -> dict | None:
-        url = str(job.get("url", "") or "")
-        parsed = urllib.parse.urlparse(url)
-        suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
-        suffix_is_known = suffix in _CHAT_IMAGE_EXTENSIONS
-        name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
-        request = urllib.request.Request(url, headers={"User-Agent": "BandoriPet/1.0"})
+        url = str(job.get("url", "") or "").strip()
+        if not url:
+            raise ValueError("Missing remote image URL")
         target = None
         response = None
         copied = 0
-        content_type = ""
+        detected_mime = "image/png"
+        name = "web-image"
         success = False
         try:
-            response = self.open_url(request, timeout=12)
-            if response is None:
+            response, final_url = open_public_url(
+                url,
+                timeout=12,
+                headers={"User-Agent": "BandoriPet/1.0", "Accept": "image/*"},
+            )
+            if not self._track_response(response):
                 return None
             with response:
                 content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
                 if content_type and not content_type.startswith("image/"):
                     raise OSError("URL does not point to an image")
-                total = int(response.headers.get("content-length", 0) or 0)
+                try:
+                    total = int(response.headers.get("content-length", 0) or 0)
+                except (TypeError, ValueError) as exc:
+                    raise OSError("The remote image returned an invalid size") from exc
+                if total < 0:
+                    raise OSError("The remote image returned an invalid size")
                 if total > _REMOTE_IMAGE_MAX_BYTES:
                     raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
+
+                parsed = urllib.parse.urlparse(final_url)
+                suffix = Path(urllib.parse.unquote(parsed.path)).suffix.lower()
+                suffix_is_known = suffix in _CHAT_IMAGE_EXTENSIONS
+                name = Path(urllib.parse.unquote(parsed.path)).name or "web-image"
                 if not suffix_is_known:
                     suffix = ChatWindow._suffix_for_image_content_type(content_type)
                     if Path(name).suffix.lower() not in _CHAT_IMAGE_EXTENSIONS:
@@ -283,6 +303,39 @@ class AttachmentImportWorker(CancelableNetworkWorker):
                             raise OSError(_tr("ChatWindow.attach_remote_image_too_large", default="网页图片太大"))
                         dst.write(chunk)
                         self._emit_progress(index, job_count, copied, total, name)
+
+            reader = QImageReader(str(target))
+            reader.setDecideFormatFromContent(True)
+            if not reader.canRead():
+                raise OSError("The downloaded content is not a readable image")
+            detected_format = bytes(reader.format()).decode("ascii", errors="ignore").lower()
+            if detected_format not in _REMOTE_IMAGE_FORMATS:
+                raise OSError("The downloaded image format is not supported")
+            image_size = reader.size()
+            width = image_size.width()
+            height = image_size.height()
+            if (
+                width <= 0
+                or height <= 0
+                or width > 16_384
+                or height > 16_384
+                or width * height > _REMOTE_IMAGE_MAX_PIXELS
+            ):
+                raise OSError("The downloaded image dimensions are too large")
+            if reader.read().isNull():
+                raise OSError("The downloaded image could not be decoded")
+
+            detected_suffix, detected_mime = _REMOTE_IMAGE_FORMATS[detected_format]
+            if target.suffix.lower() != detected_suffix:
+                renamed_target = target.with_suffix(detected_suffix)
+                target.replace(renamed_target)
+                target = renamed_target
+            current_name_suffix = Path(name).suffix.lower()
+            matching_name_suffixes = {detected_suffix}
+            if detected_format in {"jpeg", "jpg"}:
+                matching_name_suffixes.add(".jpeg")
+            if current_name_suffix not in matching_name_suffixes:
+                name = f"{Path(name).stem or 'web-image'}{detected_suffix}"
             success = True
         finally:
             if response is not None:
@@ -292,12 +345,11 @@ class AttachmentImportWorker(CancelableNetworkWorker):
                     target.unlink()
                 except OSError:
                     pass
-        mime = content_type if content_type.startswith("image/") else (mimetypes.guess_type(str(target))[0] or "image/png")
         return {
             "type": "image",
             "path": str(target),
             "name": name,
-            "mime": mime,
+            "mime": detected_mime,
             "size": target.stat().st_size if target and target.exists() else copied,
             "uploaded_at": datetime.now().isoformat(timespec="seconds"),
         }
