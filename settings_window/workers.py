@@ -321,6 +321,13 @@ class TestConnectionWorker(CancelableNetworkWorker):
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self._api_key}",
+                # Keep this consistent with model discovery: some compatible
+                # gateways block urllib's default User-Agent.
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
             }
 
             try:
@@ -406,6 +413,13 @@ class FetchModelsWorker(CancelableNetworkWorker):
 
             headers = {
                 "Authorization": f"Bearer {self._api_key}",
+                # Some OpenAI-compatible gateways apply bot filtering to the
+                # models endpoint and reject urllib's default User-Agent.
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
             }
 
             req = urllib.request.Request(
