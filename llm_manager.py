@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import re
 import threading
 import urllib.request
@@ -1090,10 +1091,24 @@ class LLMStreamWorker(_CancelableNetworkWorker):
 
     def _collect_tool_call_delta(self, delta: dict):
         for call_delta in delta.get("tool_calls") or []:
-            try:
-                index = int(call_delta.get("index", len(self._stream_tool_calls)))
-            except (TypeError, ValueError):
-                index = len(self._stream_tool_calls)
+            raw_index = call_delta.get("index")
+            call_id = str(call_delta.get("id", "") or "")
+            if raw_index is None and call_id:
+                index = next(
+                    (
+                        item_index
+                        for item_index, item in enumerate(self._stream_tool_calls)
+                        if item.get("id") == call_id
+                    ),
+                    len(self._stream_tool_calls),
+                )
+            elif raw_index is None and len(self._stream_tool_calls) == 1:
+                index = 0
+            else:
+                try:
+                    index = int(raw_index if raw_index is not None else len(self._stream_tool_calls))
+                except (TypeError, ValueError):
+                    index = len(self._stream_tool_calls)
             while len(self._stream_tool_calls) <= index:
                 self._stream_tool_calls.append({
                     "id": "",
@@ -1105,6 +1120,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 target["id"] = call_delta["id"]
             if call_delta.get("type"):
                 target["type"] = call_delta["type"]
+            extra_content = call_delta.get("extra_content")
+            if isinstance(extra_content, dict) and extra_content:
+                target["extra_content"] = _merge_nested_dicts(
+                    target.get("extra_content"),
+                    extra_content,
+                )
             function_delta = call_delta.get("function") or {}
             if function_delta.get("name"):
                 self._round_output_text += function_delta["name"]
@@ -1746,15 +1767,29 @@ def _normalize_stream_tool_calls(
             continue
         arguments = str(function.get("arguments", "") or "").strip() or "{}"
         call_id = str(call.get("id", "") or "").strip() or f"{id_prefix}{index}"
-        normalized.append({
+        normalized_call = {
             "id": call_id,
             "type": "function",
             "function": {
                 "name": name,
                 "arguments": arguments,
             },
-        })
+        }
+        extra_content = call.get("extra_content")
+        if isinstance(extra_content, dict) and extra_content:
+            normalized_call["extra_content"] = deepcopy(extra_content)
+        normalized.append(normalized_call)
     return normalized
+
+
+def _merge_nested_dicts(existing, update: dict) -> dict:
+    merged = deepcopy(existing) if isinstance(existing, dict) else {}
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_nested_dicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
 
 
 def _extract_search_sources(text: str) -> list[dict]:

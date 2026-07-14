@@ -38,6 +38,87 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
 
         self.assertEqual("provider_call_id", normalized[0]["id"])
 
+    def test_gemini_thought_signature_is_preserved_during_normalization(self):
+        calls = [{
+            "id": "function-call-1",
+            "function": {"name": "poke_user", "arguments": "{}"},
+            "extra_content": {
+                "google": {"thought_signature": "encrypted-signature"},
+            },
+        }]
+
+        normalized = _normalize_stream_tool_calls(calls)
+
+        self.assertEqual(
+            "encrypted-signature",
+            normalized[0]["extra_content"]["google"]["thought_signature"],
+        )
+
+    def test_gemini_stream_collects_signature_without_tool_call_index(self):
+        worker = LLMStreamWorker(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "key",
+            "gemini-3.5-flash",
+            [],
+        )
+        worker._process_line(
+            'data: {"choices":[{"delta":{"tool_calls":[{'
+            '"extra_content":{"google":{"thought_signature":"signature-a"}},'
+            '"function":{"name":"poke_user","arguments":"{}"},'
+            '"id":"function-call-1","type":"function"}]}}]}'
+        )
+
+        self.assertEqual(1, len(worker._stream_tool_calls))
+        self.assertEqual(
+            "signature-a",
+            worker._stream_tool_calls[0]["extra_content"]["google"]["thought_signature"],
+        )
+
+    def test_gemini_signature_is_returned_with_tool_result_follow_up(self):
+        first_stream = "\n".join([
+            'data: {"choices":[{"delta":{"tool_calls":[{'
+            '"extra_content":{"google":{"thought_signature":"signature-a"}},'
+            '"function":{"name":"poke_user","arguments":"{}"},'
+            '"id":"function-call-1","type":"function"}]}}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+            'data: [DONE]',
+            "",
+        ]).encode("utf-8")
+        second_stream = "\n".join([
+            'data: {"choices":[{"delta":{"content":"戳回来啦"}}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            'data: [DONE]',
+            "",
+        ]).encode("utf-8")
+        worker = LLMStreamWorker(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "key",
+            "gemini-3.5-flash",
+            [{"role": "user", "content": "（你戳了戳香澄）"}],
+        )
+        bodies = []
+        streams = iter((first_stream, second_stream))
+
+        def fake_open(request, _timeout):
+            bodies.append(json.loads(request.data.decode("utf-8")))
+            return io.BytesIO(next(streams))
+
+        worker._open_response = fake_open
+        with patch(
+            "llm_manager.run_local_tool_call",
+            return_value={"content": "已戳了戳用户。", "extra_messages": []},
+        ) as run_tool:
+            worker.run()
+
+        self.assertEqual(2, len(bodies))
+        returned_call = bodies[1]["messages"][-2]["tool_calls"][0]
+        self.assertEqual(
+            "signature-a",
+            returned_call["extra_content"]["google"]["thought_signature"],
+        )
+        self.assertEqual("function-call-1", bodies[1]["messages"][-1]["tool_call_id"])
+        run_tool.assert_called_once()
+
     def test_user_facing_tool_features_require_tool_support(self):
         self.assertTrue(_tool_support_is_required(False, {}))
         self.assertTrue(_tool_support_is_required(True, {}))
