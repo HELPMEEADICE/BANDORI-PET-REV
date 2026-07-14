@@ -133,7 +133,7 @@ def main():
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format()
+    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
     set_windows_app_user_model_id(APP_NAME)
 
     app = QApplication(sys.argv)
@@ -188,6 +188,8 @@ def main():
     app.aboutToQuit.connect(lambda: pet._close_compact_ai_window())
     app.aboutToQuit.connect(close_mcp_clients)
     app.aboutToQuit.connect(lambda: pet._close_settings_process())
+    app.aboutToQuit.connect(pet._send_ipc_unregistration)
+    app.aboutToQuit.connect(pet._close_ipc_bus)
     app.aboutToQuit.connect(pet._save_position_config)
     app.aboutToQuit.connect(pet._flush_save)
     app.aboutToQuit.connect(live2d.dispose)

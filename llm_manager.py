@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import re
 import threading
 import urllib.request
@@ -9,12 +10,14 @@ from PySide6.QtCore import QThread, Signal
 
 from llm_api_compat import (
     chat_completions_api_url,
+    openai_compat_headers,
     responses_api_url,
     sanitize_chat_body_for_url,
 )
 from llm_thinking import (
     apply_responses_thinking_options as _apply_responses_thinking_options,
     apply_thinking_options as _apply_thinking_options,
+    split_thinking_text,
 )
 from local_tools import (
     AUTO_CONTINUE_TOOL_NAME,
@@ -1010,11 +1013,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         self._round_output_text = ""
         self._round_stream_completed = False
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
+        headers = openai_compat_headers(self._api_key)
 
         req = urllib.request.Request(
             self._api_url, data=data, headers=headers, method="POST"
@@ -1090,10 +1089,24 @@ class LLMStreamWorker(_CancelableNetworkWorker):
 
     def _collect_tool_call_delta(self, delta: dict):
         for call_delta in delta.get("tool_calls") or []:
-            try:
-                index = int(call_delta.get("index", len(self._stream_tool_calls)))
-            except (TypeError, ValueError):
-                index = len(self._stream_tool_calls)
+            raw_index = call_delta.get("index")
+            call_id = str(call_delta.get("id", "") or "")
+            if raw_index is None and call_id:
+                index = next(
+                    (
+                        item_index
+                        for item_index, item in enumerate(self._stream_tool_calls)
+                        if item.get("id") == call_id
+                    ),
+                    len(self._stream_tool_calls),
+                )
+            elif raw_index is None and len(self._stream_tool_calls) == 1:
+                index = 0
+            else:
+                try:
+                    index = int(raw_index if raw_index is not None else len(self._stream_tool_calls))
+                except (TypeError, ValueError):
+                    index = len(self._stream_tool_calls)
             while len(self._stream_tool_calls) <= index:
                 self._stream_tool_calls.append({
                     "id": "",
@@ -1105,6 +1118,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 target["id"] = call_delta["id"]
             if call_delta.get("type"):
                 target["type"] = call_delta["type"]
+            extra_content = call_delta.get("extra_content")
+            if isinstance(extra_content, dict) and extra_content:
+                target["extra_content"] = _merge_nested_dicts(
+                    target.get("extra_content"),
+                    extra_content,
+                )
             function_delta = call_delta.get("function") or {}
             if function_delta.get("name"):
                 self._round_output_text += function_delta["name"]
@@ -1396,11 +1415,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         self._round_output_text = ""
         self._round_text_seen = False
         self._round_stream_completed = False
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
+        headers = openai_compat_headers(self._api_key)
         req = urllib.request.Request(
             self._api_url,
             data=data,
@@ -1614,11 +1629,7 @@ class NonStreamWorker(_CancelableNetworkWorker):
             sanitize_chat_body_for_url(body, self._api_url)
             data = json.dumps(body).encode("utf-8")
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            }
+            headers = openai_compat_headers(self._api_key)
 
             req = urllib.request.Request(
                 self._api_url, data=data, headers=headers, method="POST"
@@ -1746,15 +1757,29 @@ def _normalize_stream_tool_calls(
             continue
         arguments = str(function.get("arguments", "") or "").strip() or "{}"
         call_id = str(call.get("id", "") or "").strip() or f"{id_prefix}{index}"
-        normalized.append({
+        normalized_call = {
             "id": call_id,
             "type": "function",
             "function": {
                 "name": name,
                 "arguments": arguments,
             },
-        })
+        }
+        extra_content = call.get("extra_content")
+        if isinstance(extra_content, dict) and extra_content:
+            normalized_call["extra_content"] = deepcopy(extra_content)
+        normalized.append(normalized_call)
     return normalized
+
+
+def _merge_nested_dicts(existing, update: dict) -> dict:
+    merged = deepcopy(existing) if isinstance(existing, dict) else {}
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_nested_dicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
 
 
 def _extract_search_sources(text: str) -> list[dict]:
@@ -1804,9 +1829,6 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
     pattern = re.compile(r"\{\s*\"(?:web_search_sources|search_sources|sources)\"\s*:\s*\[.*?\]\s*\}", re.DOTALL)
     cleaned = pattern.sub(replace_json, text)
     return cleaned.rstrip(), sources
-
-
-_THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
 
 
 def _responses_api_url(api_url: str) -> str:
@@ -1885,18 +1907,3 @@ def _extract_response_output_text(response: dict) -> str:
             if part.get("type") in ("output_text", "text") and isinstance(part.get("text"), str):
                 texts.append(part["text"])
     return "".join(texts)
-
-
-def split_thinking_text(content: str, reasoning: str = "") -> tuple[str, str]:
-    if not content:
-        return "", reasoning.strip()
-    collected = [reasoning.strip()] if reasoning and reasoning.strip() else []
-
-    def collect(match):
-        text = match.group(1).strip()
-        if text:
-            collected.append(text)
-        return ""
-
-    clean = _THINK_PATTERN.sub(collect, content).strip()
-    return clean, "\n\n".join(collected).strip()

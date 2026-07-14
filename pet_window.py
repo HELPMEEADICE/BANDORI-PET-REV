@@ -90,6 +90,8 @@ PBT_APMRESUMECRITICAL = 0x0006
 PBT_APMRESUMESUSPEND = 0x0007
 PBT_APMRESUMEAUTOMATIC = 0x0012
 WTS_SESSION_UNLOCK = 0x0008
+POKE_USER_BADGE_DURATION_MS = 1980
+POKE_USER_WINDOW_SHAKE_INTENSITY = 36
 GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
@@ -354,6 +356,12 @@ class PetWindow(QWidget):
         ) if config_manager else False
         self._user_hidden_live2d_model = False
         self._peer_window_positions = {}  # {character: (x, y)}
+        self._peer_drag_states = {}
+        self._completed_peer_drag_sessions = {}
+        self._active_peer_drag_id = ""
+        self._active_peer_drag_total_x = 0
+        self._active_peer_drag_total_y = 0
+        self._drag_anchor_ratio = None
         self._last_peer_pos_sent = None
         self._peer_pos_broadcast_timer = QTimer(self)
         self._peer_pos_broadcast_timer.setInterval(PEER_POS_BROADCAST_INTERVAL_MS)
@@ -486,6 +494,15 @@ class PetWindow(QWidget):
         self._position_save_timer.setSingleShot(True)
         self._position_save_timer.setInterval(250)
         self._position_save_timer.timeout.connect(self._save_position_config)
+        self._screen_scale_refresh_timer = QTimer(self)
+        self._screen_scale_refresh_timer.setSingleShot(True)
+        self._screen_scale_refresh_timer.setInterval(0)
+        self._screen_scale_refresh_timer.timeout.connect(self._refresh_live2d_screen_scale)
+        self._screen_scale_window_handle = None
+        self._drag_anchor_refresh_timer = QTimer(self)
+        self._drag_anchor_refresh_timer.setSingleShot(True)
+        self._drag_anchor_refresh_timer.setInterval(0)
+        self._drag_anchor_refresh_timer.timeout.connect(self._sync_drag_anchor_after_window_change)
         self._windows_topmost_guard_timer = QTimer(self)
         self._windows_topmost_guard_timer.setInterval(TOPMOST_GUARD_INTERVAL_MS)
         self._windows_topmost_guard_timer.timeout.connect(self._tick_windows_topmost_guard)
@@ -528,7 +545,7 @@ class PetWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAutoFillBackground(False)
 
-        self.resize(*self._live2d_size())
+        self.setFixedSize(*self._live2d_size())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -541,6 +558,10 @@ class PetWindow(QWidget):
         self._live2d_widget = Live2DWidget(self)
         self._live2d_widget.set_live2d_module(self._live2d)
         self._live2d_widget.set_window_drag_callback(self._on_drag)
+        self._live2d_widget.set_window_drag_lifecycle_callbacks(
+            self._on_peer_drag_started,
+            self._on_peer_drag_finished,
+        )
         self._live2d_widget.set_click_callback(self._on_click)
         self._live2d_widget.set_double_click_callback(self._on_live2d_double_click)
         self._live2d_widget.set_right_click_callback(self._on_right_click)
@@ -555,6 +576,10 @@ class PetWindow(QWidget):
         pixel_widget_class, _load_pixel_frames, _pixel_path_for_character = _pixel_pet_support()
         self._pixel_widget = pixel_widget_class(self)
         self._pixel_widget.set_window_drag_callback(self._on_drag)
+        self._pixel_widget.set_window_drag_lifecycle_callbacks(
+            self._on_peer_drag_started,
+            self._on_peer_drag_finished,
+        )
         self._pixel_widget.set_click_callback(self._on_click)
         self._pixel_widget.set_right_click_callback(self._on_right_click)
         self._stack.addWidget(self._pixel_widget)
@@ -921,6 +946,75 @@ class PetWindow(QWidget):
         if not _get_cursor_pos(ctypes.byref(point)):
             return QCursor.pos()
         return QPoint(int(point.x), int(point.y))
+
+    def _capture_native_drag_anchor(self):
+        self._drag_anchor_ratio = None
+        if os.name != "nt" or _get_window_rect is None:
+            return
+        hwnd = int(self.winId())
+        if not hwnd:
+            return
+        rect = ctypes.wintypes.RECT()
+        if not _get_window_rect(hwnd, ctypes.byref(rect)):
+            return
+        native_w = max(1, int(rect.right - rect.left))
+        native_h = max(1, int(rect.bottom - rect.top))
+        cursor = self._native_cursor_pos()
+        self._drag_anchor_ratio = (
+            (cursor.x() - rect.left) / native_w,
+            (cursor.y() - rect.top) / native_h,
+        )
+
+    def _reanchor_window_to_drag_cursor(self) -> bool:
+        if (
+            os.name != "nt"
+            or self._drag_anchor_ratio is None
+            or _get_window_rect is None
+            or _set_window_pos is None
+        ):
+            return False
+        hwnd = int(self.winId())
+        if not hwnd:
+            return False
+        rect = ctypes.wintypes.RECT()
+        if not _get_window_rect(hwnd, ctypes.byref(rect)):
+            return False
+        native_w = max(1, int(rect.right - rect.left))
+        native_h = max(1, int(rect.bottom - rect.top))
+        cursor = self._native_cursor_pos()
+        target_left = int(round(cursor.x() - self._drag_anchor_ratio[0] * native_w))
+        target_top = int(round(cursor.y() - self._drag_anchor_ratio[1] * native_h))
+        if target_left == rect.left and target_top == rect.top:
+            return False
+        return bool(_set_window_pos(
+            hwnd,
+            None,
+            target_left,
+            target_top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        ))
+
+    def _sync_drag_anchor_after_window_change(self, *, force: bool = False):
+        if self._drag_anchor_ratio is None:
+            return
+        if not force and not self._is_pet_dragging():
+            return
+        old_x, old_y = self.x(), self.y()
+        if not self._reanchor_window_to_drag_cursor():
+            return
+        actual_dx = self.x() - old_x
+        actual_dy = self.y() - old_y
+        if actual_dx == 0 and actual_dy == 0:
+            return
+        self._move_compact_ai_with_pet(actual_dx, actual_dy)
+        self._active_peer_drag_total_x += actual_dx
+        self._active_peer_drag_total_y += actual_dy
+        self._broadcast_peer_drag(
+            self._active_peer_drag_total_x,
+            self._active_peer_drag_total_y,
+        )
 
     def _apply_windows_frameless_fix(self):
         if os.name != "nt":
@@ -1480,6 +1574,8 @@ class PetWindow(QWidget):
 
     def _handle_peer_pos(self, data: dict):
         """处理其他角色的窗口位置信息"""
+        if not isinstance(data, dict):
+            return
         char = data.get("character", "")
         if not char or char == self._current_char:
             return
@@ -1487,33 +1583,70 @@ class PetWindow(QWidget):
         self._peer_window_positions[char] = (x, y)
         self._update_mutual_gaze()
 
-    def _broadcast_peer_drag(self, dx: int, dy: int):
-        if not self._move_all_roles_together:
+    def _handle_peer_offline(self, data: dict):
+        if not isinstance(data, dict):
+            return
+        char = str(data.get("character", "") or "").strip()
+        if not char or char == self._current_char:
+            return
+        self._peer_window_positions.pop(char, None)
+        peer_drag_states = getattr(self, "_peer_drag_states", None)
+        if peer_drag_states is not None:
+            peer_drag_states.pop(char, None)
+        menu_state_removed = char in self._peers_with_radial_menu
+        self._peers_with_radial_menu.discard(char)
+        self._update_mutual_gaze()
+        if menu_state_removed:
+            self._tick_windows_topmost_guard()
+
+    def _broadcast_peer_drag(self, total_dx: int, total_dy: int, *, finished: bool = False):
+        if not self._move_all_roles_together or not self._active_peer_drag_id:
             return
         payload = json.dumps({
             "character": self._current_char,
-            "dx": int(dx),
-            "dy": int(dy),
+            "drag_id": self._active_peer_drag_id,
+            "total_dx": int(total_dx),
+            "total_dy": int(total_dy),
         }, ensure_ascii=False)
-        self._send_ipc(f"PEER_DRAG\t{payload}")
+        event_name = "PEER_DRAG_END" if finished else "PEER_DRAG"
+        self._send_ipc(f"{event_name}\t{payload}")
 
-    def _handle_peer_drag(self, data: dict):
-        if not self._move_all_roles_together:
+    def _handle_peer_drag(self, data: dict, *, finished: bool = False):
+        if not self._move_all_roles_together or not isinstance(data, dict):
             return
         char = str(data.get("character", "") or "")
         if not char or char == self._current_char:
             return
-        try:
-            dx = int(data.get("dx", 0))
-            dy = int(data.get("dy", 0))
-        except (TypeError, ValueError):
-            return
-        if dx == 0 and dy == 0:
+        drag_id = str(data.get("drag_id", "") or "").strip()
+        if drag_id:
+            if drag_id in self._completed_peer_drag_sessions:
+                return
+            try:
+                dx = int(data.get("total_dx", 0))
+                dy = int(data.get("total_dy", 0))
+            except (TypeError, ValueError):
+                return
+            state = self._peer_drag_states.get(char)
+            if not state or state[0] != drag_id:
+                state = (drag_id, self.x(), self.y())
+                self._peer_drag_states[char] = state
+            target_x = state[1] + dx
+            target_y = state[2] + dy
+        else:
+            # Compatibility with older pet processes that send per-event deltas.
+            try:
+                dx = int(data.get("dx", 0))
+                dy = int(data.get("dy", 0))
+            except (TypeError, ValueError):
+                return
+            target_x = self.x() + dx
+            target_y = self.y() + dy
+        if target_x == self.x() and target_y == self.y():
+            if finished and drag_id:
+                self._finish_received_peer_drag(char, drag_id)
             return
         self._startup_position_restore_pending = False
         self._startup_transient_position_set = False
-        screen = self._screen_for_current_window() or self._fallback_position_screen()
-        target_x, target_y = self._constrain_position_to_screen(self.x() + dx, self.y() + dy, screen)
         actual_dx = target_x - self.x()
         actual_dy = target_y - self.y()
         self._suppress_compact_ai_sync = True
@@ -1522,6 +1655,37 @@ class PetWindow(QWidget):
         finally:
             self._suppress_compact_ai_sync = False
         self._move_compact_ai_with_pet(actual_dx, actual_dy)
+        if finished and drag_id:
+            self._finish_received_peer_drag(char, drag_id)
+
+    def _finish_received_peer_drag(self, char: str, drag_id: str):
+        state = self._peer_drag_states.get(char)
+        if state and state[0] == drag_id:
+            self._peer_drag_states.pop(char, None)
+        self._completed_peer_drag_sessions[drag_id] = None
+        while len(self._completed_peer_drag_sessions) > 128:
+            self._completed_peer_drag_sessions.pop(next(iter(self._completed_peer_drag_sessions)))
+
+    def _on_peer_drag_started(self):
+        self._active_peer_drag_id = uuid.uuid4().hex
+        self._active_peer_drag_total_x = 0
+        self._active_peer_drag_total_y = 0
+        self._capture_native_drag_anchor()
+
+    def _on_peer_drag_finished(self):
+        self._sync_drag_anchor_after_window_change(force=True)
+        if self._active_peer_drag_id and (
+            self._active_peer_drag_total_x != 0 or self._active_peer_drag_total_y != 0
+        ):
+            self._broadcast_peer_drag(
+                self._active_peer_drag_total_x,
+                self._active_peer_drag_total_y,
+                finished=True,
+            )
+        self._active_peer_drag_id = ""
+        self._active_peer_drag_total_x = 0
+        self._active_peer_drag_total_y = 0
+        self._drag_anchor_ratio = None
 
     def _update_mutual_gaze(self):
         """更新对视状态，让角色看向最近的另一个角色"""
@@ -1551,7 +1715,6 @@ class PetWindow(QWidget):
 
     def moveEvent(self, event):
         super().moveEvent(event)
-        self._live2d_widget.refresh_screen_scale()
         if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
             self._sync_compact_ai_window()
         if not self._emotion_window_animating and not self._restoring_saved_position:
@@ -1562,6 +1725,8 @@ class PetWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._drag_anchor_ratio is not None:
+            self._drag_anchor_refresh_timer.start()
         self._sync_compact_ai_window()
         if not self._restoring_saved_position:
             self._schedule_position_save()
@@ -1609,6 +1774,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._send_ipc_unregistration()
         self._close_ipc_bus()
         self._save_position_config()
         super().closeEvent(event)
@@ -2518,12 +2684,12 @@ class PetWindow(QWidget):
             return
         self._live2d_model_format = model_format
         if not self._pixel_mode:
-            self.resize(*self._live2d_size())
+            self.setFixedSize(*self._live2d_size())
 
     def set_live2d_scale(self, value: object):
         self._live2d_scale = clamp_live2d_scale(value)
         if not self._pixel_mode:
-            self.resize(*self._live2d_size())
+            self.setFixedSize(*self._live2d_size())
         self._sync_compact_ai_window()
 
     def reset_position(self):
@@ -2570,6 +2736,8 @@ class PetWindow(QWidget):
         )
 
     def _on_drag(self, dx: int, dy: int):
+        if not self._active_peer_drag_id:
+            self._on_peer_drag_started()
         self._note_user_interaction()
         self._refresh_topmost_for_interaction()
         self._startup_position_restore_pending = False
@@ -2587,10 +2755,16 @@ class PetWindow(QWidget):
             self._move_unconstrained(old_x + dx, old_y + dy)
         finally:
             self._suppress_compact_ai_sync = False
+        self._reanchor_window_to_drag_cursor()
         actual_dx = self.x() - old_x
         actual_dy = self.y() - old_y
         self._move_compact_ai_with_pet(actual_dx, actual_dy)
-        self._broadcast_peer_drag(actual_dx, actual_dy)
+        self._active_peer_drag_total_x += actual_dx
+        self._active_peer_drag_total_y += actual_dy
+        self._broadcast_peer_drag(
+            self._active_peer_drag_total_x,
+            self._active_peer_drag_total_y,
+        )
 
     def _move_unconstrained(self, x: int, y: int):
         if not self._should_bypass_x11_window_manager() or _x11 is None:
@@ -3274,6 +3448,14 @@ class PetWindow(QWidget):
             # or reconnected peers receive a stationary pet's position too.
             self._last_peer_pos_sent = None
 
+    def _send_ipc_unregistration(self):
+        if not self._ipc_registered:
+            return False
+        sent = self._send_ipc(f"UNREGISTER\tPET\t{self._current_char}")
+        if sent:
+            self._ipc_registered = False
+        return sent
+
     def _read_ipc_messages(self):
         self._connect_ipc_bus()
         broadcast_queue = self._ipc_broadcast_queue
@@ -3283,10 +3465,12 @@ class PetWindow(QWidget):
             or control_queue is None or not control_queue.is_attached()
         ):
             return
-        raw_lines = control_queue.read_available(max_messages=200)
-        raw_lines += coalesce_latest_peer_positions(
+        raw_lines = coalesce_latest_peer_positions(
             broadcast_queue.read_available(max_messages=200)
         )
+        # Ordinary peer updates are older than any later reliable lifecycle
+        # notification. Process them first so final state cannot be undone.
+        raw_lines += control_queue.read_available(max_messages=200)
         for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == self._ipc_peer_id:
@@ -3358,6 +3542,19 @@ class PetWindow(QWidget):
         elif line.startswith("PEER_DRAG\t"):
             try:
                 self._handle_peer_drag(json.loads(line.split("\t", 1)[1]))
+            except json.JSONDecodeError:
+                pass
+        elif line.startswith("PEER_DRAG_END\t"):
+            try:
+                self._handle_peer_drag(
+                    json.loads(line.split("\t", 1)[1]),
+                    finished=True,
+                )
+            except json.JSONDecodeError:
+                pass
+        elif line.startswith("PEER_OFFLINE\t"):
+            try:
+                self._handle_peer_offline(json.loads(line.split("\t", 1)[1]))
             except json.JSONDecodeError:
                 pass
         elif line.startswith("OPEN_CHAT"):
@@ -3974,7 +4171,7 @@ class PetWindow(QWidget):
                 pass
 
         move_anim = QPropertyAnimation(badge, b"pos", self)
-        move_anim.setDuration(980)
+        move_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         move_anim.setStartValue(start)
         move_anim.setKeyValueAt(0.22, settle)
         move_anim.setKeyValueAt(0.72, settle)
@@ -3982,7 +4179,7 @@ class PetWindow(QWidget):
         move_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         opacity_anim = QPropertyAnimation(badge, b"windowOpacity", self)
-        opacity_anim.setDuration(980)
+        opacity_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         opacity_anim.setStartValue(0.0)
         opacity_anim.setKeyValueAt(0.14, 1.0)
         opacity_anim.setKeyValueAt(0.72, 1.0)
@@ -4013,6 +4210,10 @@ class PetWindow(QWidget):
         if str(event.get("direction", "") or "").strip().lower() == "to_user":
             self._note_user_interaction()
             self._show_character_poked_user_feedback(event)
+            self._play_emotion_window_feedback(
+                "shake",
+                POKE_USER_WINDOW_SHAKE_INTENSITY,
+            )
             return
         if str(event.get("source", "") or "").strip().lower() == "live2d":
             return
@@ -4368,10 +4569,10 @@ class PetWindow(QWidget):
 
     def _restore_live2d_position(self):
         if not self._cfg:
-            self.resize(*self._live2d_size())
+            self.setFixedSize(*self._live2d_size())
             return
         w, h = self._live2d_size()
-        self.resize(w, h)
+        self.setFixedSize(w, h)
         pos = self._saved_position("live2d")
         if pos is not None:
             self.move(pos[0], pos[1])
@@ -4389,7 +4590,7 @@ class PetWindow(QWidget):
         self._remember_current_position()
         self._pixel_mode = True
         self._stack.setCurrentWidget(self._pixel_widget)
-        self.resize(self._pixel_widget.size())
+        self.setFixedSize(self._pixel_widget.size())
         self._restore_pixel_position()
         self._pixel_widget.set_drag_locked(self._live2d_widget._drag_locked)
         self._motion_guard_token += 1
@@ -4672,6 +4873,7 @@ class PetWindow(QWidget):
         self._close_chat_process()
         self._close_compact_ai_window()
         self._close_settings_process()
+        self._send_ipc_unregistration()
         self._close_ipc_bus()
         if self._tray_icon is not None:
             self._tray_icon.hide()
@@ -4680,9 +4882,33 @@ class PetWindow(QWidget):
     def contextMenuEvent(self, event):
         event.accept()
 
+    def _ensure_screen_scale_tracking(self):
+        handle = self.windowHandle()
+        if handle is None or handle is self._screen_scale_window_handle:
+            return
+        previous_handle = self._screen_scale_window_handle
+        if previous_handle is not None:
+            try:
+                previous_handle.screenChanged.disconnect(self._on_window_screen_changed)
+            except (RuntimeError, TypeError):
+                pass
+        handle.screenChanged.connect(self._on_window_screen_changed)
+        self._screen_scale_window_handle = handle
+
+    def _on_window_screen_changed(self, _screen):
+        # QWindow updates its screen before QOpenGLWidget finishes switching
+        # backing-store DPR. Refresh on the next event-loop turn so both agree.
+        self._screen_scale_refresh_timer.start()
+
+    def _refresh_live2d_screen_scale(self):
+        self._live2d_widget.refresh_screen_scale()
+        if self._drag_anchor_ratio is not None:
+            self._drag_anchor_refresh_timer.start()
+
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
+        self._ensure_screen_scale_tracking()
         self._sync_mouse_passthrough_timer()
         if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_pet_window_polish(self, game_topmost=self._game_topmost))

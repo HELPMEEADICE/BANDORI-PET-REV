@@ -71,6 +71,31 @@ def test_peer_position_batches_keep_only_the_latest_update_per_character():
     ]) == [action, malformed, kasumi_new, ran_new]
 
 
+def test_peer_drag_batches_keep_latest_cumulative_offset_per_session():
+    from shared_memory_ipc import (
+        coalesce_latest_peer_positions,
+        encode_ipc_envelope,
+    )
+
+    first = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"one","total_dx":5,"total_dy":2}',
+    )
+    second = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"one","total_dx":80,"total_dy":20}',
+    )
+    another_session = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"two","total_dx":3,"total_dy":4}',
+    )
+
+    assert coalesce_latest_peer_positions([first, second, another_session]) == [
+        second,
+        another_session,
+    ]
+
+
 def test_shared_memory_queue_overflow_returns_recent_complete_messages():
     from shared_memory_ipc import SharedMemoryLineQueue
 
@@ -187,6 +212,11 @@ def test_reliable_classifier_covers_control_and_user_visible_events():
 
     for line in (
         "REGISTER\tPET\tkasumi",
+        "UNREGISTER\tPET\tkasumi",
+        "PEER_OFFLINE\t{}",
+        "PEER_DRAG_END\t{}",
+        "RADIAL_MENU_OPEN\t{}",
+        "RADIAL_MENU_CLOSED\t{}",
         "SETTINGS\t{}",
         "MODEL\tkasumi",
         "CHAT_EVENT\t{}",
@@ -216,12 +246,40 @@ def test_main_registers_new_ipc_peer_before_touching_heartbeat():
         "    def touch_ipc_peer", 1
     )[0]
 
-    register_check = 'if envelope.line.startswith("REGISTER\\t"):'
+    register_check = 'if envelope.line.startswith(("REGISTER\\t", "UNREGISTER\\t")):'
     assert register_check in read_flow
     assert 'handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)' in read_flow
     assert read_flow.index(register_check) < read_flow.index(
         "touch_ipc_peer(envelope.sender_id)"
     )
+
+
+def test_offline_character_detection_ignores_overlapping_pet_processes():
+    from ipc_bus import pet_characters_without_active_peers
+
+    removed = [
+        {"kind": "PET", "character": "Kasumi"},
+        {"kind": "PET", "character": "Ran"},
+        {"kind": "CHAT", "character": "Aya"},
+    ]
+    active = [
+        {"kind": "PET", "character": "Kasumi"},
+        {"kind": "SETTINGS", "character": "Ran"},
+    ]
+
+    assert pet_characters_without_active_peers(removed, active) == ["Ran"]
+
+
+def test_main_broadcasts_reliable_offline_events_for_unregister_and_timeout():
+    from pathlib import Path
+
+    source = Path("main.py").read_text(encoding="utf-8")
+
+    assert 'if line.startswith("UNREGISTER\\t"):' in source
+    assert 'broadcast_ipc_line(f"PEER_OFFLINE\\t{payload}")' in source
+    assert "broadcast_offline_pet_characters(remove_ipc_peers(stale))" in source
+    assert "def is_registered_pet_peer(peer_id: str) -> bool:" in source
+    assert "if is_registered_pet_peer(source_peer_id):" in source
 
 
 def test_ipc_envelope_round_trips_sender_and_exclusion():

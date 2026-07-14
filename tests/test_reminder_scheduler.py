@@ -136,6 +136,34 @@ class ReminderSchedulerTest(unittest.TestCase):
         scheduler._system_notify.assert_called_once_with("闹钟", "角色", "测试提醒")
         scheduler._broadcast_event.assert_not_called()
 
+    def test_screen_awareness_never_shows_reasoning_tags_in_notification(self):
+        worker = object()
+        scheduler = SimpleNamespace(
+            _ignored_workers=set(),
+            _finish_generation=Mock(),
+            _forget_worker=Mock(),
+            _fallback_text=Mock(return_value="NO_SPEAK"),
+            _show_reminder=Mock(),
+            _record_care_policy_skip=Mock(),
+            _record_care_policy_success=Mock(),
+            _drain_pending_contexts=Mock(),
+        )
+        context = {"kind": "screen_awareness"}
+
+        with patch("alarm_manager.QTimer.singleShot"):
+            ReminderScheduler._on_text_generated(
+                scheduler,
+                worker,
+                context,
+                "<thinking>不要显示这段推理</thinking>[smile]稍微休息一下吧。",
+            )
+
+        scheduler._show_reminder.assert_called_once_with(
+            context,
+            "稍微休息一下吧。",
+            "smile",
+        )
+
     def test_defer_overdue_proactive_items_on_startup(self):
         now = datetime(2026, 6, 8, 20, 0, 0)
         proactive = {

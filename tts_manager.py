@@ -10,7 +10,11 @@ from collections import deque
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
-from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
+from llm_api_compat import (
+    chat_completions_api_url,
+    openai_compat_headers,
+    sanitize_chat_body_for_url,
+)
 from process_utils import app_base_dir
 from tts_common import strip_tts_action_tags
 
@@ -202,7 +206,7 @@ def _translate_to_selected_language(config: dict, text: str, target_language: st
     req = urllib.request.Request(
         request_url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers=openai_compat_headers(api_key),
         method="POST",
     )
     if worker is not None and worker._cancelled.is_set():

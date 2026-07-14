@@ -20,3 +20,12 @@ def test_settings_relaunch_no_longer_triggers_for_any_models_payload():
 
     assert 'or "models" in data' not in settings_block
     assert "selected_model_changed\n            or models_runtime_changed" in settings_block
+
+
+def test_vsync_change_relaunches_active_pets_to_recreate_the_gl_surface():
+    source = _main_source()
+    settings_block = source.split("    def on_settings_changed(data):", 1)[1].split("    def launch_pet", 1)[0]
+
+    assert 'old_vsync = bool(cfg.get("vsync", True))' in settings_block
+    assert 'vsync_changed = "vsync" in data and requested_vsync != old_vsync' in settings_block
+    assert "or vsync_changed" in settings_block

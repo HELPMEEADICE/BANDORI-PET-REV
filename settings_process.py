@@ -63,7 +63,7 @@ def main():
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format()
+    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
 
     app_user_model_id = f"{APP_NAME}.Settings"
     if not ensure_taskbar_icon_identity(app_user_model_id, "BandoriPet Settings", BASE_DIR):

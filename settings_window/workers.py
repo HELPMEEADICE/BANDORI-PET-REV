@@ -5,6 +5,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from settings_window.constants import *
+from llm_api_compat import openai_compat_headers
 from network_worker import CancelableNetworkWorker
 
 
@@ -318,10 +319,7 @@ class TestConnectionWorker(CancelableNetworkWorker):
         try:
             ctx = ssl.create_default_context()
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            }
+            headers = openai_compat_headers(self._api_key)
 
             try:
                 if self._api_mode == "responses" and not is_google_generative_language_url(self._api_url):
@@ -404,9 +402,10 @@ class FetchModelsWorker(CancelableNetworkWorker):
         try:
             ctx = ssl.create_default_context()
 
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-            }
+            headers = openai_compat_headers(
+                self._api_key,
+                include_content_type=False,
+            )
 
             req = urllib.request.Request(
                 self._models_url, headers=headers, method="GET"

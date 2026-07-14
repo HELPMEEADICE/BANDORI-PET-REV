@@ -93,27 +93,38 @@ def decode_ipc_envelope(value: str) -> IpcEnvelope:
 
 
 def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
-    """Keep only the newest valid PEER_POS envelope for each character."""
+    """Keep only the newest coalescible peer update for each state stream."""
     classified: list[tuple[str, str]] = []
     latest_index: dict[str, int] = {}
     for index, raw_line in enumerate(raw_lines):
         envelope = decode_ipc_envelope(raw_line)
-        character = ""
+        stream_key = ""
+        event_name = ""
         if envelope.line.startswith("PEER_POS\t"):
+            event_name = "PEER_POS"
+        elif envelope.line.startswith("PEER_DRAG\t"):
+            event_name = "PEER_DRAG"
+        if event_name:
             try:
                 payload = json.loads(envelope.line.split("\t", 1)[1])
             except (IndexError, json.JSONDecodeError):
                 payload = None
             if isinstance(payload, dict):
                 character = str(payload.get("character", "") or "").strip()
-        classified.append((raw_line, character))
-        if character:
-            latest_index[character] = index
+                if event_name == "PEER_POS" and character:
+                    stream_key = f"position:{character}"
+                elif event_name == "PEER_DRAG" and character:
+                    drag_id = str(payload.get("drag_id", "") or "").strip()
+                    if drag_id:
+                        stream_key = f"drag:{character}:{drag_id}"
+        classified.append((raw_line, stream_key))
+        if stream_key:
+            latest_index[stream_key] = index
 
     return [
         raw_line
-        for index, (raw_line, character) in enumerate(classified)
-        if not character or latest_index[character] == index
+        for index, (raw_line, stream_key) in enumerate(classified)
+        if not stream_key or latest_index[stream_key] == index
     ]
 
 

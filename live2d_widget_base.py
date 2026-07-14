@@ -13,6 +13,19 @@ DEFAULT_HIT_ALPHA_THRESHOLD = 8
 DEFAULT_LIP_SYNC_MAX_OPEN = 0.55
 HIT_STABILITY_GRACE_MS = 120
 HIT_STABILITY_DISTANCE = 12
+MAX_CONSECUTIVE_DRAW_FAILURES = 3
+DRAW_FAILURE_LOG_INTERVAL_SECONDS = 5.0
+
+
+def _apply_windows_swap_interval(enabled: bool) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        from OpenGL.WGL.EXT.swap_control import wglSwapIntervalEXT
+
+        return bool(wglSwapIntervalEXT(1 if enabled else 0))
+    except Exception:
+        return False
 
 
 class DirectRenderPipeline:
@@ -81,15 +94,16 @@ class Live2DWidgetBase(QOpenGLWidget):
     model_loaded = Signal()
 
     @staticmethod
-    def configure_default_surface_format():
+    def configure_default_surface_format(vsync: bool | None = None):
         from PySide6.QtGui import QSurfaceFormat
 
-        fmt = QSurfaceFormat()
+        fmt = QSurfaceFormat(QSurfaceFormat.defaultFormat())
         fmt.setAlphaBufferSize(8)
         fmt.setSamples(0)
         fmt.setDepthBufferSize(0)
         fmt.setStencilBufferSize(8)
-        fmt.setSwapInterval(1)
+        if vsync is not None:
+            fmt.setSwapInterval(1 if bool(vsync) else 0)
         fmt.setVersion(2, 1)
         fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
         fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
@@ -105,6 +119,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._ssaa_fbo = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._model_logical_size = None
         self._system_scale = 1.0
         
         self._dragging = False
@@ -115,6 +130,8 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._drag_origin_x = 0
         self._drag_origin_y = 0
         self._window_drag_callback = None
+        self._window_drag_start_callback = None
+        self._window_drag_end_callback = None
         self._click_callback = None
         self._double_click_callback = None
         self._right_click_callback = None
@@ -129,6 +146,9 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._vsync = True
         self._static_render = False
         self._static_render_done = False
+        self._consecutive_draw_failures = 0
+        self._render_failure_suspended = False
+        self._last_draw_failure_log_at = 0.0
         self._clear_color = (0.0, 0.0, 0.0, 0.0)
         self._lip_sync_level = 0.0
         self._lip_sync_target = 0.0
@@ -192,6 +212,19 @@ class Live2DWidgetBase(QOpenGLWidget):
             model.ResizeRenderer(*target_size)
             self._renderer_target_size = target_size
 
+    def _sync_model_logical_size(self, *, force: bool = False) -> bool:
+        model = self._model
+        if not model:
+            self._model_logical_size = None
+            return False
+        logical_size = (max(1, int(self._cache_w)), max(1, int(self._cache_h)))
+        if not force and logical_size == self._model_logical_size:
+            return False
+        model.Resize(*logical_size)
+        self._model_logical_size = logical_size
+        self._update_custom_hit_area_projection()
+        return True
+
     # --------------------------------------------------------------------------
     # Base and public interface
     # --------------------------------------------------------------------------
@@ -215,15 +248,12 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._update_render_timer()
 
     def set_vsync(self, enabled: bool):
-        self._vsync = enabled
+        self._vsync = bool(enabled)
         if not self._initialized_gl:
             return
-        self._safe_make_current()
-        try:
-            from OpenGL.WGL.EXT.swap_control import wglSwapIntervalEXT
-            wglSwapIntervalEXT(1 if self._vsync else 0)
-        except Exception:
-            pass
+        if os.name == "nt":
+            self._safe_make_current()
+            _apply_windows_swap_interval(self._vsync)
         self._update_render_timer()
         if not self._static_render:
             self.update()
@@ -242,6 +272,8 @@ class Live2DWidgetBase(QOpenGLWidget):
             if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._sync_renderer_target_size(force=True)
+            self._reset_render_failure_state()
+            self._update_render_timer()
             self.update()
 
     def set_static_render(self, enabled: bool):
@@ -289,6 +321,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._model = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._model_logical_size = None
         if self._ssaa_fbo is not None:
             self._ssaa_fbo.dispose()
             self._ssaa_fbo = None
@@ -308,6 +341,10 @@ class Live2DWidgetBase(QOpenGLWidget):
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb
 
+    def set_window_drag_lifecycle_callbacks(self, start_cb, end_cb):
+        self._window_drag_start_callback = start_cb
+        self._window_drag_end_callback = end_cb
+
     def set_click_callback(self, cb):
         self._click_callback = cb
 
@@ -318,10 +355,16 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._right_click_callback = cb
 
     def set_drag_locked(self, locked: bool):
+        self._finish_window_drag()
         self._drag_locked = locked
-        self._dragging = False
         self._drag_moved = False
         self._pressed_on_model = False
+
+    def _finish_window_drag(self):
+        was_dragging = self._dragging
+        self._dragging = False
+        if was_dragging and self._window_drag_end_callback:
+            self._window_drag_end_callback()
 
     def set_head_tracking_enabled(self, enabled: bool):
         self._head_tracking_enabled = bool(enabled)
@@ -380,12 +423,12 @@ class Live2DWidgetBase(QOpenGLWidget):
             if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
-            self._model.Resize(self._cache_w, self._cache_h)
+            self._sync_model_logical_size(force=True)
             self._sync_renderer_target_size(force=True)
             self._apply_physical_viewport(self._cache_w, self._cache_h)
-            self._update_custom_hit_area_projection()
             
             self._model_path = model_json_path
+            self._reset_render_failure_state()
             self._update_render_timer()
             self.model_loaded.emit()
         except Exception as e:
@@ -458,14 +501,25 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._render_timer.setTimerType(timer_type)
 
     def _update_render_timer(self):
-        if not self._initialized_gl or self._static_render or not self._model or not self.isVisible():
+        if (
+            not self._initialized_gl
+            or self._static_render
+            or not self._model
+            or not self.isVisible()
+            or self._render_failure_suspended
+        ):
             self._render_timer.stop()
             return
         self._sync_timer_type()
         self._render_timer.start(self._frame_interval_ms())
 
+    def _reset_render_failure_state(self):
+        self._consecutive_draw_failures = 0
+        self._render_failure_suspended = False
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._reset_render_failure_state()
         self._update_render_timer()
 
     def hideEvent(self, event):
@@ -546,6 +600,8 @@ class Live2DWidgetBase(QOpenGLWidget):
             gpos = event.globalPosition()
             self._drag_start_x = self._drag_origin_x = gpos.x()
             self._drag_start_y = self._drag_origin_y = gpos.y()
+            if self._window_drag_start_callback:
+                self._window_drag_start_callback()
 
     def mouseReleaseEvent(self, event):
         pos = event.scenePosition()
@@ -571,7 +627,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             )
             self._pressed_on_model = False
 
-        self._dragging = False
+        self._finish_window_drag()
         if should_click:
             self._click_callback(x, y, self.hit_area_name_at(x, y))
             event.accept()
@@ -583,7 +639,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         x, y = pos.x(), pos.y()
         if self._double_click_callback and self._is_model_hit_at(x, y):
             self._pressed_on_model = False
-            self._dragging = False
+            self._finish_window_drag()
             self._drag_moved = False
             self._double_click_callback(x, y, self.hit_area_name_at(x, y))
             event.accept()
@@ -690,6 +746,7 @@ class Live2DWidgetBase(QOpenGLWidget):
 
             self._system_scale = self._current_device_pixel_ratio()
             self._initialized_gl = True
+            self._reset_render_failure_state()
             self._cache_w, self._cache_h = self.width(), self.height()
             self._cache_w_half, self._cache_h_half = self._cache_w * 0.5, self._cache_h * 0.5
             self._update_global_pos_cache()
@@ -713,9 +770,8 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._cache_w_half, self._cache_h_half = w * 0.5, h * 0.5
         self._reset_hit_stability()
         if self._model:
-            self._model.Resize(w, h)
-            self._sync_renderer_target_size(force=True)
-            self._update_custom_hit_area_projection()
+            self._sync_model_logical_size()
+            self._sync_renderer_target_size()
         self._apply_physical_viewport(w, h)
 
     def refresh_screen_scale(self):
@@ -728,9 +784,10 @@ class Live2DWidgetBase(QOpenGLWidget):
             return
         self._safe_make_current()
         if self._model:
-            self._model.Resize(self._cache_w, self._cache_h)
-            self._sync_renderer_target_size(force=True)
-            self._update_custom_hit_area_projection()
+            # Moving between screens changes only the physical render target.
+            # Reapplying the unchanged logical size can accumulate transforms in
+            # some Live2D runtimes when Qt reports several DPI transitions.
+            self._sync_renderer_target_size()
         self._apply_physical_viewport(self._cache_w, self._cache_h)
         self.update()
 
@@ -738,6 +795,15 @@ class Live2DWidgetBase(QOpenGLWidget):
         gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
 
     def _current_device_pixel_ratio(self) -> float:
+        # This is the DPR of the actual QOpenGLWidget backing store. During a
+        # cross-screen transition it is more authoritative than looking up a
+        # screen from the window geometry.
+        try:
+            widget_scale = float(self.devicePixelRatioF())
+            if widget_scale > 0:
+                return max(1.0, widget_scale)
+        except Exception:
+            pass
         screen = None
         try:
             handle = self.window().windowHandle() if self.window() is not None else None
@@ -757,7 +823,12 @@ class Live2DWidgetBase(QOpenGLWidget):
             return 1.0
 
     def paintGL(self):
-        if (self._static_render and self._static_render_done) or not self._live2d or not self._model:
+        if (
+            self._render_failure_suspended
+            or (self._static_render and self._static_render_done)
+            or not self._live2d
+            or not self._model
+        ):
             return
 
         self._track_current_head_target()
@@ -804,12 +875,28 @@ class Live2DWidgetBase(QOpenGLWidget):
                     self._ssaa_fbo.release()
                 except Exception:
                     pass
-            print(f"Live2D draw failed: {exc}", file=sys.stderr)
+            self._consecutive_draw_failures += 1
+            now = time.monotonic()
+            if (
+                self._consecutive_draw_failures == 1
+                and now - self._last_draw_failure_log_at >= DRAW_FAILURE_LOG_INTERVAL_SECONDS
+            ):
+                self._last_draw_failure_log_at = now
+                print(f"Live2D draw failed: {exc}", file=sys.stderr)
+            if self._consecutive_draw_failures >= MAX_CONSECUTIVE_DRAW_FAILURES:
+                self._render_failure_suspended = True
+                self._render_timer.stop()
+                print(
+                    "Live2D rendering suspended after "
+                    f"{self._consecutive_draw_failures} consecutive draw failures",
+                    file=sys.stderr,
+                )
             gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
             gl.glDisable(gl.GL_DEPTH_TEST)
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
             return
+        self._consecutive_draw_failures = 0
         if self._perf_probe.enabled:
             draw_elapsed = self._perf_probe.now() - draw_start
             self._perf_probe.add("draw_py", draw_elapsed)

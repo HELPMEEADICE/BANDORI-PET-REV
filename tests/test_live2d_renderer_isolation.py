@@ -26,6 +26,13 @@ def test_live2d_widget_has_no_redundant_head_tracking_timer():
     assert "self._track_current_head_target()" in source
 
 
+def test_live2d_widget_has_no_temporary_dpi_trace_hooks():
+    source = Path("live2d_widget_base.py").read_text(encoding="utf-8")
+
+    assert "_trace_dpi" not in source
+    assert "dpi_trace" not in source
+
+
 def test_render_pipeline_is_selected_once_at_format_boundary():
     moc_model = type("Model", (), {"renderer_format": "moc"})()
     moc3_model = type("Model", (), {"renderer_format": "moc3"})()
@@ -84,6 +91,57 @@ def test_moc3_render_target_size_changes_only_when_needed():
     Live2DWidget._sync_renderer_target_size(harness)
 
     assert calls == [(900, 1200), (450, 600)]
+
+
+def test_screen_dpi_round_trip_does_not_resize_logical_model():
+    logical_resizes = []
+    renderer_resizes = []
+    viewports = []
+    ratios = iter((1.5, 1.0, 1.5, 1.0))
+    model = SimpleNamespace(
+        Resize=lambda width, height: logical_resizes.append((width, height)),
+        ResizeRenderer=lambda width, height: renderer_resizes.append((width, height)),
+    )
+    harness = SimpleNamespace(
+        _model=model,
+        _render_pipeline=MOC3_RENDER_PIPELINE,
+        _quality_profile="performance",
+        _cache_w=400,
+        _cache_h=500,
+        _system_scale=1.0,
+        _renderer_target_size=(400, 500),
+        _initialized_gl=True,
+    )
+    harness._current_device_pixel_ratio = lambda: next(ratios)
+    harness._safe_make_current = lambda: None
+    harness._reset_hit_stability = lambda: None
+    harness._render_ssaa_scale = lambda: 1
+    harness._sync_renderer_target_size = lambda force=False: Live2DWidget._sync_renderer_target_size(
+        harness,
+        force=force,
+    )
+    harness._apply_physical_viewport = lambda width, height: viewports.append(
+        (int(width * harness._system_scale), int(height * harness._system_scale))
+    )
+    harness.update = lambda: None
+
+    for _ in range(4):
+        Live2DWidget.refresh_screen_scale(harness)
+
+    assert logical_resizes == []
+    assert renderer_resizes == [
+        (600, 750),
+        (400, 500),
+        (600, 750),
+        (400, 500),
+    ]
+    assert viewports == renderer_resizes
+
+
+def test_device_pixel_ratio_prefers_opengl_widget_backing_store_value():
+    harness = SimpleNamespace(devicePixelRatioF=lambda: 1.25)
+
+    assert Live2DWidget._current_device_pixel_ratio(harness) == 1.25
 
 
 def test_resize_renderer_does_not_change_logical_model_size():

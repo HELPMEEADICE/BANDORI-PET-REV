@@ -3,6 +3,24 @@ from urllib.parse import urlsplit, urlunsplit
 
 GOOGLE_GENERATIVE_LANGUAGE_HOST = "generativelanguage.googleapis.com"
 GOOGLE_OPENAI_BASE_PATH = "/v1beta/openai"
+OPENAI_COMPAT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def openai_compat_headers(
+    api_key: str = "",
+    *,
+    include_content_type: bool = True,
+) -> dict[str, str]:
+    headers = {"User-Agent": OPENAI_COMPAT_USER_AGENT}
+    if include_content_type:
+        headers["Content-Type"] = "application/json"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 def is_google_generative_language_url(api_url: str) -> bool:
