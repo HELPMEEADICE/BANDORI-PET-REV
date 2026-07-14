@@ -981,6 +981,9 @@ def main():
         elif line.startswith("PEER_DRAG\t"):
             if is_registered_pet_peer(source_peer_id):
                 broadcast_ipc_line(line)
+        elif line.startswith("PEER_DRAG_END\t"):
+            if is_registered_pet_peer(source_peer_id):
+                broadcast_ipc_line(line)
         elif line.startswith("PREVIEW_MOTION\t"):
             broadcast_ipc_line(line)
         elif line.startswith("LAYER_ORDER\t"):

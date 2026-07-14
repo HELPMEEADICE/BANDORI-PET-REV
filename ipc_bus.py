@@ -48,6 +48,7 @@ def is_reliable_ipc_line(line: str) -> bool:
         "REGISTER\t",
         "UNREGISTER\t",
         "PEER_OFFLINE\t",
+        "PEER_DRAG_END\t",
         "RADIAL_MENU_OPEN\t",
         "RADIAL_MENU_CLOSED\t",
         "MODEL\t",

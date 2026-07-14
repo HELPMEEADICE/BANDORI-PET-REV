@@ -52,6 +52,8 @@ class PixelPetWidget(QWidget):
         self._drag_origin_x = 0
         self._drag_origin_y = 0
         self._window_drag_callback = None
+        self._window_drag_start_callback = None
+        self._window_drag_end_callback = None
         self._click_callback = None
         self._right_click_callback = None
         self._move_target = QPoint()
@@ -79,6 +81,10 @@ class PixelPetWidget(QWidget):
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb
 
+    def set_window_drag_lifecycle_callbacks(self, start_cb, end_cb):
+        self._window_drag_start_callback = start_cb
+        self._window_drag_end_callback = end_cb
+
     def set_click_callback(self, cb):
         self._click_callback = cb
 
@@ -86,8 +92,8 @@ class PixelPetWidget(QWidget):
         self._right_click_callback = cb
 
     def set_drag_locked(self, locked: bool):
+        self._finish_window_drag()
         self._drag_locked = locked
-        self._dragging = False
         self._drag_moved = False
         self._pressed_on_sprite = False
         if locked:
@@ -96,6 +102,12 @@ class PixelPetWidget(QWidget):
         elif self.isVisible() and not self._wander_timer.isActive():
             self._choose_wander_target()
             self._wander_timer.start()
+
+    def _finish_window_drag(self):
+        was_dragging = self._dragging
+        self._dragging = False
+        if was_dragging and self._window_drag_end_callback:
+            self._window_drag_end_callback()
 
     def load_sprite(self, image_path: str, frames_data: dict) -> bool:
         self._anim_timer.stop()
@@ -291,6 +303,8 @@ class PixelPetWidget(QWidget):
         gpos = event.globalPosition()
         self._drag_start_x = self._drag_origin_x = gpos.x()
         self._drag_start_y = self._drag_origin_y = gpos.y()
+        if self._window_drag_start_callback:
+            self._window_drag_start_callback()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.RightButton:
@@ -305,8 +319,7 @@ class PixelPetWidget(QWidget):
             and self._click_callback
         )
         self._pressed_on_sprite = False
-        if self._dragging:
-            self._dragging = False
+        self._finish_window_drag()
         if should_click:
             self._click_callback()
             event.accept()

@@ -71,6 +71,31 @@ def test_peer_position_batches_keep_only_the_latest_update_per_character():
     ]) == [action, malformed, kasumi_new, ran_new]
 
 
+def test_peer_drag_batches_keep_latest_cumulative_offset_per_session():
+    from shared_memory_ipc import (
+        coalesce_latest_peer_positions,
+        encode_ipc_envelope,
+    )
+
+    first = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"one","total_dx":5,"total_dy":2}',
+    )
+    second = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"one","total_dx":80,"total_dy":20}',
+    )
+    another_session = encode_ipc_envelope(
+        "pet-ran",
+        'PEER_DRAG\t{"character":"ran","drag_id":"two","total_dx":3,"total_dy":4}',
+    )
+
+    assert coalesce_latest_peer_positions([first, second, another_session]) == [
+        second,
+        another_session,
+    ]
+
+
 def test_shared_memory_queue_overflow_returns_recent_complete_messages():
     from shared_memory_ipc import SharedMemoryLineQueue
 
@@ -189,6 +214,7 @@ def test_reliable_classifier_covers_control_and_user_visible_events():
         "REGISTER\tPET\tkasumi",
         "UNREGISTER\tPET\tkasumi",
         "PEER_OFFLINE\t{}",
+        "PEER_DRAG_END\t{}",
         "RADIAL_MENU_OPEN\t{}",
         "RADIAL_MENU_CLOSED\t{}",
         "SETTINGS\t{}",

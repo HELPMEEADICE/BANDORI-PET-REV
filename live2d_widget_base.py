@@ -119,6 +119,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._ssaa_fbo = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._model_logical_size = None
         self._system_scale = 1.0
         
         self._dragging = False
@@ -129,6 +130,8 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._drag_origin_x = 0
         self._drag_origin_y = 0
         self._window_drag_callback = None
+        self._window_drag_start_callback = None
+        self._window_drag_end_callback = None
         self._click_callback = None
         self._double_click_callback = None
         self._right_click_callback = None
@@ -208,6 +211,19 @@ class Live2DWidgetBase(QOpenGLWidget):
         if force or target_size != self._renderer_target_size:
             model.ResizeRenderer(*target_size)
             self._renderer_target_size = target_size
+
+    def _sync_model_logical_size(self, *, force: bool = False) -> bool:
+        model = self._model
+        if not model:
+            self._model_logical_size = None
+            return False
+        logical_size = (max(1, int(self._cache_w)), max(1, int(self._cache_h)))
+        if not force and logical_size == self._model_logical_size:
+            return False
+        model.Resize(*logical_size)
+        self._model_logical_size = logical_size
+        self._update_custom_hit_area_projection()
+        return True
 
     # --------------------------------------------------------------------------
     # Base and public interface
@@ -305,6 +321,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._model = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._model_logical_size = None
         if self._ssaa_fbo is not None:
             self._ssaa_fbo.dispose()
             self._ssaa_fbo = None
@@ -324,6 +341,10 @@ class Live2DWidgetBase(QOpenGLWidget):
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb
 
+    def set_window_drag_lifecycle_callbacks(self, start_cb, end_cb):
+        self._window_drag_start_callback = start_cb
+        self._window_drag_end_callback = end_cb
+
     def set_click_callback(self, cb):
         self._click_callback = cb
 
@@ -334,10 +355,16 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._right_click_callback = cb
 
     def set_drag_locked(self, locked: bool):
+        self._finish_window_drag()
         self._drag_locked = locked
-        self._dragging = False
         self._drag_moved = False
         self._pressed_on_model = False
+
+    def _finish_window_drag(self):
+        was_dragging = self._dragging
+        self._dragging = False
+        if was_dragging and self._window_drag_end_callback:
+            self._window_drag_end_callback()
 
     def set_head_tracking_enabled(self, enabled: bool):
         self._head_tracking_enabled = bool(enabled)
@@ -396,10 +423,9 @@ class Live2DWidgetBase(QOpenGLWidget):
             if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._custom_hit_areas.set_scene_areas(self._prepare_custom_hit_areas(self._model))
-            self._model.Resize(self._cache_w, self._cache_h)
+            self._sync_model_logical_size(force=True)
             self._sync_renderer_target_size(force=True)
             self._apply_physical_viewport(self._cache_w, self._cache_h)
-            self._update_custom_hit_area_projection()
             
             self._model_path = model_json_path
             self._reset_render_failure_state()
@@ -574,6 +600,8 @@ class Live2DWidgetBase(QOpenGLWidget):
             gpos = event.globalPosition()
             self._drag_start_x = self._drag_origin_x = gpos.x()
             self._drag_start_y = self._drag_origin_y = gpos.y()
+            if self._window_drag_start_callback:
+                self._window_drag_start_callback()
 
     def mouseReleaseEvent(self, event):
         pos = event.scenePosition()
@@ -599,7 +627,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             )
             self._pressed_on_model = False
 
-        self._dragging = False
+        self._finish_window_drag()
         if should_click:
             self._click_callback(x, y, self.hit_area_name_at(x, y))
             event.accept()
@@ -611,7 +639,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         x, y = pos.x(), pos.y()
         if self._double_click_callback and self._is_model_hit_at(x, y):
             self._pressed_on_model = False
-            self._dragging = False
+            self._finish_window_drag()
             self._drag_moved = False
             self._double_click_callback(x, y, self.hit_area_name_at(x, y))
             event.accept()
@@ -742,9 +770,8 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._cache_w_half, self._cache_h_half = w * 0.5, h * 0.5
         self._reset_hit_stability()
         if self._model:
-            self._model.Resize(w, h)
-            self._sync_renderer_target_size(force=True)
-            self._update_custom_hit_area_projection()
+            self._sync_model_logical_size()
+            self._sync_renderer_target_size()
         self._apply_physical_viewport(w, h)
 
     def refresh_screen_scale(self):
@@ -757,9 +784,10 @@ class Live2DWidgetBase(QOpenGLWidget):
             return
         self._safe_make_current()
         if self._model:
-            self._model.Resize(self._cache_w, self._cache_h)
-            self._sync_renderer_target_size(force=True)
-            self._update_custom_hit_area_projection()
+            # Moving between screens changes only the physical render target.
+            # Reapplying the unchanged logical size can accumulate transforms in
+            # some Live2D runtimes when Qt reports several DPI transitions.
+            self._sync_renderer_target_size()
         self._apply_physical_viewport(self._cache_w, self._cache_h)
         self.update()
 
@@ -767,6 +795,15 @@ class Live2DWidgetBase(QOpenGLWidget):
         gl.glViewport(0, 0, int(w * self._system_scale), int(h * self._system_scale))
 
     def _current_device_pixel_ratio(self) -> float:
+        # This is the DPR of the actual QOpenGLWidget backing store. During a
+        # cross-screen transition it is more authoritative than looking up a
+        # screen from the window geometry.
+        try:
+            widget_scale = float(self.devicePixelRatioF())
+            if widget_scale > 0:
+                return max(1.0, widget_scale)
+        except Exception:
+            pass
         screen = None
         try:
             handle = self.window().windowHandle() if self.window() is not None else None

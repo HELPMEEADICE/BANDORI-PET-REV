@@ -1,13 +1,16 @@
 import os
 import inspect
+import json
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QApplication, QWidget
 
 from model_manager import MODEL_FORMAT_MOC3
+import pet_window as pet_window_module
 from pet_window import LIVE2D_MOC3_BASE_HEIGHT, PetWindow
 
 
@@ -21,6 +24,97 @@ class FakeScreen:
 
 class PositionHarness(QWidget):
     _constrain_position_to_screen = PetWindow._constrain_position_to_screen
+
+
+class PeerDragHarness(QWidget):
+    _handle_peer_drag = PetWindow._handle_peer_drag
+    _finish_received_peer_drag = PetWindow._finish_received_peer_drag
+
+    def __init__(self):
+        super().__init__()
+        self._move_all_roles_together = True
+        self._current_char = "kasumi"
+        self._startup_position_restore_pending = True
+        self._startup_transient_position_set = True
+        self._suppress_compact_ai_sync = False
+        self._peer_drag_states = {}
+        self._completed_peer_drag_sessions = {}
+        self.compact_moves = []
+
+    def _move_unconstrained(self, x, y):
+        self.move(x, y)
+
+    def _move_compact_ai_with_pet(self, dx, dy):
+        self.compact_moves.append((dx, dy))
+
+
+class LocalDragHarness(QWidget):
+    _on_drag = PetWindow._on_drag
+    _on_peer_drag_started = PetWindow._on_peer_drag_started
+    _on_peer_drag_finished = PetWindow._on_peer_drag_finished
+    _broadcast_peer_drag = PetWindow._broadcast_peer_drag
+
+    def __init__(self):
+        super().__init__()
+        self._move_all_roles_together = True
+        self._current_char = "kasumi"
+        self._active_peer_drag_id = ""
+        self._active_peer_drag_total_x = 0
+        self._active_peer_drag_total_y = 0
+        self._drag_anchor_ratio = None
+        self._emotion_window_anim = None
+        self._emotion_window_animating = False
+        self._startup_position_restore_pending = False
+        self._startup_transient_position_set = False
+        self._suppress_compact_ai_sync = False
+        self.sent = []
+
+    def _note_user_interaction(self):
+        pass
+
+    def _refresh_topmost_for_interaction(self):
+        pass
+
+    def _move_unconstrained(self, x, y):
+        self.move(x, y)
+
+    def _move_compact_ai_with_pet(self, _dx, _dy):
+        pass
+
+    def _send_ipc(self, line):
+        self.sent.append(line)
+        return True
+
+    def _capture_native_drag_anchor(self):
+        pass
+
+    def _reanchor_window_to_drag_cursor(self):
+        return False
+
+    def _sync_drag_anchor_after_window_change(self, *, force=False):
+        pass
+
+
+class NativeDragAnchorHarness:
+    _capture_native_drag_anchor = PetWindow._capture_native_drag_anchor
+    _reanchor_window_to_drag_cursor = PetWindow._reanchor_window_to_drag_cursor
+
+    def __init__(self):
+        self._current_char = "kasumi"
+        self._drag_anchor_ratio = None
+        self.cursor = QPoint()
+
+    def winId(self):
+        return 123
+
+    def width(self):
+        return 300
+
+    def height(self):
+        return 375
+
+    def _native_cursor_pos(self):
+        return QPoint(self.cursor)
 
 
 class ScaleHarness(QWidget):
@@ -146,6 +240,114 @@ class PetWindowPositioningTest(unittest.TestCase):
             ),
         )
 
+    def test_peer_drag_can_follow_across_screen_boundary(self):
+        harness = PeerDragHarness()
+        harness.move(1800, 400)
+
+        harness._handle_peer_drag({"character": "ran", "dx": 300, "dy": -50})
+
+        self.assertEqual((2100, 350), (harness.x(), harness.y()))
+        self.assertEqual([(300, -50)], harness.compact_moves)
+        self.assertFalse(harness._startup_position_restore_pending)
+        self.assertFalse(harness._startup_transient_position_set)
+
+    def test_peer_drag_uses_latest_cumulative_offset_after_message_loss(self):
+        harness = PeerDragHarness()
+        harness.move(100, 200)
+
+        harness._handle_peer_drag({
+            "character": "ran",
+            "drag_id": "drag-1",
+            "total_dx": 5,
+            "total_dy": 10,
+        })
+        harness._handle_peer_drag({
+            "character": "ran",
+            "drag_id": "drag-1",
+            "total_dx": 120,
+            "total_dy": -30,
+        })
+
+        self.assertEqual((220, 170), (harness.x(), harness.y()))
+
+        harness._handle_peer_drag({
+            "character": "ran",
+            "drag_id": "drag-1",
+            "total_dx": 150,
+            "total_dy": -40,
+        }, finished=True)
+        self.assertEqual((250, 160), (harness.x(), harness.y()))
+
+        harness._handle_peer_drag({
+            "character": "ran",
+            "drag_id": "drag-1",
+            "total_dx": 80,
+            "total_dy": -20,
+        })
+        self.assertEqual((250, 160), (harness.x(), harness.y()))
+
+    def test_local_drag_sends_cumulative_update_and_reliable_final_state(self):
+        harness = LocalDragHarness()
+        harness.move(50, 60)
+        harness._on_peer_drag_started()
+
+        harness._on_drag(30, -10)
+        harness._on_drag(20, 15)
+        harness._on_peer_drag_finished()
+
+        self.assertEqual((100, 65), (harness.x(), harness.y()))
+        self.assertEqual(3, len(harness.sent))
+        self.assertTrue(harness.sent[0].startswith("PEER_DRAG\t"))
+        self.assertTrue(harness.sent[1].startswith("PEER_DRAG\t"))
+        self.assertTrue(harness.sent[2].startswith("PEER_DRAG_END\t"))
+        payloads = [json.loads(line.split("\t", 1)[1]) for line in harness.sent]
+        self.assertEqual((30, -10), (payloads[0]["total_dx"], payloads[0]["total_dy"]))
+        self.assertEqual((50, 5), (payloads[1]["total_dx"], payloads[1]["total_dy"]))
+        self.assertEqual(payloads[1], payloads[2])
+
+    @unittest.skipUnless(os.name == "nt", "native drag anchoring is Windows-specific")
+    def test_native_drag_anchor_keeps_same_relative_point_across_dpi_resize(self):
+        harness = NativeDragAnchorHarness()
+        harness.cursor = QPoint(250, 450)
+        current_rect = [100, 200, 475, 669]
+        set_window_pos_calls = []
+
+        def get_window_rect(_hwnd, rect_pointer):
+            rect = rect_pointer._obj
+            rect.left, rect.top, rect.right, rect.bottom = current_rect
+            return True
+
+        def set_window_pos(hwnd, insert_after, x, y, width, height, flags):
+            set_window_pos_calls.append(
+                (hwnd, insert_after, x, y, width, height, flags)
+            )
+            return True
+
+        with (
+            patch.object(pet_window_module, "_get_window_rect", get_window_rect),
+            patch.object(pet_window_module, "_set_window_pos", set_window_pos),
+        ):
+            harness._capture_native_drag_anchor()
+            self.assertAlmostEqual(0.4, harness._drag_anchor_ratio[0])
+            self.assertAlmostEqual(250 / 469, harness._drag_anchor_ratio[1])
+
+            # The native window becomes 300x375 on the other-DPR screen. The
+            # same relative point must remain under the physical cursor.
+            current_rect[:] = [500, 300, 800, 675]
+            harness.cursor = QPoint(900, 800)
+            self.assertTrue(harness._reanchor_window_to_drag_cursor())
+
+        self.assertEqual(1, len(set_window_pos_calls))
+        _hwnd, _after, x, y, width, height, flags = set_window_pos_calls[0]
+        self.assertEqual((780, 600), (x, y))
+        self.assertEqual((0, 0), (width, height))
+        self.assertEqual(
+            pet_window_module.SWP_NOSIZE
+            | pet_window_module.SWP_NOZORDER
+            | pet_window_module.SWP_NOACTIVATE,
+            flags,
+        )
+
     def test_scaling_keeps_saved_window_position(self):
         harness = ScaleHarness()
         harness.resize(400, 500)
@@ -154,6 +356,8 @@ class PetWindowPositioningTest(unittest.TestCase):
         harness.set_live2d_scale(200)
 
         self.assertEqual((800, 1000), (harness.width(), harness.height()))
+        self.assertEqual((800, 1000), (harness.minimumWidth(), harness.minimumHeight()))
+        self.assertEqual((800, 1000), (harness.maximumWidth(), harness.maximumHeight()))
         self.assertEqual((1700, 900), (harness.x(), harness.y()))
 
     def test_moc3_size_uses_taller_window(self):
@@ -187,6 +391,15 @@ class PetWindowPositioningTest(unittest.TestCase):
 
         for key in ("fps", "opacity", "dark_theme", "vsync", "live2d_quality", "live2d_scale"):
             self.assertNotIn(f'self._cfg.set("{key}"', source)
+
+    def test_screen_scale_refresh_is_driven_by_screen_changed(self):
+        move_source = inspect.getsource(PetWindow.moveEvent)
+        show_source = inspect.getsource(PetWindow.showEvent)
+        screen_source = inspect.getsource(PetWindow._on_window_screen_changed)
+
+        self.assertNotIn("refresh_screen_scale", move_source)
+        self.assertIn("_ensure_screen_scale_tracking", show_source)
+        self.assertIn("_screen_scale_refresh_timer.start()", screen_source)
 
     def test_position_save_only_updates_position_fields(self):
         harness = SaveConfigHarness()
