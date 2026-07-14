@@ -90,6 +90,8 @@ PBT_APMRESUMECRITICAL = 0x0006
 PBT_APMRESUMESUSPEND = 0x0007
 PBT_APMRESUMEAUTOMATIC = 0x0012
 WTS_SESSION_UNLOCK = 0x0008
+POKE_USER_BADGE_DURATION_MS = 1980
+POKE_USER_WINDOW_SHAKE_INTENSITY = 36
 GWL_EXSTYLE = -20
 HWND_TOPMOST = -1
 WS_EX_TRANSPARENT = 0x00000020
@@ -4169,7 +4171,7 @@ class PetWindow(QWidget):
                 pass
 
         move_anim = QPropertyAnimation(badge, b"pos", self)
-        move_anim.setDuration(980)
+        move_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         move_anim.setStartValue(start)
         move_anim.setKeyValueAt(0.22, settle)
         move_anim.setKeyValueAt(0.72, settle)
@@ -4177,7 +4179,7 @@ class PetWindow(QWidget):
         move_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         opacity_anim = QPropertyAnimation(badge, b"windowOpacity", self)
-        opacity_anim.setDuration(980)
+        opacity_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         opacity_anim.setStartValue(0.0)
         opacity_anim.setKeyValueAt(0.14, 1.0)
         opacity_anim.setKeyValueAt(0.72, 1.0)
@@ -4208,6 +4210,10 @@ class PetWindow(QWidget):
         if str(event.get("direction", "") or "").strip().lower() == "to_user":
             self._note_user_interaction()
             self._show_character_poked_user_feedback(event)
+            self._play_emotion_window_feedback(
+                "shake",
+                POKE_USER_WINDOW_SHAKE_INTENSITY,
+            )
             return
         if str(event.get("source", "") or "").strip().lower() == "live2d":
             return

@@ -5,7 +5,7 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 import logging
 import time
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QPoint, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -121,6 +121,8 @@ _CHAT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
 _REMOTE_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 _FILE_ATTACHMENT_INLINE_BYTES = 256 * 1024
 _FILE_ATTACHMENT_INLINE_CHARS = 120_000
+_POKE_WINDOW_SHAKE_DURATION_MS = 360
+_POKE_WINDOW_SHAKE_AMPLITUDE = 8
 _CHAT_TEXT_ATTACHMENT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml",
     ".xml", ".html", ".htm", ".css", ".js", ".jsx", ".ts", ".tsx", ".py", ".java",
@@ -396,6 +398,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._immediate_shutdown = False
         self._close_animating = False
         self._window_anim = None
+        self._poke_window_anim = None
+        self._poke_window_anim_origin = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
         self._attachment_cards: list[ComposerAttachmentCard] = []
@@ -809,6 +813,51 @@ class ChatWindow(ChatWindowMixin, QWidget):
         opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._window_anim = opacity
         opacity.start()
+
+    def _play_poke_window_shake(self):
+        if self._closing or self._close_animating or not self.isVisible() or self.isMinimized():
+            return
+        previous = self._poke_window_anim
+        previous_origin = self._poke_window_anim_origin
+        if previous is not None:
+            try:
+                previous.stop()
+            except RuntimeError:
+                pass
+            if isinstance(previous_origin, QPoint):
+                self.move(previous_origin)
+
+        origin = self.pos()
+        amplitude = _POKE_WINDOW_SHAKE_AMPLITUDE
+        anim = QVariantAnimation(self)
+        anim.setDuration(_POKE_WINDOW_SHAKE_DURATION_MS)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        for step, offset in (
+            (0.0, 0),
+            (0.18, -amplitude),
+            (0.36, amplitude),
+            (0.55, -(amplitude // 2)),
+            (0.74, amplitude // 2),
+            (1.0, 0),
+        ):
+            anim.setKeyValueAt(step, QPoint(origin.x() + offset, origin.y()))
+
+        def move_window(value):
+            if isinstance(value, QPoint):
+                self.move(value)
+
+        def finish():
+            if self._poke_window_anim is not anim:
+                return
+            self.move(origin)
+            self._poke_window_anim = None
+            self._poke_window_anim_origin = None
+
+        anim.valueChanged.connect(move_window)
+        anim.finished.connect(finish)
+        self._poke_window_anim = anim
+        self._poke_window_anim_origin = QPoint(origin)
+        anim.start()
 
     def _play_close_animation(self):
         if self._close_animating:
@@ -6280,15 +6329,16 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def handle_external_user_poke(self, event: dict):
         if not isinstance(event, dict):
             event = {}
-        if str(event.get("direction", "") or "").strip().lower() == "to_user":
-            return
-        if str(event.get("source", "") or "").strip().lower() == "chat":
-            return
         target = str(event.get("character", "") or "").strip() or self._character
         if self._is_group_chat:
             if target not in self._group_characters:
                 return
         elif target != self._character:
+            return
+        if str(event.get("direction", "") or "").strip().lower() == "to_user":
+            self._play_poke_window_shake()
+            return
+        if str(event.get("source", "") or "").strip().lower() == "chat":
             return
         self._send_poke_to_character(target)
 
