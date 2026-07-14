@@ -5,7 +5,7 @@ from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
@@ -74,6 +74,55 @@ class RadialMenuReopenTest(unittest.TestCase):
             menu.show_at(QPoint(220, 220))
             self.assertTrue(menu._is_showing)
 
+    def test_menu_geometry_stays_centered_when_it_fits(self):
+        geometry = RadialMenu._bounded_menu_geometry(
+            QPoint(500, 400), 380, 380, QRect(0, 0, 1920, 1040)
+        )
+
+        self.assertEqual(QRect(310, 210, 380, 380), geometry)
+
+    def test_menu_geometry_moves_inside_right_bottom_available_edges(self):
+        geometry = RadialMenu._bounded_menu_geometry(
+            QPoint(1900, 1020), 380, 380, QRect(0, 0, 1920, 1040)
+        )
+
+        self.assertEqual(QRect(1540, 660, 380, 380), geometry)
+
+    def test_menu_geometry_supports_negative_coordinate_screens(self):
+        left_top = RadialMenu._bounded_menu_geometry(
+            QPoint(-1910, 10), 380, 380, QRect(-1920, 0, 1920, 1040)
+        )
+        right_bottom = RadialMenu._bounded_menu_geometry(
+            QPoint(-10, 1030), 380, 380, QRect(-1920, 0, 1920, 1040)
+        )
+
+        self.assertEqual(QRect(-1920, 0, 380, 380), left_top)
+        self.assertEqual(QRect(-380, 660, 380, 380), right_bottom)
+
+    def test_menu_geometry_uses_screen_containing_click_point(self):
+        class Screen:
+            @staticmethod
+            def availableGeometry():
+                return QRect(-1920, 0, 1920, 1040)
+
+        class App:
+            requested_point = None
+
+            @classmethod
+            def screenAt(cls, point):
+                cls.requested_point = QPoint(point)
+                return Screen()
+
+            @staticmethod
+            def primaryScreen():
+                raise AssertionError("primary screen fallback should not be used")
+
+        with patch("radial_menu.QGuiApplication", App):
+            geometry = RadialMenu._menu_geometry_at(QPoint(-10, 1030), 380, 380)
+
+        self.assertEqual(QPoint(-10, 1030), App.requested_point)
+        self.assertEqual(QRect(-380, 660, 380, 380), geometry)
+
     def test_macos_global_mouse_state_detects_clicks_outside_menu_process(self):
         native_button_state = Mock(
             side_effect=lambda _source, button: button == 1
@@ -123,6 +172,14 @@ class RadialMenuReopenTest(unittest.TestCase):
             def platformName():
                 return "xcb"
 
+            @staticmethod
+            def screenAt(_point):
+                return None
+
+            @staticmethod
+            def primaryScreen():
+                return None
+
         menu = RadialMenu()
         menu.add_item("", "Chat", QColor(80, 80, 80), lambda: None)
         masks = []
@@ -148,6 +205,14 @@ class RadialMenuReopenTest(unittest.TestCase):
             @staticmethod
             def platformName():
                 return "xcb"
+
+            @staticmethod
+            def screenAt(_point):
+                return None
+
+            @staticmethod
+            def primaryScreen():
+                return None
 
         menu = RadialMenu()
         menu.add_item("", "Chat", QColor(80, 80, 80), lambda: None)

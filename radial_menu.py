@@ -10,7 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import (
     Qt, Signal, QPoint, QPropertyAnimation, QEasingCurve, QTimer,
-    QParallelAnimationGroup, QVariantAnimation, QRectF,
+    QParallelAnimationGroup, QVariantAnimation, QRect, QRectF,
 )
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QMouseEvent,
@@ -467,6 +467,24 @@ class RadialMenu(QWidget):
         if color is not None:
             widget.set_color(color)
 
+    @staticmethod
+    def _bounded_menu_geometry(center: QPoint, width: int, height: int,
+                               available: QRect) -> QRect:
+        x = center.x() - width // 2
+        y = center.y() - height // 2
+        max_x = max(available.left(), available.x() + available.width() - width)
+        max_y = max(available.top(), available.y() + available.height() - height)
+        x = min(max(x, available.left()), max_x)
+        y = min(max(y, available.top()), max_y)
+        return QRect(x, y, width, height)
+
+    @classmethod
+    def _menu_geometry_at(cls, center: QPoint, width: int, height: int) -> QRect:
+        screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return QRect(center.x() - width // 2, center.y() - height // 2, width, height)
+        return cls._bounded_menu_geometry(center, width, height, screen.availableGeometry())
+
     def show_at(self, center: QPoint):
         n = len(self._items)
         if n == 0:
@@ -493,11 +511,7 @@ class RadialMenu(QWidget):
 
         total_w = self._radius * 2 + 80 * 2
         total_h = self._radius * 2 + 80 * 2
-        self.setGeometry(
-            center.x() - total_w // 2,
-            center.y() - total_h // 2,
-            total_w, total_h,
-        )
+        self.setGeometry(self._menu_geometry_at(center, total_w, total_h))
 
         for i, item in enumerate(self._items):
             angle = -math.pi / 2 + (2 * math.pi * i / n)
