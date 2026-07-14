@@ -17,6 +17,7 @@ from desktop_state import current_desktop_state
 from i18n_manager import tr as _tr
 from llm_api_compat import chat_completions_api_url
 from llm_manager import NonStreamWorker, build_system_prompt, parse_action_tags, strip_action_tags
+from llm_thinking import split_thinking_text
 from proactive_care_policy import (
     evaluate_proactive_care,
     mark_proactive_care_result,
@@ -742,6 +743,7 @@ class ReminderScheduler(SingleShotTTSCallbacksMixin, QObject):
             return
         self._finish_generation(worker)
         self._forget_worker(worker)
+        text, _reasoning = split_thinking_text(text)
         actions = parse_action_tags(text)
         clean = strip_action_tags(text).strip()
         if context.get("kind") == "screen_awareness" and clean.upper().strip(" 。.!！") == "NO_SPEAK":

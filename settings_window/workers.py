@@ -5,6 +5,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from settings_window.constants import *
+from llm_api_compat import openai_compat_headers
 from network_worker import CancelableNetworkWorker
 
 
@@ -318,17 +319,7 @@ class TestConnectionWorker(CancelableNetworkWorker):
         try:
             ctx = ssl.create_default_context()
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                # Keep this consistent with model discovery: some compatible
-                # gateways block urllib's default User-Agent.
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            }
+            headers = openai_compat_headers(self._api_key)
 
             try:
                 if self._api_mode == "responses" and not is_google_generative_language_url(self._api_url):
@@ -411,16 +402,10 @@ class FetchModelsWorker(CancelableNetworkWorker):
         try:
             ctx = ssl.create_default_context()
 
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-                # Some OpenAI-compatible gateways apply bot filtering to the
-                # models endpoint and reject urllib's default User-Agent.
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            }
+            headers = openai_compat_headers(
+                self._api_key,
+                include_content_type=False,
+            )
 
             req = urllib.request.Request(
                 self._models_url, headers=headers, method="GET"

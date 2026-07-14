@@ -10,12 +10,14 @@ from PySide6.QtCore import QThread, Signal
 
 from llm_api_compat import (
     chat_completions_api_url,
+    openai_compat_headers,
     responses_api_url,
     sanitize_chat_body_for_url,
 )
 from llm_thinking import (
     apply_responses_thinking_options as _apply_responses_thinking_options,
     apply_thinking_options as _apply_thinking_options,
+    split_thinking_text,
 )
 from local_tools import (
     AUTO_CONTINUE_TOOL_NAME,
@@ -1011,11 +1013,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         self._round_output_text = ""
         self._round_stream_completed = False
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
+        headers = openai_compat_headers(self._api_key)
 
         req = urllib.request.Request(
             self._api_url, data=data, headers=headers, method="POST"
@@ -1417,11 +1415,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
         self._round_output_text = ""
         self._round_text_seen = False
         self._round_stream_completed = False
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
+        headers = openai_compat_headers(self._api_key)
         req = urllib.request.Request(
             self._api_url,
             data=data,
@@ -1635,11 +1629,7 @@ class NonStreamWorker(_CancelableNetworkWorker):
             sanitize_chat_body_for_url(body, self._api_url)
             data = json.dumps(body).encode("utf-8")
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            }
+            headers = openai_compat_headers(self._api_key)
 
             req = urllib.request.Request(
                 self._api_url, data=data, headers=headers, method="POST"
@@ -1841,9 +1831,6 @@ def extract_inline_search_sources(content: str) -> tuple[str, list[dict]]:
     return cleaned.rstrip(), sources
 
 
-_THINK_PATTERN = re.compile(r"<think(?:ing)?>\s*(.*?)\s*</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
-
-
 def _responses_api_url(api_url: str) -> str:
     return responses_api_url(api_url)
 
@@ -1920,18 +1907,3 @@ def _extract_response_output_text(response: dict) -> str:
             if part.get("type") in ("output_text", "text") and isinstance(part.get("text"), str):
                 texts.append(part["text"])
     return "".join(texts)
-
-
-def split_thinking_text(content: str, reasoning: str = "") -> tuple[str, str]:
-    if not content:
-        return "", reasoning.strip()
-    collected = [reasoning.strip()] if reasoning and reasoning.strip() else []
-
-    def collect(match):
-        text = match.group(1).strip()
-        if text:
-            collected.append(text)
-        return ""
-
-    clean = _THINK_PATTERN.sub(collect, content).strip()
-    return clean, "\n\n".join(collected).strip()

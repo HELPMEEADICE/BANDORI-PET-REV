@@ -1,13 +1,17 @@
 import json
-import re
 import urllib.request
 
-from llm_api_compat import chat_completions_api_url, sanitize_chat_body_for_url
-from llm_thinking import apply_thinking_options
+from llm_api_compat import (
+    chat_completions_api_url,
+    openai_compat_headers,
+    sanitize_chat_body_for_url,
+)
+from llm_thinking import apply_thinking_options, split_thinking_text
 
 
-def _strip_thinking_text(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.DOTALL | re.IGNORECASE).strip()
+def _strip_thinking_text(text: str, reasoning: str = "") -> str:
+    clean, _reasoning = split_thinking_text(text, reasoning)
+    return clean
 
 
 def analyze_images_with_aux_model(
@@ -43,9 +47,7 @@ def analyze_images_with_aux_model(
     apply_thinking_options(body, enable_thinking)
     request_url = chat_completions_api_url(api_url)
     sanitize_chat_body_for_url(body, request_url)
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = openai_compat_headers(api_key)
     req = urllib.request.Request(
         request_url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -65,4 +67,12 @@ def analyze_images_with_aux_model(
     if not choices:
         return ""
     message = choices[0].get("message", {})
-    return _strip_thinking_text(message.get("content", ""))
+    reasoning = next(
+        (
+            message.get(key)
+            for key in ("reasoning_content", "reasoning", "thinking")
+            if isinstance(message.get(key), str) and message.get(key)
+        ),
+        "",
+    )
+    return _strip_thinking_text(message.get("content", ""), reasoning)
