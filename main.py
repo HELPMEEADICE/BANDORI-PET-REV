@@ -7,6 +7,7 @@ import time
 import uuid
 
 from process_utils import (
+    app_data_dir,
     bootstrap_app,
     clamp_int,
     cleanup_stale_runtime_locks,
@@ -70,6 +71,36 @@ from shared_memory_ipc import (
 class AiEventBridge(QObject):
     line_received = Signal(str)
     delivery_requested = Signal(str, object)
+
+
+def _native_pet_renderer_program(base_dir: str) -> str:
+    explicit = os.environ.get("BANDORI_PET_NATIVE_RENDERER_PATH", "").strip()
+    candidates = [explicit] if explicit else []
+    executable = "bandori-pet-renderer-rust.exe" if os.name == "nt" else "bandori-pet-renderer-rust"
+    candidates.extend([
+        os.path.join(base_dir, executable),
+        os.path.join(base_dir, "build-rust", "native", "qt", executable),
+        os.path.join(base_dir, "build-rust", "native", "qt", "Release", executable),
+        os.path.join(base_dir, "build-rust", "Release", executable),
+    ])
+    if sys.platform == "darwin":
+        candidates.append(os.path.join(
+            base_dir,
+            "build-rust",
+            "native",
+            "qt",
+            "bandori-pet-renderer-rust.app",
+            "Contents",
+            "MacOS",
+            "bandori-pet-renderer-rust",
+        ))
+    return next((path for path in candidates if path and os.path.isfile(path)), "")
+
+
+def _native_pet_renderer_enabled() -> bool:
+    return os.environ.get("BANDORI_PET_NATIVE_RENDERER", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def main():
@@ -1388,15 +1419,39 @@ def main():
         ]
         clear_ipc_peers("PET")
         pet_window_ref["processes"] = []
+        native_renderer = _native_pet_renderer_program(BASE_DIR) if _native_pet_renderer_enabled() else ""
+        if _native_pet_renderer_enabled() and not native_renderer:
+            print(
+                "Rust pet renderer was requested but no executable was found; using Python renderer.",
+                file=sys.stderr,
+            )
         for idx, model in enumerate(models):
             process = QProcess(app)
-            program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
-                "--character", model["character"],
-                "--costume", model["costume"],
-                "--model-path", model["path"],
-                "--index", str(idx),
-                "--group-characters", group_characters_arg,
-            ])
+            if native_renderer:
+                model_format = mgr.get_model_format(model["character"], model["costume"])
+                program = native_renderer
+                arguments = [
+                    "--project-root", BASE_DIR,
+                    "--user-models", str(app_data_dir() / "models"),
+                    "--model", model["path"],
+                    "--character", model["character"],
+                    "--format", model_format or "moc3",
+                    "--width", str(cfg.get("window_width", 400)),
+                    "--height", str(cfg.get("window_height", 500)),
+                    "--fps", str(cfg.get("fps", 120)),
+                    "--opacity", str(cfg.get("opacity", 1.0)),
+                    "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),
+                    "--parent-pid", str(os.getpid()),
+                    "--ipc-session", os.environ.get("BANDORI_PET_IPC_SERVER_NAME", ""),
+                ]
+            else:
+                program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
+                    "--character", model["character"],
+                    "--costume", model["costume"],
+                    "--model-path", model["path"],
+                    "--index", str(idx),
+                    "--group-characters", group_characters_arg,
+                ])
             process.setProgram(program)
             process.setArguments(arguments)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)

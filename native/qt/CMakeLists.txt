@@ -1,5 +1,10 @@
 qt_add_executable(bandori-pet-rust
     main.cpp
+    pet_process_supervisor.cpp
+    pet_process_supervisor.h
+    shared_memory_line_queue.cpp
+    shared_memory_line_queue.h
+    bandori_ipc_ffi.h
 )
 
 qt_add_executable(bandori-pet-renderer-rust
@@ -7,6 +12,11 @@ qt_add_executable(bandori-pet-renderer-rust
     live2d_gl_widget.cpp
     live2d_gl_widget.h
     bandori_live2d_ffi.h
+    pet_ipc_client.cpp
+    pet_ipc_client.h
+    shared_memory_line_queue.cpp
+    shared_memory_line_queue.h
+    bandori_ipc_ffi.h
 )
 
 target_link_libraries(bandori-pet-rust PRIVATE

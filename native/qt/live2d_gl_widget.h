@@ -35,6 +35,9 @@ public:
     ~Live2dGlWidget() override;
 
     void setFramesPerSecond(int fps);
+    void setLipSyncMaxOpen(double value);
+    void setLipSyncPose(double level, double form = 0.0);
+    bool triggerAction(const QString& action, const QString& character);
 
 protected:
     void initializeGL() override;
@@ -58,6 +61,12 @@ private:
     BandoriLive2dHost* host_ = nullptr;
     QElapsedTimer frameClock_;
     qint64 lastFrameMsec_ = 0;
+    qint64 lipSyncLastMsec_ = -1'000;
+    double lipSyncLevel_ = 0.0;
+    double lipSyncTarget_ = 0.0;
+    double lipSyncForm_ = 0.0;
+    double lipSyncFormTarget_ = 0.0;
+    double lipSyncMaxOpen_ = 0.55;
     QTimer renderTimer_;
     std::unique_ptr<QOpenGLFramebufferObject> ssaaFramebuffer_;
     QSize ssaaFramebufferSize_;

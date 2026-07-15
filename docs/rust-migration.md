@@ -69,11 +69,19 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   split, 2x MOC3 SSAA framebuffer/blit, and side-effect-free fallback redraw are
   implemented. The native
   `bandori-pet-renderer-rust` executable provides the isolated QOpenGLWidget pet
-  process boundary. Headless runtime/contract tests pass; native GL comparison
+  process boundary. The Qt supervisor now owns compatible `BDIPC01!` shared
+  memory queues through Rust queue C ABI calls, performs REGISTER/UNREGISTER and
+  SHUTDOWN handshakes, watches the parent PID, and uses a capped restart backoff.
+  ACTION messages now resolve MOC/MOC3 motion and expression metadata in Rust;
+  LIP messages apply the existing 180 ms hold, smoothing and configurable mouth
+  limit through persistent host parameters. Cubism 2 metadata is parsed directly
+  from the model manifest, so it does not depend on a Cubism 3-only Lua helper.
+  Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: production pet IPC/supervision, native visual/driver parity,
-  application services, full UI replacement and packaging.
+- Pending: remaining pet control events (peer dragging and alpha hit testing),
+  native visual/driver parity, application services, full UI replacement and
+  packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain
@@ -86,6 +94,12 @@ independent of that local limitation.
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by
   `cmake --build build-rust --config Release`
+
+The Python supervisor keeps the Python pet as the default. To replace only the
+pet renderer during the compatibility window, set
+`BANDORI_PET_NATIVE_RENDERER=1`. Set `BANDORI_PET_NATIVE_RENDERER_PATH` when the
+native executable is outside the standard `build-rust` locations. Failure to
+find the helper logs a warning and safely falls back to the Python renderer.
 
 The native build requires Qt 6.5+ with Core, Gui, Widgets, OpenGLWidgets and Svg,
 a C++17 compiler, Rust 1.85+, CMake 3.24+, and CXX-Qt 0.9. CMake can discover an

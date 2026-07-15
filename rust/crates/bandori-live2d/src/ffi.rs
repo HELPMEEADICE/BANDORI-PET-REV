@@ -1,7 +1,9 @@
 use crate::{
-    FrameInput, Live2dFormat, Live2dRuntime, ModelResourceLoader, ResourceRoots, TextureQuality,
+    FrameInput, Live2dFormat, Live2dRuntime, ModelResourceLoader, ParameterValue, ResourceRoots,
+    TextureQuality,
 };
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -14,6 +16,7 @@ pub type BandoriGlProcResolver =
 pub struct BandoriLive2dHost {
     runtime: Live2dRuntime,
     frame_number: u64,
+    parameters: BTreeMap<String, ParameterValue>,
 }
 
 thread_local! {
@@ -74,6 +77,7 @@ pub unsafe extern "C" fn bandori_live2d_create(
         Ok(Box::into_raw(Box::new(BandoriLive2dHost {
             runtime,
             frame_number: 0,
+            parameters: BTreeMap::new(),
         })))
     }));
     match result {
@@ -179,9 +183,65 @@ pub unsafe extern "C" fn bandori_live2d_draw(
                 time_msec,
                 delta_seconds: Some(delta_seconds.clamp(0.0, 0.1)),
                 frame_number: host.frame_number,
+                parameters: host.parameters.values().cloned().collect(),
                 ..FrameInput::default()
             })
             .map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Sets a persistent host parameter that is applied on every frame.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. `parameter_id` must be valid
+/// NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_set_parameter(
+    host: *mut BandoriLive2dHost,
+    parameter_id: *const c_char,
+    value: f64,
+    weight: f64,
+) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let id = unsafe { required_string(parameter_id, "parameter_id") }?;
+        host.parameters
+            .insert(id.clone(), ParameterValue { id, value, weight });
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Resolves and triggers a host action tag against model metadata.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. Both string pointers must contain
+/// valid NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_trigger_action(
+    host: *mut BandoriLive2dHost,
+    action: *const c_char,
+    character: *const c_char,
+) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let action = unsafe { required_string(action, "action") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let character = unsafe { required_string(character, "character") }?;
+        if host
+            .runtime
+            .trigger_action(&action, &character)
+            .map_err(|error| error.to_string())?
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Live2D action did not match model metadata: {action}"
+            ))
+        }
     })
 }
 

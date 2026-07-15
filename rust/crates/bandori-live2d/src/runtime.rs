@@ -2,6 +2,8 @@ use crate::module_catalog::{ModuleCatalog, ModuleError};
 use crate::resource::{ModelResourceLoader, ResourceError};
 use mlua::{Function, Lua, ObjectLike, RegistryKey, Table, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -132,6 +134,7 @@ pub struct Live2dRuntime {
     format: Live2dFormat,
     renderer: Option<RegistryKey>,
     resource_loader: ModelResourceLoader,
+    model_info: RefCell<Option<Live2dModelInfo>>,
 }
 
 impl Live2dRuntime {
@@ -184,6 +187,7 @@ impl Live2dRuntime {
             format,
             renderer: Some(renderer),
             resource_loader,
+            model_info: RefCell::new(None),
         })
     }
 
@@ -207,12 +211,17 @@ impl Live2dRuntime {
         height: u32,
         quality: TextureQuality,
     ) -> Result<Live2dModelInfo, Live2dError> {
-        let options = self.model_options(model_path, quality)?;
+        let manifest = self.resource_loader.read(model_path)?;
+        let options = self.model_options(model_path, quality, &manifest)?;
         self.renderer_table()?.call_method::<Value>(
             "load_model",
             (model_path, width.max(1), height.max(1), options),
         )?;
-        self.model_info()
+        let info = self
+            .renderer_model_info()?
+            .unwrap_or_else(|| model_info_from_manifest(&manifest));
+        *self.model_info.borrow_mut() = Some(info.clone());
+        Ok(info)
     }
 
     pub fn resize(&self, width: u32, height: u32) -> Result<(), Live2dError> {
@@ -312,6 +321,61 @@ impl Live2dRuntime {
         Ok(())
     }
 
+    pub fn trigger_action(&self, action: &str, character: &str) -> Result<bool, Live2dError> {
+        let info = self.model_info()?;
+        let mut normalized = action
+            .trim()
+            .trim_matches(|value: char| matches!(value, '[' | ']' | ' ' | '\t' | '\r' | '\n'))
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        if normalized.is_empty() {
+            return Ok(false);
+        }
+
+        if let Some((base, extension)) = normalized.rsplit_once('.') {
+            if let Some(expression) = find_expression(&info.expressions, base, character) {
+                self.set_expression(expression)?;
+                return Ok(true);
+            }
+            if matches!(extension, "mtn" | "motion") {
+                normalized = base.to_owned();
+            } else {
+                return Ok(false);
+            }
+        }
+
+        let candidates = if normalized == "thinking" {
+            vec!["thinking", "nf", "nnf", "eeto", "odoodo"]
+        } else {
+            vec![normalized.as_str()]
+        };
+        let character = character.to_lowercase();
+        let motion = candidates.iter().find_map(|candidate| {
+            let character_candidate = format!("{character}_{candidate}");
+            info.motion_names.iter().find(|name| {
+                let name = name.to_lowercase();
+                name == **candidate
+                    || name.starts_with(*candidate)
+                    || name == character_candidate
+                    || name.starts_with(&character_candidate)
+                    || contains_action_token(&name, candidate)
+            })
+        });
+        let mut triggered = false;
+        if let Some(motion) = motion {
+            self.start_motion(motion, 0, MotionPriority::Force, false)?;
+            triggered = true;
+        }
+        if let Some(expression) = find_expression(&info.expressions, &normalized, &character) {
+            self.set_expression(expression)?;
+            triggered = true;
+        }
+        Ok(triggered)
+    }
+
     pub fn hit_test(&self, x: f64, y: f64) -> Result<Vec<String>, Live2dError> {
         let hits: Table = self.renderer_table()?.call_method("hit_test", (x, y))?;
         hits.sequence_values::<String>()
@@ -320,7 +384,19 @@ impl Live2dRuntime {
     }
 
     pub fn model_info(&self) -> Result<Live2dModelInfo, Live2dError> {
-        let info: Table = self.renderer_table()?.call_method("model_info", ())?;
+        if let Some(info) = self.model_info.borrow().as_ref() {
+            return Ok(info.clone());
+        }
+        Ok(self.renderer_model_info()?.unwrap_or_default())
+    }
+
+    fn renderer_model_info(&self) -> Result<Option<Live2dModelInfo>, Live2dError> {
+        let renderer = self.renderer_table()?;
+        let function: Option<Function> = renderer.get("model_info")?;
+        if function.is_none() {
+            return Ok(None);
+        }
+        let info: Table = renderer.call_method("model_info", ())?;
         let motion_names = table_strings(info.get::<Table>("motion_names")?)?;
         let motion_table: Table = info.get("motions")?;
         let mut motions = BTreeMap::new();
@@ -338,12 +414,12 @@ impl Live2dRuntime {
             .filter_map(|entry| entry.ok().map(|(name, _)| name))
             .collect::<Vec<_>>();
         expressions.sort();
-        Ok(Live2dModelInfo {
+        Ok(Some(Live2dModelInfo {
             motion_names,
             motions,
             expressions,
             hit_area_count: info.get::<Option<usize>>("hit_area_count")?.unwrap_or(0),
-        })
+        }))
     }
 
     pub fn dispose(&mut self) -> Result<(), Live2dError> {
@@ -390,6 +466,7 @@ impl Live2dRuntime {
         &self,
         model_path: &str,
         quality: TextureQuality,
+        manifest: &[u8],
     ) -> Result<Table, Live2dError> {
         let resources = self.lua.create_table()?;
         let resource_loader = self.resource_loader.clone();
@@ -401,11 +478,7 @@ impl Live2dRuntime {
                 lua.create_string(&bytes)
             })?,
         )?;
-        resources.set(
-            model_path,
-            self.lua
-                .create_string(&self.resource_loader.read(model_path)?)?,
-        )?;
+        resources.set(model_path, self.lua.create_string(manifest)?)?;
 
         let textures = self.lua.create_table()?;
         let texture_loader = self.resource_loader.clone();
@@ -480,6 +553,98 @@ fn find_host_module(module_root: &Path, filename: &str) -> Option<std::path::Pat
         .find(|path| path.is_file())
 }
 
+fn model_info_from_manifest(source: &[u8]) -> Live2dModelInfo {
+    let Ok(manifest) = serde_json::from_slice::<JsonValue>(source) else {
+        return Live2dModelInfo::default();
+    };
+    let references = manifest.get("FileReferences");
+    let motion_value = references
+        .and_then(|value| value.get("Motions"))
+        .or_else(|| manifest.get("motions"));
+    let mut motions = BTreeMap::new();
+    if let Some(groups) = motion_value.and_then(JsonValue::as_object) {
+        for (name, group) in groups {
+            let files = group
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| {
+                    entry
+                        .get("File")
+                        .or_else(|| entry.get("file"))
+                        .and_then(JsonValue::as_str)
+                        .map(str::to_owned)
+                })
+                .collect();
+            motions.insert(name.clone(), files);
+        }
+    }
+
+    let expression_value = references
+        .and_then(|value| value.get("Expressions"))
+        .or_else(|| manifest.get("expressions"));
+    let mut expressions = match expression_value {
+        Some(JsonValue::Array(entries)) => entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("Name")
+                    .or_else(|| entry.get("name"))
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>(),
+        Some(JsonValue::Object(entries)) => entries.keys().cloned().collect(),
+        _ => Vec::new(),
+    };
+    expressions.sort();
+    expressions.dedup();
+    let hit_area_count = manifest
+        .get("HitAreas")
+        .or_else(|| manifest.get("hit_areas"))
+        .and_then(JsonValue::as_array)
+        .map_or(0, Vec::len);
+    let motion_names = motions.keys().cloned().collect();
+    Live2dModelInfo {
+        motion_names,
+        motions,
+        expressions,
+        hit_area_count,
+    }
+}
+
+fn find_expression<'a>(
+    expressions: &'a [String],
+    action: &str,
+    character: &str,
+) -> Option<&'a str> {
+    let action = action.to_lowercase();
+    let action_base = action
+        .rsplit_once('.')
+        .map_or(action.as_str(), |(base, _)| base);
+    let character_prefix = format!("{}_{}", character.to_lowercase(), action_base);
+    expressions.iter().find_map(|expression| {
+        let lower = expression.to_lowercase();
+        let base = lower
+            .rsplit_once('.')
+            .map_or(lower.as_str(), |(base, _)| base);
+        (lower == action
+            || base == action_base
+            || base.starts_with(&character_prefix)
+            || base.starts_with(action_base))
+        .then_some(expression.as_str())
+    })
+}
+
+fn contains_action_token(name: &str, candidate: &str) -> bool {
+    name.split(['_', '-']).any(|part| {
+        part == candidate
+            || part.strip_prefix(candidate).is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|value| value.is_ascii_digit())
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,10 +669,10 @@ function M.new(width, height)
     function renderer:set_offset() return self end
     function renderer:set_scale() return self end
     function renderer:set_parameter() return self end
-    function renderer:start_motion() self.motion = true return self end
+    function renderer:start_motion(name) self.motion = true self.motion_name = name return self end
     function renderer:clear_motions() self.motion = false return self end
     function renderer:is_motion_finished() return not self.motion end
-    function renderer:set_expression() return self end
+    function renderer:set_expression(name) self.expression_name = name return self end
     function renderer:reset_expression() return self end
     function renderer:hit_test() return { "Head" } end
     function renderer:model_info()
@@ -589,5 +754,57 @@ return M
         assert_eq!(info.motions["Idle"], ["idle.motion"]);
         assert_eq!(info.expressions, ["smile"]);
         assert_eq!(runtime.hit_test(0.0, 0.0).unwrap(), ["Head"]);
+    }
+
+    #[test]
+    fn action_tags_resolve_motion_extensions_and_expression_files() {
+        let (_temp, runtime) = runtime(Live2dFormat::Moc3);
+        assert!(runtime.trigger_action("[idle.motion]", "aya").unwrap());
+        assert_eq!(
+            runtime
+                .renderer_table()
+                .unwrap()
+                .get::<String>("motion_name")
+                .unwrap(),
+            "Idle"
+        );
+        assert!(runtime.trigger_action("smile.exp3.json", "aya").unwrap());
+        assert_eq!(
+            runtime
+                .renderer_table()
+                .unwrap()
+                .get::<String>("expression_name")
+                .unwrap(),
+            "smile"
+        );
+    }
+
+    #[test]
+    fn manifest_metadata_supports_both_cubism_generations() {
+        let moc = model_info_from_manifest(
+            br#"{
+                "motions":{"smile01":[{"file":"smile.mtn"}]},
+                "expressions":[{"name":"aya_smile","file":"smile.exp.json"}],
+                "hit_areas":[{"name":"head","id":"HEAD"}]
+            }"#,
+        );
+        assert_eq!(moc.motion_names, ["smile01"]);
+        assert_eq!(moc.motions["smile01"], ["smile.mtn"]);
+        assert_eq!(moc.expressions, ["aya_smile"]);
+        assert_eq!(moc.hit_area_count, 1);
+
+        let moc3 = model_info_from_manifest(
+            br#"{
+                "FileReferences":{
+                    "Motions":{"TapBody":[{"File":"motions/tap.motion3.json"}]},
+                    "Expressions":[{"Name":"surprised","File":"surprised.exp3.json"}]
+                },
+                "HitAreas":[{"Name":"Head","Id":"HitAreaHead"}]
+            }"#,
+        );
+        assert_eq!(moc3.motion_names, ["TapBody"]);
+        assert_eq!(moc3.motions["TapBody"], ["motions/tap.motion3.json"]);
+        assert_eq!(moc3.expressions, ["surprised"]);
+        assert_eq!(moc3.hit_area_count, 1);
     }
 }

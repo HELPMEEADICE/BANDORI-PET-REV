@@ -67,6 +67,42 @@ void Live2dGlWidget::setFramesPerSecond(int fps) {
     }
 }
 
+void Live2dGlWidget::setLipSyncMaxOpen(double value) {
+    lipSyncMaxOpen_ = std::clamp(value, 0.0, 1.0);
+    lipSyncTarget_ = std::clamp(lipSyncTarget_, 0.0, lipSyncMaxOpen_);
+}
+
+void Live2dGlWidget::setLipSyncPose(double level, double form) {
+    lipSyncTarget_ = std::clamp(level, 0.0, lipSyncMaxOpen_);
+    lipSyncFormTarget_ = std::clamp(form, -1.0, 1.0);
+    lipSyncLastMsec_ = frameClock_.isValid() ? frameClock_.elapsed() : 0;
+    update();
+}
+
+bool Live2dGlWidget::triggerAction(const QString& action, const QString& character) {
+    if (host_ == nullptr || action.trimmed().isEmpty()) {
+        return false;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const QByteArray actionUtf8 = action.toUtf8();
+    const QByteArray characterUtf8 = character.toUtf8();
+    const bool triggered = bandori_live2d_trigger_action(
+        host_, actionUtf8.constData(), characterUtf8.constData());
+    if (!triggered) {
+        reportLastError("trigger action");
+    }
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (triggered) {
+        update();
+    }
+    return triggered;
+}
+
 void Live2dGlWidget::initializeGL() {
     auto* gl = context()->functions();
     gl->initializeOpenGLFunctions();
@@ -168,6 +204,27 @@ void Live2dGlWidget::paintGL() {
         ? std::clamp((now - lastFrameMsec_) / 1000.0, 0.0, 0.1)
         : 0.0;
     lastFrameMsec_ = now;
+    const bool lipSyncFresh = now - lipSyncLastMsec_ <= 180;
+    const double lipTarget = lipSyncFresh ? lipSyncTarget_ : 0.0;
+    const double lipFormTarget = lipSyncFresh ? lipSyncFormTarget_ : 0.0;
+    lipSyncLevel_ += (lipTarget - lipSyncLevel_) * 0.55;
+    lipSyncForm_ += (lipFormTarget - lipSyncForm_) * 0.45;
+    if (lipSyncLevel_ < 0.01) {
+        lipSyncLevel_ = 0.0;
+    }
+    if (std::abs(lipSyncForm_) < 0.01) {
+        lipSyncForm_ = 0.0;
+    }
+    if (!bandori_live2d_set_parameter(host_, "PARAM_MOUTH_OPEN_Y", lipSyncLevel_, 1.0)
+        || !bandori_live2d_set_parameter(host_, "PARAM_MOUTH_FORM", lipSyncForm_, 1.0)) {
+        if (usingSsaa) {
+            ssaaFramebuffer_->release();
+            context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+        }
+        reportLastError("apply lip sync");
+        renderTimer_.stop();
+        return;
+    }
     if (!bandori_live2d_draw(host_, static_cast<double>(now), delta)) {
         if (usingSsaa) {
             ssaaFramebuffer_->release();
