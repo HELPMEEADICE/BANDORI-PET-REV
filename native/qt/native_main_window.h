@@ -73,7 +73,11 @@ private:
     void deleteSelectedNativeReminder();
     void loadNativeLlmSettings();
     void syncNativeLlmSettingsControls();
-    void saveNativeLlmSettings();
+    bool saveNativeLlmSettings();
+    bool mutateNativeLlmProfile(const QJsonObject& command);
+    void applySelectedNativeLlmProfile();
+    void saveCurrentNativeLlmProfile();
+    void deleteSelectedNativeLlmProfile();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -189,6 +193,11 @@ private:
     qfw::PushButton* deleteReminderButton_ = nullptr;
     qfw::CaptionLabel* reminderStatusLabel_ = nullptr;
     QJsonObject llmSettings_;
+    qfw::ComboBox* llmProfileComboBox_ = nullptr;
+    qfw::LineEdit* llmProfileNameEdit_ = nullptr;
+    qfw::PushButton* llmApplyProfileButton_ = nullptr;
+    qfw::PrimaryPushButton* llmSaveProfileButton_ = nullptr;
+    qfw::PushButton* llmDeleteProfileButton_ = nullptr;
     qfw::LineEdit* llmApiUrlEdit_ = nullptr;
     qfw::LineEdit* llmApiKeyEdit_ = nullptr;
     qfw::CheckBox* llmClearApiKeyCheckBox_ = nullptr;

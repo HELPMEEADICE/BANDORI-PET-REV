@@ -48,6 +48,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "mutateReminder",
         "loadLlmSettings",
         "saveLlmSettings",
+        "mutateLlmProfile",
         "loadChatState",
         "loadGroupChatState",
         "prepareChatTurn",

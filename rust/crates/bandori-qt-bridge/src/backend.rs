@@ -84,6 +84,14 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "mutateLlmProfile"]
+        fn mutate_llm_profile(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "loadChatState"]
         fn load_chat_state(
             self: Pin<&mut Self>,
@@ -303,7 +311,9 @@ use bandori_core::group_chat::{
     build_native_group_chat_request, conversation_key_for, fallback_group_plan,
     group_assistant_content, load_native_group_chat_snapshot, parse_group_plan,
 };
-use bandori_core::llm_settings::{load_native_llm_settings, save_native_llm_settings};
+use bandori_core::llm_settings::{
+    load_native_llm_settings, mutate_native_llm_profiles, save_native_llm_settings,
+};
 use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
@@ -712,6 +722,32 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("LLM settings save error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn mutate_llm_profile(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        command_json: &QString,
+    ) -> bool {
+        match mutate_native_llm_profiles(
+            Path::new(&config_path.to_string()),
+            &command_json.to_string(),
+            MAX_LLM_SETTINGS_BYTES,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native LLM profile state serialization cannot fail");
+                self.as_mut().set_llm_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native LLM profiles saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("LLM profile change error: {error}")));
                 false
             }
         }

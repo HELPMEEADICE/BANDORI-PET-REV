@@ -539,25 +539,36 @@ def test_native_llm_settings_are_redacted_whitelisted_and_qt_editable():
     assert '#[serde(deny_unknown_fields)]' in settings
     assert "pub fn load_native_llm_settings" in settings
     assert "pub fn save_native_llm_settings" in settings
+    assert "pub struct NativeLlmProfileSummary" in settings
+    assert "enum NativeLlmProfileMutation" in settings
+    assert "pub fn mutate_native_llm_profiles" in settings
     assert "blank_secret_input_preserves_existing_keys" in settings
     assert "explicit_secret_clear_and_replacement_are_distinct_and_bounded" in settings
+    assert "profile_mutations_apply_secrets_without_exposing_them" in settings
     assert 'config.set("llm_active_api_profile", Value::String(String::new()))' in settings
     assert "llm_settings_json" in backend
     assert "MAX_LLM_SETTINGS_BYTES" in backend
     assert "fn load_llm_settings(" in backend
     assert "fn save_llm_settings(" in backend
+    assert "fn mutate_llm_profile(" in backend
     assert '"getLlmSettingsJson"' in bridge_test
     assert '"loadLlmSettings"' in bridge_test
     assert '"saveLlmSettings"' in bridge_test
+    assert '"mutateLlmProfile"' in bridge_test
     assert "QWidget* createLlmSettingsPage()" in header
     assert "qfw::LineEdit* llmApiKeyEdit_" in header
+    assert "qfw::ComboBox* llmProfileComboBox_" in header
     assert "QLineEdit::Password" in window
     assert "Leave blank to keep the saved key" in window
     assert "backend_.loadLlmSettings" in window
     assert "backend_.saveLlmSettings" in window
+    assert "backend_.mutateLlmProfile" in window
     assert 'settings.insert(QStringLiteral("api_key"), primaryKey)' in window
     assert 'settings.insert(QStringLiteral("aux_api_key"), auxiliaryKey)' in window
     assert "loadNativeLlmSettings();" in window
+    assert 'QStringLiteral("apply_profile")' in window
+    assert 'QStringLiteral("save_current_profile")' in window
+    assert 'QStringLiteral("delete_profile")' in window
 
 
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():

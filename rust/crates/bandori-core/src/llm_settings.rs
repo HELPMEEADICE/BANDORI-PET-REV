@@ -1,6 +1,6 @@
 use crate::config::{ConfigDocument, ConfigError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::path::Path;
 use thiserror::Error;
 
@@ -8,6 +8,41 @@ const MAX_URL_BYTES: usize = 4 * 1024;
 const MAX_SECRET_BYTES: usize = 16 * 1024;
 const MAX_MODEL_BYTES: usize = 512;
 const MAX_SYSTEM_PROMPT_BYTES: usize = 64 * 1024;
+const MAX_PROFILE_NAME_BYTES: usize = 80;
+const MAX_PROFILE_COUNT: usize = 64;
+const LLM_PROFILE_KEYS: [&str; 21] = [
+    "llm_api_url",
+    "llm_api_key",
+    "llm_model_id",
+    "llm_aux_api_url",
+    "llm_aux_api_key",
+    "llm_aux_model_id",
+    "llm_aux_enable_thinking",
+    "llm_aux_vision_fallback_enabled",
+    "llm_live2d_outfit_recognition_enabled",
+    "llm_api_mode",
+    "llm_web_search_enabled",
+    "llm_web_search_engine",
+    "llm_web_search_show_sources",
+    "llm_web_fetch_enabled",
+    "llm_auto_continue_enabled",
+    "llm_auto_continue_max_turns",
+    "llm_chat_history_message_limit",
+    "llm_compact_history_message_limit",
+    "llm_cross_chat_history_enabled",
+    "llm_enable_thinking",
+    "llm_show_reasoning",
+];
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeLlmProfileSummary {
+    pub name: String,
+    pub api_url: String,
+    pub api_key_configured: bool,
+    pub model_id: String,
+    pub aux_model_id: String,
+    pub api_mode: String,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NativeLlmSettingsState {
@@ -28,6 +63,7 @@ pub struct NativeLlmSettingsState {
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
     pub active_api_profile: String,
+    pub profiles: Vec<NativeLlmProfileSummary>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -67,6 +103,14 @@ pub enum NativeLlmSettingsError {
     Invalid(String),
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum NativeLlmProfileMutation {
+    ApplyProfile { name: String },
+    SaveCurrentProfile { name: String },
+    DeleteProfile { name: String },
+}
+
 pub fn load_native_llm_settings(
     config_path: &Path,
 ) -> Result<NativeLlmSettingsState, NativeLlmSettingsError> {
@@ -87,6 +131,87 @@ pub fn save_native_llm_settings(
     let update = serde_json::from_str::<NativeLlmSettingsUpdate>(settings_json)?;
     let mut config = ConfigDocument::load(config_path)?;
     update.apply_to(&mut config)?;
+    config.save(config_path)?;
+    Ok(NativeLlmSettingsState::from_config(&config))
+}
+
+pub fn mutate_native_llm_profiles(
+    config_path: &Path,
+    command_json: &str,
+    max_bytes: usize,
+) -> Result<NativeLlmSettingsState, NativeLlmSettingsError> {
+    if command_json.len() > max_bytes {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "profile command exceeds the {max_bytes} byte limit"
+        )));
+    }
+    let command = serde_json::from_str::<NativeLlmProfileMutation>(command_json)?;
+    let mut config = ConfigDocument::load(config_path)?;
+    let mut profiles = normalized_profiles(&config);
+    match command {
+        NativeLlmProfileMutation::ApplyProfile { name } => {
+            let name = checked_profile_name(&name)?;
+            let profile = profiles
+                .iter()
+                .find(|profile| profile.get("name").and_then(Value::as_str) == Some(&name))
+                .cloned()
+                .ok_or_else(|| {
+                    NativeLlmSettingsError::Invalid(
+                        "selected LLM profile does not exist".to_owned(),
+                    )
+                })?;
+            let defaults = ConfigDocument::default();
+            for key in LLM_PROFILE_KEYS {
+                let value = profile
+                    .get(key)
+                    .cloned()
+                    .or_else(|| defaults.get(key).cloned())
+                    .unwrap_or(Value::Null);
+                config.set(key, value);
+            }
+            config.set("llm_active_api_profile", Value::String(name));
+        }
+        NativeLlmProfileMutation::SaveCurrentProfile { name } => {
+            let name = checked_profile_name(&name)?;
+            profiles.retain(|profile| {
+                profile.get("name").and_then(Value::as_str) != Some(name.as_str())
+            });
+            if profiles.len() >= MAX_PROFILE_COUNT {
+                return Err(NativeLlmSettingsError::Invalid(format!(
+                    "at most {MAX_PROFILE_COUNT} LLM profiles can be saved"
+                )));
+            }
+            let mut profile = Map::new();
+            profile.insert("name".to_owned(), Value::String(name.clone()));
+            for key in LLM_PROFILE_KEYS {
+                profile.insert(
+                    key.to_owned(),
+                    config.get(key).cloned().unwrap_or(Value::Null),
+                );
+            }
+            profiles.push(profile);
+            config.set("llm_active_api_profile", Value::String(name));
+        }
+        NativeLlmProfileMutation::DeleteProfile { name } => {
+            let name = checked_profile_name(&name)?;
+            let previous = profiles.len();
+            profiles.retain(|profile| {
+                profile.get("name").and_then(Value::as_str) != Some(name.as_str())
+            });
+            if profiles.len() == previous {
+                return Err(NativeLlmSettingsError::Invalid(
+                    "selected LLM profile does not exist".to_owned(),
+                ));
+            }
+            if config.get("llm_active_api_profile").and_then(Value::as_str) == Some(name.as_str()) {
+                config.set("llm_active_api_profile", Value::String(String::new()));
+            }
+        }
+    }
+    config.set(
+        "llm_api_profiles",
+        Value::Array(profiles.into_iter().map(Value::Object).collect()),
+    );
     config.save(config_path)?;
     Ok(NativeLlmSettingsState::from_config(&config))
 }
@@ -129,6 +254,7 @@ impl NativeLlmSettingsState {
             ),
             custom_system_prompt: config_string(config, "llm_custom_system_prompt"),
             active_api_profile: config_string(config, "llm_active_api_profile"),
+            profiles: profile_summaries(config),
         }
     }
 }
@@ -231,6 +357,76 @@ fn apply_secret(
     }
     config.set(key, Value::String(replacement.to_owned()));
     Ok(())
+}
+
+fn checked_profile_name(value: &str) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > MAX_PROFILE_NAME_BYTES
+        || value.chars().any(char::is_control)
+    {
+        Err(NativeLlmSettingsError::Invalid(
+            "LLM profile name is empty, too long, or contains control characters".to_owned(),
+        ))
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+fn normalized_profiles(config: &ConfigDocument) -> Vec<Map<String, Value>> {
+    let mut result: Vec<Map<String, Value>> = Vec::new();
+    for value in config
+        .get("llm_api_profiles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(profile) = value.as_object() else {
+            continue;
+        };
+        let Some(name) = profile.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(name) = checked_profile_name(name) else {
+            continue;
+        };
+        if result
+            .iter()
+            .any(|saved| saved.get("name").and_then(Value::as_str) == Some(name.as_str()))
+        {
+            continue;
+        }
+        let mut normalized = profile.clone();
+        normalized.insert("name".to_owned(), Value::String(name));
+        result.push(normalized);
+        if result.len() >= MAX_PROFILE_COUNT {
+            break;
+        }
+    }
+    result
+}
+
+fn profile_summaries(config: &ConfigDocument) -> Vec<NativeLlmProfileSummary> {
+    normalized_profiles(config)
+        .into_iter()
+        .map(|profile| NativeLlmProfileSummary {
+            name: profile_string(&profile, "name"),
+            api_url: profile_string(&profile, "llm_api_url"),
+            api_key_configured: !profile_string(&profile, "llm_api_key").is_empty(),
+            model_id: profile_string(&profile, "llm_model_id"),
+            aux_model_id: profile_string(&profile, "llm_aux_model_id"),
+            api_mode: normalized_api_mode(&profile_string(&profile, "llm_api_mode")),
+        })
+        .collect()
+}
+
+fn profile_string(profile: &Map<String, Value>, key: &str) -> String {
+    profile
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
 }
 
 fn checked_url(value: &str, label: &str) -> Result<String, NativeLlmSettingsError> {
@@ -392,5 +588,74 @@ mod tests {
         update.as_object_mut().unwrap().remove("unknown");
         update["api_url"] = json!("file:///secret");
         assert!(save_native_llm_settings(&path, &update.to_string(), 128 * 1024).is_err());
+    }
+
+    #[test]
+    fn profile_mutations_apply_secrets_without_exposing_them_and_preserve_owned_profiles() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let mut config = ConfigDocument::default();
+        config.set(
+            "llm_api_profiles",
+            json!([
+                {
+                    "name":"remote",
+                    "llm_api_url":"https://example.invalid/v1/chat/completions",
+                    "llm_api_key":"profile-secret",
+                    "llm_model_id":"remote-model",
+                    "llm_api_mode":"chat_completions"
+                },
+                {"name":"keep","llm_model_id":"keep-model"}
+            ]),
+        );
+        config.save(&path).unwrap();
+
+        let state =
+            mutate_native_llm_profiles(&path, r#"{"op":"apply_profile","name":"remote"}"#, 4096)
+                .unwrap();
+        assert_eq!(state.active_api_profile, "remote");
+        assert!(state.api_key_configured);
+        assert_eq!(state.model_id, "remote-model");
+        assert!(
+            !serde_json::to_string(&state)
+                .unwrap()
+                .contains("profile-secret")
+        );
+        assert_eq!(
+            ConfigDocument::load(&path).unwrap().get("llm_api_key"),
+            Some(&json!("profile-secret"))
+        );
+
+        let mut config = ConfigDocument::load(&path).unwrap();
+        config.set("llm_model_id", json!("edited-model"));
+        config.save(&path).unwrap();
+        let state = mutate_native_llm_profiles(
+            &path,
+            r#"{"op":"save_current_profile","name":"edited"}"#,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(state.active_api_profile, "edited");
+        assert!(state.profiles.iter().any(|profile| profile.name == "keep"));
+        assert!(
+            state
+                .profiles
+                .iter()
+                .any(|profile| profile.name == "edited" && profile.model_id == "edited-model")
+        );
+
+        let state =
+            mutate_native_llm_profiles(&path, r#"{"op":"delete_profile","name":"remote"}"#, 4096)
+                .unwrap();
+        assert!(
+            !state
+                .profiles
+                .iter()
+                .any(|profile| profile.name == "remote")
+        );
+        assert!(
+            mutate_native_llm_profiles(&path, r#"{"op":"apply_profile","name":"missing"}"#, 4096,)
+                .is_err()
+        );
     }
 }

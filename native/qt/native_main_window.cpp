@@ -708,6 +708,29 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         combo->setFixedWidth(178);
     };
 
+    auto* profiles = new qfw::GroupHeaderCardWidget(tr("API profiles"), content);
+    auto* profileEditor = new QWidget(profiles);
+    auto* profileEditorLayout = new QHBoxLayout(profileEditor);
+    profileEditorLayout->setContentsMargins(0, 0, 0, 0);
+    profileEditorLayout->setSpacing(8);
+    llmProfileComboBox_ = new qfw::ComboBox(profileEditor);
+    llmProfileComboBox_->setMinimumWidth(180);
+    llmProfileNameEdit_ = new qfw::LineEdit(profileEditor);
+    llmProfileNameEdit_->setPlaceholderText(tr("Profile name"));
+    llmApplyProfileButton_ = new qfw::PushButton(tr("Apply"), profileEditor);
+    llmSaveProfileButton_ = new qfw::PrimaryPushButton(tr("Save current"), profileEditor);
+    llmDeleteProfileButton_ = new qfw::PushButton(tr("Delete"), profileEditor);
+    profileEditorLayout->addWidget(llmProfileComboBox_);
+    profileEditorLayout->addWidget(llmProfileNameEdit_, 1);
+    profileEditorLayout->addWidget(llmApplyProfileButton_);
+    profileEditorLayout->addWidget(llmSaveProfileButton_);
+    profileEditorLayout->addWidget(llmDeleteProfileButton_);
+    profiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Saved profiles"),
+        tr("Profile secrets are applied inside Rust and never returned to Qt"),
+        profileEditor);
+
     auto* primary = new qfw::GroupHeaderCardWidget(tr("Primary model"), content);
     llmApiUrlEdit_ = new qfw::LineEdit(primary);
     llmApiUrlEdit_->setPlaceholderText(
@@ -867,6 +890,7 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
 
     layout->addWidget(title);
     layout->addWidget(subtitle);
+    layout->addWidget(profiles);
     layout->addWidget(primary);
     layout->addWidget(auxiliary);
     layout->addWidget(context);
@@ -892,9 +916,38 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         &qfw::SwitchButton::checkedChanged,
         this,
         [this](bool enabled) { llmCustomPromptEdit_->setEnabled(enabled); });
+    connect(
+        llmProfileComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            const QString name = llmProfileComboBox_->currentData().toString();
+            if (!name.isEmpty()) {
+                llmProfileNameEdit_->setText(name);
+            }
+            llmApplyProfileButton_->setEnabled(!name.isEmpty());
+            llmDeleteProfileButton_->setEnabled(!name.isEmpty());
+        });
+    connect(
+        llmApplyProfileButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { applySelectedNativeLlmProfile(); });
+    connect(
+        llmSaveProfileButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { saveCurrentNativeLlmProfile(); });
+    connect(
+        llmDeleteProfileButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { deleteSelectedNativeLlmProfile(); });
     connect(llmSaveButton_, &QPushButton::clicked, this, [this]() {
         saveNativeLlmSettings();
     });
+    llmApplyProfileButton_->setEnabled(false);
+    llmDeleteProfileButton_->setEnabled(false);
     return page;
 }
 
@@ -1507,6 +1560,39 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
     if (llmApiUrlEdit_ == nullptr) {
         return;
     }
+    const QString previousProfile = llmProfileComboBox_->currentData().toString();
+    const QString activeProfile =
+        llmSettings_.value(QStringLiteral("active_api_profile")).toString().trimmed();
+    const QString selectedProfile = activeProfile.isEmpty() ? previousProfile : activeProfile;
+    {
+        const QSignalBlocker blocker(llmProfileComboBox_);
+        llmProfileComboBox_->clear();
+        llmProfileComboBox_->addItem(tr("No profile selected"), QVariant(), QString());
+        for (const QJsonValue& value : llmSettings_.value(QStringLiteral("profiles")).toArray()) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const QJsonObject profile = value.toObject();
+            const QString name = profile.value(QStringLiteral("name")).toString().trimmed();
+            if (name.isEmpty()) {
+                continue;
+            }
+            const QString model = profile.value(QStringLiteral("model_id")).toString().trimmed();
+            const QString label = model.isEmpty()
+                ? name
+                : QStringLiteral("%1 · %2").arg(name, model);
+            llmProfileComboBox_->addItem(label, QVariant(), name);
+        }
+        const int profileIndex = llmProfileComboBox_->findData(selectedProfile);
+        llmProfileComboBox_->setCurrentIndex(profileIndex < 0 ? 0 : profileIndex);
+    }
+    const QString currentProfile = llmProfileComboBox_->currentData().toString();
+    if (!currentProfile.isEmpty()) {
+        llmProfileNameEdit_->setText(currentProfile);
+    }
+    llmApplyProfileButton_->setEnabled(!currentProfile.isEmpty());
+    llmDeleteProfileButton_->setEnabled(!currentProfile.isEmpty());
+
     llmApiUrlEdit_->setText(llmSettings_.value(QStringLiteral("api_url")).toString());
     llmModelIdEdit_->setText(llmSettings_.value(QStringLiteral("model_id")).toString());
     const QString apiMode = llmSettings_
@@ -1566,8 +1652,6 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
         auxiliaryKeyConfigured
             ? tr("Saved auxiliary key configured — blank keeps it")
             : tr("Blank falls back to the primary saved key"));
-    const QString activeProfile =
-        llmSettings_.value(QStringLiteral("active_api_profile")).toString().trimmed();
     llmSettingsStatusLabel_->setText(
         activeProfile.isEmpty()
             ? tr("Editing the current custom LLM configuration")
@@ -1575,7 +1659,7 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
                   .arg(activeProfile));
 }
 
-void NativeMainWindow::saveNativeLlmSettings() {
+bool NativeMainWindow::saveNativeLlmSettings() {
     auto thinkingValue = [](const qfw::ComboBox* combo) -> QJsonValue {
         const QString mode = combo->currentData().toString();
         if (mode == QStringLiteral("on")) {
@@ -1622,12 +1706,70 @@ void NativeMainWindow::saveNativeLlmSettings() {
     if (!backend_.saveLlmSettings(configPath_, compactJson(settings))) {
         serviceStatusLabel_->setText(backend_.getStatus());
         llmSettingsStatusLabel_->setText(backend_.getStatus());
-        return;
+        return false;
     }
     llmSettings_ = parseObject(backend_.getLlmSettingsJson());
     serviceStatusLabel_->setText(backend_.getStatus());
     syncNativeLlmSettingsControls();
     llmSettingsStatusLabel_->setText(tr("Native LLM settings saved"));
+    return true;
+}
+
+bool NativeMainWindow::mutateNativeLlmProfile(const QJsonObject& command) {
+    if (!backend_.mutateLlmProfile(configPath_, compactJson(command))) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        llmSettingsStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    llmSettings_ = parseObject(backend_.getLlmSettingsJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    syncNativeLlmSettingsControls();
+    return true;
+}
+
+void NativeMainWindow::applySelectedNativeLlmProfile() {
+    const QString name = llmProfileComboBox_->currentData().toString().trimmed();
+    if (name.isEmpty()) {
+        llmSettingsStatusLabel_->setText(tr("Select a saved profile first"));
+        return;
+    }
+    if (mutateNativeLlmProfile({
+            {QStringLiteral("op"), QStringLiteral("apply_profile")},
+            {QStringLiteral("name"), name},
+        })) {
+        llmSettingsStatusLabel_->setText(tr("Applied LLM profile “%1”").arg(name));
+    }
+}
+
+void NativeMainWindow::saveCurrentNativeLlmProfile() {
+    const QString name = llmProfileNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        llmSettingsStatusLabel_->setText(tr("Enter a profile name first"));
+        return;
+    }
+    if (!saveNativeLlmSettings()) {
+        return;
+    }
+    if (mutateNativeLlmProfile({
+            {QStringLiteral("op"), QStringLiteral("save_current_profile")},
+            {QStringLiteral("name"), name},
+        })) {
+        llmSettingsStatusLabel_->setText(tr("Saved and applied LLM profile “%1”").arg(name));
+    }
+}
+
+void NativeMainWindow::deleteSelectedNativeLlmProfile() {
+    const QString name = llmProfileComboBox_->currentData().toString().trimmed();
+    if (name.isEmpty()) {
+        return;
+    }
+    if (mutateNativeLlmProfile({
+            {QStringLiteral("op"), QStringLiteral("delete_profile")},
+            {QStringLiteral("name"), name},
+        })) {
+        llmProfileNameEdit_->clear();
+        llmSettingsStatusLabel_->setText(tr("Deleted LLM profile “%1”").arg(name));
+    }
 }
 
 void NativeMainWindow::syncSettingsControls() {
