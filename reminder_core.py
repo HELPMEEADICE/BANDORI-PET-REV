@@ -213,7 +213,7 @@ def compute_next_alarm_at(time_text: str, repeat_days=None, after: datetime | No
 def _clamp_minutes(value, default: int, minimum: int, maximum: int) -> int:
     try:
         minutes = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         minutes = default
     return max(minimum, min(maximum, minutes))
 
@@ -238,7 +238,7 @@ def _coerce_bool(value, default: bool = False) -> bool:
 def _coerce_int(value, default: int = 0) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -436,7 +436,7 @@ def normalize_proactive_companion(value, now: datetime | None = None) -> dict:
 def clamp_repeat_count(value) -> int:
     try:
         count = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         count = 1
     return max(1, min(24, count))
 
