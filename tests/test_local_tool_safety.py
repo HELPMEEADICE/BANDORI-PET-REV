@@ -84,6 +84,25 @@ class LocalToolSafetyTests(unittest.TestCase):
         web_search.assert_called_once_with("Bandori", max_results=2, engine="bing_cn")
         self.assertEqual("result", result["content"])
 
+    def test_web_tools_tolerate_infinite_result_limits(self):
+        with (
+            patch("local_tools.web_search", return_value="search") as web_search,
+            patch("local_tools.web_fetch", return_value="fetch") as web_fetch,
+        ):
+            search_result = local_tools.run_local_tool_call(
+                local_tools.WEB_SEARCH_TOOL_NAME,
+                {"query": "Bandori", "max_results": float("inf")},
+            )
+            fetch_result = local_tools.run_local_tool_call(
+                local_tools.WEB_FETCH_TOOL_NAME,
+                {"url": "https://example.com", "max_chars": float("inf")},
+            )
+
+        web_search.assert_called_once_with("Bandori", max_results=5, engine="bing_cn")
+        web_fetch.assert_called_once_with("https://example.com", max_chars=6000)
+        self.assertEqual("search", search_result["content"])
+        self.assertEqual("fetch", fetch_result["content"])
+
     def test_tool_argument_normalizer_is_shared_and_preserves_fallbacks(self):
         self.assertEqual({"value": 1}, parse_tool_arguments('{"value":1}'))
         self.assertEqual({}, parse_tool_arguments("{broken"))

@@ -414,7 +414,7 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     )
     try:
         max_results = int(arguments.get("max_results", 5) or 5)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         max_results = 5
     max_results = max(1, min(8, max_results))
     engine = _normalize_search_engine((tool_config or {}).get("llm_web_search_engine", "bing_cn"))
@@ -426,7 +426,7 @@ def _run_web_fetch_tool_call(arguments, tool_config: dict | None = None) -> dict
     url = str(arguments.get("url", "") or "").strip()
     try:
         max_chars = int(arguments.get("max_chars", 6000) or 6000)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         max_chars = 6000
     max_chars = max(500, min(12000, max_chars))
     return {"content": web_fetch(url, max_chars=max_chars), "extra_messages": []}
