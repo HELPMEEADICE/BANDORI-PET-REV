@@ -99,6 +99,23 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "startProviderOperation"]
+        fn start_provider_operation(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            target: &QString,
+            operation: &QString,
+            api_url: &QString,
+            api_key: &QString,
+            model: &QString,
+            api_mode: &QString,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelProviderOperation"]
+        fn cancel_provider_operation(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "loadMemoryState"]
         fn load_memory_state(
             self: Pin<&mut Self>,
@@ -396,6 +413,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "chatMemoryEvent"]
         fn chat_memory_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "providerOperationEvent"]
+        fn provider_operation_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -563,6 +584,9 @@ pub struct BackendRust {
     completed_group_reply: Option<(i64, GroupTurnContext)>,
     next_chat_request_id: i64,
     active_chat_cancellation: Option<CancellationToken>,
+    next_provider_request_id: i64,
+    active_provider_request_id: i64,
+    provider_cancellation: Option<CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -615,6 +639,9 @@ impl Default for BackendRust {
             completed_group_reply: None,
             next_chat_request_id: 1,
             active_chat_cancellation: None,
+            next_provider_request_id: 1,
+            active_provider_request_id: 0,
+            provider_cancellation: None,
             memory_cancellations: HashMap::new(),
         }
     }
@@ -623,6 +650,9 @@ impl Default for BackendRust {
 impl Drop for BackendRust {
     fn drop(&mut self) {
         if let Some(cancellation) = self.active_chat_cancellation.take() {
+            cancellation.cancel();
+        }
+        if let Some(cancellation) = self.provider_cancellation.take() {
             cancellation.cancel();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
@@ -897,6 +927,83 @@ impl ffi::Backend {
                 false
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_provider_operation(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        target: &QString,
+        operation: &QString,
+        api_url: &QString,
+        api_key: &QString,
+        model: &QString,
+        api_mode: &QString,
+    ) -> i64 {
+        if self.as_ref().get_ref().rust().active_provider_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A provider operation is already running"));
+            return 0;
+        }
+        let job = match prepare_provider_operation(
+            Path::new(&config_path.to_string()),
+            &target.to_string(),
+            &operation.to_string(),
+            &api_url.to_string(),
+            &api_key.to_string(),
+            &model.to_string(),
+            &api_mode.to_string(),
+        ) {
+            Ok(job) => job,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_provider_request_id.max(1);
+            state.next_provider_request_id = request_id.checked_add(1).unwrap_or(1);
+            state.active_provider_request_id = request_id;
+            state.provider_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from(match job.operation.as_str() {
+                "fetch_models" => "Provider model discovery started",
+                _ => "Provider connection test started",
+            }));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-provider-{request_id}"))
+            .spawn(move || run_provider_operation(qt_thread, request_id, job, cancellation))
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_provider_request_id = 0;
+            state.provider_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start provider operation: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_provider_operation(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        if state.active_provider_request_id == 0
+            || (request_id > 0 && request_id != state.active_provider_request_id)
+        {
+            return false;
+        }
+        let Some(cancellation) = state.provider_cancellation.as_ref() else {
+            return false;
+        };
+        cancellation.cancel();
+        self.as_mut()
+            .set_status(QString::from("Provider operation cancellation requested"));
+        true
     }
 
     pub fn load_memory_state(
@@ -2819,6 +2926,40 @@ impl ffi::Backend {
         self.as_mut()
             .chat_memory_event(&QString::from(payload.as_str()));
     }
+
+    fn emit_provider_operation_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
+        if self.as_ref().get_ref().rust().active_provider_request_id != request_id {
+            return;
+        }
+        let state = self.as_mut().rust_mut().get_mut();
+        state.active_provider_request_id = 0;
+        state.provider_cancellation = None;
+        let status = serde_json::from_str::<Value>(&payload)
+            .ok()
+            .and_then(|value| {
+                let state = value.get("state").and_then(Value::as_str)?;
+                Some(if state == "finished" {
+                    "Provider operation completed".to_owned()
+                } else {
+                    value
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Provider operation failed")
+                        .to_owned()
+                })
+            })
+            .unwrap_or_else(|| "Provider operation failed".to_owned());
+        self.as_mut().set_status(QString::from(&status));
+        self.as_mut()
+            .provider_operation_event(&QString::from(payload.as_str()));
+    }
+}
+
+#[derive(Clone)]
+struct ProviderOperationJob {
+    target: String,
+    operation: String,
+    config: LlmTransportConfig,
 }
 
 #[derive(Clone)]
@@ -3003,6 +3144,212 @@ fn group_members_match_key(members: &[GroupMember], group_key: &str) -> bool {
 fn parse_llm_request(source: &str) -> Result<LlmTransportRequest, String> {
     LlmTransportRequest::from_json(source, MAX_CHAT_REQUEST_BYTES)
         .map_err(|error| format!("Invalid native LLM request: {error}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_provider_operation(
+    config_path: &Path,
+    target: &str,
+    operation: &str,
+    api_url_override: &str,
+    api_key_override: &str,
+    model_override: &str,
+    api_mode_override: &str,
+) -> Result<ProviderOperationJob, String> {
+    let target = target.trim();
+    if !matches!(target, "primary" | "auxiliary") {
+        return Err("Provider target must be primary or auxiliary".into());
+    }
+    let operation = operation.trim();
+    if !matches!(operation, "fetch_models" | "test_connection") {
+        return Err("Unknown provider operation".into());
+    }
+    let config =
+        ConfigDocument::load(config_path).map_err(|error| format!("LLM config error: {error}"))?;
+    let primary_url = config_string(&config, "llm_api_url");
+    let primary_key = config_string(&config, "llm_api_key");
+    let primary_model = config_string(&config, "llm_model_id");
+    let api_url = checked_provider_value(
+        if api_url_override.trim().is_empty() {
+            if target == "auxiliary" {
+                nonempty_config_string(&config, "llm_aux_api_url", "llm_api_url")
+            } else {
+                primary_url
+            }
+        } else {
+            api_url_override.trim().to_owned()
+        },
+        4 * 1024,
+        "API URL",
+    )?;
+    if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
+        return Err("Provider API URL must use HTTP or HTTPS".into());
+    }
+    let api_key = checked_provider_value(
+        if api_key_override.trim().is_empty() {
+            if target == "auxiliary" {
+                nonempty_config_string(&config, "llm_aux_api_key", "llm_api_key")
+            } else {
+                primary_key
+            }
+        } else {
+            api_key_override.trim().to_owned()
+        },
+        16 * 1024,
+        "API key",
+    )?;
+    if api_key.is_empty() {
+        return Err("Provider API key is not configured".into());
+    }
+    let model = checked_provider_value(
+        if model_override.trim().is_empty() {
+            if target == "auxiliary" {
+                nonempty_config_string(&config, "llm_aux_model_id", "llm_model_id")
+            } else {
+                primary_model
+            }
+        } else {
+            model_override.trim().to_owned()
+        },
+        512,
+        "model ID",
+    )?;
+    if operation == "test_connection" && model.is_empty() {
+        return Err("Provider model ID is not configured".into());
+    }
+    let api_mode = if api_mode_override.trim().is_empty() {
+        config_string(&config, "llm_api_mode")
+    } else {
+        api_mode_override.trim().to_owned()
+    };
+    Ok(ProviderOperationJob {
+        target: target.to_owned(),
+        operation: operation.to_owned(),
+        config: LlmTransportConfig {
+            api_url,
+            api_key,
+            model,
+            mode: LlmApiMode::from_config(&api_mode),
+            enable_thinking: None,
+        },
+    })
+}
+
+fn checked_provider_value(value: String, max_bytes: usize, label: &str) -> Result<String, String> {
+    if value.len() > max_bytes || value.chars().any(char::is_control) {
+        Err(format!(
+            "Provider {label} is too long or contains control characters"
+        ))
+    } else {
+        Ok(value)
+    }
+}
+
+fn run_provider_operation(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: ProviderOperationJob,
+    cancellation: CancellationToken,
+) {
+    let ProviderOperationJob {
+        target,
+        operation,
+        config,
+    } = job;
+    let provider_secret = config.api_key.clone();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_provider_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "target":target,
+                    "operation":operation,
+                    "state":"error",
+                    "message":format!("Provider async runtime error: {error}")
+                }),
+            );
+            return;
+        }
+    };
+    let transport = match LlmTransport::new(config) {
+        Ok(transport) => transport,
+        Err(error) => {
+            queue_provider_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "target":target,
+                    "operation":operation,
+                    "state":"error",
+                    "message":provider_error_message(&error, &provider_secret)
+                }),
+            );
+            return;
+        }
+    };
+    let payload = if operation == "fetch_models" {
+        match runtime.block_on(transport.fetch_models(&cancellation)) {
+            Ok(models) => json!({
+                "request_id":request_id,
+                "target":target,
+                "operation":operation,
+                "state":"finished",
+                "models":models
+            }),
+            Err(LlmTransportError::Cancelled) => json!({
+                "request_id":request_id,"target":target,"operation":operation,
+                "state":"cancelled","message":"Provider operation cancelled"
+            }),
+            Err(error) => json!({
+                "request_id":request_id,"target":target,"operation":operation,
+                "state":"error","message":provider_error_message(&error, &provider_secret)
+            }),
+        }
+    } else {
+        match runtime.block_on(transport.test_connection(&cancellation)) {
+            Ok(mode) => json!({
+                "request_id":request_id,
+                "target":target,
+                "operation":operation,
+                "state":"finished",
+                "mode":mode
+            }),
+            Err(LlmTransportError::Cancelled) => json!({
+                "request_id":request_id,"target":target,"operation":operation,
+                "state":"cancelled","message":"Provider operation cancelled"
+            }),
+            Err(error) => json!({
+                "request_id":request_id,"target":target,"operation":operation,
+                "state":"error","message":provider_error_message(&error, &provider_secret)
+            }),
+        }
+    };
+    queue_provider_payload(&qt_thread, request_id, payload);
+}
+
+fn provider_error_message(error: &LlmTransportError, secret: &str) -> String {
+    let message = error.to_string();
+    if secret.is_empty() {
+        message
+    } else {
+        message.replace(secret, "<redacted>")
+    }
+}
+
+fn queue_provider_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, payload: Value) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_provider_operation_payload(request_id, payload);
+        })
+        .ok();
 }
 
 fn assistant_tool_trace(outcome_json: &str) -> Option<Value> {

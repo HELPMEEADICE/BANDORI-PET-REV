@@ -56,6 +56,8 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "loadLlmSettings",
         "saveLlmSettings",
         "mutateLlmProfile",
+        "startProviderOperation",
+        "cancelProviderOperation",
         "loadMemoryState",
         "mutateMemory",
         "loadUserProfiles",
@@ -90,6 +92,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "cancelChatStream",
         "chatStreamEvent",
         "chatMemoryEvent",
+        "providerOperationEvent",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

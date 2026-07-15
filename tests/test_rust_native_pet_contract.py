@@ -571,6 +571,37 @@ def test_native_llm_settings_are_redacted_whitelisted_and_qt_editable():
     assert 'QStringLiteral("delete_profile")' in window
 
 
+def test_native_provider_discovery_and_connection_tests_are_bounded_and_async():
+    transport = source("rust/crates/bandori-llm/src/lib.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub async fn fetch_models" in transport
+    assert "pub async fn test_connection" in transport
+    assert "PROVIDER_OPERATION_TIMEOUT" in transport
+    assert "MAX_JSON_BODY_BYTES" in transport
+    assert "MAX_PROVIDER_MODELS" in transport
+    assert "models_api_url" in transport
+    assert "provider_model_discovery_is_authenticated_sorted_and_deduplicated" in transport
+    assert "provider_connection_test_falls_back_from_responses_to_chat_completions" in transport
+    assert "fn start_provider_operation(" in backend
+    assert "fn cancel_provider_operation(" in backend
+    assert "run_provider_operation" in backend
+    assert "provider_error_message" in backend
+    assert "provider_operation_event" in backend
+    assert '"startProviderOperation"' in bridge_test
+    assert '"cancelProviderOperation"' in bridge_test
+    assert '"providerOperationEvent"' in bridge_test
+    assert "qfw::ComboBox* llmPrimaryDiscoveredModelsComboBox_" in header
+    assert "qfw::ComboBox* llmAuxDiscoveredModelsComboBox_" in header
+    assert "backend_.startProviderOperation" in window
+    assert "handleNativeProviderOperation" in window
+    assert "kMaximumVisibleProviderModels" in window
+    assert "&Backend::providerOperationEvent" in window
+
+
 def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     core = source("rust/crates/bandori-core/src/lib.rs")
     memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")

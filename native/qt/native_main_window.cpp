@@ -273,6 +273,11 @@ NativeMainWindow::NativeMainWindow(
         &Backend::chatMemoryEvent,
         this,
         [this](const QString& payloadJson) { handleChatMemoryEvent(payloadJson); });
+    connect(
+        &backend_,
+        &Backend::providerOperationEvent,
+        this,
+        [this](const QString& payloadJson) { handleNativeProviderOperation(payloadJson); });
     reloadBackendState();
     setupTray();
     reminderTimer_.setInterval(15'000);
@@ -1641,6 +1646,20 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     llmApiUrlEdit_->setMinimumWidth(380);
     llmModelIdEdit_ = new qfw::LineEdit(primary);
     llmModelIdEdit_->setPlaceholderText(tr("Model ID"));
+    auto* primaryProviderActions = new QWidget(primary);
+    auto* primaryProviderLayout = new QHBoxLayout(primaryProviderActions);
+    primaryProviderLayout->setContentsMargins(0, 0, 0, 0);
+    primaryProviderLayout->setSpacing(8);
+    llmPrimaryDiscoveredModelsComboBox_ = new qfw::ComboBox(primaryProviderActions);
+    llmPrimaryDiscoveredModelsComboBox_->addItem(
+        tr("No discovered models"), QVariant(), QString());
+    llmPrimaryDiscoveredModelsComboBox_->setEnabled(false);
+    llmPrimaryFetchModelsButton_ =
+        new qfw::PushButton(tr("Fetch models"), primaryProviderActions);
+    llmPrimaryTestButton_ = new qfw::PushButton(tr("Test connection"), primaryProviderActions);
+    primaryProviderLayout->addWidget(llmPrimaryDiscoveredModelsComboBox_, 1);
+    primaryProviderLayout->addWidget(llmPrimaryFetchModelsButton_);
+    primaryProviderLayout->addWidget(llmPrimaryTestButton_);
     llmApiModeComboBox_ = new qfw::ComboBox(primary);
     llmApiModeComboBox_->addItem(
         tr("Chat Completions compatible"), QVariant(), QStringLiteral("chat_completions"));
@@ -1677,6 +1696,11 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         tr("Provider model identifier"),
         llmModelIdEdit_);
     primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::CloudDownload),
+        tr("Provider tools"),
+        tr("Fetch a bounded model list or send a short non-streaming connection probe"),
+        primaryProviderActions);
+    primary->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Code),
         tr("API mode"),
         tr("Responses automatically falls back when an endpoint is incompatible"),
@@ -1693,6 +1717,21 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     llmAuxApiUrlEdit_->setMinimumWidth(380);
     llmAuxModelIdEdit_ = new qfw::LineEdit(auxiliary);
     llmAuxModelIdEdit_->setPlaceholderText(tr("Blank uses the primary model"));
+    auto* auxiliaryProviderActions = new QWidget(auxiliary);
+    auto* auxiliaryProviderLayout = new QHBoxLayout(auxiliaryProviderActions);
+    auxiliaryProviderLayout->setContentsMargins(0, 0, 0, 0);
+    auxiliaryProviderLayout->setSpacing(8);
+    llmAuxDiscoveredModelsComboBox_ = new qfw::ComboBox(auxiliaryProviderActions);
+    llmAuxDiscoveredModelsComboBox_->addItem(
+        tr("No discovered models"), QVariant(), QString());
+    llmAuxDiscoveredModelsComboBox_->setEnabled(false);
+    llmAuxFetchModelsButton_ =
+        new qfw::PushButton(tr("Fetch models"), auxiliaryProviderActions);
+    llmAuxTestButton_ =
+        new qfw::PushButton(tr("Test connection"), auxiliaryProviderActions);
+    auxiliaryProviderLayout->addWidget(llmAuxDiscoveredModelsComboBox_, 1);
+    auxiliaryProviderLayout->addWidget(llmAuxFetchModelsButton_);
+    auxiliaryProviderLayout->addWidget(llmAuxTestButton_);
     llmAuxThinkingComboBox_ = new qfw::ComboBox(auxiliary);
     addThinkingItems(llmAuxThinkingComboBox_);
     llmAuxVisionSwitch_ = new qfw::SwitchButton(auxiliary);
@@ -1725,6 +1764,11 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         tr("Model"),
         tr("Optional smaller model for background work"),
         llmAuxModelIdEdit_);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::CloudDownload),
+        tr("Provider tools"),
+        tr("Blank auxiliary values fall back to the primary endpoint, key and model"),
+        auxiliaryProviderActions);
     auxiliary->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Brightness),
         tr("Reasoning request"),
@@ -1846,6 +1890,41 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         &QPushButton::clicked,
         this,
         [this]() { deleteSelectedNativeLlmProfile(); });
+    connect(llmPrimaryFetchModelsButton_, &QPushButton::clicked, this, [this]() {
+        startNativeProviderOperation(QStringLiteral("primary"), QStringLiteral("fetch_models"));
+    });
+    connect(llmPrimaryTestButton_, &QPushButton::clicked, this, [this]() {
+        startNativeProviderOperation(
+            QStringLiteral("primary"), QStringLiteral("test_connection"));
+    });
+    connect(llmAuxFetchModelsButton_, &QPushButton::clicked, this, [this]() {
+        startNativeProviderOperation(
+            QStringLiteral("auxiliary"), QStringLiteral("fetch_models"));
+    });
+    connect(llmAuxTestButton_, &QPushButton::clicked, this, [this]() {
+        startNativeProviderOperation(
+            QStringLiteral("auxiliary"), QStringLiteral("test_connection"));
+    });
+    connect(
+        llmPrimaryDiscoveredModelsComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            const QString model = llmPrimaryDiscoveredModelsComboBox_->currentData().toString();
+            if (!model.isEmpty()) {
+                llmModelIdEdit_->setText(model);
+            }
+        });
+    connect(
+        llmAuxDiscoveredModelsComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            const QString model = llmAuxDiscoveredModelsComboBox_->currentData().toString();
+            if (!model.isEmpty()) {
+                llmAuxModelIdEdit_->setText(model);
+            }
+        });
     connect(llmSaveButton_, &QPushButton::clicked, this, [this]() {
         saveNativeLlmSettings();
     });
@@ -2680,6 +2759,100 @@ void NativeMainWindow::deleteSelectedNativeLlmProfile() {
         llmProfileNameEdit_->clear();
         llmSettingsStatusLabel_->setText(tr("Deleted LLM profile “%1”").arg(name));
     }
+}
+
+void NativeMainWindow::startNativeProviderOperation(
+    const QString& target,
+    const QString& operation) {
+    if (activeProviderRequestId_ != 0) {
+        return;
+    }
+    const bool auxiliary = target == QStringLiteral("auxiliary");
+    QString apiUrl = auxiliary ? llmAuxApiUrlEdit_->text().trimmed() : QString();
+    if (apiUrl.isEmpty()) {
+        apiUrl = llmApiUrlEdit_->text().trimmed();
+    }
+    QString apiKey = auxiliary ? llmAuxApiKeyEdit_->text().trimmed() : QString();
+    if (apiKey.isEmpty()) {
+        apiKey = llmApiKeyEdit_->text().trimmed();
+    }
+    QString model = auxiliary ? llmAuxModelIdEdit_->text().trimmed() : QString();
+    if (model.isEmpty()) {
+        model = llmModelIdEdit_->text().trimmed();
+    }
+    const QString apiMode = llmApiModeComboBox_->currentData().toString();
+    const qint64 requestId = backend_.startProviderOperation(
+        configPath_, target, operation, apiUrl, apiKey, model, apiMode);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    llmSettingsStatusLabel_->setText(backend_.getStatus());
+    if (requestId <= 0) {
+        return;
+    }
+    activeProviderRequestId_ = requestId;
+    setNativeProviderBusy(true);
+}
+
+void NativeMainWindow::handleNativeProviderOperation(const QString& payloadJson) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (requestId <= 0 || requestId != activeProviderRequestId_) {
+        return;
+    }
+    activeProviderRequestId_ = 0;
+    setNativeProviderBusy(false);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    const QString target = payload.value(QStringLiteral("target")).toString();
+    const QString operation = payload.value(QStringLiteral("operation")).toString();
+    if (state != QStringLiteral("finished")) {
+        llmSettingsStatusLabel_->setText(
+            payload.value(QStringLiteral("message")).toString(tr("Provider operation failed")));
+        return;
+    }
+    if (operation == QStringLiteral("fetch_models")) {
+        qfw::ComboBox* combo = target == QStringLiteral("auxiliary")
+            ? llmAuxDiscoveredModelsComboBox_
+            : llmPrimaryDiscoveredModelsComboBox_;
+        const QJsonArray models = payload.value(QStringLiteral("models")).toArray();
+        constexpr int kMaximumVisibleProviderModels = 2'000;
+        {
+            const QSignalBlocker blocker(combo);
+            combo->clear();
+            if (models.isEmpty()) {
+                combo->addItem(tr("Provider returned no models"), QVariant(), QString());
+                combo->setEnabled(false);
+            } else {
+                combo->addItem(tr("Select a discovered model"), QVariant(), QString());
+                const int visible = std::min(
+                    static_cast<int>(models.size()), kMaximumVisibleProviderModels);
+                for (int index = 0; index < visible; ++index) {
+                    const QString model = models.at(index).toString();
+                    combo->addItem(model, QVariant(), model);
+                }
+                combo->setEnabled(true);
+                combo->setCurrentIndex(0);
+            }
+        }
+        llmSettingsStatusLabel_->setText(
+            models.size() > kMaximumVisibleProviderModels
+                ? tr("Fetched %1 models; showing the first %2")
+                      .arg(models.size())
+                      .arg(kMaximumVisibleProviderModels)
+                : tr("Fetched %1 provider models").arg(models.size()));
+        return;
+    }
+    const QString mode = payload.value(QStringLiteral("mode")).toString();
+    llmSettingsStatusLabel_->setText(
+        target == QStringLiteral("auxiliary")
+            ? tr("Auxiliary model connection succeeded via %1").arg(mode)
+            : tr("Primary model connection succeeded via %1").arg(mode));
+}
+
+void NativeMainWindow::setNativeProviderBusy(bool busy) {
+    llmPrimaryFetchModelsButton_->setEnabled(!busy);
+    llmPrimaryTestButton_->setEnabled(!busy);
+    llmAuxFetchModelsButton_->setEnabled(!busy);
+    llmAuxTestButton_->setEnabled(!busy);
 }
 
 void NativeMainWindow::populateMemoryCharacters() {

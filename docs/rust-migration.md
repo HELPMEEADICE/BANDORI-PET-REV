@@ -241,7 +241,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   Provider URLs, protocol modes, history/prompt bounds and primary/auxiliary
   profile selection are validated in the core. Secret fields are write-only:
   blank edits preserve an existing key, explicit clear removes it, and neither
-  summaries nor QObject properties expose stored credentials.
+  summaries nor QObject properties expose stored credentials. Provider model
+  discovery and connection probes also run natively on background workers. They
+  reuse the Rust URL/authentication contract, enforce 30-second and bounded JSON
+  limits, and fall back from an unsupported Responses probe to Chat Completions;
+  the Qt page exposes separate primary and auxiliary model selectors.
   Relationship state and scoped long-term memory can now be inspected and edited
   from the native memory page. Rust enforces the selected character/user scope,
   including the compatible `__global__` scope, and the page refreshes after chat
@@ -276,8 +280,7 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
   screen-awareness and remaining integration services; the remaining
-  attachment-retention controls; provider model discovery/connection checks;
-  default-launcher cutover, packaging and
+  attachment-retention controls; default-launcher cutover, packaging and
   multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because

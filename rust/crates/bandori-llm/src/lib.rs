@@ -1,7 +1,7 @@
 pub use bandori_llm_protocol::{LlmApiMode, LlmStreamEvent, TokenUsage};
 use bandori_llm_protocol::{
     LlmProtocolError, LlmSseDecoder, build_chat_completions_body, build_responses_body,
-    chat_completions_api_url, responses_api_url, supports_openai_responses_api,
+    chat_completions_api_url, models_api_url, responses_api_url, supports_openai_responses_api,
 };
 use futures_util::StreamExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
@@ -18,6 +18,10 @@ const OPENAI_COMPAT_USER_AGENT: &str = concat!(
 );
 const MAX_SSE_LINE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_JSON_BODY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PROVIDER_MODELS: usize = 10_000;
+const MAX_PROVIDER_MODEL_ID_BYTES: usize = 512;
+const PROVIDER_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct LlmTransportConfig {
@@ -250,14 +254,150 @@ impl LlmTransport {
         })
     }
 
+    pub async fn fetch_models(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<String>, LlmTransportError> {
+        let endpoint = models_api_url(&self.config.api_url);
+        let response = tokio::time::timeout(PROVIDER_OPERATION_TIMEOUT, async {
+            tokio::select! {
+                _ = cancellation.cancelled() => Err(LlmTransportError::Cancelled),
+                response = self.client
+                    .get(endpoint)
+                    .headers(self.json_headers(false)?)
+                    .send() => response.map_err(sanitized_http_error),
+            }
+        })
+        .await
+        .map_err(|_| LlmTransportError::Http("request timed out"))??;
+        let body = checked_json_response(response, cancellation).await?;
+        let value = serde_json::from_slice::<Value>(&body).map_err(|_| {
+            LlmTransportError::InvalidRequest("provider model list returned invalid JSON".into())
+        })?;
+        let entries = value.get("data").and_then(Value::as_array).ok_or_else(|| {
+            LlmTransportError::InvalidRequest(
+                "provider model list response does not contain a data array".into(),
+            )
+        })?;
+        if entries.len() > MAX_PROVIDER_MODELS {
+            return Err(LlmTransportError::InvalidRequest(format!(
+                "provider returned more than {MAX_PROVIDER_MODELS} models"
+            )));
+        }
+        let mut models = entries
+            .iter()
+            .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|model| {
+                !model.is_empty()
+                    && model.len() <= MAX_PROVIDER_MODEL_ID_BYTES
+                    && !model.chars().any(char::is_control)
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        models.sort();
+        models.dedup();
+        Ok(models)
+    }
+
+    pub async fn test_connection(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<LlmApiMode, LlmTransportError> {
+        let chat_endpoint = chat_completions_api_url(&self.config.api_url);
+        let responses_endpoint = responses_api_url(&self.config.api_url);
+        let preferred =
+            if self.config.mode == LlmApiMode::Responses && responses_endpoint != chat_endpoint {
+                LlmApiMode::Responses
+            } else {
+                LlmApiMode::ChatCompletions
+            };
+        match self.test_connection_mode(preferred, cancellation).await {
+            Err(LlmTransportError::HttpStatus { status, .. })
+                if preferred == LlmApiMode::Responses
+                    && matches!(status, 400 | 403 | 404 | 422) =>
+            {
+                self.test_connection_mode(LlmApiMode::ChatCompletions, cancellation)
+                    .await
+            }
+            result => result,
+        }
+    }
+
+    async fn test_connection_mode(
+        &self,
+        mode: LlmApiMode,
+        cancellation: &CancellationToken,
+    ) -> Result<LlmApiMode, LlmTransportError> {
+        let messages = vec![serde_json::json!({"role":"user","content":"Hi"})];
+        let (endpoint, body) = match mode {
+            LlmApiMode::ChatCompletions => {
+                let endpoint = chat_completions_api_url(&self.config.api_url);
+                let body = build_chat_completions_body(
+                    &endpoint,
+                    &self.config.model,
+                    &messages,
+                    false,
+                    None,
+                    &[],
+                );
+                (endpoint, body)
+            }
+            LlmApiMode::Responses => (
+                responses_api_url(&self.config.api_url),
+                build_responses_body(&self.config.model, &messages, false, None, &[], ""),
+            ),
+        };
+        let response = tokio::time::timeout(PROVIDER_OPERATION_TIMEOUT, async {
+            tokio::select! {
+                _ = cancellation.cancelled() => Err(LlmTransportError::Cancelled),
+                response = self.client
+                    .post(endpoint)
+                    .headers(self.json_headers(true)?)
+                    .json(&body)
+                    .send() => response.map_err(sanitized_http_error),
+            }
+        })
+        .await
+        .map_err(|_| LlmTransportError::Http("request timed out"))??;
+        let body = checked_json_response(response, cancellation).await?;
+        let value = serde_json::from_slice::<Value>(&body).map_err(|_| {
+            LlmTransportError::InvalidRequest("connection test returned invalid JSON".into())
+        })?;
+        let valid = match mode {
+            LlmApiMode::ChatCompletions => value
+                .get("choices")
+                .and_then(Value::as_array)
+                .is_some_and(|choices| !choices.is_empty()),
+            LlmApiMode::Responses => value
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.trim().is_empty()),
+        };
+        if !valid {
+            return Err(LlmTransportError::InvalidRequest(
+                "connection test returned an unexpected response format".into(),
+            ));
+        }
+        Ok(mode)
+    }
+
     fn headers(&self) -> Result<HeaderMap, LlmTransportError> {
+        let mut headers = self.json_headers(true)?;
+        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        Ok(headers)
+    }
+
+    fn json_headers(&self, include_content_type: bool) -> Result<HeaderMap, LlmTransportError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
             HeaderValue::from_static(OPENAI_COMPAT_USER_AGENT),
         );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        if include_content_type {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        }
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         if !self.config.api_key.is_empty() {
             let mut value = HeaderValue::from_str(&format!("Bearer {}", self.config.api_key))
                 .map_err(|_| LlmTransportError::InvalidAuthorizationHeader)?;
@@ -266,6 +406,56 @@ impl LlmTransport {
         }
         Ok(headers)
     }
+}
+
+async fn checked_json_response(
+    response: reqwest::Response,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, LlmTransportError> {
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = read_error_body(response, cancellation).await?;
+        return Err(LlmTransportError::HttpStatus {
+            status,
+            message: error_message(&body),
+        });
+    }
+    read_bounded_body(response, cancellation, MAX_JSON_BODY_BYTES).await
+}
+
+async fn read_bounded_body(
+    response: reqwest::Response,
+    cancellation: &CancellationToken,
+    max_bytes: usize,
+) -> Result<Vec<u8>, LlmTransportError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(LlmTransportError::InvalidRequest(format!(
+            "provider response exceeds the {max_bytes} byte limit"
+        )));
+    }
+    let stream = response.bytes_stream();
+    tokio::pin!(stream);
+    let mut body = Vec::new();
+    loop {
+        let chunk = tokio::select! {
+            _ = cancellation.cancelled() => return Err(LlmTransportError::Cancelled),
+            chunk = stream.next() => chunk,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        let chunk = chunk.map_err(sanitized_http_error)?;
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(LlmTransportError::InvalidRequest(format!(
+                "provider response exceeds the {max_bytes} byte limit"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 fn redacted_url(url: &str) -> String {
@@ -449,6 +639,20 @@ mod tests {
         socket.write_all(b"\r\n").await.unwrap();
     }
 
+    async fn write_json_response(socket: &mut TcpStream, status: &str, body: &[u8]) {
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        socket.write_all(body).await.unwrap();
+    }
+
     #[test]
     fn debug_output_redacts_api_keys_and_responses_fall_back_for_compatible_providers() {
         let transport = LlmTransport::new(config(
@@ -594,6 +798,77 @@ mod tests {
             }) if message == "bad key"
         ));
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn provider_model_discovery_is_authenticated_sorted_and_deduplicated() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await;
+            write_json_response(
+                &mut socket,
+                "200 OK",
+                br#"{"data":[{"id":"model-z"},{"id":"model-a"},{"id":"model-a"},{"missing":true}]}"#,
+            )
+            .await;
+            request
+        });
+        let transport = LlmTransport::new(config(
+            format!("http://{address}/v1/chat/completions"),
+            LlmApiMode::ChatCompletions,
+        ))
+        .unwrap();
+        let models = transport
+            .fetch_models(&CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(models, ["model-a", "model-z"]);
+        let request = String::from_utf8_lossy(&server.await.unwrap()).into_owned();
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+        assert!(request.contains("authorization: Bearer super-secret"));
+    }
+
+    #[tokio::test]
+    async fn provider_connection_test_falls_back_from_responses_to_chat_completions() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            let (mut first, _) = listener.accept().await.unwrap();
+            requests.push(read_request(&mut first).await);
+            write_json_response(
+                &mut first,
+                "404 Not Found",
+                br#"{"error":{"message":"responses unsupported"}}"#,
+            )
+            .await;
+            let (mut second, _) = listener.accept().await.unwrap();
+            requests.push(read_request(&mut second).await);
+            write_json_response(
+                &mut second,
+                "200 OK",
+                br#"{"choices":[{"message":{"content":"Hi"}}]}"#,
+            )
+            .await;
+            requests
+        });
+        let transport = LlmTransport::new(config(
+            format!("http://{address}/v1/responses"),
+            LlmApiMode::Responses,
+        ))
+        .unwrap();
+        let mode = transport
+            .test_connection(&CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(mode, LlmApiMode::ChatCompletions);
+        let requests = server.await.unwrap();
+        assert!(String::from_utf8_lossy(&requests[0]).starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(
+            String::from_utf8_lossy(&requests[1]).starts_with("POST /v1/chat/completions HTTP/1.1")
+        );
     }
 
     #[test]

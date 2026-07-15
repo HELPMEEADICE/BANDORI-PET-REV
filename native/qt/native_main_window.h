@@ -84,6 +84,9 @@ private:
     void applySelectedNativeLlmProfile();
     void saveCurrentNativeLlmProfile();
     void deleteSelectedNativeLlmProfile();
+    void startNativeProviderOperation(const QString& target, const QString& operation);
+    void handleNativeProviderOperation(const QString& payloadJson);
+    void setNativeProviderBusy(bool busy);
     void populateMemoryCharacters();
     void refreshNativeMemoryState();
     void renderNativeMemories();
@@ -284,12 +287,18 @@ private:
     qfw::LineEdit* llmApiKeyEdit_ = nullptr;
     qfw::CheckBox* llmClearApiKeyCheckBox_ = nullptr;
     qfw::LineEdit* llmModelIdEdit_ = nullptr;
+    qfw::ComboBox* llmPrimaryDiscoveredModelsComboBox_ = nullptr;
+    qfw::PushButton* llmPrimaryFetchModelsButton_ = nullptr;
+    qfw::PushButton* llmPrimaryTestButton_ = nullptr;
     qfw::ComboBox* llmApiModeComboBox_ = nullptr;
     qfw::ComboBox* llmThinkingComboBox_ = nullptr;
     qfw::LineEdit* llmAuxApiUrlEdit_ = nullptr;
     qfw::LineEdit* llmAuxApiKeyEdit_ = nullptr;
     qfw::CheckBox* llmClearAuxApiKeyCheckBox_ = nullptr;
     qfw::LineEdit* llmAuxModelIdEdit_ = nullptr;
+    qfw::ComboBox* llmAuxDiscoveredModelsComboBox_ = nullptr;
+    qfw::PushButton* llmAuxFetchModelsButton_ = nullptr;
+    qfw::PushButton* llmAuxTestButton_ = nullptr;
     qfw::ComboBox* llmAuxThinkingComboBox_ = nullptr;
     qfw::SwitchButton* llmAuxVisionSwitch_ = nullptr;
     qfw::SwitchButton* llmOutfitRecognitionSwitch_ = nullptr;
@@ -300,6 +309,7 @@ private:
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;
     qfw::CaptionLabel* llmSettingsStatusLabel_ = nullptr;
+    qint64 activeProviderRequestId_ = 0;
     QJsonObject memorySnapshot_;
     bool updatingMemoryControls_ = false;
     qfw::ComboBox* memoryCharacterComboBox_ = nullptr;
