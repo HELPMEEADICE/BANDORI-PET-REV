@@ -1,4 +1,5 @@
 import io
+import math
 import ntpath
 import os
 import shutil
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from process_utils import app_base_dir, app_runtime_dir
+from process_utils import app_base_dir, app_runtime_dir, clamp_int
 
 
 _NUMPY_MODULE = None
@@ -26,6 +27,20 @@ ASR_LOCAL_DEVICE = "cpu"
 ASR_LOCAL_COMPUTE_TYPE = "int8"
 _LOCAL_ASR_PROCESS = None
 _LOCAL_ASR_LOCK = threading.Lock()
+
+
+def _asr_sample_rate(value) -> int:
+    return clamp_int(value, 8000, 192000, 16000)
+
+
+def _bounded_float(value, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        number = default
+    if not math.isfinite(number):
+        number = default
+    return max(minimum, min(maximum, number))
 
 
 class ASRInstallCancelled(RuntimeError):
@@ -641,8 +656,13 @@ class ASRRecorderWorker(QThread):
         self._config = dict(config or {})
 
     def run(self):
-        sample_rate = int(self._config.get("asr_sample_rate", 16000) or 16000)
-        max_seconds = max(1.0, float(self._config.get("asr_max_record_seconds", 60) or 60))
+        sample_rate = _asr_sample_rate(self._config.get("asr_sample_rate", 16000))
+        max_seconds = _bounded_float(
+            self._config.get("asr_max_record_seconds", 60),
+            default=60.0,
+            minimum=1.0,
+            maximum=300.0,
+        )
         channels = 1
         chunks = []
         started = time.monotonic()
@@ -750,7 +770,12 @@ class ASRRequestWorker(_CancelableASRWorker):
         api_key = str(self._config.get("asr_api_key", "") or "").strip()
         model = str(self._config.get("asr_model_id", "") or "").strip() or "whisper-large-v3"
         language = str(self._config.get("asr_language", "") or "").strip()
-        timeout = max(5.0, float(self._config.get("asr_timeout_seconds", 60) or 60))
+        timeout = _bounded_float(
+            self._config.get("asr_timeout_seconds", 60),
+            default=60.0,
+            minimum=5.0,
+            maximum=600.0,
+        )
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
