@@ -43,6 +43,14 @@ class CustomModelImportError(Exception):
         self.params = params
 
 
+def _is_safe_folder_name_char(character: str) -> bool:
+    return (
+        character not in _INVALID_NAME_CHARS
+        and ord(character) >= 32
+        and ord(character) != 127
+    )
+
+
 def sanitize_character_name(name: str) -> str:
     """Turn a user-entered display name into a safe folder name.
 
@@ -50,7 +58,7 @@ def sanitize_character_name(name: str) -> str:
     work), so we only strip what the filesystem or the scanner can't handle.
     ModelManager skips entries starting with ``_``, so those are stripped too.
     """
-    cleaned = "".join(ch for ch in str(name or "") if ch not in _INVALID_NAME_CHARS)
+    cleaned = "".join(ch for ch in str(name or "") if _is_safe_folder_name_char(ch))
     cleaned = cleaned.strip().strip(".")
     while cleaned.startswith("_"):
         cleaned = cleaned[1:].lstrip()
@@ -59,7 +67,7 @@ def sanitize_character_name(name: str) -> str:
 
 
 def sanitize_costume_id(costume_id: str, fallback: str = "default") -> str:
-    cleaned = "".join(ch for ch in str(costume_id or "") if ch not in _INVALID_NAME_CHARS)
+    cleaned = "".join(ch for ch in str(costume_id or "") if _is_safe_folder_name_char(ch))
     cleaned = cleaned.strip().strip(".")
     while cleaned.startswith("_"):
         cleaned = cleaned[1:].lstrip()

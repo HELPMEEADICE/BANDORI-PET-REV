@@ -51,6 +51,39 @@ def _write_model3(root: Path) -> None:
 
 
 class CustomModelImportTest(unittest.TestCase):
+    def test_import_rejects_display_name_containing_only_control_characters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            source.mkdir()
+            _write_model(source)
+
+            with (
+                patch.object(custom_model_import, "MODELS_DIR", root / "models"),
+                self.assertRaises(CustomModelImportError) as raised,
+            ):
+                import_from_folder(str(source), "\0\n\t", "default")
+
+            self.assertEqual("invalid_name", raised.exception.code)
+
+    def test_import_strips_control_characters_from_costume_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            models = root / "models"
+            source.mkdir()
+            _write_model(source)
+
+            with patch.object(custom_model_import, "MODELS_DIR", models):
+                _character, costumes = import_from_folder(
+                    str(source),
+                    "Test Character",
+                    "live\0_01",
+                )
+
+            self.assertEqual(["live_01"], costumes)
+            self.assertTrue((models / "Test Character" / "live_01" / "model.json").is_file())
+
     def test_delete_removes_marked_character_inside_models_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             models = Path(temp_dir) / "models"
