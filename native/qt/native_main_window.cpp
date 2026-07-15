@@ -32,6 +32,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonDocument>
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QListWidgetItem>
@@ -40,6 +41,7 @@
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QMessageBox>
+#include <QNetworkRequest>
 #include <QPainter>
 #include <QPixmap>
 #include <QRandomGenerator>
@@ -59,6 +61,8 @@
 #include <QVBoxLayout>
 #include <QUuid>
 #include <QUrl>
+#include <QUrlQuery>
+#include <QtWebSockets/QWebSocket>
 
 #include <algorithm>
 #include <cmath>
@@ -86,6 +90,7 @@ constexpr int kMemoryContentRole = Qt::UserRole + 22;
 constexpr int kMemoryImportanceRole = Qt::UserRole + 23;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
+constexpr int kMaximumConcurrentNapcatReplies = 4;
 constexpr qsizetype kMaximumAsrAudioBytes = 64 * 1024 * 1024;
 
 QByteArray encodeWaveAudio(const QByteArray& pcm, const QAudioFormat& format) {
@@ -384,6 +389,16 @@ NativeMainWindow::NativeMainWindow(
         [this](const QString& payloadJson) {
             handleNativeIntegrationEvent(payloadJson);
         });
+    connect(
+        &backend_,
+        &Backend::napcatReplyEvent,
+        this,
+        [this](const QString& payloadJson) { handleNativeNapcatReply(payloadJson); });
+    napcatReconnectTimer_.setSingleShot(true);
+    napcatReconnectTimer_.setInterval(3'000);
+    connect(&napcatReconnectTimer_, &QTimer::timeout, this, [this]() {
+        connectNativeNapcat();
+    });
     screenAwarenessTimer_.setSingleShot(true);
     connect(&screenAwarenessTimer_, &QTimer::timeout, this, [this]() {
         triggerNativeScreenAwareness(false);
@@ -2693,6 +2708,169 @@ QWidget* NativeMainWindow::createIntegrationPage() {
         tr("The saved secret is never copied into a Qt property or exported package"),
         aiToken);
 
+    auto* napcat = new qfw::GroupHeaderCardWidget(tr("NapCat forward WebSocket"), content);
+    napcatEnabledSwitch_ = new qfw::SwitchButton(napcat);
+    napcatUrlEdit_ = new qfw::LineEdit(napcat);
+    napcatUrlEdit_->setPlaceholderText(QStringLiteral("ws://127.0.0.1:3001"));
+    napcatUrlEdit_->setMinimumWidth(280);
+    napcatTokenEdit_ = new qfw::LineEdit(napcat);
+    napcatTokenEdit_->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    napcatTokenEdit_->setClearButtonEnabled(true);
+    napcatClearTokenCheckBox_ = new qfw::CheckBox(tr("Clear saved token"), napcat);
+    auto* napcatToken = new QWidget(napcat);
+    auto* napcatTokenLayout = new QHBoxLayout(napcatToken);
+    napcatTokenLayout->setContentsMargins(0, 0, 0, 0);
+    napcatTokenLayout->setSpacing(8);
+    napcatTokenLayout->addWidget(napcatTokenEdit_, 1);
+    napcatTokenLayout->addWidget(napcatClearTokenCheckBox_);
+    napcatAutoReplySwitch_ = new qfw::SwitchButton(napcat);
+    napcatReplyPrivateSwitch_ = new qfw::SwitchButton(napcat);
+    napcatGroupAtOnlySwitch_ = new qfw::SwitchButton(napcat);
+    napcatMentionSenderSwitch_ = new qfw::SwitchButton(napcat);
+    napcatReplyCharacterEdit_ = new qfw::LineEdit(napcat);
+    napcatReplyCharacterEdit_->setPlaceholderText(
+        tr("Blank uses the first configured pet"));
+    napcatSavePolicyComboBox_ = new qfw::ComboBox(napcat);
+    napcatSavePolicyComboBox_->addItem(
+        tr("Save group and private chat"), QVariant(), QStringLiteral("all"));
+    napcatSavePolicyComboBox_->addItem(
+        tr("Save private chat only"), QVariant(), QStringLiteral("private_only"));
+    napcatSavePolicyComboBox_->addItem(
+        tr("Overlay only; do not save"), QVariant(), QStringLiteral("overlay_only"));
+    napcatSavePolicyComboBox_->setMinimumWidth(220);
+    auto makeRetentionEditor = [napcat, this](
+                                   qfw::ComboBox** mode,
+                                   qfw::SpinBox** days) {
+        auto* editor = new QWidget(napcat);
+        auto* row = new QHBoxLayout(editor);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        *mode = new qfw::ComboBox(editor);
+        (*mode)->addItem(tr("Manual deletion"), QVariant(), QStringLiteral("manual"));
+        (*mode)->addItem(tr("Automatic deletion"), QVariant(), QStringLiteral("auto"));
+        (*mode)->setFixedWidth(170);
+        *days = new qfw::SpinBox(editor);
+        (*days)->setRange(1, 3650);
+        (*days)->setSuffix(tr(" days"));
+        (*days)->setFixedWidth(130);
+        row->addWidget(*mode);
+        row->addWidget(*days);
+        row->addStretch(1);
+        connect(*mode, &qfw::ComboBox::currentIndexChanged, editor, [mode, days](int) {
+            (*days)->setEnabled((*mode)->currentData().toString() == QStringLiteral("auto"));
+        });
+        return editor;
+    };
+    QWidget* groupRetention = makeRetentionEditor(
+        &napcatGroupRetentionModeComboBox_, &napcatGroupRetentionDaysSpinBox_);
+    QWidget* privateRetention = makeRetentionEditor(
+        &napcatPrivateRetentionModeComboBox_, &napcatPrivateRetentionDaysSpinBox_);
+    auto* napcatRecordActions = new QWidget(napcat);
+    auto* napcatRecordActionsLayout = new QHBoxLayout(napcatRecordActions);
+    napcatRecordActionsLayout->setContentsMargins(0, 0, 0, 0);
+    napcatRecordActionsLayout->setSpacing(8);
+    auto* deleteGroupRecords = new qfw::PushButton(tr("Delete group records"), napcatRecordActions);
+    auto* deletePrivateRecords = new qfw::PushButton(tr("Delete private records"), napcatRecordActions);
+    napcatRecordActionsLayout->addWidget(deleteGroupRecords);
+    napcatRecordActionsLayout->addWidget(deletePrivateRecords);
+    napcatRecordActionsLayout->addStretch(1);
+    napcatStatusLabel_ = new qfw::CaptionLabel(tr("NapCat is stopped."), napcat);
+    napcatStatusLabel_->setWordWrap(true);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("Enable NapCat"),
+        tr("Connect outward to a OneBot v11 WebSocket server and reconnect every three seconds"),
+        napcatEnabledSwitch_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("WebSocket URL"),
+        tr("Supports ws:// and wss://; the token is sent as Bearer and access_token query fallback"),
+        napcatUrlEdit_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
+        tr("Access token"),
+        tr("Blank keeps the saved token; the secret is never exposed through a Qt property"),
+        napcatToken);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("AI auto reply"),
+        tr("Generate native LLM replies without blocking the interactive chat stream"),
+        napcatAutoReplySwitch_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Reply to private chat"),
+        tr("Allow private OneBot messages to trigger AI replies"),
+        napcatReplyPrivateSwitch_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Group reply only when mentioned"),
+        tr("Require an @ segment targeting the logged-in self_id"),
+        napcatGroupAtOnlySwitch_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Mention sender in group reply"),
+        tr("Prefix outbound group text with a OneBot CQ at code"),
+        napcatMentionSenderSwitch_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Reply character ID"),
+        tr("Use this character persona for NapCat replies"),
+        napcatReplyCharacterEdit_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Record policy"),
+        tr("Choose which NapCat messages are persisted in the external-chat database"),
+        napcatSavePolicyComboBox_);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Delete),
+        tr("Group-chat retention"),
+        tr("Automatic mode purges expired group messages after each accepted event"),
+        groupRetention);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Delete),
+        tr("Private-chat retention"),
+        tr("Automatic mode purges expired private messages after each accepted event"),
+        privateRetention);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Delete),
+        tr("Delete saved records"),
+        tr("Permanently delete all external records of the selected chat type"),
+        napcatRecordActions);
+    napcat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Info),
+        tr("Connection status"),
+        tr("Connection, message and reply failures remain visible here"),
+        napcatStatusLabel_);
+    auto deleteNapcatRecords = [this](const QString& chatType, const QString& label) {
+        if (QMessageBox::warning(
+                this,
+                tr("Delete %1 records?").arg(label),
+                tr("This permanently deletes every saved %1 external-chat record. This cannot be undone.")
+                    .arg(label),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No)
+            != QMessageBox::Yes) {
+            return;
+        }
+        const QString databasePath =
+            QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        if (!backend_.deleteNapcatRecords(databasePath, chatType)) {
+            napcatStatusLabel_->setText(backend_.getStatus());
+            return;
+        }
+        const QJsonObject result = parseObject(backend_.getNapcatEventResultJson());
+        napcatStatusLabel_->setText(
+            tr("Deleted %1 messages and %2 threads.")
+                .arg(result.value(QStringLiteral("deleted_messages")).toInteger())
+                .arg(result.value(QStringLiteral("deleted_threads")).toInteger()));
+    };
+    connect(deleteGroupRecords, &QPushButton::clicked, this, [deleteNapcatRecords]() {
+        deleteNapcatRecords(QStringLiteral("group"), QObject::tr("group-chat"));
+    });
+    connect(deletePrivateRecords, &QPushButton::clicked, this, [deleteNapcatRecords]() {
+        deleteNapcatRecords(QStringLiteral("private"), QObject::tr("private-chat"));
+    });
+
     auto* actions = new QWidget(content);
     auto* actionsLayout = new QHBoxLayout(actions);
     actionsLayout->setContentsMargins(0, 0, 0, 0);
@@ -2711,6 +2889,7 @@ QWidget* NativeMainWindow::createIntegrationPage() {
     layout->addWidget(subtitle);
     layout->addWidget(chat);
     layout->addWidget(aiStatus);
+    layout->addWidget(napcat);
     layout->addWidget(actions);
     layout->addWidget(integrationStatusLabel_);
     layout->addStretch(1);
@@ -4738,12 +4917,14 @@ void NativeMainWindow::loadNativeIntegrationSettings() {
     if (integrationStatusLabel_ == nullptr) {
         return;
     }
-    if (!backend_.loadIntegrationSettings(configPath_)) {
+    if (!backend_.loadIntegrationSettings(configPath_)
+        || !backend_.loadNapcatSettings(configPath_)) {
         integrationStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
         return;
     }
     integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
+    napcatSettings_ = parseObject(backend_.getNapcatSettingsJson());
     syncNativeIntegrationControls();
 }
 
@@ -4759,6 +4940,11 @@ void NativeMainWindow::syncNativeIntegrationControls() {
     const QSignalBlocker compactBlocker(compactAiWindowSwitch_);
     const QSignalBlocker aiOverlayBlocker(aiEventOverlaySwitch_);
     const QSignalBlocker aiPortBlocker(aiStatusPortSpinBox_);
+    const QSignalBlocker napcatEnabledBlocker(napcatEnabledSwitch_);
+    const QSignalBlocker napcatAutoReplyBlocker(napcatAutoReplySwitch_);
+    const QSignalBlocker napcatPrivateBlocker(napcatReplyPrivateSwitch_);
+    const QSignalBlocker napcatAtBlocker(napcatGroupAtOnlySwitch_);
+    const QSignalBlocker napcatMentionBlocker(napcatMentionSenderSwitch_);
     chatIntegrationEnabledSwitch_->setChecked(
         integrationSettings_.value(QStringLiteral("chat_enabled")).toBool(false));
     chatIntegrationPortSpinBox_->setValue(
@@ -4785,10 +4971,60 @@ void NativeMainWindow::syncNativeIntegrationControls() {
             .toBool(false));
     aiStatusPortSpinBox_->setValue(
         integrationSettings_.value(QStringLiteral("ai_status_port")).toInt(38'472));
+    napcatEnabledSwitch_->setChecked(
+        napcatSettings_.value(QStringLiteral("enabled")).toBool(false));
+    napcatUrlEdit_->setText(
+        napcatSettings_
+            .value(QStringLiteral("ws_url"))
+            .toString(QStringLiteral("ws://127.0.0.1:3001")));
+    napcatAutoReplySwitch_->setChecked(
+        napcatSettings_.value(QStringLiteral("auto_reply_enabled")).toBool(false));
+    napcatReplyPrivateSwitch_->setChecked(
+        napcatSettings_.value(QStringLiteral("reply_private")).toBool(true));
+    napcatGroupAtOnlySwitch_->setChecked(
+        napcatSettings_.value(QStringLiteral("reply_group_at_only")).toBool(true));
+    napcatMentionSenderSwitch_->setChecked(
+        napcatSettings_.value(QStringLiteral("reply_mention_sender")).toBool(true));
+    napcatReplyCharacterEdit_->setText(
+        napcatSettings_.value(QStringLiteral("reply_character")).toString());
+    const auto setCombo = [](qfw::ComboBox* combo, const QString& value, int fallback) {
+        const int index = combo->findData(value);
+        combo->setCurrentIndex(index < 0 ? fallback : index);
+    };
+    setCombo(
+        napcatSavePolicyComboBox_,
+        napcatSettings_
+            .value(QStringLiteral("save_policy"))
+            .toString(QStringLiteral("all")),
+        0);
+    setCombo(
+        napcatGroupRetentionModeComboBox_,
+        napcatSettings_
+            .value(QStringLiteral("group_retention_mode"))
+            .toString(QStringLiteral("manual")),
+        0);
+    napcatGroupRetentionDaysSpinBox_->setValue(
+        napcatSettings_.value(QStringLiteral("group_retention_days")).toInt(7));
+    napcatGroupRetentionDaysSpinBox_->setEnabled(
+        napcatGroupRetentionModeComboBox_->currentData().toString()
+        == QStringLiteral("auto"));
+    setCombo(
+        napcatPrivateRetentionModeComboBox_,
+        napcatSettings_
+            .value(QStringLiteral("private_retention_mode"))
+            .toString(QStringLiteral("manual")),
+        0);
+    napcatPrivateRetentionDaysSpinBox_->setValue(
+        napcatSettings_.value(QStringLiteral("private_retention_days")).toInt(30));
+    napcatPrivateRetentionDaysSpinBox_->setEnabled(
+        napcatPrivateRetentionModeComboBox_->currentData().toString()
+        == QStringLiteral("auto"));
     chatIntegrationTokenEdit_->clear();
     aiStatusTokenEdit_->clear();
+    napcatTokenEdit_->clear();
     chatIntegrationClearTokenCheckBox_->setChecked(false);
     aiStatusClearTokenCheckBox_->setChecked(false);
+    napcatClearTokenCheckBox_->setChecked(false);
     chatIntegrationTokenEdit_->setPlaceholderText(
         integrationSettings_
                 .value(QStringLiteral("chat_token_configured"))
@@ -4801,6 +5037,12 @@ void NativeMainWindow::syncNativeIntegrationControls() {
                 .toBool(false)
             ? tr("Saved token configured — blank keeps it")
             : tr("No saved token — enabling generates one"));
+    napcatTokenEdit_->setPlaceholderText(
+        napcatSettings_
+                .value(QStringLiteral("access_token_configured"))
+                .toBool(false)
+            ? tr("Saved NapCat token configured — blank keeps it")
+            : tr("No saved NapCat token"));
 }
 
 bool NativeMainWindow::saveNativeIntegrationSettings() {
@@ -4833,12 +5075,46 @@ bool NativeMainWindow::saveNativeIntegrationSettings() {
     if (!aiToken.isEmpty()) {
         settings.insert(QStringLiteral("ai_status_token"), aiToken);
     }
+    QJsonObject napcatSettings {
+        {QStringLiteral("enabled"), napcatEnabledSwitch_->isChecked()},
+        {QStringLiteral("ws_url"), napcatUrlEdit_->text().trimmed()},
+        {QStringLiteral("clear_access_token"),
+         napcatClearTokenCheckBox_->isChecked()},
+        {QStringLiteral("auto_reply_enabled"), napcatAutoReplySwitch_->isChecked()},
+        {QStringLiteral("reply_private"), napcatReplyPrivateSwitch_->isChecked()},
+        {QStringLiteral("reply_group_at_only"),
+         napcatGroupAtOnlySwitch_->isChecked()},
+        {QStringLiteral("reply_mention_sender"),
+         napcatMentionSenderSwitch_->isChecked()},
+        {QStringLiteral("reply_character"),
+         napcatReplyCharacterEdit_->text().trimmed()},
+        {QStringLiteral("save_policy"),
+         napcatSavePolicyComboBox_->currentData().toString()},
+        {QStringLiteral("group_retention_mode"),
+         napcatGroupRetentionModeComboBox_->currentData().toString()},
+        {QStringLiteral("group_retention_days"),
+         napcatGroupRetentionDaysSpinBox_->value()},
+        {QStringLiteral("private_retention_mode"),
+         napcatPrivateRetentionModeComboBox_->currentData().toString()},
+        {QStringLiteral("private_retention_days"),
+         napcatPrivateRetentionDaysSpinBox_->value()},
+    };
+    const QString napcatToken = napcatTokenEdit_->text().trimmed();
+    if (!napcatToken.isEmpty()) {
+        napcatSettings.insert(QStringLiteral("access_token"), napcatToken);
+    }
+    if (!backend_.saveNapcatSettings(configPath_, compactJson(napcatSettings))) {
+        integrationStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
     if (!backend_.saveIntegrationSettings(configPath_, compactJson(settings))) {
         integrationStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
         return false;
     }
     integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
+    napcatSettings_ = parseObject(backend_.getNapcatSettingsJson());
     runtime_.insert(
         QStringLiteral("compact_ai_window_enabled"),
         integrationSettings_.value(QStringLiteral("compact_ai_window_enabled")));
@@ -4873,6 +5149,7 @@ bool NativeMainWindow::restartNativeIntegrationServices() {
         integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
         integrationStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
+        startNativeNapcat();
         return false;
     }
     integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
@@ -4882,6 +5159,9 @@ bool NativeMainWindow::restartNativeIntegrationServices() {
         integrationStatus_.value(QStringLiteral("chat_running")).toBool(false);
     const bool aiRunning =
         integrationStatus_.value(QStringLiteral("ai_status_running")).toBool(false);
+    startNativeNapcat();
+    const bool napcatEnabled =
+        napcatSettings_.value(QStringLiteral("enabled")).toBool(false);
     QStringList endpoints;
     if (chatRunning) {
         endpoints.append(
@@ -4893,21 +5173,27 @@ bool NativeMainWindow::restartNativeIntegrationServices() {
             QStringLiteral("AI http://127.0.0.1:%1/ai-events")
                 .arg(integrationStatus_.value(QStringLiteral("ai_status_port")).toInt()));
     }
+    if (napcatEnabled) {
+        endpoints.append(
+            tr("NapCat %1")
+                .arg(napcatSettings_.value(QStringLiteral("ws_url")).toString()));
+    }
     integrationStatusLabel_->setText(
         endpoints.isEmpty()
-            ? tr("Both native loopback integration services are disabled.")
+            ? tr("Native integration services are disabled.")
             : tr("Listening on %1. Requests are limited to 1 MiB with a five-second timeout.")
                   .arg(endpoints.join(QStringLiteral(" · "))));
-    integrationStopButton_->setEnabled(chatRunning || aiRunning);
+    integrationStopButton_->setEnabled(chatRunning || aiRunning || napcatEnabled);
     serviceStatusLabel_->setText(backend_.getStatus());
     return true;
 }
 
 void NativeMainWindow::stopNativeIntegrationServices() {
+    stopNativeNapcat();
     backend_.stopIntegrationServices();
     integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
     if (integrationStatusLabel_ != nullptr) {
-        integrationStatusLabel_->setText(tr("Native loopback integration services stopped."));
+        integrationStatusLabel_->setText(tr("Native integration services stopped."));
     }
     if (integrationStopButton_ != nullptr) {
         integrationStopButton_->setEnabled(false);
@@ -4939,6 +5225,283 @@ void NativeMainWindow::handleNativeIntegrationEvent(const QString& payloadJson) 
                 tr("AI status event authenticated and forwarded to native pets."));
         }
     }
+}
+
+void NativeMainWindow::startNativeNapcat() {
+    stopNativeNapcat();
+    if (!backend_.loadNapcatSettings(configPath_)) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(backend_.getStatus());
+        }
+        return;
+    }
+    napcatSettings_ = parseObject(backend_.getNapcatSettingsJson());
+    if (!napcatSettings_.value(QStringLiteral("enabled")).toBool(false)) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(tr("NapCat is disabled."));
+        }
+        return;
+    }
+    const QUrl url(
+        napcatSettings_.value(QStringLiteral("ws_url")).toString().trimmed());
+    if (!url.isValid()
+        || (url.scheme() != QStringLiteral("ws")
+            && url.scheme() != QStringLiteral("wss"))
+        || url.host().isEmpty()) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(
+                tr("NapCat URL must be a valid ws:// or wss:// address."));
+        }
+        return;
+    }
+    napcatStopping_ = false;
+    auto* socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
+    socket->setMaxAllowedIncomingFrameSize(1024 * 1024);
+    socket->setMaxAllowedIncomingMessageSize(1024 * 1024);
+    napcatSocket_ = socket;
+    connect(socket, &QWebSocket::connected, this, [this, socket]() {
+        if (socket != napcatSocket_) {
+            return;
+        }
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(tr("NapCat connected."));
+        }
+    });
+    connect(socket, &QWebSocket::disconnected, this, [this, socket]() {
+        if (socket != napcatSocket_ || napcatStopping_) {
+            return;
+        }
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(tr("NapCat disconnected; reconnecting…"));
+        }
+        scheduleNativeNapcatReconnect();
+    });
+    connect(
+        socket,
+        &QWebSocket::errorOccurred,
+        this,
+        [this, socket](QAbstractSocket::SocketError) {
+            if (socket != napcatSocket_ || napcatStopping_) {
+                return;
+            }
+            if (napcatStatusLabel_ != nullptr) {
+                napcatStatusLabel_->setText(
+                    tr("NapCat connection error: %1; reconnecting…")
+                        .arg(socket->errorString()));
+            }
+            scheduleNativeNapcatReconnect();
+        });
+    connect(
+        socket,
+        &QWebSocket::textMessageReceived,
+        this,
+        [this, socket](const QString& message) {
+            if (socket == napcatSocket_) {
+                handleNativeNapcatMessage(message);
+            }
+        });
+    connectNativeNapcat();
+}
+
+void NativeMainWindow::stopNativeNapcat() {
+    napcatStopping_ = true;
+    napcatReconnectTimer_.stop();
+    for (qint64 requestId : std::as_const(activeNapcatReplyIds_)) {
+        backend_.cancelNapcatReply(requestId);
+    }
+    activeNapcatReplyIds_.clear();
+    if (napcatSocket_ != nullptr) {
+        QWebSocket* socket = napcatSocket_;
+        napcatSocket_ = nullptr;
+        socket->abort();
+        socket->deleteLater();
+    }
+    if (napcatStatusLabel_ != nullptr) {
+        napcatStatusLabel_->setText(tr("NapCat is stopped."));
+    }
+}
+
+void NativeMainWindow::connectNativeNapcat() {
+    if (napcatStopping_ || napcatSocket_ == nullptr) {
+        return;
+    }
+    if (napcatSocket_->state() != QAbstractSocket::UnconnectedState) {
+        return;
+    }
+    QUrl url(napcatSettings_.value(QStringLiteral("ws_url")).toString().trimmed());
+    const QString token = backend_.napcatAccessToken(configPath_).trimmed();
+    if (!token.isEmpty()) {
+        QUrlQuery query(url);
+        query.removeAllQueryItems(QStringLiteral("access_token"));
+        query.addQueryItem(QStringLiteral("access_token"), token);
+        url.setQuery(query);
+    }
+    QNetworkRequest request(url);
+    if (!token.isEmpty()) {
+        request.setRawHeader(
+            QByteArrayLiteral("Authorization"),
+            QByteArrayLiteral("Bearer ") + token.toUtf8());
+    }
+    if (napcatStatusLabel_ != nullptr) {
+        napcatStatusLabel_->setText(tr("Connecting to NapCat…"));
+    }
+    napcatSocket_->open(request);
+}
+
+void NativeMainWindow::scheduleNativeNapcatReconnect() {
+    if (!napcatStopping_ && napcatSocket_ != nullptr
+        && !napcatReconnectTimer_.isActive()) {
+        napcatReconnectTimer_.start();
+    }
+}
+
+void NativeMainWindow::handleNativeNapcatMessage(const QString& message) {
+    const QByteArray encoded = message.toUtf8();
+    if (encoded.size() > 1024 * 1024) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(tr("NapCat message exceeded the 1 MiB limit."));
+        }
+        return;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(encoded, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return;
+    }
+    const QString eventJson = compactJson(document.object());
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.ingestNapcatEvent(configPath_, databasePath, eventJson)) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(backend_.getStatus());
+        }
+        return;
+    }
+    const QJsonObject result = parseObject(backend_.getNapcatEventResultJson());
+    if (result.value(QStringLiteral("ignored")).toBool(true)) {
+        return;
+    }
+    const QJsonObject overlay = result.value(QStringLiteral("overlay")).toObject();
+    if (!overlay.isEmpty()) {
+        supervisor_.broadcastControlLine(
+            QStringLiteral("CHAT_EVENT\t") + compactJson(overlay));
+    }
+    if (result.value(QStringLiteral("should_reply")).toBool(false)) {
+        if (activeNapcatReplyIds_.size() >= kMaximumConcurrentNapcatReplies) {
+            if (napcatStatusLabel_ != nullptr) {
+                napcatStatusLabel_->setText(
+                    tr("NapCat message stored; the four-reply queue is busy."));
+            }
+            return;
+        }
+        const QJsonObject normalized =
+            result.value(QStringLiteral("normalized_event")).toObject();
+        const qint64 requestId = backend_.startNapcatReply(
+            configPath_, projectRoot_, databasePath, compactJson(normalized));
+        if (requestId > 0) {
+            activeNapcatReplyIds_.insert(requestId);
+        } else if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(backend_.getStatus());
+        }
+    }
+    if (napcatStatusLabel_ != nullptr) {
+        napcatStatusLabel_->setText(
+            result.value(QStringLiteral("duplicate")).toBool(false)
+                ? tr("NapCat duplicate ignored.")
+                : (result.value(QStringLiteral("saved")).toBool(false)
+                       ? tr("NapCat message stored.")
+                       : tr("NapCat message forwarded to the overlay without storage.")));
+    }
+}
+
+void NativeMainWindow::handleNativeNapcatReply(const QString& payloadJson) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (!activeNapcatReplyIds_.remove(requestId)) {
+        return;
+    }
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    if (state != QStringLiteral("finished")) {
+        if (napcatStatusLabel_ != nullptr && state == QStringLiteral("error")) {
+            napcatStatusLabel_->setText(
+                tr("NapCat auto reply failed: %1")
+                    .arg(payload.value(QStringLiteral("message")).toString()));
+        }
+        return;
+    }
+    const QString reply = payload.value(QStringLiteral("reply")).toString().trimmed();
+    const bool sent = sendNativeNapcatReply(
+        payload.value(QStringLiteral("raw_event")).toObject(),
+        reply,
+        payload.value(QStringLiteral("mention_sender")).toBool(true));
+    if (!sent) {
+        if (napcatStatusLabel_ != nullptr) {
+            napcatStatusLabel_->setText(
+                tr("NapCat reply completed after the connection became unavailable."));
+        }
+        return;
+    }
+    const QJsonObject overlay {
+        {QStringLiteral("source"), QStringLiteral("napcat")},
+        {QStringLiteral("state"), QStringLiteral("stream")},
+        {QStringLiteral("mode"), QStringLiteral("replace")},
+        {QStringLiteral("title"), tr("Replied to QQ")},
+        {QStringLiteral("text"), reply},
+        {QStringLiteral("action"), QStringLiteral("smile")},
+        {QStringLiteral("ttl_ms"), 9000},
+        {QStringLiteral("anchor_to_pet"), true},
+        {QStringLiteral("character"),
+         payload.value(QStringLiteral("character")).toString()},
+    };
+    supervisor_.broadcastControlLine(
+        QStringLiteral("CHAT_EVENT\t") + compactJson(overlay));
+    if (napcatStatusLabel_ != nullptr) {
+        napcatStatusLabel_->setText(tr("NapCat AI reply sent."));
+    }
+}
+
+bool NativeMainWindow::sendNativeNapcatReply(
+    const QJsonObject& rawEvent,
+    const QString& text,
+    bool mentionSender) {
+    if (text.trimmed().isEmpty() || napcatSocket_ == nullptr
+        || napcatSocket_->state() != QAbstractSocket::ConnectedState) {
+        return false;
+    }
+    const QJsonValue userId = rawEvent.value(QStringLiteral("user_id"));
+    const QJsonValue groupId = rawEvent.value(QStringLiteral("group_id"));
+    const bool isGroup =
+        rawEvent.value(QStringLiteral("message_type")).toString().toLower()
+        == QStringLiteral("group");
+    auto idText = [](const QJsonValue& value) {
+        if (value.isString()) {
+            return value.toString();
+        }
+        return value.isDouble() ? QString::number(value.toInteger()) : QString();
+    };
+    QString message = text.trimmed();
+    const QString senderId = idText(userId);
+    if (isGroup && mentionSender && !senderId.isEmpty()) {
+        message.prepend(QStringLiteral("[CQ:at,qq=%1] ").arg(senderId));
+    }
+    QString action;
+    QJsonObject params;
+    if (isGroup && !groupId.isNull() && !groupId.isUndefined()) {
+        action = QStringLiteral("send_group_msg");
+        params.insert(QStringLiteral("group_id"), groupId);
+    } else if (!userId.isNull() && !userId.isUndefined()) {
+        action = QStringLiteral("send_private_msg");
+        params.insert(QStringLiteral("user_id"), userId);
+    } else {
+        return false;
+    }
+    params.insert(QStringLiteral("message"), message);
+    const QJsonObject request {
+        {QStringLiteral("action"), action},
+        {QStringLiteral("params"), params},
+        {QStringLiteral("echo"),
+         QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-')},
+    };
+    return napcatSocket_->sendTextMessage(compactJson(request)) > 0;
 }
 
 void NativeMainWindow::populateMemoryCharacters() {

@@ -338,11 +338,20 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   during application shutdown. The native pet now consumes `CHAT_EVENT` and
   `AI_EVENT`, including targeted actions, compact bubbles and explicit clear
   events, without routing through a Python process.
+  The NapCat forward-WebSocket adapter is also native. Qt WebSockets owns the
+  authenticated `ws://`/`wss://` connection, bounded incoming messages and
+  three-second reconnect timer; Rust owns OneBot normalization, self-message
+  suppression, duplicate-safe persistence, overlay-only/private-only policies,
+  per-chat retention, @self reply eligibility and an independent cancellable
+  LLM reply lane. Outbound private/group actions reuse the same socket, optional
+  sender mentions and action-tag stripping as the Python implementation. The
+  Qt-Fluent-Widgets page saves redacted NapCat settings and stops both socket
+  and reply workers during shutdown.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: remaining native visual/driver parity; the NapCat forward-WebSocket
-  adapter and other remaining integration services; packaged offline ASR sidecar,
+- Pending: remaining native visual/driver parity and integration services;
+  packaged offline ASR sidecar,
   default-launcher cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
@@ -368,7 +377,7 @@ native executable is outside the standard `build-rust` locations. Failure to
 find the helper logs a warning and safely falls back to the Python renderer.
 
 The native build requires Qt 6.5+ with Core, Gui, Widgets, Multimedia,
-OpenGLWidgets and Svg,
+OpenGLWidgets, Svg and WebSockets,
 a C++17 compiler, Rust 1.85+, CMake 3.24+, and CXX-Qt 0.9. CMake can discover an
 installed CXX-Qt package or fetch its pinned CMake integration at configure time.
 GNU-target Windows builds of vendored LuaJIT also require a `make` command (the

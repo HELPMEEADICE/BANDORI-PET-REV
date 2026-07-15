@@ -14,7 +14,7 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Multimedia Svg OpenGLWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Multimedia Svg OpenGLWidgets WebSockets)
 
 find_package(CxxQt 0.9 QUIET)
 if(NOT CxxQt_FOUND)

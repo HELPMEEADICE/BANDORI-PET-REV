@@ -28,6 +28,8 @@ pub mod ffi {
         #[qproperty(QString, screen_awareness_settings_json)]
         #[qproperty(QString, integration_settings_json)]
         #[qproperty(QString, integration_status_json)]
+        #[qproperty(QString, napcat_settings_json)]
+        #[qproperty(QString, napcat_event_result_json)]
         #[qproperty(QString, special_events_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
@@ -228,6 +230,53 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "stopIntegrationServices"]
         fn stop_integration_services(self: Pin<&mut Self>);
+
+        #[qinvokable]
+        #[cxx_name = "loadNapcatSettings"]
+        fn load_napcat_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveNapcatSettings"]
+        fn save_napcat_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "napcatAccessToken"]
+        fn napcat_access_token(self: Pin<&mut Self>, config_path: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "ingestNapcatEvent"]
+        fn ingest_napcat_event(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            database_path: &QString,
+            event_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "deleteNapcatRecords"]
+        fn delete_napcat_records(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            chat_type: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startNapcatReply"]
+        fn start_napcat_reply(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            project_root: &QString,
+            database_path: &QString,
+            normalized_event_json: &QString,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelNapcatReply"]
+        fn cancel_napcat_reply(self: Pin<&mut Self>, request_id: i64) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadSpecialEvents"]
@@ -569,6 +618,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "integrationEvent"]
         fn integration_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "napcatReplyEvent"]
+        fn napcat_reply_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -576,7 +629,7 @@ pub mod ffi {
 
 use bandori_asr::{AsrConfig, AsrTransport};
 use bandori_core::asr_settings::{load_native_asr_settings, save_native_asr_settings};
-use bandori_core::chat_actions::parse_chat_response;
+use bandori_core::chat_actions::{parse_chat_response, strip_action_tags};
 use bandori_core::chat_attachments::{
     chat_attachment_stats, cleanup_chat_attachments as cleanup_native_chat_attachments,
     discard_imported_chat_attachments, import_chat_attachments as import_attachment_files,
@@ -621,6 +674,11 @@ use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
 };
+use bandori_core::napcat::{
+    NativeNapcatReplyJob, delete_native_napcat_records, ingest_native_napcat_event,
+    load_native_napcat_settings, napcat_access_token as load_napcat_access_token,
+    prepare_native_napcat_reply, save_native_napcat_settings,
+};
 use bandori_core::persona_settings::{
     load_native_persona_settings, mutate_native_persona_settings,
 };
@@ -650,6 +708,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
@@ -727,6 +786,8 @@ pub struct BackendRust {
     screen_awareness_settings_json: QString,
     integration_settings_json: QString,
     integration_status_json: QString,
+    napcat_settings_json: QString,
+    napcat_event_result_json: QString,
     special_events_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
@@ -773,6 +834,8 @@ pub struct BackendRust {
     active_screen_awareness_request_id: i64,
     screen_awareness_cancellation: Option<CancellationToken>,
     integration_server: Option<NativeIntegrationServer>,
+    next_napcat_reply_id: i64,
+    napcat_reply_cancellations: HashMap<i64, CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -801,6 +864,8 @@ impl Default for BackendRust {
             integration_status_json: QString::from(
                 "{\"running\":false,\"ai_status_running\":false,\"chat_running\":false}",
             ),
+            napcat_settings_json: QString::from("{}"),
+            napcat_event_result_json: QString::from("{}"),
             special_events_json: QString::from("[]"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
@@ -847,6 +912,8 @@ impl Default for BackendRust {
             active_screen_awareness_request_id: 0,
             screen_awareness_cancellation: None,
             integration_server: None,
+            next_napcat_reply_id: 1,
+            napcat_reply_cancellations: HashMap::new(),
             memory_cancellations: HashMap::new(),
         }
     }
@@ -871,6 +938,13 @@ impl Drop for BackendRust {
         }
         if let Some(mut server) = self.integration_server.take() {
             server.stop();
+        }
+        for cancellation in self
+            .napcat_reply_cancellations
+            .drain()
+            .map(|(_, token)| token)
+        {
+            cancellation.cancel();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
             cancellation.cancel();
@@ -1700,6 +1774,184 @@ impl ffi::Backend {
         ));
         self.as_mut()
             .set_status(QString::from("Native integration services stopped"));
+    }
+
+    pub fn load_napcat_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_napcat_settings(Path::new(&config_path.to_string())) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native NapCat settings serialization cannot fail");
+                self.as_mut()
+                    .set_napcat_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native NapCat settings loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("NapCat settings error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn save_napcat_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_napcat_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+        ) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native NapCat settings serialization cannot fail");
+                self.as_mut()
+                    .set_napcat_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native NapCat settings saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "NapCat settings save error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn napcat_access_token(mut self: Pin<&mut Self>, config_path: &QString) -> QString {
+        match load_napcat_access_token(Path::new(&config_path.to_string())) {
+            Ok(token) => QString::from(&token),
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("NapCat token error: {error}")));
+                QString::default()
+            }
+        }
+    }
+
+    pub fn ingest_napcat_event(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        database_path: &QString,
+        event_json: &QString,
+    ) -> bool {
+        match ingest_native_napcat_event(
+            Path::new(&config_path.to_string()),
+            Path::new(&database_path.to_string()),
+            &event_json.to_string(),
+        ) {
+            Ok(result) => {
+                let payload = serde_json::to_string(&result)
+                    .expect("native NapCat ingest serialization cannot fail");
+                self.as_mut()
+                    .set_napcat_event_result_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_napcat_event_result_json(QString::from("{}"));
+                self.as_mut()
+                    .set_status(QString::from(&format!("NapCat event error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn delete_napcat_records(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        chat_type: &QString,
+    ) -> bool {
+        match delete_native_napcat_records(
+            Path::new(&database_path.to_string()),
+            &chat_type.to_string(),
+        ) {
+            Ok(result) => {
+                let payload = serde_json::to_string(&result)
+                    .expect("native NapCat delete serialization cannot fail");
+                self.as_mut()
+                    .set_napcat_event_result_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native NapCat records deleted"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("NapCat delete error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn start_napcat_reply(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        project_root: &QString,
+        database_path: &QString,
+        normalized_event_json: &QString,
+    ) -> i64 {
+        let config_path = config_path.to_string();
+        let config = match load_llm_transport_config(Path::new(&config_path)) {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let job = match prepare_native_napcat_reply(
+            Path::new(&config_path),
+            Path::new(&project_root.to_string()),
+            Path::new(&database_path.to_string()),
+            &normalized_event_json.to_string(),
+        ) {
+            Ok(Some(job)) => job,
+            Ok(None) => return 0,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "NapCat reply preparation error: {error}"
+                )));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_napcat_reply_id.max(1);
+            state.next_napcat_reply_id = request_id.checked_add(1).unwrap_or(1);
+            state
+                .napcat_reply_cancellations
+                .insert(request_id, cancellation.clone());
+            request_id
+        };
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-napcat-reply-{request_id}"))
+            .spawn(move || run_napcat_reply(qt_thread, request_id, config, job, cancellation))
+        {
+            self.as_mut()
+                .rust_mut()
+                .get_mut()
+                .napcat_reply_cancellations
+                .remove(&request_id);
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start NapCat reply worker: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_napcat_reply(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        let Some(cancellation) = state.napcat_reply_cancellations.get(&request_id) else {
+            return false;
+        };
+        cancellation.cancel();
+        true
     }
 
     pub fn load_special_events(
@@ -3700,6 +3952,21 @@ impl ffi::Backend {
             .chat_memory_event(&QString::from(payload.as_str()));
     }
 
+    fn emit_napcat_reply_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
+        if self
+            .as_mut()
+            .rust_mut()
+            .get_mut()
+            .napcat_reply_cancellations
+            .remove(&request_id)
+            .is_none()
+        {
+            return;
+        }
+        self.as_mut()
+            .napcat_reply_event(&QString::from(payload.as_str()));
+    }
+
     fn emit_provider_operation_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
         if self.as_ref().get_ref().rust().active_provider_request_id != request_id {
             return;
@@ -4948,6 +5215,98 @@ fn run_llm_stream(
         }
     };
     queue_terminal_payload(&qt_thread, request_id, payload);
+}
+
+fn run_napcat_reply(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    config: LlmTransportConfig,
+    job: NativeNapcatReplyJob,
+    cancellation: CancellationToken,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_napcat_reply_payload(
+                &qt_thread,
+                request_id,
+                json!({"request_id":request_id,"state":"error","message":format!("Async runtime error: {error}")}),
+            );
+            return;
+        }
+    };
+    let transport = match LlmTransport::new(config) {
+        Ok(transport) => transport,
+        Err(error) => {
+            queue_napcat_reply_payload(
+                &qt_thread,
+                request_id,
+                json!({"request_id":request_id,"state":"error","message":error.to_string()}),
+            );
+            return;
+        }
+    };
+    let request = LlmTransportRequest {
+        messages: job.messages,
+        tools: Vec::new(),
+        previous_response_id: String::new(),
+    };
+    let mut text = String::new();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(130),
+            transport.stream(&request, &cancellation, |event| {
+                if let LlmStreamEvent::TextDelta { text: delta } = event {
+                    text.push_str(&delta);
+                }
+            }),
+        )
+        .await
+    });
+    let payload = match result {
+        Ok(Ok(_)) => {
+            let reply = strip_action_tags(&text);
+            if reply.trim().is_empty() {
+                json!({"request_id":request_id,"state":"error","message":"NapCat reply was empty"})
+            } else {
+                json!({
+                    "request_id": request_id,
+                    "state": "finished",
+                    "reply": reply,
+                    "character": job.character,
+                    "mention_sender": job.mention_sender,
+                    "raw_event": job.raw_event
+                })
+            }
+        }
+        Ok(Err(LlmTransportError::Cancelled)) => {
+            json!({"request_id":request_id,"state":"cancelled"})
+        }
+        Ok(Err(error)) => {
+            json!({"request_id":request_id,"state":"error","message":error.to_string()})
+        }
+        Err(_) => {
+            cancellation.cancel();
+            json!({"request_id":request_id,"state":"error","message":"NapCat reply timed out"})
+        }
+    };
+    queue_napcat_reply_payload(&qt_thread, request_id, payload);
+}
+
+fn queue_napcat_reply_payload(
+    qt_thread: &ffi::BackendCxxQtThread,
+    request_id: i64,
+    payload: Value,
+) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_napcat_reply_payload(request_id, payload);
+        })
+        .ok();
 }
 
 async fn stream_with_native_tools<F>(

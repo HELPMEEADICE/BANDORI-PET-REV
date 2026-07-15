@@ -27,6 +27,7 @@ pub mod local_integration;
 pub mod memory_dashboard;
 pub mod memory_extraction;
 pub mod model;
+pub mod napcat;
 pub mod persona_settings;
 pub mod relationship_analysis;
 pub mod reminder;

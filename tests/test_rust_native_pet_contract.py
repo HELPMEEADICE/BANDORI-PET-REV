@@ -1115,3 +1115,37 @@ def test_native_loopback_integrations_are_bounded_redacted_and_pet_visible():
     assert 'QStringLiteral("CHAT_EVENT\\t")' in pet
     assert 'QStringLiteral("AI_EVENT\\t")' in pet
     assert 'state == QStringLiteral("clear")' in pet
+
+
+def test_native_napcat_uses_qt_websocket_and_rust_policy_reply_pipeline():
+    cmake = source("CMakeLists.txt")
+    native_cmake = source("native/qt/CMakeLists.txt")
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    napcat = source("rust/crates/bandori-core/src/napcat.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "WebSockets" in cmake
+    assert "Qt6::WebSockets" in native_cmake
+    assert "pub mod napcat;" in core
+    assert "pub fn ingest_native_napcat_event" in napcat
+    assert "pub fn prepare_native_napcat_reply" in napcat
+    assert "group_at_policy_stores_once_and_requests_reply" in napcat
+    assert "overlay_only_does_not_persist" in napcat
+    assert "access_token_configured" in napcat
+    assert "napcat_reply_cancellations" in backend
+    assert "run_napcat_reply" in backend
+    assert '"napcatReplyEvent"' in bridge_test
+    assert "QWebSocket* napcatSocket_" in header
+    assert "void NativeMainWindow::startNativeNapcat()" in window
+    assert "setMaxAllowedIncomingMessageSize(1024 * 1024)" in window
+    assert 'QByteArrayLiteral("Authorization")' in window
+    assert 'QStringLiteral("access_token")' in window
+    assert "backend_.ingestNapcatEvent" in window
+    assert "backend_.deleteNapcatRecords" in window
+    assert "backend_.startNapcatReply" in window
+    assert "kMaximumConcurrentNapcatReplies = 4" in window
+    assert 'QStringLiteral("send_group_msg")' in window
+    assert 'QStringLiteral("send_private_msg")' in window

@@ -32,6 +32,7 @@ target_link_libraries(bandori-pet-rust PRIVATE
     Qt6::Multimedia
     Qt6::Widgets
     Qt6::Svg
+    Qt6::WebSockets
 )
 
 if(WIN32)

@@ -827,7 +827,7 @@ fn looks_like_chat_event(params: &BTreeMap<String, String>) -> bool {
         .any(|key| params.contains_key(*key))
 }
 
-fn normalize_onebot_event(event: &Value) -> Option<Value> {
+pub(crate) fn normalize_onebot_event(event: &Value) -> Option<Value> {
     let source = event.as_object()?;
     let post_type = value_text(source.get("post_type")).to_ascii_lowercase();
     if post_type.is_empty() {
@@ -995,7 +995,7 @@ fn segment_placeholder(kind: &str) -> String {
     .into()
 }
 
-fn chat_overlay(event: &Value, summary: &ExternalUnreadSummary) -> Option<Value> {
+pub(crate) fn chat_overlay(event: &Value, summary: &ExternalUnreadSummary) -> Option<Value> {
     if summary.total_unread <= 0 {
         return None;
     }

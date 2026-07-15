@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QQueue>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -26,6 +27,7 @@ class QMediaPlayer;
 class QSystemTrayIcon;
 class QTemporaryFile;
 class QTextBrowser;
+class QWebSocket;
 
 namespace bandori {
 
@@ -141,6 +143,16 @@ private:
     bool restartNativeIntegrationServices();
     void stopNativeIntegrationServices();
     void handleNativeIntegrationEvent(const QString& payloadJson);
+    void startNativeNapcat();
+    void stopNativeNapcat();
+    void connectNativeNapcat();
+    void scheduleNativeNapcatReconnect();
+    void handleNativeNapcatMessage(const QString& message);
+    void handleNativeNapcatReply(const QString& payloadJson);
+    bool sendNativeNapcatReply(
+        const QJsonObject& rawEvent,
+        const QString& text,
+        bool mentionSender);
     void populateMemoryCharacters();
     void refreshNativeMemoryState();
     void renderNativeMemories();
@@ -440,6 +452,7 @@ private:
     qint64 activeScreenAwarenessRequestId_ = 0;
     QJsonObject integrationSettings_;
     QJsonObject integrationStatus_;
+    QJsonObject napcatSettings_;
     qfw::SwitchButton* chatIntegrationEnabledSwitch_ = nullptr;
     qfw::SpinBox* chatIntegrationPortSpinBox_ = nullptr;
     qfw::SwitchButton* chatIntegrationOverlaySwitch_ = nullptr;
@@ -452,9 +465,28 @@ private:
     qfw::SpinBox* aiStatusPortSpinBox_ = nullptr;
     qfw::LineEdit* aiStatusTokenEdit_ = nullptr;
     qfw::CheckBox* aiStatusClearTokenCheckBox_ = nullptr;
+    qfw::SwitchButton* napcatEnabledSwitch_ = nullptr;
+    qfw::LineEdit* napcatUrlEdit_ = nullptr;
+    qfw::LineEdit* napcatTokenEdit_ = nullptr;
+    qfw::CheckBox* napcatClearTokenCheckBox_ = nullptr;
+    qfw::SwitchButton* napcatAutoReplySwitch_ = nullptr;
+    qfw::SwitchButton* napcatReplyPrivateSwitch_ = nullptr;
+    qfw::SwitchButton* napcatGroupAtOnlySwitch_ = nullptr;
+    qfw::SwitchButton* napcatMentionSenderSwitch_ = nullptr;
+    qfw::LineEdit* napcatReplyCharacterEdit_ = nullptr;
+    qfw::ComboBox* napcatSavePolicyComboBox_ = nullptr;
+    qfw::ComboBox* napcatGroupRetentionModeComboBox_ = nullptr;
+    qfw::SpinBox* napcatGroupRetentionDaysSpinBox_ = nullptr;
+    qfw::ComboBox* napcatPrivateRetentionModeComboBox_ = nullptr;
+    qfw::SpinBox* napcatPrivateRetentionDaysSpinBox_ = nullptr;
+    qfw::CaptionLabel* napcatStatusLabel_ = nullptr;
     qfw::PrimaryPushButton* integrationSaveButton_ = nullptr;
     qfw::PushButton* integrationStopButton_ = nullptr;
     qfw::CaptionLabel* integrationStatusLabel_ = nullptr;
+    QWebSocket* napcatSocket_ = nullptr;
+    QTimer napcatReconnectTimer_;
+    bool napcatStopping_ = true;
+    QSet<qint64> activeNapcatReplyIds_;
     qint64 activeProviderRequestId_ = 0;
     QJsonObject memorySnapshot_;
     bool updatingMemoryControls_ = false;

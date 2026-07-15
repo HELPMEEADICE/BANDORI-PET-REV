@@ -45,6 +45,8 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "getScreenAwarenessSettingsJson",
         "getIntegrationSettingsJson",
         "getIntegrationStatusJson",
+        "getNapcatSettingsJson",
+        "getNapcatEventResultJson",
         "getSpecialEventsJson",
         "getMemorySnapshotJson",
         "getUserProfilesJson",
@@ -81,6 +83,13 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "saveIntegrationSettings",
         "startIntegrationServices",
         "stopIntegrationServices",
+        "loadNapcatSettings",
+        "saveNapcatSettings",
+        "napcatAccessToken",
+        "ingestNapcatEvent",
+        "deleteNapcatRecords",
+        "startNapcatReply",
+        "cancelNapcatReply",
         "loadSpecialEvents",
         "loadMemoryState",
         "mutateMemory",
@@ -123,6 +132,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "asrTranscriptionEvent",
         "screenAwarenessEvent",
         "integrationEvent",
+        "napcatReplyEvent",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }
