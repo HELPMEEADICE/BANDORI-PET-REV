@@ -5,9 +5,26 @@ from unittest.mock import Mock
 from PySide6.QtCore import QUrlQuery
 
 from napcat_adapter import NapcatClient
+from onebot_message import onebot_event_mentions_self
 
 
 class NapcatDeliverySemanticsTest(unittest.TestCase):
+    def test_raw_cq_mention_does_not_match_account_id_prefix(self):
+        event = {
+            "self_id": 123,
+            "raw_message": "[CQ:at,qq=1234] 这条消息不是发给机器人",
+        }
+
+        self.assertFalse(onebot_event_mentions_self(event))
+
+    def test_raw_cq_mention_accepts_exact_id_with_extra_parameters(self):
+        event = {
+            "self_id": 123,
+            "raw_message": "[CQ:at,qq=123,name=BandoriPet] 你好",
+        }
+
+        self.assertTrue(onebot_event_mentions_self(event))
+
     def test_main_does_not_auto_reply_to_duplicate_saved_messages(self):
         from pathlib import Path
 
