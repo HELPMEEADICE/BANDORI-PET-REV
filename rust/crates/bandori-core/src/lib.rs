@@ -8,6 +8,7 @@ pub mod chat_actions;
 pub mod chat_attachments;
 pub mod chat_context;
 pub mod chat_dashboard;
+pub mod chat_management;
 pub mod chat_prompt;
 pub mod config;
 pub mod config_ffi;

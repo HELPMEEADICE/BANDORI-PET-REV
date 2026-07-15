@@ -208,6 +208,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   speaker labels, globally orders excerpts by timestamp/id and keeps the latest
   18 entries. Unrelated group members and other user profiles never cross into
   the prompt.
+  The native private-chat page can draft a new conversation without creating an
+  empty database row, then creates it transactionally on first send. Saved
+  conversations can be deleted only after Rust verifies the selected character
+  and user partition; cascading message deletion is followed by canonical-root
+  cleanup of deduplicated attachment copies.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

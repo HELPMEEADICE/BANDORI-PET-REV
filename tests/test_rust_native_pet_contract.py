@@ -320,6 +320,24 @@ def test_native_cross_chat_context_is_filtered_and_python_contract_backed():
     assert "_cross_chat_history_contract" in exporter
 
 
+def test_native_private_conversation_management_validates_ownership_and_cleans_files():
+    management = source("rust/crates/bandori-core/src/chat_management.rs")
+    attachments = source("rust/crates/bandori-core/src/chat_attachments.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub fn delete_owned_private_conversation" in management
+    assert ".get_conversations(Some(character), Some(user_key))" in management
+    assert "delete_message_attachment_copies" in management
+    assert "pub fn delete_message_attachment_copies" in attachments
+    assert "deleteChatConversation" in backend
+    assert "bool draftingNewConversation_" in window_header
+    assert "void NativeMainWindow::startNewChatConversation()" in window
+    assert "void NativeMainWindow::deleteSelectedChatConversation()" in window
+    assert "QMessageBox::question" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

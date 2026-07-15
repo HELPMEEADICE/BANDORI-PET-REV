@@ -3,6 +3,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -177,6 +178,28 @@ pub fn chat_message_content(
         parts.extend(raw_images);
         Value::Array(parts)
     }
+}
+
+pub fn delete_message_attachment_copies(database: &Database, messages: &[Message]) -> usize {
+    let mut paths = HashSet::new();
+    for message in messages {
+        let attachments = serde_json::from_str::<Value>(&message.attachments_json)
+            .ok()
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default();
+        for attachment in attachments {
+            let Some(path) = attachment.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(resolved) = database.resolve_chat_attachment(path) {
+                paths.insert(resolved);
+            }
+        }
+    }
+    paths
+        .into_iter()
+        .filter(|path| fs::remove_file(path).is_ok())
+        .count()
 }
 
 fn import_one(target_root: &Path, source: &Path) -> io::Result<ImportedChatAttachment> {

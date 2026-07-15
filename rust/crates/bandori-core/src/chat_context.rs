@@ -1,3 +1,4 @@
+use crate::chat_attachments::chat_message_content;
 use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
 };
@@ -382,4 +383,3 @@ mod tests {
         );
     }
 }
-use crate::chat_attachments::chat_message_content;

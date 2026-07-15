@@ -44,6 +44,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "prepareChatTurn",
         "importChatAttachments",
         "discardChatAttachments",
+        "deleteChatConversation",
         "buildChatRequest",
         "saveChatAssistant",
         "startChatStream",

@@ -69,6 +69,8 @@ private:
     void chooseChatAttachments();
     void clearPendingChatAttachments();
     void updatePendingChatAttachments();
+    void startNewChatConversation();
+    void deleteSelectedChatConversation();
     void setChatBusy(bool busy);
     void renderChatStreamPreview();
     void openNativeChat(const QString& character);
@@ -108,6 +110,8 @@ private:
     qfw::CaptionLabel* chatStatusLabel_ = nullptr;
     qfw::PushButton* chatLoadOlderButton_ = nullptr;
     qfw::PushButton* chatRefreshButton_ = nullptr;
+    qfw::PushButton* chatNewConversationButton_ = nullptr;
+    qfw::PushButton* chatDeleteConversationButton_ = nullptr;
     qfw::PushButton* chatAttachButton_ = nullptr;
     qfw::PushButton* chatClearAttachmentsButton_ = nullptr;
     qfw::CaptionLabel* chatAttachmentLabel_ = nullptr;
@@ -125,6 +129,7 @@ private:
     qint64 activeChatRequestId_ = 0;
     int chatMessageLimit_ = 200;
     bool updatingChatControls_ = false;
+    bool draftingNewConversation_ = false;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

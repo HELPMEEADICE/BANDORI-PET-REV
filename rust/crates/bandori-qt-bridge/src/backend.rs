@@ -83,6 +83,16 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "deleteChatConversation"]
+        fn delete_chat_conversation(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            character: &QString,
+            user_key: &QString,
+            conversation_id: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "buildChatRequest"]
         fn build_chat_request(
             self: Pin<&mut Self>,
@@ -136,6 +146,7 @@ use bandori_core::chat_attachments::{
 };
 use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
+use bandori_core::chat_management::delete_owned_private_conversation;
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
@@ -488,6 +499,65 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Attachment cleanup error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn delete_chat_conversation(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        character: &QString,
+        user_key: &QString,
+        conversation_id: &QString,
+    ) -> bool {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut().set_status(QString::from(
+                "Cannot delete a conversation while chat is active",
+            ));
+            return false;
+        }
+        let conversation_id = match conversation_id.to_string().trim().parse::<i64>() {
+            Ok(value) if value > 0 => value,
+            _ => {
+                self.as_mut()
+                    .set_status(QString::from("No saved conversation is selected"));
+                return false;
+            }
+        };
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match delete_owned_private_conversation(
+            &database,
+            &character.to_string(),
+            &user_key.to_string(),
+            conversation_id,
+        ) {
+            Ok(result) if result.deleted => {
+                let payload = serde_json::to_string(&result)
+                    .expect("conversation delete result serialization cannot fail");
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_status(QString::from(&format!(
+                    "Conversation deleted; {} attachment copy/copies removed",
+                    result.attachments_removed
+                )));
+                true
+            }
+            Ok(_) => {
+                self.as_mut()
+                    .set_status(QString::from("Conversation was already unavailable"));
+                false
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Conversation delete error: {error}"
+                )));
                 false
             }
         }

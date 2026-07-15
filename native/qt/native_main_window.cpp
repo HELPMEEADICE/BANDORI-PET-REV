@@ -15,6 +15,7 @@
 #include <QKeySequence>
 #include <QListWidgetItem>
 #include <QMenu>
+#include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -425,6 +426,8 @@ QWidget* NativeMainWindow::createChatPage() {
     chatConversationComboBox_ = new qfw::ComboBox(page);
     chatConversationComboBox_->setMinimumWidth(280);
     chatRefreshButton_ = new qfw::PushButton(tr("Refresh"), page);
+    chatNewConversationButton_ = new qfw::PushButton(tr("New"), page);
+    chatDeleteConversationButton_ = new qfw::PushButton(tr("Delete"), page);
     chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
     chatLoadOlderButton_->setEnabled(false);
     auto* controls = new QHBoxLayout();
@@ -434,6 +437,8 @@ QWidget* NativeMainWindow::createChatPage() {
     controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
     controls->addWidget(chatConversationComboBox_, 1);
     controls->addWidget(chatLoadOlderButton_);
+    controls->addWidget(chatNewConversationButton_);
+    controls->addWidget(chatDeleteConversationButton_);
     controls->addWidget(chatRefreshButton_);
 
     chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
@@ -478,6 +483,16 @@ QWidget* NativeMainWindow::createChatPage() {
     connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
         refreshChatState(chatConversationComboBox_->currentData().toString());
     });
+    connect(
+        chatNewConversationButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { startNewChatConversation(); });
+    connect(
+        chatDeleteConversationButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { deleteSelectedChatConversation(); });
     connect(chatLoadOlderButton_, &QPushButton::clicked, this, [this]() {
         chatMessageLimit_ = std::min(chatMessageLimit_ + kChatMessagePageSize, kChatMessageLimit);
         refreshChatState(chatConversationComboBox_->currentData().toString());
@@ -903,6 +918,7 @@ void NativeMainWindow::refreshChatState(
     if (chatCharacterComboBox_ == nullptr || chatTranscript_ == nullptr) {
         return;
     }
+    draftingNewConversation_ = false;
     const QString character = chatCharacterComboBox_->currentData().toString();
     if (resetPagination) {
         chatMessageLimit_ = kChatMessagePageSize;
@@ -958,6 +974,7 @@ void NativeMainWindow::refreshChatState(
     }
     chatConversationComboBox_->setCurrentIndex(activeIndex);
     updatingChatControls_ = false;
+    chatDeleteConversationButton_->setEnabled(activeIndex >= 0 && activeChatRequestId_ == 0);
 
     const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
     const bool hasOlderMessages = backend_.getChatHasOlderMessages();
@@ -991,6 +1008,57 @@ void NativeMainWindow::refreshChatState(
                   .arg(messages.size())
                   .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
     setChatBusy(activeChatRequestId_ != 0);
+}
+
+void NativeMainWindow::startNewChatConversation() {
+    if (activeChatRequestId_ != 0 || chatCharacterComboBox_->currentData().toString().isEmpty()) {
+        return;
+    }
+    draftingNewConversation_ = true;
+    const QSignalBlocker blocker(chatConversationComboBox_);
+    chatConversationComboBox_->setCurrentIndex(-1);
+    chatTranscriptBase_.clear();
+    chatTranscript_->clear();
+    chatLoadOlderButton_->setEnabled(false);
+    chatDeleteConversationButton_->setEnabled(false);
+    chatStatusLabel_->setText(tr("New conversation · it will be created when you send"));
+    chatInput_->setFocus();
+    setChatBusy(false);
+}
+
+void NativeMainWindow::deleteSelectedChatConversation() {
+    if (activeChatRequestId_ != 0 || draftingNewConversation_) {
+        return;
+    }
+    const QString conversationId = chatConversationComboBox_->currentData().toString();
+    const QString character = chatCharacterComboBox_->currentData().toString();
+    if (conversationId.isEmpty() || character.isEmpty()) {
+        return;
+    }
+    if (QMessageBox::question(
+            this,
+            tr("Delete conversation"),
+            tr("Delete this conversation and its saved attachment copies?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    if (!backend_.deleteChatConversation(
+            databasePath,
+            character,
+            userKey,
+            conversationId)) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    const QString status = backend_.getStatus();
+    refreshChatState({}, true);
+    chatStatusLabel_->setText(status);
 }
 
 void NativeMainWindow::chooseChatAttachments() {
@@ -1107,8 +1175,9 @@ void NativeMainWindow::sendNativeChat() {
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
-    const QString requestedConversationId =
-        chatConversationComboBox_->currentData().toString();
+    const QString requestedConversationId = draftingNewConversation_
+        ? QString()
+        : chatConversationComboBox_->currentData().toString();
     const QString attachmentsJson = QString::fromUtf8(
         QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
     if (!backend_.prepareChatTurn(
@@ -1121,6 +1190,7 @@ void NativeMainWindow::sendNativeChat() {
         chatStatusLabel_->setText(backend_.getStatus());
         return;
     }
+    draftingNewConversation_ = false;
     chatInput_->clear();
     pendingChatAttachments_ = QJsonArray();
     updatePendingChatAttachments();
@@ -1272,6 +1342,11 @@ void NativeMainWindow::setChatBusy(bool busy) {
     chatCharacterComboBox_->setEnabled(!busy);
     chatConversationComboBox_->setEnabled(!busy);
     chatRefreshButton_->setEnabled(!busy);
+    chatNewConversationButton_->setEnabled(
+        !busy && !chatCharacterComboBox_->currentData().toString().isEmpty());
+    chatDeleteConversationButton_->setEnabled(
+        !busy && !draftingNewConversation_
+        && !chatConversationComboBox_->currentData().toString().isEmpty());
     chatLoadOlderButton_->setEnabled(
         !busy && backend_.getChatHasOlderMessages() && chatMessageLimit_ < kChatMessageLimit);
     chatInput_->setEnabled(!busy);
