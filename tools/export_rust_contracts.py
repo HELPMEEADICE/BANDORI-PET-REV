@@ -280,6 +280,45 @@ def _database_behavior_contract() -> dict:
             ]
             usage = manager.get_conversation_token_usage(conversation)
 
+            group_user_message = manager.add_group_message(
+                "__group__:Ran|Moca",
+                "group-1",
+                "user",
+                "group hello",
+                user_key="alice",
+            )
+            group_assistant_message = manager.add_group_message(
+                "__group__:Ran|Moca",
+                "group-1",
+                "assistant",
+                "【Ran】\ngroup reply",
+                user_key="alice",
+            )
+            manager.set_group_display_name("__group__:Ran|Moca", "Band chat")
+            filter_options = manager.get_chat_history_filter_options()
+            history_search = manager.search_chat_history(
+                keyword="group hello",
+                character="Ran",
+                user_key="alice",
+                source="group",
+                limit=10,
+            )
+            history_search["records"] = [
+                without_times(record) for record in history_search["records"]
+            ]
+            group_conversations = [
+                without_times(record)
+                for record in manager.get_group_conversations(
+                    "__group__:Ran|Moca", "alice"
+                )
+            ]
+            group_chats = [
+                without_times(record)
+                for record in manager.get_group_chats("alice")
+            ]
+            first_user_content = manager.get_first_user_message_content(conversation)
+            chat_summary = manager.get_chat_summary()
+
             external_event = {
                 "platform": "napcat",
                 "thread_id": "group-1",
@@ -357,6 +396,15 @@ def _database_behavior_contract() -> dict:
             "page": page,
             "before": before,
             "usage": usage,
+        },
+        "queries": {
+            "group_ids": [group_user_message, group_assistant_message],
+            "filter_options": filter_options,
+            "history_search": history_search,
+            "group_conversations": group_conversations,
+            "group_chats": group_chats,
+            "first_user_content": first_user_content,
+            "chat_summary": chat_summary,
         },
         "external": {
             "first": normalize_external_result(external_first),

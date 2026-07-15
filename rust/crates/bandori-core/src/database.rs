@@ -1,15 +1,16 @@
 use fs2::FileExt;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, MAIN_DB, OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
+use tempfile::Builder;
 use thiserror::Error;
 
 const DEFAULT_USER_PROFILE_KEY: &str = "__default__";
@@ -143,6 +144,42 @@ CREATE INDEX IF NOT EXISTS idx_external_chat_messages_external_id ON external_ch
 CREATE INDEX IF NOT EXISTS idx_external_chat_messages_chat_type ON external_chat_messages(chat_type, created_at);
 "#;
 
+const CHAT_HISTORY_SQL: &str = r#"
+SELECT
+    'private' AS source,
+    m.id AS source_id,
+    CAST(c.id AS TEXT) AS conversation_id,
+    c.character AS character,
+    '' AS group_key,
+    c.title AS chat_title,
+    c.user_key AS user_key,
+    m.role AS role,
+    m.content AS content,
+    m.created_at AS created_at,
+    '|' || c.character || '|' AS member_keys
+FROM messages m
+JOIN conversations c ON c.id=m.conversation_id
+UNION ALL
+SELECT
+    'group' AS source,
+    gm.id AS source_id,
+    CAST(gm.conversation_id AS TEXT) AS conversation_id,
+    '' AS character,
+    gm.group_key AS group_key,
+    COALESCE(meta.display_name, '') AS chat_title,
+    gm.user_key AS user_key,
+    gm.role AS role,
+    gm.content AS content,
+    gm.created_at AS created_at,
+    CASE
+        WHEN gm.group_key LIKE '__group__:%'
+        THEN '|' || substr(gm.group_key, 11) || '|'
+        ELSE '|' || gm.group_key || '|'
+    END AS member_keys
+FROM group_messages gm
+LEFT JOIN group_chat_meta meta ON meta.group_key=gm.group_key
+"#;
+
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("database I/O failed: {0}")]
@@ -157,6 +194,8 @@ pub enum DatabaseError {
     Poisoned,
     #[error("external chat event is invalid: {0}")]
     InvalidExternalEvent(String),
+    #[error("database operation is invalid: {0}")]
+    InvalidOperation(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -344,6 +383,109 @@ pub struct ExternalDeleteResult {
     pub unread: Option<ExternalUnreadSummary>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatHistoryFilterOptions {
+    pub characters: Vec<String>,
+    pub user_keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatHistoryQuery<'a> {
+    pub keyword: &'a str,
+    pub date_from: &'a str,
+    pub date_to: &'a str,
+    pub character: &'a str,
+    pub user_key: &'a str,
+    pub role: &'a str,
+    pub source: &'a str,
+    pub limit: i64,
+    pub offset: i64,
+    pub skip_count: bool,
+}
+
+impl Default for ChatHistoryQuery<'_> {
+    fn default() -> Self {
+        Self {
+            keyword: "",
+            date_from: "",
+            date_to: "",
+            character: "",
+            user_key: "",
+            role: "",
+            source: "",
+            limit: 300,
+            offset: 0,
+            skip_count: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatHistoryRecord {
+    pub source: String,
+    pub id: i64,
+    pub conversation_id: String,
+    pub character: String,
+    pub group_key: String,
+    pub chat_title: String,
+    pub user_key: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatHistorySearchResult {
+    pub total: i64,
+    pub has_more: bool,
+    pub records: Vec<ChatHistoryRecord>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GroupConversation {
+    pub group_key: String,
+    pub conversation_id: String,
+    pub user_key: String,
+    pub message_id: i64,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatSummary {
+    pub total_conversations: i64,
+    pub total_messages: i64,
+    pub total_group_messages: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DailyMessageCount {
+    pub day: String,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatDatabaseSummary {
+    pub conversations: i64,
+    pub messages: i64,
+    pub group_messages: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RelationshipData {
+    pub relationship_states: Vec<RelationshipState>,
+    pub character_memories: Vec<CharacterMemory>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RelationshipImportSummary {
+    pub relationship_states: i64,
+    pub character_memories: i64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct ColumnContract {
     name: String,
@@ -368,6 +510,7 @@ struct IndexContract {
 /// mode so existing Python readers and Rust writers can share one file during
 /// the staged migration.
 pub struct Database {
+    path: PathBuf,
     connection: Mutex<Connection>,
     lock_path: PathBuf,
     attachment_dir: PathBuf,
@@ -392,6 +535,7 @@ impl Database {
             .unwrap_or_else(|| Path::new("."))
             .join("chat_attachments");
         Ok(Self {
+            path,
             connection: Mutex::new(connection),
             lock_path,
             attachment_dir,
@@ -1240,6 +1384,301 @@ impl Database {
         })
     }
 
+    pub fn chat_history_filter_options(&self) -> Result<ChatHistoryFilterOptions, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut characters = BTreeSet::new();
+            {
+                let mut statement = connection.prepare(
+                    "SELECT DISTINCT character FROM conversations WHERE character != ''",
+                )?;
+                for character in statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+                {
+                    let character = character.trim();
+                    if !character.is_empty() && character != "__group__" {
+                        characters.insert(character.to_owned());
+                    }
+                }
+            }
+            {
+                let mut statement = connection.prepare(
+                    "SELECT DISTINCT group_key FROM group_messages WHERE group_key != ''",
+                )?;
+                for group_key in statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+                {
+                    characters.extend(group_key_characters(&group_key));
+                }
+            }
+            let mut user_keys = {
+                let mut statement = connection.prepare(concat!(
+                    "SELECT user_key FROM conversations WHERE user_key != '' ",
+                    "UNION SELECT user_key FROM group_messages WHERE user_key != ''"
+                ))?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            user_keys.retain(|key| !key.trim().is_empty());
+            user_keys.sort_by_key(|value| value.to_lowercase());
+            user_keys.dedup();
+            let mut characters = characters.into_iter().collect::<Vec<_>>();
+            characters.sort_by_key(|value| value.to_lowercase());
+            Ok(ChatHistoryFilterOptions {
+                characters,
+                user_keys,
+            })
+        })
+    }
+
+    pub fn search_chat_history(
+        &self,
+        query: &ChatHistoryQuery<'_>,
+    ) -> Result<ChatHistorySearchResult, DatabaseError> {
+        let keyword = truncate_chars(query.keyword.trim(), 500);
+        let date_from = truncate_chars(query.date_from.trim(), 10);
+        let date_to = truncate_chars(query.date_to.trim(), 10);
+        let character = query.character.trim();
+        let user_key = query.user_key.trim();
+        let role = query.role.trim();
+        let source = query.source.trim();
+        let limit = query.limit.clamp(1, 1000);
+        let offset = query.offset.clamp(0, 1_000_000);
+        self.with_connection(|connection| {
+            let mut clauses = Vec::new();
+            let mut values = Vec::new();
+            if !keyword.is_empty() {
+                clauses.push("content LIKE ? ESCAPE '\\' COLLATE NOCASE");
+                values.push(SqlValue::Text(format!("%{}%", escape_like(&keyword))));
+            }
+            if !date_from.is_empty() {
+                clauses.push("created_at >= ?");
+                values.push(SqlValue::Text(format!("{date_from} 00:00:00")));
+            }
+            if !date_to.is_empty() {
+                clauses.push("created_at <= ?");
+                values.push(SqlValue::Text(format!("{date_to} 23:59:59")));
+            }
+            if !character.is_empty() {
+                clauses.push("instr(member_keys, ?) > 0");
+                values.push(SqlValue::Text(format!("|{character}|")));
+            }
+            if !user_key.is_empty() {
+                clauses.push("user_key = ?");
+                values.push(SqlValue::Text(user_key.to_owned()));
+            }
+            if matches!(role, "user" | "assistant" | "system") {
+                clauses.push("role = ?");
+                values.push(SqlValue::Text(role.to_owned()));
+            }
+            if matches!(source, "private" | "group") {
+                clauses.push("source = ?");
+                values.push(SqlValue::Text(source.to_owned()));
+            }
+            let where_sql = if clauses.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", clauses.join(" AND "))
+            };
+            let total = if query.skip_count {
+                -1
+            } else {
+                connection.query_row(
+                    &format!("SELECT COUNT(*) FROM ({CHAT_HISTORY_SQL}) history{where_sql}"),
+                    params_from_iter(values.clone()),
+                    |row| row.get::<_, i64>(0),
+                )?
+            };
+            let probe = if query.skip_count { limit + 1 } else { limit };
+            let mut page_values = values;
+            page_values.push(SqlValue::Integer(probe));
+            page_values.push(SqlValue::Integer(offset));
+            let mut statement = connection.prepare(&format!(
+                concat!(
+                    "SELECT source, source_id, conversation_id, character, group_key, ",
+                    "chat_title, user_key, role, content, created_at FROM ({}) history",
+                    "{} ORDER BY created_at DESC, source_id DESC LIMIT ? OFFSET ?"
+                ),
+                CHAT_HISTORY_SQL, where_sql
+            ))?;
+            let mut records = statement
+                .query_map(params_from_iter(page_values), row_to_chat_history_record)?
+                .collect::<Result<Vec<_>, _>>()?;
+            let has_more = query.skip_count && records.len() > limit as usize;
+            if has_more {
+                records.truncate(limit as usize);
+            }
+            Ok(ChatHistorySearchResult {
+                total,
+                has_more,
+                records,
+                limit,
+                offset,
+            })
+        })
+    }
+
+    pub fn first_user_message_content(
+        &self,
+        conversation_id: i64,
+    ) -> Result<String, DatabaseError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    concat!(
+                        "SELECT content FROM messages WHERE conversation_id=? ",
+                        "AND role='user' AND content != '' ORDER BY id ASC LIMIT 1"
+                    ),
+                    params![conversation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map(|value| value.unwrap_or_default().trim().to_owned())
+                .map_err(DatabaseError::from)
+        })
+    }
+
+    pub fn group_conversations(
+        &self,
+        group_key: &str,
+        user_key: Option<&str>,
+    ) -> Result<Vec<GroupConversation>, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut sql = concat!(
+                "SELECT g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at ",
+                "FROM group_messages g JOIN (SELECT conversation_id, MAX(id) AS latest_id ",
+                "FROM group_messages WHERE group_key=? "
+            )
+            .to_owned();
+            let mut values = vec![SqlValue::Text(group_key.to_owned())];
+            if let Some(user_key) = user_key {
+                sql.push_str("AND user_key=? ");
+                values.push(SqlValue::Text(normalize_user_key(user_key)));
+            }
+            sql.push_str(concat!(
+                "AND role IN ('user','assistant','system') GROUP BY conversation_id) latest ",
+                "ON g.id=latest.latest_id ORDER BY latest.latest_id DESC"
+            ));
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                row_to_group_conversation(row, group_key, false)
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(DatabaseError::from)
+        })
+    }
+
+    pub fn group_chats(
+        &self,
+        user_key: Option<&str>,
+    ) -> Result<Vec<GroupConversation>, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut sql = concat!(
+                "SELECT g.group_key, g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at ",
+                "FROM group_messages g JOIN (SELECT group_key, MAX(id) AS latest_id ",
+                "FROM group_messages WHERE "
+            )
+            .to_owned();
+            let mut values = Vec::new();
+            if let Some(user_key) = user_key {
+                sql.push_str("user_key=? AND ");
+                values.push(SqlValue::Text(normalize_user_key(user_key)));
+            }
+            sql.push_str(concat!(
+                "role IN ('user','assistant','system') GROUP BY group_key) latest ",
+                "ON g.id=latest.latest_id ORDER BY latest.latest_id DESC"
+            ));
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |row| {
+                row_to_group_conversation(row, "", true)
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(DatabaseError::from)
+        })
+    }
+
+    pub fn delete_empty_conversations(
+        &self,
+        character: &str,
+        user_key: Option<&str>,
+    ) -> Result<usize, DatabaseError> {
+        self.with_connection(|connection| {
+            let mut clauses = Vec::new();
+            let mut values = Vec::new();
+            if !character.is_empty() {
+                clauses.push("character=?");
+                values.push(SqlValue::Text(character.to_owned()));
+            }
+            if let Some(user_key) = user_key {
+                clauses.push("user_key=?");
+                values.push(SqlValue::Text(normalize_user_key(user_key)));
+            }
+            clauses.push(
+                "NOT EXISTS (SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id)",
+            );
+            connection
+                .execute(
+                    &format!("DELETE FROM conversations WHERE {}", clauses.join(" AND ")),
+                    params_from_iter(values),
+                )
+                .map_err(DatabaseError::from)
+        })
+    }
+
+    pub fn chat_summary(&self) -> Result<ChatSummary, DatabaseError> {
+        self.with_connection(|connection| {
+            Ok(ChatSummary {
+                total_conversations: table_count(connection, "conversations")?,
+                total_messages: table_count(connection, "messages")?,
+                total_group_messages: table_count(connection, "group_messages")?,
+            })
+        })
+    }
+
+    pub fn daily_message_counts(
+        &self,
+        days: i64,
+        user_key: Option<&str>,
+    ) -> Result<Vec<DailyMessageCount>, DatabaseError> {
+        self.with_connection(|connection| {
+            let modifier = format!("-{} days", days.max(0));
+            let private = daily_counts_for_source(connection, true, &modifier, user_key)?;
+            let group = daily_counts_for_source(connection, false, &modifier, user_key)?;
+            let mut counts = BTreeMap::new();
+            for (day, count) in private.into_iter().chain(group) {
+                if !day.is_empty() {
+                    *counts.entry(day).or_insert(0) += count;
+                }
+            }
+            Ok(counts
+                .into_iter()
+                .map(|(day, count)| DailyMessageCount { day, count })
+                .collect())
+        })
+    }
+
+    pub fn hourly_heatmap(
+        &self,
+        days: i64,
+        user_key: Option<&str>,
+    ) -> Result<Vec<Vec<i64>>, DatabaseError> {
+        self.with_connection(|connection| {
+            let modifier = format!("-{} days", days.max(0));
+            let mut grid = vec![vec![0; 24]; 7];
+            for (weekday, hour, count) in hourly_counts(connection, true, &modifier, user_key)?
+                .into_iter()
+                .chain(hourly_counts(connection, false, &modifier, user_key)?)
+            {
+                let iso_day = (weekday - 1).rem_euclid(7);
+                if (0..7).contains(&iso_day) && (0..24).contains(&hour) {
+                    grid[iso_day as usize][hour as usize] += count;
+                }
+            }
+            Ok(grid)
+        })
+    }
+
     pub fn add_external_chat_message(
         &self,
         event: &Value,
@@ -1583,6 +2022,221 @@ impl Database {
         })
     }
 
+    pub fn database_summary(&self) -> Result<ChatDatabaseSummary, DatabaseError> {
+        self.with_connection(|connection| chat_database_summary(connection))
+    }
+
+    pub fn sanitize_attachment_references(&self) -> Result<i64, DatabaseError> {
+        let attachment_dir = self.attachment_dir.clone();
+        self.with_connection(|connection| {
+            sanitize_database_attachments(connection, &attachment_dir)
+        })
+    }
+
+    pub fn export_database(
+        &self,
+        destination: impl AsRef<Path>,
+    ) -> Result<ChatDatabaseSummary, DatabaseError> {
+        let destination = destination.as_ref().to_path_buf();
+        if same_path(&self.path, &destination)? {
+            return Err(DatabaseError::InvalidOperation(
+                "source and destination are the same file".into(),
+            ));
+        }
+        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        self.with_connection(|connection| {
+            validate_chat_database(connection)?;
+            let temp = Builder::new()
+                .prefix(
+                    destination
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("data.db"),
+                )
+                .suffix(".tmp")
+                .tempfile_in(parent)?;
+            let temp_path = temp.into_temp_path();
+            connection.backup(MAIN_DB, &temp_path, None)?;
+            {
+                let exported = Connection::open(&temp_path)?;
+                exported.pragma_update(None, "journal_mode", "DELETE")?;
+            }
+            temp_path
+                .persist(&destination)
+                .map_err(|error| DatabaseError::Io(error.error))?;
+            let exported = Connection::open(&destination)?;
+            chat_database_summary(&exported)
+        })
+    }
+
+    pub fn import_database(
+        &self,
+        source: impl AsRef<Path>,
+    ) -> Result<ChatDatabaseSummary, DatabaseError> {
+        let source = source.as_ref().to_path_buf();
+        if !source.is_file() {
+            return Err(DatabaseError::InvalidOperation(format!(
+                "source database does not exist: {}",
+                source.display()
+            )));
+        }
+        if same_path(&source, &self.path)? {
+            return Err(DatabaseError::InvalidOperation(
+                "source and destination are the same file".into(),
+            ));
+        }
+        let staging = tempfile::tempdir()?;
+        let local_source = staging.path().join(
+            source
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("data.db")),
+        );
+        fs::copy(&source, &local_source)?;
+        for suffix in ["-wal", "-shm"] {
+            let source_sidecar = PathBuf::from(format!("{}{suffix}", source.display()));
+            if source_sidecar.is_file() {
+                fs::copy(
+                    &source_sidecar,
+                    PathBuf::from(format!("{}{suffix}", local_source.display())),
+                )?;
+            }
+        }
+        {
+            let source_connection = Connection::open(&local_source)?;
+            validate_chat_database(&source_connection)?;
+        }
+        let attachment_dir = self.attachment_dir.clone();
+        self.with_connection(|connection| {
+            connection.restore(
+                MAIN_DB,
+                &local_source,
+                None::<fn(rusqlite::backup::Progress)>,
+            )?;
+            connection.pragma_update(None, "foreign_keys", "ON")?;
+            sanitize_database_attachments(connection, &attachment_dir)?;
+            validate_chat_database(connection)?;
+            let _ = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+            chat_database_summary(connection)
+        })
+    }
+
+    pub fn export_relationship_data(&self) -> Result<RelationshipData, DatabaseError> {
+        self.with_connection(|connection| {
+            let relationship_states = {
+                let mut statement = connection.prepare(concat!(
+                    "SELECT id, character, user_key, affection, trust, familiarity, mood, ",
+                    "mood_intensity, summary, updated_at FROM relationship_states ",
+                    "ORDER BY character, user_key"
+                ))?;
+                statement
+                    .query_map([], row_to_relationship_state)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            let character_memories = {
+                let mut statement = connection.prepare(concat!(
+                    "SELECT id, character, user_key, kind, content, importance, source_message_id, ",
+                    "source_group_message_id, created_at, updated_at FROM character_memories ",
+                    "ORDER BY character, user_key, importance DESC, updated_at DESC, id DESC"
+                ))?;
+                statement
+                    .query_map([], row_to_character_memory)?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            Ok(RelationshipData {
+                relationship_states,
+                character_memories,
+            })
+        })
+    }
+
+    pub fn import_relationship_data(
+        &self,
+        data: &RelationshipData,
+    ) -> Result<RelationshipImportSummary, DatabaseError> {
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            let now = now_text(&transaction)?;
+            let mut state_count = 0;
+            for state in &data.relationship_states {
+                let character = state.character.trim();
+                if character.is_empty() {
+                    continue;
+                }
+                let imported = RelationshipState {
+                    id: 0,
+                    character: character.to_owned(),
+                    user_key: normalize_user_key(&state.user_key),
+                    affection: state.affection.clamp(0, 100),
+                    trust: state.trust.clamp(0, 100),
+                    familiarity: state.familiarity.clamp(0, 100),
+                    mood: nonempty_mood(state.mood.trim().to_owned()),
+                    mood_intensity: state.mood_intensity.clamp(0, 100),
+                    summary: state.summary.clone(),
+                    updated_at: if state.updated_at.is_empty() {
+                        now.clone()
+                    } else {
+                        state.updated_at.clone()
+                    },
+                };
+                write_relationship_state(&transaction, &imported)?;
+                state_count += 1;
+            }
+
+            let mut memory_count = 0;
+            for memory in &data.character_memories {
+                let character = memory.character.trim();
+                let content = memory.content.trim();
+                if character.is_empty() || content.is_empty() {
+                    continue;
+                }
+                let created_at = if memory.created_at.is_empty() {
+                    now.clone()
+                } else {
+                    memory.created_at.clone()
+                };
+                let updated_at = if memory.updated_at.is_empty() {
+                    created_at.clone()
+                } else {
+                    memory.updated_at.clone()
+                };
+                transaction.execute(
+                    concat!(
+                        "INSERT INTO character_memories ",
+                        "(character, user_key, kind, content, importance, source_message_id, ",
+                        "source_group_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+                        "ON CONFLICT(character, user_key, content) DO UPDATE SET ",
+                        "kind=excluded.kind, importance=excluded.importance, ",
+                        "source_message_id=coalesce(excluded.source_message_id, character_memories.source_message_id), ",
+                        "source_group_message_id=coalesce(excluded.source_group_message_id, character_memories.source_group_message_id), ",
+                        "updated_at=excluded.updated_at"
+                    ),
+                    params![
+                        character,
+                        normalize_user_key(&memory.user_key),
+                        if memory.kind.trim().is_empty() {
+                            "note"
+                        } else {
+                            memory.kind.trim()
+                        },
+                        content,
+                        memory.importance.clamp(1, 100),
+                        memory.source_message_id,
+                        memory.source_group_message_id,
+                        created_at,
+                        updated_at,
+                    ],
+                )?;
+                memory_count += 1;
+            }
+            transaction.commit()?;
+            Ok(RelationshipImportSummary {
+                relationship_states: state_count,
+                character_memories: memory_count,
+            })
+        })
+    }
+
     pub fn schema_contract(&self) -> Result<Value, DatabaseError> {
         self.with_connection(schema_contract)
     }
@@ -1895,6 +2549,291 @@ fn prune_external_group_thread_messages(
         resync_external_chat_threads(connection)?;
     }
     Ok(deleted)
+}
+
+fn group_key_characters(group_key: &str) -> Vec<String> {
+    group_key
+        .strip_prefix("__group__:")
+        .map(|members| {
+            members
+                .split('|')
+                .filter(|member| !member.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn row_to_chat_history_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatHistoryRecord> {
+    Ok(ChatHistoryRecord {
+        source: row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+        id: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+        conversation_id: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        character: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        group_key: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+        chat_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        user_key: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        role: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+        content: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+        created_at: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+    })
+}
+
+fn row_to_group_conversation(
+    row: &rusqlite::Row<'_>,
+    fixed_group_key: &str,
+    includes_group_key: bool,
+) -> rusqlite::Result<GroupConversation> {
+    let base = usize::from(includes_group_key);
+    let group_key = if includes_group_key {
+        row.get::<_, Option<String>>(0)?.unwrap_or_default()
+    } else {
+        fixed_group_key.to_owned()
+    };
+    let conversation_id = row
+        .get::<_, Option<String>>(base)?
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "default".into());
+    Ok(GroupConversation {
+        group_key,
+        conversation_id,
+        user_key: row.get::<_, Option<String>>(base + 1)?.unwrap_or_default(),
+        message_id: row.get::<_, Option<i64>>(base + 2)?.unwrap_or(0),
+        role: row
+            .get::<_, Option<String>>(base + 3)?
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+        content: row.get::<_, Option<String>>(base + 4)?.unwrap_or_default(),
+        created_at: row.get::<_, Option<String>>(base + 5)?.unwrap_or_default(),
+    })
+}
+
+fn table_count(connection: &Connection, table: &str) -> Result<i64, DatabaseError> {
+    connection
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .map_err(DatabaseError::from)
+}
+
+fn daily_counts_for_source(
+    connection: &Connection,
+    private: bool,
+    modifier: &str,
+    user_key: Option<&str>,
+) -> Result<Vec<(String, i64)>, DatabaseError> {
+    let mut sql = if private {
+        concat!(
+            "SELECT date(m.created_at), COUNT(*) FROM messages m ",
+            "JOIN conversations c ON c.id=m.conversation_id ",
+            "WHERE m.created_at>=datetime('now','localtime',?) "
+        )
+        .to_owned()
+    } else {
+        concat!(
+            "SELECT date(created_at), COUNT(*) FROM group_messages ",
+            "WHERE created_at>=datetime('now','localtime',?) "
+        )
+        .to_owned()
+    };
+    let mut values = vec![SqlValue::Text(modifier.to_owned())];
+    if let Some(user_key) = user_key {
+        sql.push_str(if private {
+            "AND c.user_key=? "
+        } else {
+            "AND user_key=? "
+        });
+        values.push(SqlValue::Text(normalize_user_key(user_key)));
+    }
+    sql.push_str(if private {
+        "GROUP BY date(m.created_at)"
+    } else {
+        "GROUP BY date(created_at)"
+    });
+    let mut statement = connection.prepare(&sql)?;
+    statement
+        .query_map(params_from_iter(values), |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DatabaseError::from)
+}
+
+fn hourly_counts(
+    connection: &Connection,
+    private: bool,
+    modifier: &str,
+    user_key: Option<&str>,
+) -> Result<Vec<(i64, i64, i64)>, DatabaseError> {
+    let mut sql = if private {
+        concat!(
+            "SELECT CAST(strftime('%w',m.created_at) AS INTEGER), ",
+            "CAST(strftime('%H',m.created_at) AS INTEGER), COUNT(*) FROM messages m ",
+            "JOIN conversations c ON c.id=m.conversation_id ",
+            "WHERE m.created_at>=datetime('now','localtime',?) "
+        )
+        .to_owned()
+    } else {
+        concat!(
+            "SELECT CAST(strftime('%w',created_at) AS INTEGER), ",
+            "CAST(strftime('%H',created_at) AS INTEGER), COUNT(*) FROM group_messages ",
+            "WHERE created_at>=datetime('now','localtime',?) "
+        )
+        .to_owned()
+    };
+    let mut values = vec![SqlValue::Text(modifier.to_owned())];
+    if let Some(user_key) = user_key {
+        sql.push_str(if private {
+            "AND c.user_key=? "
+        } else {
+            "AND user_key=? "
+        });
+        values.push(SqlValue::Text(normalize_user_key(user_key)));
+    }
+    sql.push_str("GROUP BY 1, 2");
+    let mut statement = connection.prepare(&sql)?;
+    statement
+        .query_map(params_from_iter(values), |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DatabaseError::from)
+}
+
+fn row_to_relationship_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<RelationshipState> {
+    Ok(RelationshipState {
+        id: row.get::<_, Option<i64>>(0)?.unwrap_or(0),
+        character: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        user_key: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        affection: row.get::<_, Option<i64>>(3)?.unwrap_or(50),
+        trust: row.get::<_, Option<i64>>(4)?.unwrap_or(50),
+        familiarity: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+        mood: nonempty_mood(row.get::<_, Option<String>>(6)?.unwrap_or_default()),
+        mood_intensity: row.get::<_, Option<i64>>(7)?.unwrap_or(20),
+        summary: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+        updated_at: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+    })
+}
+
+fn chat_database_summary(connection: &Connection) -> Result<ChatDatabaseSummary, DatabaseError> {
+    validate_chat_database(connection)?;
+    Ok(ChatDatabaseSummary {
+        conversations: table_count(connection, "conversations")?,
+        messages: table_count(connection, "messages")?,
+        group_messages: table_count(connection, "group_messages")?,
+    })
+}
+
+fn validate_chat_database(connection: &Connection) -> Result<(), DatabaseError> {
+    let tables = {
+        let mut statement =
+            connection.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<BTreeSet<_>, _>>()?
+    };
+    for table in ["conversations", "messages", "group_messages"] {
+        if !tables.contains(table) {
+            return Err(DatabaseError::InvalidOperation(format!(
+                "missing table: {table}"
+            )));
+        }
+    }
+    let requirements = [
+        (
+            "conversations",
+            ["id", "character", "title", "created_at"].as_slice(),
+        ),
+        (
+            "messages",
+            ["id", "conversation_id", "role", "content", "created_at"].as_slice(),
+        ),
+        (
+            "group_messages",
+            [
+                "id",
+                "group_key",
+                "conversation_id",
+                "role",
+                "content",
+                "created_at",
+            ]
+            .as_slice(),
+        ),
+    ];
+    for (table, required) in requirements {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        for column in required {
+            if !columns.contains(*column) {
+                return Err(DatabaseError::InvalidOperation(format!(
+                    "table {table} missing column: {column}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_database_attachments(
+    connection: &Connection,
+    attachment_dir: &Path,
+) -> Result<i64, DatabaseError> {
+    let mut removed = 0;
+    for table in ["messages", "group_messages"] {
+        let rows = {
+            let mut statement = connection.prepare(&format!(
+                "SELECT id, attachments_json FROM {table} WHERE attachments_json != ''"
+            ))?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for (id, raw) in rows {
+            let original = serde_json::from_str::<Value>(&raw).unwrap_or(Value::Array(Vec::new()));
+            let cleaned = sanitize_attachments(Some(&original), attachment_dir);
+            if let Some(original) = original.as_array() {
+                let cleaned_len = cleaned.as_array().map_or(0, Vec::len);
+                removed += original.len().saturating_sub(cleaned_len) as i64;
+            }
+            connection.execute(
+                &format!("UPDATE {table} SET attachments_json=? WHERE id=?"),
+                params![json_text(Some(&cleaned))?, id],
+            )?;
+        }
+    }
+    Ok(removed)
+}
+
+fn same_path(left: &Path, right: &Path) -> Result<bool, DatabaseError> {
+    fn normalized(path: &Path) -> io::Result<PathBuf> {
+        if path.exists() {
+            return dunce::canonicalize(path);
+        }
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        Ok(dunce::canonicalize(parent)?.join(
+            path.file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("data.db")),
+        ))
+    }
+    let left = normalized(left)?;
+    let right = normalized(right)?;
+    if cfg!(windows) {
+        Ok(left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase())
+    } else {
+        Ok(left == right)
+    }
 }
 
 fn relationship_state_from_connection(
@@ -2659,6 +3598,17 @@ mod tests {
         })
     }
 
+    fn normalize_history_search(result: &ChatHistorySearchResult) -> Value {
+        let records = result.records.iter().map(without_times).collect::<Vec<_>>();
+        json!({
+            "total": result.total,
+            "has_more": result.has_more,
+            "records": records,
+            "limit": result.limit,
+            "offset": result.offset,
+        })
+    }
+
     #[test]
     fn schema_matches_the_python_contract() {
         let temp = tempdir().unwrap();
@@ -2773,6 +3723,80 @@ mod tests {
                     .unwrap()
             ),
             expected["chat"]["usage"]
+        );
+
+        let group_ids = vec![
+            database
+                .add_group_message(
+                    "__group__:Ran|Moca",
+                    "group-1",
+                    "user",
+                    "group hello",
+                    "",
+                    None,
+                    None,
+                    "alice",
+                )
+                .unwrap(),
+            database
+                .add_group_message(
+                    "__group__:Ran|Moca",
+                    "group-1",
+                    "assistant",
+                    "【Ran】\ngroup reply",
+                    "",
+                    None,
+                    None,
+                    "alice",
+                )
+                .unwrap(),
+        ];
+        database
+            .set_group_display_name("__group__:Ran|Moca", "Band chat")
+            .unwrap();
+        assert_eq!(json!(group_ids), expected["queries"]["group_ids"]);
+        assert_eq!(
+            json!(database.chat_history_filter_options().unwrap()),
+            expected["queries"]["filter_options"]
+        );
+        let history = database
+            .search_chat_history(&ChatHistoryQuery {
+                keyword: "group hello",
+                character: "Ran",
+                user_key: "alice",
+                source: "group",
+                limit: 10,
+                ..ChatHistoryQuery::default()
+            })
+            .unwrap();
+        assert_eq!(
+            normalize_history_search(&history),
+            expected["queries"]["history_search"]
+        );
+        let group_conversations = database
+            .group_conversations("__group__:Ran|Moca", Some("alice"))
+            .unwrap()
+            .into_iter()
+            .map(without_times)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            json!(group_conversations),
+            expected["queries"]["group_conversations"]
+        );
+        let group_chats = database
+            .group_chats(Some("alice"))
+            .unwrap()
+            .into_iter()
+            .map(without_times)
+            .collect::<Vec<_>>();
+        assert_eq!(json!(group_chats), expected["queries"]["group_chats"]);
+        assert_eq!(
+            database.first_user_message_content(conversation).unwrap(),
+            expected["queries"]["first_user_content"]
+        );
+        assert_eq!(
+            json!(database.chat_summary().unwrap()),
+            expected["queries"]["chat_summary"]
         );
 
         let external_event = json!({
@@ -3096,6 +4120,171 @@ mod tests {
         assert_eq!(deleted.deleted_messages, 1);
         assert_eq!(deleted.deleted_threads, 1);
         assert_eq!(deleted.unread.unwrap().total_unread, 0);
+    }
+
+    #[test]
+    fn history_search_and_analytics_respect_literal_filters_and_user_scope() {
+        let temp = tempdir().unwrap();
+        let database = Database::open(temp.path().join("data.db")).unwrap();
+        let conversation = database.create_conversation("Ran", "", "").unwrap();
+        let other = database.create_conversation("Ran", "", "other").unwrap();
+        let empty = database.create_conversation("Ran", "", "").unwrap();
+        database
+            .add_message(conversation, "user", "literal 100%", "", None, None)
+            .unwrap();
+        database
+            .add_message(
+                conversation,
+                "assistant",
+                "literal 100% again",
+                "",
+                None,
+                None,
+            )
+            .unwrap();
+        database
+            .add_message(other, "user", "literal 100x", "", None, None)
+            .unwrap();
+        database
+            .add_group_message("group", "1", "user", "group", "", None, None, "")
+            .unwrap();
+
+        let first_page = database
+            .search_chat_history(&ChatHistoryQuery {
+                keyword: "100%",
+                user_key: DEFAULT_USER_PROFILE_KEY,
+                limit: 1,
+                skip_count: true,
+                ..ChatHistoryQuery::default()
+            })
+            .unwrap();
+        assert_eq!(first_page.total, -1);
+        assert!(first_page.has_more);
+        assert_eq!(first_page.records.len(), 1);
+
+        let daily = database
+            .daily_message_counts(1, Some(DEFAULT_USER_PROFILE_KEY))
+            .unwrap();
+        assert_eq!(daily.iter().map(|day| day.count).sum::<i64>(), 3);
+        let heatmap = database
+            .hourly_heatmap(1, Some(DEFAULT_USER_PROFILE_KEY))
+            .unwrap();
+        assert_eq!(heatmap.iter().flatten().sum::<i64>(), 3);
+        assert_eq!(
+            database
+                .delete_empty_conversations("Ran", Some(DEFAULT_USER_PROFILE_KEY))
+                .unwrap(),
+            1
+        );
+        assert_ne!(empty, conversation);
+    }
+
+    #[test]
+    fn database_backup_restore_and_relationship_transfer_round_trip() {
+        let temp = tempdir().unwrap();
+        let source_path = temp.path().join("source.db");
+        let export_path = temp.path().join("export.db");
+        let target_path = temp.path().join("target.db");
+        let source = Database::open(&source_path).unwrap();
+        let conversation = source.create_conversation("Ran", "backup", "").unwrap();
+        source
+            .add_message(conversation, "user", "persisted", "", None, None)
+            .unwrap();
+        source
+            .upsert_relationship_state(
+                "Ran",
+                "",
+                &RelationshipUpdate {
+                    affection: Some(87),
+                    summary: Some("trusted"),
+                    ..RelationshipUpdate::default()
+                },
+            )
+            .unwrap();
+        source
+            .add_character_memory("Ran", "", "preference", "likes bread", 80, None, None)
+            .unwrap();
+
+        assert!(matches!(
+            source.export_database(&source_path),
+            Err(DatabaseError::InvalidOperation(_))
+        ));
+        assert_eq!(
+            source.export_database(&export_path).unwrap(),
+            ChatDatabaseSummary {
+                conversations: 1,
+                messages: 1,
+                group_messages: 0,
+            }
+        );
+
+        let target = Database::open(&target_path).unwrap();
+        target.create_conversation("discard", "", "").unwrap();
+        assert_eq!(
+            target.import_database(&export_path).unwrap(),
+            ChatDatabaseSummary {
+                conversations: 1,
+                messages: 1,
+                group_messages: 0,
+            }
+        );
+        assert_eq!(
+            target.get_messages(conversation, None, None).unwrap()[0].content,
+            "persisted"
+        );
+
+        let relationship_data = source.export_relationship_data().unwrap();
+        let relationship_target = Database::open(temp.path().join("relationship.db")).unwrap();
+        assert_eq!(
+            relationship_target
+                .import_relationship_data(&relationship_data)
+                .unwrap(),
+            RelationshipImportSummary {
+                relationship_states: 1,
+                character_memories: 1,
+            }
+        );
+        assert_eq!(
+            relationship_target
+                .relationship_state("Ran", "")
+                .unwrap()
+                .affection,
+            87
+        );
+        assert_eq!(
+            relationship_target
+                .character_memories("Ran", "", 8)
+                .unwrap()[0]
+                .content,
+            "likes bread"
+        );
+    }
+
+    #[test]
+    fn attachment_reference_cleanup_removes_files_that_disappeared() {
+        let temp = tempdir().unwrap();
+        let attachment_dir = temp.path().join("chat_attachments");
+        fs::create_dir(&attachment_dir).unwrap();
+        let attachment = attachment_dir.join("temporary.png");
+        fs::write(&attachment, b"image").unwrap();
+        let database = Database::open(temp.path().join("data.db")).unwrap();
+        let conversation = database.create_conversation("Ran", "", "").unwrap();
+        database
+            .add_message(
+                conversation,
+                "user",
+                "attachment",
+                "",
+                Some(&json!([{"type": "image", "path": attachment}])),
+                None,
+            )
+            .unwrap();
+        fs::remove_file(&attachment).unwrap();
+        assert_eq!(database.sanitize_attachment_references().unwrap(), 1);
+        assert_eq!(
+            database.get_messages(conversation, None, None).unwrap()[0].attachments_json,
+            ""
+        );
     }
 
     #[test]

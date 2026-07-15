@@ -118,6 +118,67 @@
       "untracked_count": 1
     }
   },
+  "queries": {
+    "group_ids": [
+      1,
+      2
+    ],
+    "filter_options": {
+      "characters": [
+        "Moca",
+        "Ran"
+      ],
+      "user_keys": [
+        "__default__",
+        "alice"
+      ]
+    },
+    "history_search": {
+      "total": 1,
+      "has_more": false,
+      "records": [
+        {
+          "source": "group",
+          "id": 1,
+          "conversation_id": "group-1",
+          "character": "",
+          "group_key": "__group__:Ran|Moca",
+          "chat_title": "Band chat",
+          "user_key": "alice",
+          "role": "user",
+          "content": "group hello"
+        }
+      ],
+      "limit": 10,
+      "offset": 0
+    },
+    "group_conversations": [
+      {
+        "group_key": "__group__:Ran|Moca",
+        "conversation_id": "group-1",
+        "user_key": "alice",
+        "message_id": 2,
+        "role": "assistant",
+        "content": "【Ran】\ngroup reply"
+      }
+    ],
+    "group_chats": [
+      {
+        "group_key": "__group__:Ran|Moca",
+        "conversation_id": "group-1",
+        "user_key": "alice",
+        "message_id": 2,
+        "role": "assistant",
+        "content": "【Ran】\ngroup reply"
+      }
+    ],
+    "first_user_content": "hello",
+    "chat_summary": {
+      "total_conversations": 1,
+      "total_messages": 3,
+      "total_group_messages": 2
+    }
+  },
   "external": {
     "first": {
       "duplicate": false,

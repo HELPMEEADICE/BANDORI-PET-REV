@@ -60,9 +60,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   cross-process lock, WAL mode, private/group message pagination, token accounting,
   relationship state/events, long-term memories, usage sessions, external-chat
   retention/unread state, group labels, cascade deletion and attachment-path
-  sanitization are available in `bandori-core`.
-- Pending: database analytics and import/export helpers, LuaJIT Live2D process
-  replacement, application services, full UI replacement and packaging.
+  sanitization are available in `bandori-core`. History search/filtering, group
+  lists, daily/hourly analytics and atomic SQLite backup/restore are also ported.
+- Pending: character-album aggregation helpers, LuaJIT Live2D process replacement,
+  application services, full UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain
