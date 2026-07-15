@@ -302,12 +302,22 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   The legacy faster-whisper installer remains usable as an external compatible
   local endpoint; replacing that Python-managed installer with a packaged native
   offline sidecar belongs to distribution work rather than the GUI process.
+  Native screen awareness now persists its whitelisted schedule, character,
+  capture, model, delivery and privacy controls through Rust and synchronizes the
+  interval with the shared proactive-care cooldown. Qt composites every display,
+  scales the longest edge to 640-1920 px, PNG-encodes within a 24 MiB bound and,
+  on Windows, adds only the explicitly enabled foreground process/title fields.
+  A single-shot timer prevents overlapping captures. Rust supplies persona and
+  relationship context, supports direct main-model vision or an auxiliary-model
+  summary with main-model image fallback, honors cancellation and `NO_SPEAK`, and
+  returns only bounded text/actions. Qt then routes the result through the native
+  system tray or floating pet event and the existing TTS/LIP queue.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity;
-  screen-awareness and remaining integration services; packaged offline ASR
-  sidecar, default-launcher cutover, packaging and multi-platform validation.
+  remaining integration services; packaged offline ASR sidecar,
+  default-launcher cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation

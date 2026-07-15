@@ -715,6 +715,44 @@ def test_native_asr_records_with_qt_and_transcribes_through_rust():
     assert 'QStringLiteral("auto_send")' in window
 
 
+def test_native_screen_awareness_captures_with_qt_and_analyzes_through_rust():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    settings = source("rust/crates/bandori-core/src/screen_awareness_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod screen_awareness_settings;" in core
+    assert "pub struct NativeScreenAwarenessSettings" in settings
+    assert "load_native_screen_awareness_settings" in settings
+    assert "save_native_screen_awareness_settings" in settings
+    assert "deny_unknown_fields" in settings
+    assert "global_cooldown_minutes" in settings
+    assert "screen_awareness_settings_json" in backend
+    assert "startScreenAwareness" in backend
+    assert "cancelScreenAwareness" in backend
+    assert "screenAwarenessEvent" in backend
+    assert "MAX_SCREENSHOT_BYTES" in backend
+    assert "run_screen_awareness" in backend
+    assert "collect_screen_awareness_text" in backend
+    assert "getScreenAwarenessSettingsJson" in generation
+    assert "startScreenAwareness" in generation
+    assert "screenAwarenessEvent" in generation
+    assert "QTimer screenAwarenessTimer_" in window_header
+    assert "QWidget* NativeMainWindow::createScreenAwarenessPage()" in window
+    assert "QGuiApplication::screens()" in window
+    assert "screen->grabWindow(0)" in window
+    assert "nativeForegroundDesktopState" in window
+    assert "backend_.loadScreenAwarenessSettings" in window
+    assert "backend_.saveScreenAwarenessSettings" in window
+    assert "backend_.startScreenAwareness" in window
+    assert "backend_.cancelScreenAwareness" in window
+    assert 'QStringLiteral("NO_SPEAK")' not in window
+    assert 'QStringLiteral("REMINDER_EVENT\\t")' in window
+    assert "enqueueNativeTts(text, character)" in window
+
+
 def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     core = source("rust/crates/bandori-core/src/lib.rs")
     memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")

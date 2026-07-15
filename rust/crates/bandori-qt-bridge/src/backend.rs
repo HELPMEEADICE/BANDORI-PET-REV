@@ -25,6 +25,7 @@ pub mod ffi {
         #[qproperty(QString, llm_settings_json)]
         #[qproperty(QString, tts_settings_json)]
         #[qproperty(QString, asr_settings_json)]
+        #[qproperty(QString, screen_awareness_settings_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
         #[qproperty(QString, persona_settings_json)]
@@ -172,6 +173,34 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "cancelAsrTranscription"]
         fn cancel_asr_transcription(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadScreenAwarenessSettings"]
+        fn load_screen_awareness_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveScreenAwarenessSettings"]
+        fn save_screen_awareness_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startScreenAwareness"]
+        fn start_screen_awareness(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            project_root: &QString,
+            database_path: &QString,
+            capture_json: &QString,
+            png: &QByteArray,
+            force: bool,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelScreenAwareness"]
+        fn cancel_screen_awareness(self: Pin<&mut Self>, request_id: i64) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadMemoryState"]
@@ -495,6 +524,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "asrTranscriptionEvent"]
         fn asr_transcription_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "screenAwarenessEvent"]
+        fn screen_awareness_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -511,6 +544,9 @@ use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::chat_management::{
     delete_owned_group_conversation, delete_owned_private_conversation,
+};
+use bandori_core::chat_prompt::{
+    build_native_system_prompt, build_relationship_context, load_character_markdown,
 };
 use bandori_core::chat_tools::{
     NativeToolCallAccumulator, NativeToolExecutionContext, NativeToolResult,
@@ -550,6 +586,9 @@ use bandori_core::relationship_analysis::{
 use bandori_core::reminder::{
     LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
 };
+use bandori_core::screen_awareness_settings::{
+    load_native_screen_awareness_settings, save_native_screen_awareness_settings,
+};
 use bandori_core::statistics_dashboard::load_native_statistics;
 use bandori_core::tts_settings::{load_native_tts_settings, save_native_tts_settings};
 use bandori_core::user_profiles::{load_native_user_profiles, mutate_native_user_profiles};
@@ -558,9 +597,11 @@ use bandori_llm::{
     LlmTransportRequest, TokenUsage,
 };
 use bandori_tts::{TtsAudioChunk, TtsConfig, TtsRequest, TtsTransport, clean_tts_text};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QByteArray, QString};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -638,6 +679,7 @@ pub struct BackendRust {
     llm_settings_json: QString,
     tts_settings_json: QString,
     asr_settings_json: QString,
+    screen_awareness_settings_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
     persona_settings_json: QString,
@@ -679,6 +721,9 @@ pub struct BackendRust {
     next_asr_request_id: i64,
     active_asr_request_id: i64,
     asr_cancellation: Option<CancellationToken>,
+    next_screen_awareness_request_id: i64,
+    active_screen_awareness_request_id: i64,
+    screen_awareness_cancellation: Option<CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -702,6 +747,7 @@ impl Default for BackendRust {
             llm_settings_json: QString::from("{}"),
             tts_settings_json: QString::from("{}"),
             asr_settings_json: QString::from("{}"),
+            screen_awareness_settings_json: QString::from("{}"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
             persona_settings_json: QString::from("{}"),
@@ -743,6 +789,9 @@ impl Default for BackendRust {
             next_asr_request_id: 1,
             active_asr_request_id: 0,
             asr_cancellation: None,
+            next_screen_awareness_request_id: 1,
+            active_screen_awareness_request_id: 0,
+            screen_awareness_cancellation: None,
             memory_cancellations: HashMap::new(),
         }
     }
@@ -760,6 +809,9 @@ impl Drop for BackendRust {
             cancellation.cancel();
         }
         if let Some(cancellation) = self.asr_cancellation.take() {
+            cancellation.cancel();
+        }
+        if let Some(cancellation) = self.screen_awareness_cancellation.take() {
             cancellation.cancel();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
@@ -1344,6 +1396,139 @@ impl ffi::Backend {
         cancellation.cancel();
         self.as_mut()
             .set_status(QString::from("Native ASR cancellation requested"));
+        true
+    }
+
+    pub fn load_screen_awareness_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_screen_awareness_settings(Path::new(&config_path.to_string())) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native screen-awareness settings serialization cannot fail");
+                self.as_mut()
+                    .set_screen_awareness_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native screen-awareness settings loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Screen-awareness settings error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn save_screen_awareness_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_screen_awareness_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+        ) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native screen-awareness settings serialization cannot fail");
+                self.as_mut()
+                    .set_screen_awareness_settings_json(QString::from(&payload));
+                self.as_mut().set_status(QString::from(
+                    "Native screen-awareness settings saved atomically",
+                ));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Screen-awareness settings save error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_screen_awareness(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        project_root: &QString,
+        database_path: &QString,
+        capture_json: &QString,
+        png: &QByteArray,
+        force: bool,
+    ) -> i64 {
+        if self
+            .as_ref()
+            .get_ref()
+            .rust()
+            .active_screen_awareness_request_id
+            != 0
+        {
+            self.as_mut().set_status(QString::from(
+                "A native screen-awareness request is already running",
+            ));
+            return 0;
+        }
+        let job = match prepare_screen_awareness_job(
+            Path::new(&config_path.to_string()),
+            Path::new(&project_root.to_string()),
+            Path::new(&database_path.to_string()),
+            &capture_json.to_string(),
+            Vec::<u8>::from(png),
+            force,
+        ) {
+            Ok(Some(job)) => job,
+            Ok(None) => {
+                self.as_mut()
+                    .set_status(QString::from("Native screen awareness is disabled"));
+                return 0;
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_screen_awareness_request_id.max(1);
+            state.next_screen_awareness_request_id = request_id.saturating_add(1);
+            state.active_screen_awareness_request_id = request_id;
+            state.screen_awareness_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from("Native screen-awareness analysis started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-screen-awareness-{request_id}"))
+            .spawn(move || run_screen_awareness(qt_thread, request_id, job, cancellation))
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_screen_awareness_request_id = 0;
+            state.screen_awareness_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native screen awareness: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_screen_awareness(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        if state.active_screen_awareness_request_id == 0
+            || (request_id > 0 && request_id != state.active_screen_awareness_request_id)
+        {
+            return false;
+        }
+        let Some(cancellation) = state.screen_awareness_cancellation.as_ref() else {
+            return false;
+        };
+        cancellation.cancel();
+        self.as_mut().set_status(QString::from(
+            "Native screen-awareness cancellation requested",
+        ));
         true
     }
 
@@ -3388,6 +3573,39 @@ impl ffi::Backend {
         self.as_mut()
             .asr_transcription_event(&QString::from(payload.as_str()));
     }
+
+    fn emit_screen_awareness_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
+        if self
+            .as_ref()
+            .get_ref()
+            .rust()
+            .active_screen_awareness_request_id
+            != request_id
+        {
+            return;
+        }
+        let state_name = serde_json::from_str::<Value>(&payload)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default();
+        let status = match state_name.as_str() {
+            "finished" => "Native screen-awareness analysis completed",
+            "no_speak" => "Native screen awareness chose not to interrupt",
+            "cancelled" => "Native screen-awareness analysis cancelled",
+            _ => "Native screen-awareness analysis failed",
+        };
+        let state = self.as_mut().rust_mut().get_mut();
+        state.active_screen_awareness_request_id = 0;
+        state.screen_awareness_cancellation = None;
+        self.as_mut().set_status(QString::from(status));
+        self.as_mut()
+            .screen_awareness_event(&QString::from(payload.as_str()));
+    }
 }
 
 #[derive(Clone)]
@@ -3409,6 +3627,33 @@ struct TtsSynthesisJob {
 struct AsrTranscriptionJob {
     config: AsrConfig,
     audio: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct ScreenAwarenessJob {
+    main_config: LlmTransportConfig,
+    auxiliary_config: Option<LlmTransportConfig>,
+    model_mode: String,
+    character: String,
+    display_name: String,
+    display_mode: String,
+    system_prompt: String,
+    relationship_context: String,
+    image_data_url: String,
+    metrics: Value,
+    desktop_state: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScreenAwarenessCapture {
+    character: String,
+    display_name: String,
+    image_width: u32,
+    image_height: u32,
+    desktop_width: u32,
+    desktop_height: u32,
+    desktop_state: Value,
 }
 
 #[derive(Clone)]
@@ -3547,6 +3792,108 @@ fn prepare_asr_transcription_job(
         },
         audio,
     }))
+}
+
+fn prepare_screen_awareness_job(
+    config_path: &Path,
+    project_root: &Path,
+    database_path: &Path,
+    capture_json: &str,
+    png: Vec<u8>,
+    force: bool,
+) -> Result<Option<ScreenAwarenessJob>, String> {
+    const MAX_CAPTURE_JSON_BYTES: usize = 64 * 1024;
+    const MAX_SCREENSHOT_BYTES: usize = 24 * 1024 * 1024;
+    let settings = load_native_screen_awareness_settings(config_path)
+        .map_err(|error| format!("Screen-awareness settings error: {error}"))?;
+    if !settings.enabled && !force {
+        return Ok(None);
+    }
+    if capture_json.len() > MAX_CAPTURE_JSON_BYTES {
+        return Err("Screen-awareness capture metadata is too large".into());
+    }
+    if png.is_empty() || png.len() > MAX_SCREENSHOT_BYTES {
+        return Err("Screen-awareness PNG is empty or exceeds 24 MiB".into());
+    }
+    let capture: ScreenAwarenessCapture = serde_json::from_str(capture_json)
+        .map_err(|error| format!("Screen-awareness capture metadata is invalid: {error}"))?;
+    let character = checked_screen_character(capture.character)?;
+    let display_name = checked_screen_text(capture.display_name, 256, "display name")?;
+    let config = ConfigDocument::load(config_path)
+        .map_err(|error| format!("Screen-awareness config error: {error}"))?;
+    let main_config = load_llm_transport_config(config_path)?;
+    let auxiliary_config = if settings.model_mode == "aux" {
+        let model = config_string(&config, "llm_aux_model_id");
+        let api_url = nonempty_config_string(&config, "llm_aux_api_url", "llm_api_url");
+        let api_key = nonempty_config_string(&config, "llm_aux_api_key", "llm_api_key");
+        (!model.is_empty() && !api_url.is_empty() && !api_key.is_empty()).then(|| {
+            LlmTransportConfig {
+                api_url,
+                api_key,
+                model,
+                mode: LlmApiMode::ChatCompletions,
+                enable_thinking: None,
+            }
+        })
+    } else {
+        None
+    };
+    let markdown = load_character_markdown(project_root, &character);
+    let system_prompt =
+        build_native_system_prompt(&character, &display_name, config.values(), &markdown);
+    let user_key = {
+        let key = config_string(&config, "active_user_key");
+        if key.is_empty() {
+            "__default__".to_owned()
+        } else {
+            key
+        }
+    };
+    let relationship_context = Database::open(database_path)
+        .and_then(|database| {
+            build_relationship_context(&database, &character, &user_key, &display_name)
+        })
+        .unwrap_or_default();
+    Ok(Some(ScreenAwarenessJob {
+        main_config,
+        auxiliary_config,
+        model_mode: settings.model_mode,
+        character,
+        display_name,
+        display_mode: settings.display_mode,
+        system_prompt,
+        relationship_context,
+        image_data_url: format!("data:image/png;base64,{}", BASE64_STANDARD.encode(png)),
+        metrics: json!({
+            "image_width":capture.image_width,
+            "image_height":capture.image_height,
+            "desktop_width":capture.desktop_width,
+            "desktop_height":capture.desktop_height
+        }),
+        desktop_state: capture.desktop_state,
+    }))
+}
+
+fn checked_screen_character(value: String) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 128
+        || value.contains(['/', '\\', '\0'])
+        || value.chars().any(char::is_control)
+    {
+        Err("Screen-awareness character is invalid".into())
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+fn checked_screen_text(value: String, maximum: usize, label: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.len() > maximum || value.chars().any(char::is_control) {
+        Err(format!("Screen-awareness {label} is invalid"))
+    } else {
+        Ok(value.to_owned())
+    }
 }
 
 fn load_memory_transport_config(path: &Path) -> Result<Option<LlmTransportConfig>, String> {
@@ -3995,6 +4342,187 @@ fn queue_asr_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, paylo
     qt_thread
         .queue(move |backend| {
             backend.emit_asr_payload(request_id, payload);
+        })
+        .ok();
+}
+
+fn run_screen_awareness(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: ScreenAwarenessJob,
+    cancellation: CancellationToken,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_screen_awareness_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "state":"error",
+                    "message":format!("Screen-awareness async runtime error: {error}")
+                }),
+            );
+            return;
+        }
+    };
+    runtime.block_on(execute_screen_awareness(
+        qt_thread,
+        request_id,
+        job,
+        cancellation,
+    ));
+}
+
+async fn execute_screen_awareness(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: ScreenAwarenessJob,
+    cancellation: CancellationToken,
+) {
+    let mut observation = String::new();
+    let mut auxiliary_warning = String::new();
+    let mut send_image_to_main = true;
+    if job.model_mode == "aux" {
+        if let Some(auxiliary_config) = job.auxiliary_config.clone() {
+            let request = LlmTransportRequest {
+                messages: vec![
+                    json!({
+                        "role":"system",
+                        "content":"请观察这张桌面截图，客观概括用户当前可能正在做什么。重点包括应用、网页、代码、错误信息、文档、游戏或聊天等可见线索。不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；不要角色扮演或建议用户做事，只输出 2 到 5 条紧凑观察，用用户当前界面语言回复。"
+                    }),
+                    json!({
+                        "role":"user",
+                        "content":[
+                            {"type":"text","text":"概括当前桌面，但不要复述隐私文本。"},
+                            {"type":"image_url","image_url":{"url":job.image_data_url.clone()}}
+                        ]
+                    }),
+                ],
+                ..Default::default()
+            };
+            match collect_screen_awareness_text(auxiliary_config, request, &cancellation).await {
+                Ok(text) if !text.trim().is_empty() => {
+                    observation = text.trim().to_owned();
+                    send_image_to_main = false;
+                }
+                Ok(_) => auxiliary_warning = "auxiliary vision returned no observation".into(),
+                Err(error) => auxiliary_warning = error,
+            }
+        } else {
+            auxiliary_warning = "auxiliary vision model is not fully configured".into();
+        }
+    }
+    if cancellation.is_cancelled() {
+        queue_screen_awareness_payload(
+            &qt_thread,
+            request_id,
+            json!({"request_id":request_id,"state":"cancelled"}),
+        );
+        return;
+    }
+    let instruction = "你正在为桌宠应用生成基于当前屏幕的自然主动搭话。根据桌面截图或 screen_observation 判断是否值得主动开口。只有在用户可能卡住、专注太久、切换任务、看起来需要鼓励或存在自然搭话点时才说话；如果不需要打扰，只输出 NO_SPEAK。不要说自己在截图、监控或读取屏幕。process_name、app_name、foreground_title 只能用于判断场景和语气，不得在回复中复述进程名、窗口标题、文件名、聊天对象或隐私内容。严格保持角色口吻，只输出 1 到 2 句简短中文，不要解释过程，不要使用 Markdown，可以在末尾保留一个动作标签。";
+    let reminder = json!({
+        "kind":"screen_awareness",
+        "character":job.character,
+        "character_display_name":job.display_name,
+        "screen_observation":observation,
+        "screen_metrics":job.metrics,
+        "desktop_state":job.desktop_state
+    });
+    let user_content = if send_image_to_main {
+        json!([
+            {"type":"text","text":reminder.to_string()},
+            {"type":"image_url","image_url":{"url":job.image_data_url}}
+        ])
+    } else {
+        Value::String(reminder.to_string())
+    };
+    let request = LlmTransportRequest {
+        messages: vec![
+            json!({
+                "role":"system",
+                "content":format!("{}\n\n{}\n\n{}", job.system_prompt, job.relationship_context, instruction)
+            }),
+            json!({"role":"user","content":user_content}),
+        ],
+        ..Default::default()
+    };
+    let payload = match collect_screen_awareness_text(job.main_config, request, &cancellation).await
+    {
+        Ok(text) => {
+            let parsed = parse_chat_response(&text);
+            let clean = parsed.visible_content.trim().to_owned();
+            if clean
+                .trim_matches([' ', '。', '.', '!', '！'])
+                .eq_ignore_ascii_case("NO_SPEAK")
+                || clean.is_empty()
+            {
+                json!({
+                    "request_id":request_id,
+                    "state":"no_speak",
+                    "auxiliary_warning":auxiliary_warning
+                })
+            } else {
+                json!({
+                    "request_id":request_id,
+                    "state":"finished",
+                    "text":clean,
+                    "actions":parsed.actions,
+                    "character":job.character,
+                    "display_name":job.display_name,
+                    "display_mode":job.display_mode,
+                    "auxiliary_warning":auxiliary_warning
+                })
+            }
+        }
+        Err(error) if cancellation.is_cancelled() => {
+            json!({"request_id":request_id,"state":"cancelled","message":error})
+        }
+        Err(error) => json!({
+            "request_id":request_id,
+            "state":"error",
+            "message":error,
+            "auxiliary_warning":auxiliary_warning
+        }),
+    };
+    queue_screen_awareness_payload(&qt_thread, request_id, payload);
+}
+
+async fn collect_screen_awareness_text(
+    config: LlmTransportConfig,
+    request: LlmTransportRequest,
+    cancellation: &CancellationToken,
+) -> Result<String, String> {
+    const MAX_SCREEN_RESPONSE_BYTES: usize = 256 * 1024;
+    let transport = LlmTransport::new(config).map_err(|error| error.to_string())?;
+    let mut text = String::new();
+    transport
+        .stream(&request, cancellation, |event| {
+            if let LlmStreamEvent::TextDelta { text: delta } = event
+                && text.len().saturating_add(delta.len()) <= MAX_SCREEN_RESPONSE_BYTES
+            {
+                text.push_str(&delta);
+            }
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(text)
+}
+
+fn queue_screen_awareness_payload(
+    qt_thread: &ffi::BackendCxxQtThread,
+    request_id: i64,
+    payload: Value,
+) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_screen_awareness_payload(request_id, payload);
         })
         .ok();
 }

@@ -34,6 +34,10 @@ target_link_libraries(bandori-pet-rust PRIVATE
     Qt6::Svg
 )
 
+if(WIN32)
+    target_link_libraries(bandori-pet-rust PRIVATE user32)
+endif()
+
 target_link_libraries(bandori-pet-renderer-rust PRIVATE
     bandori_qt_bridge
     Qt6::Core

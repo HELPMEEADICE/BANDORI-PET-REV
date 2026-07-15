@@ -1,3 +1,15 @@
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
+
 #include "native_main_window.h"
 
 #include <QAbstractItemView>
@@ -6,6 +18,7 @@
 #include <QAudioDevice>
 #include <QAudioOutput>
 #include <QAudioSource>
+#include <QBuffer>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDebug>
@@ -15,6 +28,7 @@
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
@@ -25,9 +39,13 @@
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPixmap>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSystemTrayIcon>
@@ -44,6 +62,10 @@
 #include <cmath>
 #include <limits>
 #include <utility>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 namespace bandori {
 
@@ -346,6 +368,17 @@ NativeMainWindow::NativeMainWindow(
         &Backend::asrTranscriptionEvent,
         this,
         [this](const QString& payloadJson) { handleNativeAsrEvent(payloadJson); });
+    connect(
+        &backend_,
+        &Backend::screenAwarenessEvent,
+        this,
+        [this](const QString& payloadJson) {
+            handleNativeScreenAwarenessEvent(payloadJson);
+        });
+    screenAwarenessTimer_.setSingleShot(true);
+    connect(&screenAwarenessTimer_, &QTimer::timeout, this, [this]() {
+        triggerNativeScreenAwareness(false);
+    });
     reloadBackendState();
     setupTray();
     reminderTimer_.setInterval(15'000);
@@ -448,6 +481,7 @@ void NativeMainWindow::quitFromTray() {
     exitRequested_ = true;
     stopNativeTts();
     stopNativeAsr();
+    stopNativeScreenAwareness();
     clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
         trayIcon_->hide();
@@ -476,6 +510,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     clearPendingChatAttachments();
     stopNativeTts();
     stopNativeAsr();
+    stopNativeScreenAwareness();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
@@ -499,6 +534,7 @@ void NativeMainWindow::setupUi() {
     QWidget* llmSettings = createLlmSettingsPage();
     QWidget* ttsSettings = createTtsSettingsPage();
     QWidget* asrSettings = createAsrSettingsPage();
+    QWidget* screenAwareness = createScreenAwarenessPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
@@ -512,6 +548,7 @@ void NativeMainWindow::setupUi() {
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     ttsSettings->setObjectName(QStringLiteral("ttsSettingsPage"));
     asrSettings->setObjectName(QStringLiteral("asrSettingsPage"));
+    screenAwareness->setObjectName(QStringLiteral("screenAwarenessPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
@@ -525,6 +562,10 @@ void NativeMainWindow::setupUi() {
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(ttsSettings, qfw::FluentIconEnum::Volume, tr("TTS settings"));
     addSubInterface(asrSettings, qfw::FluentIconEnum::Microphone, tr("ASR voice input"));
+    addSubInterface(
+        screenAwareness,
+        qfw::FluentIconEnum::View,
+        tr("Screen awareness"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -2397,6 +2438,136 @@ QWidget* NativeMainWindow::createAsrSettingsPage() {
     return page;
 }
 
+QWidget* NativeMainWindow::createScreenAwarenessPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native screen awareness"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Capture a bounded composite of all displays with Qt, analyze it through Rust, and let a configured character decide whether a short proactive message is appropriate."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* schedule = new qfw::GroupHeaderCardWidget(tr("Schedule and speaker"), content);
+    screenAwarenessEnabledSwitch_ = new qfw::SwitchButton(schedule);
+    screenAwarenessIntervalSpinBox_ = new qfw::SpinBox(schedule);
+    screenAwarenessIntervalSpinBox_->setRange(5, 120);
+    screenAwarenessIntervalSpinBox_->setSuffix(tr(" min"));
+    screenAwarenessIntervalSpinBox_->setFixedWidth(132);
+    screenAwarenessCharacterComboBox_ = new qfw::ComboBox(schedule);
+    screenAwarenessCharacterComboBox_->setMinimumWidth(220);
+    schedule->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Enable screen awareness"),
+        tr("A single-shot timer is rearmed only after the previous analysis completes"),
+        screenAwarenessEnabledSwitch_);
+    schedule->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Clock),
+        tr("Proactive interval"),
+        tr("This stays synchronized with the shared proactive-care cooldown"),
+        screenAwarenessIntervalSpinBox_);
+    schedule->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Speaking character"),
+        tr("Choose a visible pet, the default pet, or one fixed character"),
+        screenAwarenessCharacterComboBox_);
+
+    auto* analysis = new qfw::GroupHeaderCardWidget(tr("Capture and analysis"), content);
+    screenAwarenessMaxWidthSpinBox_ = new qfw::SpinBox(analysis);
+    screenAwarenessMaxWidthSpinBox_->setRange(640, 1920);
+    screenAwarenessMaxWidthSpinBox_->setSingleStep(160);
+    screenAwarenessMaxWidthSpinBox_->setSuffix(tr(" px"));
+    screenAwarenessMaxWidthSpinBox_->setFixedWidth(132);
+    screenAwarenessModelModeComboBox_ = new qfw::ComboBox(analysis);
+    screenAwarenessModelModeComboBox_->addItem(
+        tr("Main model reads screenshot"), QVariant(), QStringLiteral("main"));
+    screenAwarenessModelModeComboBox_->addItem(
+        tr("Auxiliary model summarizes first"), QVariant(), QStringLiteral("aux"));
+    screenAwarenessModelModeComboBox_->setMinimumWidth(250);
+    screenAwarenessDisplayModeComboBox_ = new qfw::ComboBox(analysis);
+    screenAwarenessDisplayModeComboBox_->addItem(
+        tr("Floating pet bubble"), QVariant(), QStringLiteral("floating"));
+    screenAwarenessDisplayModeComboBox_->addItem(
+        tr("System notification"), QVariant(), QStringLiteral("system"));
+    screenAwarenessDisplayModeComboBox_->setMinimumWidth(210);
+    analysis->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Transparent),
+        tr("Screenshot longest edge"),
+        tr("All displays are composited, scaled once, PNG-encoded, and bounded to 24 MiB"),
+        screenAwarenessMaxWidthSpinBox_);
+    analysis->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Screen-reading model"),
+        tr("Auxiliary mode falls back to sending the image to the main model"),
+        screenAwarenessModelModeComboBox_);
+    analysis->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Send),
+        tr("Message delivery"),
+        tr("NO_SPEAK decisions are never displayed"),
+        screenAwarenessDisplayModeComboBox_);
+
+    auto* privacy = new qfw::GroupHeaderCardWidget(tr("Foreground privacy"), content);
+    screenAwarenessIncludeProcessSwitch_ = new qfw::SwitchButton(privacy);
+    screenAwarenessIncludeTitleSwitch_ = new qfw::SwitchButton(privacy);
+    privacy->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Fingerprint),
+        tr("Include foreground process name"),
+        tr("Used only as model context and explicitly forbidden from being repeated"),
+        screenAwarenessIncludeProcessSwitch_);
+    privacy->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Include foreground window title"),
+        tr("Disabled by default because titles may contain file names or private text"),
+        screenAwarenessIncludeTitleSwitch_);
+
+    auto* actions = new QWidget(content);
+    auto* actionsLayout = new QHBoxLayout(actions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+    screenAwarenessTestButton_ = new qfw::PushButton(tr("Capture and test now"), actions);
+    screenAwarenessCancelButton_ = new qfw::PushButton(tr("Cancel"), actions);
+    screenAwarenessSaveButton_ =
+        new qfw::PrimaryPushButton(tr("Save screen-awareness settings"), actions);
+    actionsLayout->addWidget(screenAwarenessTestButton_);
+    actionsLayout->addWidget(screenAwarenessCancelButton_);
+    actionsLayout->addStretch(1);
+    actionsLayout->addWidget(screenAwarenessSaveButton_);
+    screenAwarenessStatusLabel_ = new qfw::CaptionLabel(
+        tr("Screen capture stays local until a scheduled or manual analysis starts."),
+        content);
+    screenAwarenessStatusLabel_->setWordWrap(true);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(schedule);
+    layout->addWidget(analysis);
+    layout->addWidget(privacy);
+    layout->addWidget(actions);
+    layout->addWidget(screenAwarenessStatusLabel_);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(screenAwarenessSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeScreenAwarenessSettings();
+    });
+    connect(screenAwarenessTestButton_, &QPushButton::clicked, this, [this]() {
+        if (saveNativeScreenAwarenessSettings()) {
+            triggerNativeScreenAwareness(true);
+        }
+    });
+    connect(screenAwarenessCancelButton_, &QPushButton::clicked, this, [this]() {
+        stopNativeScreenAwareness();
+    });
+    screenAwarenessCancelButton_->setEnabled(false);
+    return page;
+}
+
 QWidget* NativeMainWindow::createSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
@@ -2764,10 +2935,12 @@ void NativeMainWindow::applyBackendState() {
     populateChatCharacters();
     populateMemoryCharacters();
     populateReminderCharacters();
+    populateNativeScreenAwarenessCharacters();
     loadNativeReminderState();
     loadNativeLlmSettings();
     loadNativeTtsSettings();
     loadNativeAsrSettings();
+    loadNativeScreenAwarenessSettings();
     refreshNativeMemoryState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
@@ -3920,6 +4093,471 @@ void NativeMainWindow::stopNativeAsr() {
     }
     if (asrCancelButton_ != nullptr) {
         asrCancelButton_->setEnabled(activeAsrRequestId_ != 0);
+    }
+}
+
+void NativeMainWindow::populateNativeScreenAwarenessCharacters() {
+    if (screenAwarenessCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString previous = screenAwarenessCharacterComboBox_->currentData().toString();
+    const QString savedMode =
+        screenAwarenessSettings_
+            .value(QStringLiteral("character_mode"))
+            .toString(QStringLiteral("random_visible"));
+    const QString savedCharacter =
+        screenAwarenessSettings_.value(QStringLiteral("character")).toString().trimmed();
+    const QSignalBlocker blocker(screenAwarenessCharacterComboBox_);
+    screenAwarenessCharacterComboBox_->clear();
+    screenAwarenessCharacterComboBox_->addItem(
+        tr("Random visible character"), QVariant(), QStringLiteral("__random_visible__"));
+    screenAwarenessCharacterComboBox_->addItem(
+        tr("Default configured character"), QVariant(), QStringLiteral("__default__"));
+    QStringList added;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character.isEmpty() || added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        screenAwarenessCharacterComboBox_->addItem(
+            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
+            QVariant(),
+            model.character);
+    }
+    if (!savedCharacter.isEmpty()
+        && screenAwarenessCharacterComboBox_->findData(savedCharacter) < 0) {
+        screenAwarenessCharacterComboBox_->addItem(savedCharacter, QVariant(), savedCharacter);
+    }
+    QString selected;
+    if (!screenAwarenessSettings_.isEmpty()) {
+        selected = savedMode == QStringLiteral("fixed")
+            ? savedCharacter
+            : (savedMode == QStringLiteral("default")
+                   ? QStringLiteral("__default__")
+                   : QStringLiteral("__random_visible__"));
+    } else {
+        selected = previous;
+    }
+    const int index = screenAwarenessCharacterComboBox_->findData(selected);
+    screenAwarenessCharacterComboBox_->setCurrentIndex(index < 0 ? 0 : index);
+}
+
+void NativeMainWindow::loadNativeScreenAwarenessSettings() {
+    if (screenAwarenessEnabledSwitch_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadScreenAwarenessSettings(configPath_)) {
+        screenAwarenessStatusLabel_->setText(backend_.getStatus());
+        screenAwarenessTimer_.stop();
+        return;
+    }
+    screenAwarenessSettings_ = parseObject(backend_.getScreenAwarenessSettingsJson());
+    populateNativeScreenAwarenessCharacters();
+    syncNativeScreenAwarenessControls();
+    scheduleNativeScreenAwareness();
+}
+
+void NativeMainWindow::syncNativeScreenAwarenessControls() {
+    if (screenAwarenessEnabledSwitch_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker enabledBlocker(screenAwarenessEnabledSwitch_);
+    const QSignalBlocker intervalBlocker(screenAwarenessIntervalSpinBox_);
+    const QSignalBlocker characterBlocker(screenAwarenessCharacterComboBox_);
+    const QSignalBlocker widthBlocker(screenAwarenessMaxWidthSpinBox_);
+    const QSignalBlocker modelBlocker(screenAwarenessModelModeComboBox_);
+    const QSignalBlocker displayBlocker(screenAwarenessDisplayModeComboBox_);
+    const QSignalBlocker processBlocker(screenAwarenessIncludeProcessSwitch_);
+    const QSignalBlocker titleBlocker(screenAwarenessIncludeTitleSwitch_);
+    screenAwarenessEnabledSwitch_->setChecked(
+        screenAwarenessSettings_.value(QStringLiteral("enabled")).toBool(false));
+    screenAwarenessIntervalSpinBox_->setValue(
+        screenAwarenessSettings_.value(QStringLiteral("interval_minutes")).toInt(30));
+    screenAwarenessMaxWidthSpinBox_->setValue(
+        screenAwarenessSettings_.value(QStringLiteral("max_screenshot_width")).toInt(1920));
+    const int modelIndex = screenAwarenessModelModeComboBox_->findData(
+        screenAwarenessSettings_
+            .value(QStringLiteral("model_mode"))
+            .toString(QStringLiteral("main")));
+    screenAwarenessModelModeComboBox_->setCurrentIndex(modelIndex < 0 ? 0 : modelIndex);
+    const int displayIndex = screenAwarenessDisplayModeComboBox_->findData(
+        screenAwarenessSettings_
+            .value(QStringLiteral("display_mode"))
+            .toString(QStringLiteral("floating")));
+    screenAwarenessDisplayModeComboBox_->setCurrentIndex(displayIndex < 0 ? 0 : displayIndex);
+    screenAwarenessIncludeProcessSwitch_->setChecked(
+        screenAwarenessSettings_
+            .value(QStringLiteral("include_process_name"))
+            .toBool(true));
+    screenAwarenessIncludeTitleSwitch_->setChecked(
+        screenAwarenessSettings_
+            .value(QStringLiteral("include_window_title"))
+            .toBool(false));
+    screenAwarenessStatusLabel_->setText(
+        screenAwarenessEnabledSwitch_->isChecked()
+            ? tr("Screen awareness is enabled; the next capture is scheduled after the configured interval")
+            : tr("Screen awareness is disabled; manual tests remain available"));
+}
+
+bool NativeMainWindow::saveNativeScreenAwarenessSettings() {
+    if (screenAwarenessEnabledSwitch_ == nullptr) {
+        return false;
+    }
+    const QString selection =
+        screenAwarenessCharacterComboBox_->currentData().toString().trimmed();
+    QString characterMode = QStringLiteral("fixed");
+    QString character = selection;
+    if (selection == QStringLiteral("__random_visible__")) {
+        characterMode = QStringLiteral("random_visible");
+        character.clear();
+    } else if (selection == QStringLiteral("__default__")) {
+        characterMode = QStringLiteral("default");
+        character.clear();
+    }
+    const QJsonObject settings {
+        {QStringLiteral("enabled"), screenAwarenessEnabledSwitch_->isChecked()},
+        {QStringLiteral("interval_minutes"), screenAwarenessIntervalSpinBox_->value()},
+        {QStringLiteral("character_mode"), characterMode},
+        {QStringLiteral("character"), character},
+        {QStringLiteral("max_screenshot_width"), screenAwarenessMaxWidthSpinBox_->value()},
+        {QStringLiteral("model_mode"),
+         screenAwarenessModelModeComboBox_->currentData().toString()},
+        {QStringLiteral("display_mode"),
+         screenAwarenessDisplayModeComboBox_->currentData().toString()},
+        {QStringLiteral("include_process_name"),
+         screenAwarenessIncludeProcessSwitch_->isChecked()},
+        {QStringLiteral("include_window_title"),
+         screenAwarenessIncludeTitleSwitch_->isChecked()},
+    };
+    if (!backend_.saveScreenAwarenessSettings(configPath_, compactJson(settings))) {
+        screenAwarenessStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    screenAwarenessSettings_ = parseObject(backend_.getScreenAwarenessSettingsJson());
+    syncNativeScreenAwarenessControls();
+    scheduleNativeScreenAwareness();
+    screenAwarenessStatusLabel_->setText(tr("Native screen-awareness settings saved"));
+    return true;
+}
+
+void NativeMainWindow::scheduleNativeScreenAwareness() {
+    screenAwarenessTimer_.stop();
+    if (exitRequested_ || activeScreenAwarenessRequestId_ != 0
+        || !screenAwarenessSettings_.value(QStringLiteral("enabled")).toBool(false)) {
+        return;
+    }
+    const int minutes = std::clamp(
+        screenAwarenessSettings_.value(QStringLiteral("interval_minutes")).toInt(30),
+        5,
+        120);
+    screenAwarenessTimer_.start(minutes * 60 * 1'000);
+}
+
+QString NativeMainWindow::chooseNativeScreenAwarenessCharacter() const {
+    const QString mode =
+        screenAwarenessSettings_
+            .value(QStringLiteral("character_mode"))
+            .toString(QStringLiteral("random_visible"));
+    if (mode == QStringLiteral("fixed")) {
+        return screenAwarenessSettings_.value(QStringLiteral("character")).toString().trimmed();
+    }
+    QList<ModelCatalogItem> candidates;
+    if (mode == QStringLiteral("random_visible") && !activeSpecs_.isEmpty()) {
+        QStringList added;
+        for (const PetLaunchSpec& spec : activeSpecs_) {
+            const QString character = spec.character.trimmed();
+            if (character.isEmpty() || added.contains(character)) {
+                continue;
+            }
+            added.append(character);
+            const auto found = std::find_if(
+                catalog_.cbegin(), catalog_.cend(), [&character](const ModelCatalogItem& model) {
+                    return model.character == character;
+                });
+            if (found != catalog_.cend()) {
+                candidates.append(*found);
+            }
+        }
+    }
+    if (candidates.isEmpty()) {
+        candidates = configuredModels();
+    }
+    if (candidates.isEmpty()) {
+        return {};
+    }
+    if (mode == QStringLiteral("random_visible") && candidates.size() > 1) {
+        return candidates
+            .at(QRandomGenerator::global()->bounded(static_cast<int>(candidates.size())))
+            .character;
+    }
+    return candidates.first().character;
+}
+
+QByteArray NativeMainWindow::captureNativeDesktop(QJsonObject* metadata) const {
+    if (metadata == nullptr) {
+        return {};
+    }
+    QRect desktopGeometry;
+    const QList<QScreen*> screens = QGuiApplication::screens();
+    for (const QScreen* screen : screens) {
+        if (screen != nullptr) {
+            desktopGeometry = desktopGeometry.united(screen->geometry());
+        }
+    }
+    const qint64 pixels =
+        static_cast<qint64>(desktopGeometry.width()) * desktopGeometry.height();
+    if (!desktopGeometry.isValid() || pixels <= 0 || pixels > 100'000'000) {
+        return {};
+    }
+    QImage composite(desktopGeometry.size(), QImage::Format_RGB32);
+    if (composite.isNull()) {
+        return {};
+    }
+    composite.fill(Qt::black);
+    QPainter painter(&composite);
+    bool capturedAny = false;
+    for (QScreen* screen : screens) {
+        if (screen == nullptr) {
+            continue;
+        }
+        const QPixmap pixmap = screen->grabWindow(0);
+        if (pixmap.isNull()) {
+            continue;
+        }
+        const QRect target(
+            screen->geometry().topLeft() - desktopGeometry.topLeft(),
+            screen->geometry().size());
+        painter.drawPixmap(target, pixmap, pixmap.rect());
+        capturedAny = true;
+    }
+    painter.end();
+    if (!capturedAny) {
+        return {};
+    }
+    const int maximum = std::clamp(
+        screenAwarenessSettings_
+            .value(QStringLiteral("max_screenshot_width"))
+            .toInt(1920),
+        640,
+        1920);
+    QImage encoded = composite;
+    if (std::max(encoded.width(), encoded.height()) > maximum) {
+        encoded = encoded.scaled(
+            maximum,
+            maximum,
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation);
+    }
+    QByteArray png;
+    QBuffer buffer(&png);
+    if (!buffer.open(QIODevice::WriteOnly) || !encoded.save(&buffer, "PNG")
+        || png.isEmpty() || png.size() > 24 * 1024 * 1024) {
+        return {};
+    }
+    metadata->insert(QStringLiteral("image_width"), encoded.width());
+    metadata->insert(QStringLiteral("image_height"), encoded.height());
+    metadata->insert(QStringLiteral("desktop_width"), desktopGeometry.width());
+    metadata->insert(QStringLiteral("desktop_height"), desktopGeometry.height());
+    metadata->insert(QStringLiteral("desktop_state"), nativeForegroundDesktopState());
+    return png;
+}
+
+QJsonObject NativeMainWindow::nativeForegroundDesktopState() const {
+    QJsonObject state {
+        {QStringLiteral("state"), QStringLiteral("desktop")},
+        {QStringLiteral("label"), QStringLiteral("使用电脑")},
+        {QStringLiteral("confidence"), 0.5},
+        {QStringLiteral("reason"), QStringLiteral("Qt native foreground context")},
+        {QStringLiteral("captured_at"), currentLocalDateTime()},
+    };
+#ifdef Q_OS_WIN
+    LASTINPUTINFO inputInfo {};
+    inputInfo.cbSize = sizeof(inputInfo);
+    if (GetLastInputInfo(&inputInfo)) {
+        const DWORD idleMilliseconds = GetTickCount() - inputInfo.dwTime;
+        const int idleSeconds = static_cast<int>(idleMilliseconds / 1'000);
+        state.insert(QStringLiteral("idle_seconds"), idleSeconds);
+        state.insert(QStringLiteral("idle_threshold_seconds"), 180);
+        if (idleSeconds >= 180) {
+            state.insert(QStringLiteral("state"), QStringLiteral("idle"));
+            state.insert(QStringLiteral("label"), QStringLiteral("发呆/离开"));
+            state.insert(QStringLiteral("confidence"), 0.95);
+            state.insert(
+                QStringLiteral("reason"),
+                QStringLiteral("Keyboard and pointer have been idle"));
+        }
+    }
+    const HWND window = GetForegroundWindow();
+    if (window != nullptr) {
+        if (screenAwarenessSettings_
+                .value(QStringLiteral("include_window_title"))
+                .toBool(false)) {
+            wchar_t title[141] = {};
+            const int length = GetWindowTextW(window, title, 141);
+            if (length > 0) {
+                state.insert(
+                    QStringLiteral("foreground_title"),
+                    QString::fromWCharArray(title, length));
+            }
+        }
+        if (screenAwarenessSettings_
+                .value(QStringLiteral("include_process_name"))
+                .toBool(true)) {
+            DWORD processId = 0;
+            GetWindowThreadProcessId(window, &processId);
+            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+            if (process != nullptr) {
+                wchar_t path[4096] = {};
+                DWORD length = 4096;
+                if (QueryFullProcessImageNameW(process, 0, path, &length) && length > 0) {
+                    const QFileInfo info(QString::fromWCharArray(path, static_cast<int>(length)));
+                    state.insert(
+                        QStringLiteral("process_name"),
+                        info.fileName().toLower());
+                    state.insert(QStringLiteral("app_name"), info.completeBaseName());
+                }
+                CloseHandle(process);
+            }
+        }
+    }
+#endif
+    return state;
+}
+
+void NativeMainWindow::triggerNativeScreenAwareness(bool force) {
+    screenAwarenessTimer_.stop();
+    if (activeScreenAwarenessRequestId_ != 0) {
+        screenAwarenessStatusLabel_->setText(tr("A screen-awareness analysis is already running"));
+        return;
+    }
+    if (!force
+        && !screenAwarenessSettings_.value(QStringLiteral("enabled")).toBool(false)) {
+        return;
+    }
+    const QString character = chooseNativeScreenAwarenessCharacter();
+    if (character.isEmpty()) {
+        screenAwarenessStatusLabel_->setText(
+            tr("No configured character is available for screen awareness"));
+        scheduleNativeScreenAwareness();
+        return;
+    }
+    QJsonObject capture;
+    const QByteArray png = captureNativeDesktop(&capture);
+    if (png.isEmpty()) {
+        screenAwarenessStatusLabel_->setText(
+            tr("Qt could not capture the desktop, or the PNG exceeded the safety limit"));
+        scheduleNativeScreenAwareness();
+        return;
+    }
+    capture.insert(QStringLiteral("character"), character);
+    QString displayName = displayNameForCharacter(character).trimmed();
+    if (displayName.isEmpty()) {
+        displayName = character;
+    }
+    capture.insert(QStringLiteral("display_name"), displayName);
+    const qint64 requestId = backend_.startScreenAwareness(
+        configPath_,
+        projectRoot_,
+        QDir(projectRoot_).filePath(QStringLiteral("data.db")),
+        compactJson(capture),
+        png,
+        force);
+    if (requestId <= 0) {
+        screenAwarenessStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        scheduleNativeScreenAwareness();
+        return;
+    }
+    activeScreenAwarenessRequestId_ = requestId;
+    screenAwarenessTestButton_->setEnabled(false);
+    screenAwarenessCancelButton_->setEnabled(true);
+    screenAwarenessStatusLabel_->setText(
+        tr("Desktop captured; Rust is asking the configured model whether to speak…"));
+}
+
+void NativeMainWindow::handleNativeScreenAwarenessEvent(const QString& payloadJson) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (requestId <= 0 || requestId != activeScreenAwarenessRequestId_) {
+        return;
+    }
+    activeScreenAwarenessRequestId_ = 0;
+    screenAwarenessTestButton_->setEnabled(true);
+    screenAwarenessCancelButton_->setEnabled(false);
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    if (state == QStringLiteral("finished")) {
+        const QString text = payload.value(QStringLiteral("text")).toString().trimmed();
+        const QString character = payload.value(QStringLiteral("character")).toString().trimmed();
+        QString displayName = payload.value(QStringLiteral("display_name")).toString().trimmed();
+        if (displayName.isEmpty()) {
+            displayName = displayNameForCharacter(character).trimmed();
+        }
+        if (displayName.isEmpty()) {
+            displayName = QStringLiteral("BandoriPet");
+        }
+        const QJsonArray actions = payload.value(QStringLiteral("actions")).toArray();
+        const QString action = actions.isEmpty()
+            ? QStringLiteral("surprised")
+            : actions.first().toString(QStringLiteral("surprised"));
+        enqueueNativeTts(text, character);
+        if (payload.value(QStringLiteral("display_mode")).toString()
+                == QStringLiteral("system")
+            && trayIcon_ != nullptr) {
+            trayIcon_->showMessage(
+                displayName, text, QSystemTrayIcon::Information, 15'000);
+            if (!action.isEmpty()) {
+                supervisor_.broadcastControlLine(
+                    QStringLiteral("ACTION\t%1\t%2").arg(character, action));
+            }
+        } else {
+            QJsonObject event {
+                {QStringLiteral("source"), QStringLiteral("screen_awareness")},
+                {QStringLiteral("kind"), QStringLiteral("screen_awareness")},
+                {QStringLiteral("state"), QStringLiteral("done")},
+                {QStringLiteral("mode"), QStringLiteral("replace_raw")},
+                {QStringLiteral("character"), character},
+                {QStringLiteral("title"), displayName},
+                {QStringLiteral("text"), text},
+                {QStringLiteral("action"), action},
+                {QStringLiteral("ttl_ms"), 18'000},
+                {QStringLiteral("anchor_to_pet"), true},
+            };
+            supervisor_.broadcastControlLine(
+                QStringLiteral("REMINDER_EVENT\t") + compactJson(event));
+        }
+        const QString warning =
+            payload.value(QStringLiteral("auxiliary_warning")).toString().trimmed();
+        screenAwarenessStatusLabel_->setText(
+            warning.isEmpty()
+                ? tr("Screen awareness delivered a proactive character message")
+                : tr("Message delivered after auxiliary-model fallback: %1").arg(warning));
+    } else if (state == QStringLiteral("no_speak")) {
+        screenAwarenessStatusLabel_->setText(
+            tr("The character decided not to interrupt this time"));
+    } else if (state == QStringLiteral("cancelled")) {
+        screenAwarenessStatusLabel_->setText(tr("Native screen-awareness analysis cancelled"));
+    } else {
+        QString message = payload.value(QStringLiteral("message")).toString().trimmed();
+        if (message.isEmpty()) {
+            message = tr("Native screen-awareness analysis failed");
+        }
+        screenAwarenessStatusLabel_->setText(message);
+        serviceStatusLabel_->setText(message);
+    }
+    scheduleNativeScreenAwareness();
+}
+
+void NativeMainWindow::stopNativeScreenAwareness() {
+    screenAwarenessTimer_.stop();
+    if (activeScreenAwarenessRequestId_ != 0) {
+        backend_.cancelScreenAwareness(activeScreenAwarenessRequestId_);
+    }
+    if (screenAwarenessStatusLabel_ != nullptr) {
+        screenAwarenessStatusLabel_->setText(tr("Native screen awareness stopped"));
+    }
+    if (screenAwarenessCancelButton_ != nullptr) {
+        screenAwarenessCancelButton_->setEnabled(activeScreenAwarenessRequestId_ != 0);
     }
 }
 
