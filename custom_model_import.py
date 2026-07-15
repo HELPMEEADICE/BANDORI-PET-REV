@@ -27,6 +27,8 @@ MODEL_JSON_NAME = "model.json"
 MODEL3_JSON_SUFFIX = ".model3.json"
 _INVALID_NAME_CHARS = '<>:"/\\|?*'
 _MAX_NAME_LENGTH = 64
+_MAX_ZIP_MEMBERS = 10_000
+_MAX_ZIP_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class CustomModelImportError(Exception):
@@ -364,10 +366,20 @@ def import_from_zip(zip_path: str, display_name: str,
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
-    """Extract a zip, rejecting path traversal (Zip Slip) entries."""
+    """Extract a zip, rejecting unsafe paths and resource usage."""
+    members = zf.infolist()
+    if len(members) > _MAX_ZIP_MEMBERS:
+        raise CustomModelImportError("bad_zip", detail="too many files in archive")
+    unpacked_size = sum(
+        max(0, int(member.file_size))
+        for member in members
+        if not member.is_dir()
+    )
+    if unpacked_size > _MAX_ZIP_UNCOMPRESSED_BYTES:
+        raise CustomModelImportError("bad_zip", detail="archive is too large when extracted")
     dest = dest.resolve()
-    for member in zf.namelist():
-        target = (dest / member).resolve()
+    for member in members:
+        target = (dest / member.filename).resolve()
         if dest != target and dest not in target.parents:
             raise CustomModelImportError("bad_zip", detail="unsafe path in archive")
     zf.extractall(dest)
