@@ -17,6 +17,7 @@ pub mod cross_chat_history;
 pub mod dashboard;
 pub mod database;
 pub mod group_chat;
+pub mod history_dashboard;
 pub mod ipc;
 pub mod ipc_ffi;
 pub mod llm_settings;

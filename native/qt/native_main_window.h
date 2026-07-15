@@ -52,6 +52,7 @@ private:
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
     QWidget* createChatPage();
+    QWidget* createHistorySearchPage();
     QWidget* createMemoryPage();
     QWidget* createUserProfilesPage();
     QWidget* createPersonaPage();
@@ -110,6 +111,10 @@ private:
     void saveNativeCharacterPersona(bool asNew);
     void deleteSelectedNativeCharacterPersona();
     void importNativeCharacterPersonaDocuments();
+    void loadNativeHistoryFilters();
+    void syncNativeHistoryFilters();
+    void searchNativeHistory(bool append);
+    void resetNativeHistoryFilters();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -206,6 +211,22 @@ private:
     bool updatingChatControls_ = false;
     bool draftingNewConversation_ = false;
     bool groupSequenceActive_ = false;
+    QJsonObject historyFiltersState_;
+    qint64 historyTotal_ = -1;
+    int historyOffset_ = 0;
+    bool historyHasMore_ = false;
+    qfw::LineEdit* historyKeywordEdit_ = nullptr;
+    qfw::LineEdit* historyDateFromEdit_ = nullptr;
+    qfw::LineEdit* historyDateToEdit_ = nullptr;
+    qfw::ComboBox* historyCharacterComboBox_ = nullptr;
+    qfw::ComboBox* historyUserComboBox_ = nullptr;
+    qfw::ComboBox* historyRoleComboBox_ = nullptr;
+    qfw::ComboBox* historySourceComboBox_ = nullptr;
+    qfw::PrimaryPushButton* historySearchButton_ = nullptr;
+    qfw::PushButton* historyResetButton_ = nullptr;
+    qfw::ListWidget* historyList_ = nullptr;
+    qfw::PushButton* historyLoadMoreButton_ = nullptr;
+    qfw::CaptionLabel* historyStatusLabel_ = nullptr;
     QTimer reminderTimer_;
     QJsonObject reminderState_;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;

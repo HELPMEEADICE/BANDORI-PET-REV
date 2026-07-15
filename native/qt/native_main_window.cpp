@@ -397,6 +397,7 @@ void NativeMainWindow::setupUi() {
     QWidget* dashboard = createDashboardPage();
     QWidget* models = createModelsPage();
     chatPage_ = createChatPage();
+    QWidget* history = createHistorySearchPage();
     QWidget* memory = createMemoryPage();
     QWidget* userProfiles = createUserProfilesPage();
     QWidget* personas = createPersonaPage();
@@ -405,6 +406,7 @@ void NativeMainWindow::setupUi() {
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
+    history->setObjectName(QStringLiteral("historySearchPage"));
     memory->setObjectName(QStringLiteral("memoryPage"));
     userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
     personas->setObjectName(QStringLiteral("personasPage"));
@@ -413,6 +415,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
+    addSubInterface(history, qfw::FluentIconEnum::Search, tr("History search"));
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
     addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
     addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
@@ -699,6 +702,123 @@ QWidget* NativeMainWindow::createChatPage() {
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
+    return page;
+}
+
+QWidget* NativeMainWindow::createHistorySearchPage() {
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(16);
+
+    auto* title = new qfw::TitleLabel(tr("Search all chat history"), page);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Search private and group messages through one Rust-owned query with bounded filters and pagination."),
+        page);
+    subtitle->setWordWrap(true);
+    auto* filters = new qfw::GroupHeaderCardWidget(tr("History filters"), page);
+
+    historyKeywordEdit_ = new qfw::LineEdit(filters);
+    historyKeywordEdit_->setPlaceholderText(tr("Message keyword (literal matching)"));
+    historySearchButton_ = new qfw::PrimaryPushButton(tr("Search"), filters);
+    historyResetButton_ = new qfw::PushButton(tr("Reset"), filters);
+    auto* keywordEditor = new QWidget(filters);
+    auto* keywordLayout = new QHBoxLayout(keywordEditor);
+    keywordLayout->setContentsMargins(0, 0, 0, 0);
+    keywordLayout->setSpacing(8);
+    keywordLayout->addWidget(historyKeywordEdit_, 1);
+    keywordLayout->addWidget(historySearchButton_);
+    keywordLayout->addWidget(historyResetButton_);
+
+    historyDateFromEdit_ = new qfw::LineEdit(filters);
+    historyDateToEdit_ = new qfw::LineEdit(filters);
+    historyDateFromEdit_->setPlaceholderText(QStringLiteral("yyyy-MM-dd"));
+    historyDateToEdit_->setPlaceholderText(QStringLiteral("yyyy-MM-dd"));
+    historyDateFromEdit_->setMaxLength(10);
+    historyDateToEdit_->setMaxLength(10);
+    auto* dateEditor = new QWidget(filters);
+    auto* dateLayout = new QHBoxLayout(dateEditor);
+    dateLayout->setContentsMargins(0, 0, 0, 0);
+    dateLayout->setSpacing(8);
+    dateLayout->addWidget(historyDateFromEdit_);
+    dateLayout->addWidget(new qfw::CaptionLabel(tr("through"), dateEditor));
+    dateLayout->addWidget(historyDateToEdit_);
+
+    historyCharacterComboBox_ = new qfw::ComboBox(filters);
+    historyUserComboBox_ = new qfw::ComboBox(filters);
+    historyRoleComboBox_ = new qfw::ComboBox(filters);
+    historyRoleComboBox_->addItem(tr("All speakers"), QVariant(), QString());
+    historyRoleComboBox_->addItem(tr("User"), QVariant(), QStringLiteral("user"));
+    historyRoleComboBox_->addItem(tr("Character"), QVariant(), QStringLiteral("assistant"));
+    historyRoleComboBox_->addItem(tr("System"), QVariant(), QStringLiteral("system"));
+    historySourceComboBox_ = new qfw::ComboBox(filters);
+    historySourceComboBox_->addItem(tr("Private and group chats"), QVariant(), QString());
+    historySourceComboBox_->addItem(tr("Private chats"), QVariant(), QStringLiteral("private"));
+    historySourceComboBox_->addItem(tr("Group chats"), QVariant(), QStringLiteral("group"));
+
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Search),
+        tr("Keyword"),
+        tr("Percent and underscore are treated as literal characters"),
+        keywordEditor);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
+        tr("Date range"),
+        tr("Leave both fields blank to search every date"),
+        dateEditor);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Character"),
+        tr("Group chats match any member in the canonical group key"),
+        historyCharacterComboBox_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Person),
+        tr("User partition"),
+        tr("Includes normal user profiles and role-POV partitions found in the database"),
+        historyUserComboBox_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Speaker"),
+        tr("Filter user, character, or system messages"),
+        historyRoleComboBox_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Chat type"),
+        tr("Search private chats, group chats, or both"),
+        historySourceComboBox_);
+
+    historyList_ = new qfw::ListWidget(page);
+    historyList_->setSelectionMode(QAbstractItemView::NoSelection);
+    historyList_->setWordWrap(true);
+    historyList_->setAlternatingRowColors(false);
+    historyLoadMoreButton_ = new qfw::PushButton(tr("Load more"), page);
+    historyStatusLabel_ = new qfw::CaptionLabel(tr("History filters have not loaded"), page);
+    auto* resultActions = new QWidget(page);
+    auto* resultActionsLayout = new QHBoxLayout(resultActions);
+    resultActionsLayout->setContentsMargins(0, 0, 0, 0);
+    resultActionsLayout->setSpacing(8);
+    resultActionsLayout->addWidget(historyStatusLabel_, 1);
+    resultActionsLayout->addWidget(historyLoadMoreButton_);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(filters);
+    layout->addWidget(historyList_, 1);
+    layout->addWidget(resultActions);
+
+    connect(historySearchButton_, &QPushButton::clicked, this, [this]() {
+        searchNativeHistory(false);
+    });
+    connect(historyResetButton_, &QPushButton::clicked, this, [this]() {
+        resetNativeHistoryFilters();
+    });
+    connect(historyLoadMoreButton_, &QPushButton::clicked, this, [this]() {
+        searchNativeHistory(true);
+    });
+    connect(historyKeywordEdit_, &QLineEdit::returnPressed, this, [this]() {
+        searchNativeHistory(false);
+    });
+    historyLoadMoreButton_->setEnabled(false);
     return page;
 }
 
@@ -1783,6 +1903,7 @@ void NativeMainWindow::applyBackendState() {
     populateModelList();
     loadNativeUserProfiles();
     loadNativePersonaSettings();
+    loadNativeHistoryFilters();
     populateChatCharacters();
     populateMemoryCharacters();
     populateReminderCharacters();
@@ -3045,6 +3166,159 @@ void NativeMainWindow::importNativeCharacterPersonaDocuments() {
         failed.isEmpty()
             ? tr("Persona documents imported into the editor; save to persist them")
             : tr("Imported readable documents; %1 file(s) failed").arg(failed.size()));
+}
+
+void NativeMainWindow::loadNativeHistoryFilters() {
+    if (historyCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.loadHistoryFilters(databasePath)) {
+        historyStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    historyFiltersState_ = parseObject(backend_.getHistoryFiltersJson());
+    syncNativeHistoryFilters();
+    searchNativeHistory(false);
+}
+
+void NativeMainWindow::syncNativeHistoryFilters() {
+    const QString selectedCharacter = historyCharacterComboBox_->currentData().toString();
+    const QString selectedUser = historyUserComboBox_->currentData().toString();
+    historyCharacterComboBox_->clear();
+    historyCharacterComboBox_->addItem(tr("All characters"), QVariant(), QString());
+    for (const QJsonValue& value :
+         historyFiltersState_.value(QStringLiteral("characters")).toArray()) {
+        const QString character = value.toString().trimmed();
+        if (!character.isEmpty()) {
+            historyCharacterComboBox_->addItem(
+                displayNameForCharacter(character), QVariant(), character);
+        }
+    }
+    const int characterIndex = historyCharacterComboBox_->findData(selectedCharacter);
+    historyCharacterComboBox_->setCurrentIndex(characterIndex < 0 ? 0 : characterIndex);
+
+    historyUserComboBox_->clear();
+    historyUserComboBox_->addItem(tr("All user partitions"), QVariant(), QString());
+    for (const QJsonValue& value :
+         historyFiltersState_.value(QStringLiteral("user_keys")).toArray()) {
+        const QString userKey = value.toString().trimmed();
+        if (userKey.isEmpty()) {
+            continue;
+        }
+        QString label = userKey;
+        if (userKey == QStringLiteral("__default__")) {
+            label = tr("Default user");
+        } else if (userKey.startsWith(QStringLiteral("__role__:"))) {
+            const QString roleCharacter = userKey.mid(9);
+            label = tr("Role POV · %1").arg(displayNameForCharacter(roleCharacter));
+        }
+        historyUserComboBox_->addItem(label, QVariant(), userKey);
+    }
+    const int userIndex = historyUserComboBox_->findData(selectedUser);
+    historyUserComboBox_->setCurrentIndex(userIndex < 0 ? 0 : userIndex);
+}
+
+void NativeMainWindow::searchNativeHistory(bool append) {
+    if (historyList_ == nullptr || (append && !historyHasMore_)) {
+        return;
+    }
+    historySearchButton_->setEnabled(false);
+    historyLoadMoreButton_->setEnabled(false);
+    historyStatusLabel_->setText(append ? tr("Loading more history…") : tr("Searching history…"));
+    const int offset = append ? historyOffset_ : 0;
+    const QJsonObject query {
+        {QStringLiteral("keyword"), historyKeywordEdit_->text().trimmed()},
+        {QStringLiteral("date_from"), historyDateFromEdit_->text().trimmed()},
+        {QStringLiteral("date_to"), historyDateToEdit_->text().trimmed()},
+        {QStringLiteral("character"), historyCharacterComboBox_->currentData().toString()},
+        {QStringLiteral("user_key"), historyUserComboBox_->currentData().toString()},
+        {QStringLiteral("role"), historyRoleComboBox_->currentData().toString()},
+        {QStringLiteral("source"), historySourceComboBox_->currentData().toString()},
+        {QStringLiteral("limit"), 50},
+        {QStringLiteral("offset"), offset},
+        {QStringLiteral("skip_count"), append},
+    };
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.searchHistory(databasePath, compactJson(query))) {
+        historyStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        historySearchButton_->setEnabled(true);
+        historyLoadMoreButton_->setEnabled(historyHasMore_);
+        return;
+    }
+    const QJsonObject result = parseObject(backend_.getHistoryResultJson());
+    const QJsonArray records = result.value(QStringLiteral("records")).toArray();
+    if (!append) {
+        historyList_->clear();
+        historyOffset_ = 0;
+        historyTotal_ = result.value(QStringLiteral("total")).toInteger(-1);
+    }
+    for (const QJsonValue& value : records) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject record = value.toObject();
+        const QString source = record.value(QStringLiteral("source")).toString();
+        const QString role = record.value(QStringLiteral("role")).toString();
+        const QString userKey = record.value(QStringLiteral("user_key")).toString();
+        const QString character = record.value(QStringLiteral("character")).toString();
+        const QString groupKey = record.value(QStringLiteral("group_key")).toString();
+        const QString target = source == QStringLiteral("group")
+            ? groupDisplayName(groupKey)
+            : displayNameForCharacter(character);
+        const QString sourceLabel = source == QStringLiteral("group") ? tr("Group") : tr("Private");
+        const QString roleLabel = role == QStringLiteral("user")
+            ? tr("User")
+            : (role == QStringLiteral("assistant") ? tr("Character") : tr("System"));
+        QString userLabel = userKey;
+        if (userKey == QStringLiteral("__default__")) {
+            userLabel = tr("Default user");
+        } else if (userKey.startsWith(QStringLiteral("__role__:"))) {
+            userLabel = tr("Role POV · %1").arg(
+                displayNameForCharacter(userKey.mid(9)));
+        }
+        const QString content = record.value(QStringLiteral("content")).toString();
+        QString preview = content;
+        if (preview.size() > 600) {
+            preview = preview.left(600).trimmed() + QStringLiteral("…");
+        }
+        const QString createdAt = record.value(QStringLiteral("created_at")).toString();
+        auto* item = new QListWidgetItem(
+            QStringLiteral("%1 · %2 · %3 · %4\n%5\n%6")
+                .arg(createdAt, sourceLabel, target, roleLabel, userLabel, preview),
+            historyList_);
+        item->setToolTip(content);
+        const int estimatedLines = std::clamp(
+            3 + preview.count(QLatin1Char('\n')) + preview.size() / 90, 3, 9);
+        item->setSizeHint(QSize(0, 22 * estimatedLines));
+    }
+    historyOffset_ += records.size();
+    historyHasMore_ = result.value(QStringLiteral("has_more")).toBool()
+        || (historyTotal_ >= 0 && historyOffset_ < historyTotal_);
+    historySearchButton_->setEnabled(true);
+    historyLoadMoreButton_->setEnabled(historyHasMore_);
+    if (historyList_->count() == 0) {
+        historyStatusLabel_->setText(tr("No history matched these filters"));
+    } else if (historyTotal_ >= 0) {
+        historyStatusLabel_->setText(
+            tr("Showing %1 of %2 messages").arg(historyList_->count()).arg(historyTotal_));
+    } else {
+        historyStatusLabel_->setText(
+            tr("Showing %1 messages").arg(historyList_->count()));
+    }
+}
+
+void NativeMainWindow::resetNativeHistoryFilters() {
+    historyKeywordEdit_->clear();
+    historyDateFromEdit_->clear();
+    historyDateToEdit_->clear();
+    historyRoleComboBox_->setCurrentIndex(0);
+    historySourceComboBox_->setCurrentIndex(0);
+    historyCharacterComboBox_->setCurrentIndex(0);
+    historyUserComboBox_->setCurrentIndex(0);
+    loadNativeHistoryFilters();
 }
 
 void NativeMainWindow::syncSettingsControls() {

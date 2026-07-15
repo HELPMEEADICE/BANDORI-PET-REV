@@ -254,12 +254,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   `__role__:<character>` chat/relationship/memory partition when role POV is
   active. The Qt-Fluent page also imports local Markdown/text documents without
   moving configuration rules into C++.
+  A separate native history-search page now queries private and group messages
+  through one Rust database path. Keyword, calendar-date, character/member,
+  user-partition, speaker and source filters are bounded and whitelisted, with
+  count-aware 50-row pagination in Qt. Character album-chain ordering also uses
+  the latest matching speaker message, so a later reply from another group
+  member cannot reorder the selected character's conversation chain.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
   screen-awareness and remaining integration services; the remaining
-  history/statistics/data-management pages; provider model
+  statistics/data-management pages; provider model
   discovery/connection checks; default-launcher cutover, packaging and
   multi-platform validation.
 

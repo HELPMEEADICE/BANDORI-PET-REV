@@ -688,6 +688,41 @@ def test_native_persona_settings_are_rust_owned_and_qt_fluent_managed():
     assert "qfw::GroupHeaderCardWidget" in window
 
 
+def test_native_history_search_is_bounded_unified_and_paginated():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    history = source("rust/crates/bandori-core/src/history_dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod history_dashboard;" in core
+    assert "pub struct NativeHistoryQuery" in history
+    assert '#[serde(default, deny_unknown_fields)]' in history
+    assert "pub fn load_native_history_filters" in history
+    assert "pub fn search_native_history" in history
+    assert "MAX_HISTORY_PAGE_SIZE" in history
+    assert "checked_date" in history
+    assert "history_dashboard_searches_private_and_group_records_with_literal_filters" in history
+    assert "history_filters_json" in backend
+    assert "history_result_json" in backend
+    assert "MAX_HISTORY_QUERY_BYTES" in backend
+    assert "fn load_history_filters(" in backend
+    assert "fn search_history(" in backend
+    assert '"getHistoryFiltersJson"' in bridge_test
+    assert '"getHistoryResultJson"' in bridge_test
+    assert '"loadHistoryFilters"' in bridge_test
+    assert '"searchHistory"' in bridge_test
+    assert "QWidget* createHistorySearchPage()" in header
+    assert "qfw::LineEdit* historyKeywordEdit_" in header
+    assert "qfw::ListWidget* historyList_" in header
+    assert "backend_.loadHistoryFilters" in window
+    assert "backend_.searchHistory" in window
+    assert 'QStringLiteral("skip_count")' in window
+    assert "historyHasMore_" in window
+    assert "loadNativeHistoryFilters();" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

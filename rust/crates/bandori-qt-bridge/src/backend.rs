@@ -24,6 +24,8 @@ pub mod ffi {
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
         #[qproperty(QString, persona_settings_json)]
+        #[qproperty(QString, history_filters_json)]
+        #[qproperty(QString, history_result_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -142,6 +144,18 @@ pub mod ffi {
             project_root: &QString,
             characters_json: &QString,
             command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadHistoryFilters"]
+        fn load_history_filters(self: Pin<&mut Self>, database_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "searchHistory"]
+        fn search_history(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            query_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -364,6 +378,7 @@ use bandori_core::group_chat::{
     build_native_group_chat_request, conversation_key_for, fallback_group_plan,
     group_assistant_content, load_native_group_chat_snapshot, parse_group_plan,
 };
+use bandori_core::history_dashboard::{load_native_history_filters, search_native_history};
 use bandori_core::llm_settings::{
     load_native_llm_settings, mutate_native_llm_profiles, save_native_llm_settings,
 };
@@ -402,6 +417,7 @@ const MAX_LLM_SETTINGS_BYTES: usize = 256 * 1024;
 const MAX_MEMORY_COMMAND_BYTES: usize = 128 * 1024;
 const MAX_USER_PROFILE_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_PERSONA_COMMAND_BYTES: usize = 1024 * 1024;
+const MAX_HISTORY_QUERY_BYTES: usize = 64 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -464,6 +480,8 @@ pub struct BackendRust {
     memory_snapshot_json: QString,
     user_profiles_json: QString,
     persona_settings_json: QString,
+    history_filters_json: QString,
+    history_result_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -512,6 +530,8 @@ impl Default for BackendRust {
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
             persona_settings_json: QString::from("{}"),
+            history_filters_json: QString::from("{}"),
+            history_result_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -1041,6 +1061,51 @@ impl ffi::Backend {
                 self.as_mut().set_status(QString::from(&format!(
                     "Persona settings change error: {error}"
                 )));
+                false
+            }
+        }
+    }
+
+    pub fn load_history_filters(mut self: Pin<&mut Self>, database_path: &QString) -> bool {
+        match load_native_history_filters(Path::new(&database_path.to_string())) {
+            Ok(filters) => {
+                let payload = serde_json::to_string(&filters)
+                    .expect("native history filters serialization cannot fail");
+                self.as_mut()
+                    .set_history_filters_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "History filters load error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn search_history(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        query_json: &QString,
+    ) -> bool {
+        match search_native_history(
+            Path::new(&database_path.to_string()),
+            &query_json.to_string(),
+            MAX_HISTORY_QUERY_BYTES,
+        ) {
+            Ok(result) => {
+                let payload = serde_json::to_string(&result)
+                    .expect("native history result serialization cannot fail");
+                self.as_mut()
+                    .set_history_result_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native history query completed"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("History query error: {error}")));
                 false
             }
         }

@@ -3443,32 +3443,40 @@ fn group_conversation_album_preview(
     conversation_id: &str,
     user_key: &str,
     aliases: &BTreeSet<String>,
-) -> Result<(String, i64), DatabaseError> {
+) -> Result<(String, i64, String), DatabaseError> {
     let rows = {
         let mut statement = connection.prepare(concat!(
-            "SELECT role, content FROM group_messages WHERE group_key=? ",
+            "SELECT role, content, created_at FROM group_messages WHERE group_key=? ",
             "AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ",
             "AND user_key=? ORDER BY id DESC"
         ))?;
         statement
             .query_map(
                 params![group_key, conversation_id, conversation_id, user_key],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )?
             .collect::<Result<Vec<_>, _>>()?
     };
     let mut preview = String::new();
+    let mut last_message_at = String::new();
     let mut count = 0;
-    for (role, content) in rows {
+    for (role, content, created_at) in rows {
         if !group_message_matches_character(&role, &content, aliases) {
             continue;
         }
         count += 1;
         if preview.is_empty() {
             preview = content;
+            last_message_at = created_at;
         }
     }
-    Ok((preview, count))
+    Ok((preview, count, last_message_at))
 }
 
 fn character_conversation_chain(
@@ -3544,7 +3552,7 @@ fn character_conversation_chain(
             continue;
         }
         let conversation_id = if row.1.is_empty() { "default" } else { &row.1 };
-        let (preview, message_count) = group_conversation_album_preview(
+        let (preview, message_count, matching_last_message_at) = group_conversation_album_preview(
             connection,
             &row.0,
             conversation_id,
@@ -3559,7 +3567,11 @@ fn character_conversation_chain(
             title: String::new(),
             created_at: row.2.clone(),
             first_message_at: row.2,
-            last_message_at: row.3,
+            last_message_at: if matching_last_message_at.is_empty() {
+                row.3
+            } else {
+                matching_last_message_at
+            },
             message_count: if message_count == 0 {
                 row.4
             } else {
@@ -5113,6 +5125,71 @@ mod tests {
             1
         );
         assert_ne!(empty, conversation);
+    }
+
+    #[test]
+    fn character_album_chain_ignores_later_replies_from_other_group_speakers() {
+        let temp = tempdir().unwrap();
+        let database = Database::open(temp.path().join("data.db")).unwrap();
+        let user_id = database
+            .add_group_message(
+                "__group__:Moca|Ran",
+                "group-1",
+                "user",
+                "hello",
+                "",
+                None,
+                None,
+                "alice",
+            )
+            .unwrap();
+        let ran_id = database
+            .add_group_message(
+                "__group__:Moca|Ran",
+                "group-1",
+                "assistant",
+                "【Ran】\nRan reply",
+                "",
+                None,
+                None,
+                "alice",
+            )
+            .unwrap();
+        let moca_id = database
+            .add_group_message(
+                "__group__:Moca|Ran",
+                "group-1",
+                "assistant",
+                "【Moca】\nMoca reply",
+                "",
+                None,
+                None,
+                "alice",
+            )
+            .unwrap();
+        database
+            .with_connection(|connection| {
+                for (id, created_at) in [
+                    (user_id, "2026-07-15 10:00:00"),
+                    (ran_id, "2026-07-15 10:01:00"),
+                    (moca_id, "2026-07-15 10:02:00"),
+                ] {
+                    connection.execute(
+                        "UPDATE group_messages SET created_at=? WHERE id=?",
+                        params![created_at, id],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let chain = database
+            .character_conversation_chain("Ran", "alice", 20, &["Ran".to_owned()])
+            .unwrap();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].preview, "【Ran】\nRan reply");
+        assert_eq!(chain[0].last_message_at, "2026-07-15 10:01:00");
+        assert_eq!(chain[0].message_count, 2);
     }
 
     #[test]
