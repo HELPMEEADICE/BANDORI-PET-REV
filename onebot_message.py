@@ -159,6 +159,10 @@ def onebot_event_mentions_self(event: dict) -> bool:
             if str(data.get("qq") or "").strip() == self_id:
                 return True
     raw_message = str(event.get("raw_message") or "")
-    if raw_message and f"[CQ:at,qq={self_id}" in raw_message:
+    if raw_message and re.search(
+        rf"\[CQ:at,qq={re.escape(self_id)}(?:,|\])",
+        raw_message,
+        flags=re.IGNORECASE,
+    ):
         return True
     return False
