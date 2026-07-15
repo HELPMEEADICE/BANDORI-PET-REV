@@ -208,6 +208,41 @@ class LLMApiProfileSaveTests(unittest.TestCase):
         page.close()
         harness.close()
 
+    def test_load_config_tolerates_infinite_auto_continue_limit(self):
+        harness = _LLMPageHarness()
+        page = harness._build_llm_page()
+        harness._cfg = _ConfigStub()
+        harness._cfg.data["llm_auto_continue_max_turns"] = float("inf")
+        harness._cfg.data["llm_active_api_profile"] = "test"
+        harness._cfg.active_user_profile = lambda: {"key": "test"}
+        harness._llm_config_widgets_ready = lambda: True
+        harness._reload_user_profile_combo = lambda _key: None
+        harness._load_user_profile_fields = lambda _profile: None
+        harness._pov_mode = harness._llm_api_mode
+        harness._pov_custom_prompt = harness._llm_custom_system_prompt
+        harness._pov_role_character = harness._llm_api_mode
+        harness._reload_pov_persona_combo = lambda: None
+        harness._on_pov_mode_changed = lambda _index: None
+        harness._reload_llm_api_profiles = lambda _name: None
+
+        harness._load_llm_config()
+
+        self.assertEqual(5, harness._llm_auto_continue_max_turns.value())
+        page.close()
+        harness.close()
+
+    def test_apply_profile_tolerates_infinite_auto_continue_limit(self):
+        harness = _LLMPageHarness()
+        page = harness._build_llm_page()
+
+        harness._apply_llm_api_profile(
+            _profile(llm_auto_continue_max_turns=float("inf"))
+        )
+
+        self.assertEqual(5, harness._llm_auto_continue_max_turns.value())
+        page.close()
+        harness.close()
+
     def test_live_widget_values_are_compared_with_active_profile(self):
         profile = _profile(llm_model_id="saved-model")
         harness = _LLMProfileHarness(profile)
