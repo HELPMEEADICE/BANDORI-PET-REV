@@ -1,6 +1,10 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from screen_awareness import (
+    clamp_screen_awareness_interval,
+    clamp_screen_awareness_screenshot_width,
+)
 
 
 SCREEN_AWARENESS_CONFIG_KEYS = (
@@ -187,9 +191,8 @@ class ScreenAwarenessPageMixin:
             policy = normalize_proactive_care_policy(
                 self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {})
             )
-            policy["global_cooldown_minutes"] = max(
-                5,
-                min(120, int(data.get("screen_awareness_interval_minutes", 30) or 30)),
+            policy["global_cooldown_minutes"] = clamp_screen_awareness_interval(
+                data.get("screen_awareness_interval_minutes", 30) or 30
             )
             self._cfg.set(PROACTIVE_CARE_POLICY_CONFIG_KEY, policy)
         self._load_screen_awareness_controls()
@@ -245,16 +248,20 @@ class ScreenAwarenessPageMixin:
             return
         self._screen_awareness_enabled.setChecked(bool(self._cfg.get("screen_awareness_enabled", False)))
         policy = normalize_proactive_care_policy(self._cfg.get(PROACTIVE_CARE_POLICY_CONFIG_KEY, {}))
-        shared_interval = int(policy.get(
+        shared_interval = clamp_screen_awareness_interval(policy.get(
             "global_cooldown_minutes",
             self._cfg.get("screen_awareness_interval_minutes", 30),
         ) or 30)
-        self._screen_awareness_interval.setValue(max(5, min(120, shared_interval)))
+        self._screen_awareness_interval.setValue(shared_interval)
         self._fill_screen_awareness_character_combo(
             str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
             self._cfg.get("screen_awareness_character", ""),
         )
-        self._screen_awareness_max_width.setValue(max(640, min(1920, int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920))))
+        self._screen_awareness_max_width.setValue(
+            clamp_screen_awareness_screenshot_width(
+                self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920
+            )
+        )
         self._set_screen_awareness_model_mode(self._cfg.get("screen_awareness_model_mode", "main"))
         self._set_screen_awareness_display_mode(
             self._cfg.get(SCREEN_AWARENESS_DISPLAY_MODE_KEY, DISPLAY_MODE_FLOATING)
@@ -298,10 +305,14 @@ class ScreenAwarenessPageMixin:
         if self._cfg:
             return {
                 "screen_awareness_enabled": bool(self._cfg.get("screen_awareness_enabled", False)),
-                "screen_awareness_interval_minutes": int(self._cfg.get("screen_awareness_interval_minutes", 30) or 30),
+                "screen_awareness_interval_minutes": clamp_screen_awareness_interval(
+                    self._cfg.get("screen_awareness_interval_minutes", 30) or 30
+                ),
                 "screen_awareness_character_mode": str(self._cfg.get("screen_awareness_character_mode", "random_visible") or "random_visible"),
                 "screen_awareness_character": str(self._cfg.get("screen_awareness_character", "") or ""),
-                "screen_awareness_max_screenshot_width": int(self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920),
+                "screen_awareness_max_screenshot_width": clamp_screen_awareness_screenshot_width(
+                    self._cfg.get("screen_awareness_max_screenshot_width", 1920) or 1920
+                ),
                 "screen_awareness_model_mode": str(self._cfg.get("screen_awareness_model_mode", "main") or "main"),
                 "screen_awareness_include_process_name": bool(self._cfg.get("screen_awareness_include_process_name", True)),
                 "screen_awareness_include_window_title": bool(self._cfg.get("screen_awareness_include_window_title", False)),
