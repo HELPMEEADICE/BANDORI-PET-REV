@@ -25,6 +25,14 @@ class NapcatDeliverySemanticsTest(unittest.TestCase):
 
         self.assertTrue(onebot_event_mentions_self(event))
 
+    def test_raw_cq_mention_accepts_qq_after_other_parameters(self):
+        event = {
+            "self_id": 123,
+            "raw_message": "[CQ:at,name=BandoriPet,qq=123] 你好",
+        }
+
+        self.assertTrue(onebot_event_mentions_self(event))
+
     def test_main_does_not_auto_reply_to_duplicate_saved_messages(self):
         from pathlib import Path
 
