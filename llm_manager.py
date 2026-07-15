@@ -55,6 +55,16 @@ _MOC3_ACTION_TAGS = (
 )
 
 _ACTION_INSTRUCTION_RE = re.compile(r"\n\n【重要指令】：必须在最后加动作标签：.*?(?=\n\n|$)", re.S)
+_MAX_STREAM_ITEM_INDEX = 1024
+
+
+def _coerce_stream_item_index(value) -> int | None:
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return index if 0 <= index <= _MAX_STREAM_ITEM_INDEX else None
+
 
 def _make_prompt(intro: str, suffix: str) -> str:
     return f"{intro}\n\n【重要指令】：必须在最后加动作标签：{suffix}"
@@ -1091,22 +1101,26 @@ class LLMStreamWorker(_CancelableNetworkWorker):
         for call_delta in delta.get("tool_calls") or []:
             raw_index = call_delta.get("index")
             call_id = str(call_delta.get("id", "") or "")
-            if raw_index is None and call_id:
-                index = next(
-                    (
-                        item_index
-                        for item_index, item in enumerate(self._stream_tool_calls)
-                        if item.get("id") == call_id
-                    ),
-                    len(self._stream_tool_calls),
-                )
+            matching_index = next(
+                (
+                    item_index
+                    for item_index, item in enumerate(self._stream_tool_calls)
+                    if call_id and item.get("id") == call_id
+                ),
+                None,
+            )
+            if raw_index is None and matching_index is not None:
+                index = matching_index
             elif raw_index is None and len(self._stream_tool_calls) == 1:
                 index = 0
             else:
-                try:
-                    index = int(raw_index if raw_index is not None else len(self._stream_tool_calls))
-                except (TypeError, ValueError):
-                    index = len(self._stream_tool_calls)
+                index = _coerce_stream_item_index(raw_index)
+                if index is None:
+                    index = (
+                        matching_index
+                        if matching_index is not None
+                        else len(self._stream_tool_calls)
+                    )
             while len(self._stream_tool_calls) <= index:
                 self._stream_tool_calls.append({
                     "id": "",
@@ -1553,15 +1567,16 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
 
     def _function_call_target(self, item_id, output_index):
         item_id = str(item_id or "")
-        try:
-            index = int(output_index)
-        except (TypeError, ValueError):
-            index = len(self._stream_tool_calls)
         for target in self._stream_tool_calls:
             if item_id and target.get("_item_id") == item_id:
                 return target
-            if target.get("_output_index") == index:
-                return target
+        index = _coerce_stream_item_index(output_index)
+        if index is not None:
+            for target in self._stream_tool_calls:
+                if target.get("_output_index") == index:
+                    return target
+        else:
+            index = len(self._stream_tool_calls)
         target = {
             "id": "",
             "type": "function",

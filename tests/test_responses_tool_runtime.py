@@ -15,6 +15,46 @@ from local_tools import responses_tools
 
 
 class ResponsesToolRuntimeTests(unittest.TestCase):
+    def test_chat_tool_call_negative_index_does_not_overwrite_previous_call(self):
+        worker = LLMStreamWorker("https://example.com/v1", "key", "model", [])
+        worker._collect_tool_call_delta({"tool_calls": [{
+            "index": 0,
+            "id": "call-first",
+            "function": {"name": "first", "arguments": "{}"},
+        }]})
+        worker._collect_tool_call_delta({"tool_calls": [{
+            "index": -1,
+            "id": "call-second",
+            "function": {"name": "second", "arguments": "{}"},
+        }]})
+
+        self.assertEqual(
+            ["first", "second"],
+            [call["function"]["name"] for call in worker._stream_tool_calls],
+        )
+
+    def test_chat_tool_call_oversized_index_does_not_allocate_sparse_entries(self):
+        worker = LLMStreamWorker("https://example.com/v1", "key", "model", [])
+        worker._collect_tool_call_delta({"tool_calls": [{
+            "index": 10000,
+            "id": "call-first",
+            "function": {"name": "first", "arguments": "{}"},
+        }]})
+
+        self.assertEqual(1, len(worker._stream_tool_calls))
+        self.assertEqual("call-first", worker._stream_tool_calls[0]["id"])
+
+    def test_responses_invalid_output_indexes_do_not_merge_distinct_calls(self):
+        worker = ResponsesStreamWorker(
+            "https://example.com/v1/responses", "key", "model", []
+        )
+
+        first = worker._function_call_target("fc-first", -1)
+        second = worker._function_call_target("fc-second", -1)
+
+        self.assertIsNot(first, second)
+        self.assertEqual(2, len(worker._stream_tool_calls))
+
     def test_missing_tool_call_ids_are_unique_across_calls_and_rounds(self):
         calls = [
             {"function": {"name": "first", "arguments": "{}"}},
