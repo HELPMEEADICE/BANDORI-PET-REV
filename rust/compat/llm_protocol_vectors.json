@@ -1,0 +1,46 @@
+{
+  "endpoints": [
+    {
+      "input": "",
+      "chat_completions": "",
+      "responses": "",
+      "models": "",
+      "supports_responses": false
+    },
+    {
+      "input": "https://api.openai.com/v1",
+      "chat_completions": "https://api.openai.com/v1/chat/completions",
+      "responses": "https://api.openai.com/v1/responses",
+      "models": "https://api.openai.com/v1/models",
+      "supports_responses": true
+    },
+    {
+      "input": "https://api.openai.com/v1/chat/completions",
+      "chat_completions": "https://api.openai.com/v1/chat/completions",
+      "responses": "https://api.openai.com/v1/responses",
+      "models": "https://api.openai.com/v1/models",
+      "supports_responses": true
+    },
+    {
+      "input": "https://api.openai.com/v1/responses?tenant=1",
+      "chat_completions": "https://api.openai.com/v1/responses?tenant=1/chat/completions",
+      "responses": "https://api.openai.com/v1/responses?tenant=1/responses",
+      "models": "https://api.openai.com/v1/models",
+      "supports_responses": true
+    },
+    {
+      "input": "https://openrouter.ai/api/v1",
+      "chat_completions": "https://openrouter.ai/api/v1/chat/completions",
+      "responses": "https://openrouter.ai/api/v1/responses",
+      "models": "https://openrouter.ai/api/v1/models",
+      "supports_responses": false
+    },
+    {
+      "input": "https://generativelanguage.googleapis.com/v1beta/models?key=test",
+      "chat_completions": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key=test",
+      "responses": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key=test",
+      "models": "https://generativelanguage.googleapis.com/v1beta/openai/models?key=test",
+      "supports_responses": false
+    }
+  ]
+}

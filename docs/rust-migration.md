@@ -144,6 +144,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   is deliberately read-only until the LLM/tool
   orchestration path is ported, so dual-track operation cannot append orphaned
   user messages without an assistant response.
+  The first transport-independent LLM protocol layer is also in Rust. It keeps
+  the Python endpoint rules for Chat Completions, Responses and Google OpenAI
+  compatibility, converts messages into Responses input items, builds thinking
+  and tool-aware request bodies, and normalizes both SSE dialects into shared
+  text, reasoning, tool-call, usage, response-id and completion events. Network
+  I/O, cancellation and local-tool execution remain staged behind this boundary.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

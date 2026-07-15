@@ -18,6 +18,12 @@ def rendered_contracts() -> dict[Path, str]:
         sys.path.insert(0, str(ROOT))
     from config_manager import DEFAULTS
     from ipc_bus import is_control_ipc_line, is_reliable_ipc_line
+    from llm_api_compat import (
+        chat_completions_api_url,
+        models_api_url,
+        responses_api_url,
+        supports_openai_responses_api,
+    )
     from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
@@ -31,6 +37,27 @@ def rendered_contracts() -> dict[Path, str]:
 
     database_contract = _database_contract()
     database_vectors = _database_behavior_contract()
+
+    llm_endpoint_inputs = [
+        "",
+        "https://api.openai.com/v1",
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.openai.com/v1/responses?tenant=1",
+        "https://openrouter.ai/api/v1",
+        "https://generativelanguage.googleapis.com/v1beta/models?key=test",
+    ]
+    llm_protocol_vectors = {
+        "endpoints": [
+            {
+                "input": value,
+                "chat_completions": chat_completions_api_url(value),
+                "responses": responses_api_url(value),
+                "models": models_api_url(value),
+                "supports_responses": supports_openai_responses_api(value),
+            }
+            for value in llm_endpoint_inputs
+        ]
+    }
 
     key_cases = [
         ["bandori-main-123", "main-in"],
@@ -146,6 +173,10 @@ def rendered_contracts() -> dict[Path, str]:
         + "\n",
         OUTPUT_DIR / "model_vectors.json": json.dumps(
             {"cases": model_cases}, ensure_ascii=False, indent=2
+        )
+        + "\n",
+        OUTPUT_DIR / "llm_protocol_vectors.json": json.dumps(
+            llm_protocol_vectors, ensure_ascii=False, indent=2
         )
         + "\n",
         OUTPUT_DIR / "database_schema.json": json.dumps(
