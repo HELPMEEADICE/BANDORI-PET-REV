@@ -128,6 +128,9 @@ private:
     void exportNativeChatDatabase();
     void importNativeChatDatabase();
     void showNativeDataSummary(const QString& action);
+    void refreshNativeAttachmentStats();
+    void saveNativeAttachmentSettings();
+    void cleanupNativeChatAttachments(bool clearAll);
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -259,6 +262,14 @@ private:
     qfw::PushButton* databaseExportButton_ = nullptr;
     qfw::PushButton* databaseImportButton_ = nullptr;
     qfw::CaptionLabel* dataStatusLabel_ = nullptr;
+    qfw::SwitchButton* attachmentAutoCleanupSwitch_ = nullptr;
+    qfw::SpinBox* attachmentRetentionDaysSpinBox_ = nullptr;
+    qfw::PushButton* attachmentSavePolicyButton_ = nullptr;
+    qfw::PushButton* attachmentRefreshButton_ = nullptr;
+    qfw::PushButton* attachmentCleanupOldButton_ = nullptr;
+    qfw::PushButton* attachmentClearAllButton_ = nullptr;
+    qfw::BodyLabel* attachmentStatsLabel_ = nullptr;
+    bool attachmentStartupCleanupRan_ = false;
     QTimer reminderTimer_;
     QJsonObject reminderState_;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;

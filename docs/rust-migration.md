@@ -274,14 +274,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   relationship/memory data. Rust strips root and nested API keys plus integration
   tokens on export and preserves local secrets on import. Complete SQLite backup
   and restore use the existing locked backup API; Qt requires destructive-action
-  confirmation and blocks restore while a chat response is active.
+  confirmation and blocks restore while a chat response is active. The same
+  Qt-Fluent page now reports attachment file count, size and upload range, saves
+  a bounded 1-3650 day retention policy, and offers confirmed expired/all-file
+  cleanup. Rust scopes every scan and deletion to `chat_attachments` beside the
+  selected `data.db`, sanitizes broken private/group message references, and can
+  run the saved policy once at native startup.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
-  screen-awareness and remaining integration services; the remaining
-  attachment-retention controls; default-launcher cutover, packaging and
-  multi-platform validation.
+  screen-awareness and remaining integration services; default-launcher
+  cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation

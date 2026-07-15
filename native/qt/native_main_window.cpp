@@ -158,7 +158,11 @@ QString formatAttachmentSize(qint64 size) {
     if (size < 1024 * 1024) {
         return QStringLiteral("%1 KB").arg(QString::number(size / 1024.0, 'f', 1));
     }
-    return QStringLiteral("%1 MB").arg(QString::number(size / (1024.0 * 1024.0), 'f', 1));
+    if (size < 1024LL * 1024 * 1024) {
+        return QStringLiteral("%1 MB").arg(QString::number(size / (1024.0 * 1024.0), 'f', 1));
+    }
+    return QStringLiteral("%1 GB")
+        .arg(QString::number(size / (1024.0 * 1024.0 * 1024.0), 'f', 2));
 }
 
 QStringList attachmentSummaries(const QString& json) {
@@ -1081,6 +1085,46 @@ QWidget* NativeMainWindow::createDataManagementPage() {
         tr("Restore replaces the current database, requires confirmation and is blocked while a chat response is active"),
         new qfw::BodyLabel(tr("Keep a recent backup before restoring."), databaseCard));
 
+    auto* attachmentCard =
+        new qfw::GroupHeaderCardWidget(tr("Chat attachment files"), content);
+    auto* attachmentPolicy = new QWidget(attachmentCard);
+    auto* attachmentPolicyLayout = new QHBoxLayout(attachmentPolicy);
+    attachmentPolicyLayout->setContentsMargins(0, 0, 0, 0);
+    attachmentPolicyLayout->setSpacing(8);
+    attachmentAutoCleanupSwitch_ = new qfw::SwitchButton(attachmentPolicy);
+    attachmentRetentionDaysSpinBox_ = new qfw::SpinBox(attachmentPolicy);
+    attachmentRetentionDaysSpinBox_->setRange(1, 3650);
+    attachmentRetentionDaysSpinBox_->setSuffix(tr(" days"));
+    attachmentRetentionDaysSpinBox_->setValue(30);
+    attachmentSavePolicyButton_ = new qfw::PushButton(tr("Save policy"), attachmentPolicy);
+    attachmentPolicyLayout->addWidget(attachmentAutoCleanupSwitch_);
+    attachmentPolicyLayout->addWidget(attachmentRetentionDaysSpinBox_);
+    attachmentPolicyLayout->addWidget(attachmentSavePolicyButton_);
+    attachmentPolicyLayout->addStretch(1);
+
+    auto* attachmentActions = new QWidget(attachmentCard);
+    auto* attachmentActionsLayout = new QHBoxLayout(attachmentActions);
+    attachmentActionsLayout->setContentsMargins(0, 0, 0, 0);
+    attachmentActionsLayout->setSpacing(8);
+    attachmentStatsLabel_ = new qfw::BodyLabel(tr("Loading attachment statistics…"), attachmentActions);
+    attachmentRefreshButton_ = new qfw::PushButton(tr("Refresh"), attachmentActions);
+    attachmentCleanupOldButton_ = new qfw::PushButton(tr("Clean expired"), attachmentActions);
+    attachmentClearAllButton_ = new qfw::PushButton(tr("Clear all"), attachmentActions);
+    attachmentActionsLayout->addWidget(attachmentStatsLabel_, 1);
+    attachmentActionsLayout->addWidget(attachmentRefreshButton_);
+    attachmentActionsLayout->addWidget(attachmentCleanupOldButton_);
+    attachmentActionsLayout->addWidget(attachmentClearAllButton_);
+    attachmentCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::History),
+        tr("Automatic retention"),
+        tr("When enabled, Rust removes files older than the selected age at native startup and after saving this policy"),
+        attachmentPolicy);
+    attachmentCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Broom),
+        tr("Storage cleanup"),
+        tr("Cleanup is scoped to chat_attachments beside data.db and removes broken database references"),
+        attachmentActions);
+
     auto* statusCard = new qfw::GroupHeaderCardWidget(tr("Last operation"), content);
     dataStatusLabel_ = new qfw::CaptionLabel(tr("No data operation has run"), statusCard);
     dataStatusLabel_->setWordWrap(true);
@@ -1094,6 +1138,7 @@ QWidget* NativeMainWindow::createDataManagementPage() {
     layout->addWidget(subtitle);
     layout->addWidget(packageCard);
     layout->addWidget(databaseCard);
+    layout->addWidget(attachmentCard);
     layout->addWidget(statusCard);
     layout->addStretch(1);
     content->setMinimumWidth(620);
@@ -1112,6 +1157,18 @@ QWidget* NativeMainWindow::createDataManagementPage() {
     });
     connect(databaseImportButton_, &QPushButton::clicked, this, [this]() {
         importNativeChatDatabase();
+    });
+    connect(attachmentSavePolicyButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeAttachmentSettings();
+    });
+    connect(attachmentRefreshButton_, &QPushButton::clicked, this, [this]() {
+        refreshNativeAttachmentStats();
+    });
+    connect(attachmentCleanupOldButton_, &QPushButton::clicked, this, [this]() {
+        cleanupNativeChatAttachments(false);
+    });
+    connect(attachmentClearAllButton_, &QPushButton::clicked, this, [this]() {
+        cleanupNativeChatAttachments(true);
     });
     return page;
 }
@@ -2258,6 +2315,29 @@ void NativeMainWindow::applyBackendState() {
         QStringLiteral("%1\n%2").arg(configPath_, backend_.getConfigSummary()));
     runtime_ = parseObject(backend_.getRuntimeConfigJson());
     syncSettingsControls();
+    if (attachmentAutoCleanupSwitch_ != nullptr) {
+        const QSignalBlocker switchBlocker(attachmentAutoCleanupSwitch_);
+        const QSignalBlocker daysBlocker(attachmentRetentionDaysSpinBox_);
+        attachmentAutoCleanupSwitch_->setChecked(
+            runtime_
+                .value(QStringLiteral("chat_attachment_auto_cleanup_enabled"))
+                .toBool(false));
+        attachmentRetentionDaysSpinBox_->setValue(
+            runtime_.value(QStringLiteral("chat_attachment_retention_days")).toInt(30));
+        if (!attachmentStartupCleanupRan_) {
+            attachmentStartupCleanupRan_ = true;
+            if (attachmentAutoCleanupSwitch_->isChecked()) {
+                const QString databasePath =
+                    QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+                if (!backend_.cleanupChatAttachments(
+                        databasePath, attachmentRetentionDaysSpinBox_->value())) {
+                    dataStatusLabel_->setText(backend_.getStatus());
+                    serviceStatusLabel_->setText(backend_.getStatus());
+                }
+            }
+        }
+        refreshNativeAttachmentStats();
+    }
     catalog_.clear();
     for (const QJsonValue& value : parseArray(backend_.getModelCatalogJson())) {
         if (!value.isObject()) {
@@ -4140,6 +4220,143 @@ void NativeMainWindow::showNativeDataSummary(const QString& action) {
     }
     dataStatusLabel_->setText(
         details.isEmpty() ? action : QStringLiteral("%1\n%2").arg(action, details.join(" · ")));
+}
+
+void NativeMainWindow::refreshNativeAttachmentStats() {
+    if (attachmentStatsLabel_ == nullptr) {
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.loadAttachmentStats(databasePath)) {
+        attachmentStatsLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    const QJsonObject stats = parseObject(backend_.getAttachmentManagementJson());
+    const qint64 files = stats.value(QStringLiteral("file_count")).toInteger();
+    const qint64 bytes = stats.value(QStringLiteral("total_bytes")).toInteger();
+    QString range;
+    const qint64 oldest =
+        stats.value(QStringLiteral("oldest_uploaded_at_unix")).toInteger(-1);
+    const qint64 newest =
+        stats.value(QStringLiteral("newest_uploaded_at_unix")).toInteger(-1);
+    if (oldest >= 0 && newest >= 0) {
+        const QString oldestLabel = QDateTime::fromSecsSinceEpoch(oldest)
+                                        .toLocalTime()
+                                        .toString(QStringLiteral("yyyy-MM-dd"));
+        const QString newestLabel = QDateTime::fromSecsSinceEpoch(newest)
+                                        .toLocalTime()
+                                        .toString(QStringLiteral("yyyy-MM-dd"));
+        range = oldestLabel == newestLabel
+            ? tr(" · uploaded %1").arg(oldestLabel)
+            : tr(" · uploaded %1 to %2").arg(oldestLabel, newestLabel);
+    }
+    attachmentStatsLabel_->setText(
+        tr("%1 files · %2%3").arg(files).arg(formatAttachmentSize(bytes), range));
+    attachmentCleanupOldButton_->setEnabled(files > 0);
+    attachmentClearAllButton_->setEnabled(files > 0);
+}
+
+void NativeMainWindow::saveNativeAttachmentSettings() {
+    const QJsonObject settings {
+        {QStringLiteral("chat_attachment_auto_cleanup_enabled"),
+         attachmentAutoCleanupSwitch_->isChecked()},
+        {QStringLiteral("chat_attachment_retention_days"),
+         attachmentRetentionDaysSpinBox_->value()},
+    };
+    if (!backend_.saveNativeSettings(configPath_, compactJson(settings))) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Attachment policy failed"), backend_.getStatus());
+        return;
+    }
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    if (attachmentAutoCleanupSwitch_->isChecked()) {
+        const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        if (!backend_.cleanupChatAttachments(
+                databasePath, attachmentRetentionDaysSpinBox_->value())) {
+            dataStatusLabel_->setText(backend_.getStatus());
+            serviceStatusLabel_->setText(backend_.getStatus());
+            return;
+        }
+        const QJsonObject result = parseObject(backend_.getAttachmentManagementJson());
+        const qint64 removedReferences =
+            result.value(QStringLiteral("removed_references")).toInteger();
+        if (removedReferences > 0) {
+            if (isGroupChatMode()) {
+                refreshGroupChatState({}, true);
+            } else {
+                refreshChatState({}, true);
+            }
+        }
+        dataStatusLabel_->setText(
+            tr("Attachment policy saved · removed %1 expired files (%2) · %3 database references removed")
+                .arg(result.value(QStringLiteral("deleted_files")).toInteger())
+                .arg(formatAttachmentSize(
+                    result.value(QStringLiteral("deleted_bytes")).toInteger()))
+                .arg(removedReferences));
+    } else {
+        dataStatusLabel_->setText(tr("Attachment policy saved · automatic cleanup disabled"));
+    }
+    serviceStatusLabel_->setText(backend_.getStatus());
+    refreshNativeAttachmentStats();
+}
+
+void NativeMainWindow::cleanupNativeChatAttachments(bool clearAll) {
+    if (activeChatRequestId_ != 0 || groupSequenceActive_) {
+        QMessageBox::warning(
+            this,
+            tr("Chat is still active"),
+            tr("Wait for the current private or group response to finish before cleaning attachments."));
+        return;
+    }
+    const int retentionDays = attachmentRetentionDaysSpinBox_->value();
+    const QMessageBox::StandardButton reply = QMessageBox::warning(
+        this,
+        clearAll ? tr("Clear every chat attachment?") : tr("Clean expired attachments?"),
+        clearAll
+            ? tr("This permanently deletes every file in chat_attachments and removes all affected database references. This cannot be undone.")
+            : tr("This permanently deletes attachment files older than %1 days and removes affected database references.")
+                  .arg(retentionDays),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    attachmentCleanupOldButton_->setEnabled(false);
+    attachmentClearAllButton_->setEnabled(false);
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.cleanupChatAttachments(databasePath, clearAll ? 0 : retentionDays)) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Attachment cleanup failed"), backend_.getStatus());
+        refreshNativeAttachmentStats();
+        return;
+    }
+    const QJsonObject result = parseObject(backend_.getAttachmentManagementJson());
+    const qint64 removedReferences =
+        result.value(QStringLiteral("removed_references")).toInteger();
+    if (clearAll && !pendingChatAttachments_.isEmpty()) {
+        pendingChatAttachments_ = QJsonArray();
+        updatePendingChatAttachments();
+    }
+    if (removedReferences > 0) {
+        if (isGroupChatMode()) {
+            refreshGroupChatState({}, true);
+        } else {
+            refreshChatState({}, true);
+        }
+    }
+    dataStatusLabel_->setText(
+        tr("Attachment cleanup finished · %1 files (%2) deleted · %3 failures · %4 database references removed")
+            .arg(result.value(QStringLiteral("deleted_files")).toInteger())
+            .arg(formatAttachmentSize(
+                result.value(QStringLiteral("deleted_bytes")).toInteger()))
+            .arg(result.value(QStringLiteral("failed_files")).toInteger())
+            .arg(removedReferences));
+    serviceStatusLabel_->setText(backend_.getStatus());
+    refreshNativeAttachmentStats();
 }
 
 void NativeMainWindow::syncSettingsControls() {

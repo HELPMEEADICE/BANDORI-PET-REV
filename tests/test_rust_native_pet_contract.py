@@ -304,6 +304,35 @@ def test_native_chat_attachments_are_copied_sanitized_and_inlined_by_rust():
     assert "backend_.prepareChatTurn" in window
 
 
+def test_native_chat_attachment_retention_is_scoped_configurable_and_qt_managed():
+    attachments = source("rust/crates/bandori-core/src/chat_attachments.rs")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub struct ChatAttachmentStats" in attachments
+    assert "pub struct ChatAttachmentCleanupResult" in attachments
+    assert "pub fn chat_attachment_stats" in attachments
+    assert "pub fn cleanup_chat_attachments" in attachments
+    assert "attachment_stats_and_cleanup_are_scoped_to_the_database_directory" in attachments
+    assert "chat_attachment_auto_cleanup_enabled" in dashboard
+    assert "chat_attachment_retention_days" in dashboard
+    assert "attachment_management_json" in backend
+    assert "loadAttachmentStats" in backend
+    assert "cleanupChatAttachments" in backend
+    assert "getAttachmentManagementJson" in generation
+    assert "loadAttachmentStats" in generation
+    assert "cleanupChatAttachments" in generation
+    assert "attachmentAutoCleanupSwitch_" in window_header
+    assert "attachmentRetentionDaysSpinBox_" in window_header
+    assert "refreshNativeAttachmentStats" in window
+    assert "saveNativeAttachmentSettings" in window
+    assert "cleanupNativeChatAttachments" in window
+    assert "backend_.cleanupChatAttachments" in window
+
+
 def test_native_cross_chat_context_is_filtered_and_python_contract_backed():
     history = source("rust/crates/bandori-core/src/cross_chat_history.rs")
     context = source("rust/crates/bandori-core/src/chat_context.rs")

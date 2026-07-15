@@ -34,6 +34,136 @@ pub struct AttachmentImportResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatAttachmentStats {
+    pub file_count: u64,
+    pub total_bytes: u64,
+    pub oldest_uploaded_at_unix: Option<u64>,
+    pub newest_uploaded_at_unix: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChatAttachmentCleanupResult {
+    pub deleted_files: u64,
+    pub deleted_bytes: u64,
+    pub failed_files: u64,
+    pub removed_references: i64,
+    pub remaining_files: u64,
+    pub remaining_bytes: u64,
+}
+
+pub fn chat_attachment_stats(database_path: &Path) -> ChatAttachmentStats {
+    attachment_stats_for_root(&chat_attachment_root(database_path))
+}
+
+pub fn cleanup_chat_attachments(
+    database_path: &Path,
+    older_than_days: Option<i64>,
+) -> Result<ChatAttachmentCleanupResult, DatabaseError> {
+    let root = chat_attachment_root(database_path);
+    let cutoff = older_than_days.map(|days| {
+        SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(
+                days.clamp(1, 3650) as u64 * 24 * 60 * 60,
+            ))
+            .unwrap_or(UNIX_EPOCH)
+    });
+    let mut result = ChatAttachmentCleanupResult::default();
+    if root.is_dir() {
+        for entry in fs::read_dir(&root)? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    result.failed_files += 1;
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let metadata = match path.metadata() {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) => continue,
+                Err(_) => {
+                    result.failed_files += 1;
+                    continue;
+                }
+            };
+            if let Some(cutoff) = cutoff {
+                let Some(uploaded_at) = attachment_uploaded_at(&metadata) else {
+                    result.failed_files += 1;
+                    continue;
+                };
+                if uploaded_at >= cutoff {
+                    continue;
+                }
+            }
+            let size = metadata.len();
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    result.deleted_files += 1;
+                    result.deleted_bytes = result.deleted_bytes.saturating_add(size);
+                }
+                Err(_) => result.failed_files += 1,
+            }
+        }
+    }
+    result.removed_references = Database::open(database_path)?.sanitize_attachment_references()?;
+    let remaining = attachment_stats_for_root(&root);
+    result.remaining_files = remaining.file_count;
+    result.remaining_bytes = remaining.total_bytes;
+    Ok(result)
+}
+
+fn chat_attachment_root(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("chat_attachments")
+}
+
+fn attachment_stats_for_root(root: &Path) -> ChatAttachmentStats {
+    let mut result = ChatAttachmentStats::default();
+    let Ok(entries) = fs::read_dir(root) else {
+        return result;
+    };
+    for entry in entries.flatten() {
+        let Ok(metadata) = entry.path().metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        result.file_count += 1;
+        result.total_bytes = result.total_bytes.saturating_add(metadata.len());
+        if let Some(uploaded_at) = attachment_uploaded_at(&metadata)
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+        {
+            result.oldest_uploaded_at_unix = Some(
+                result
+                    .oldest_uploaded_at_unix
+                    .map(|current| current.min(uploaded_at))
+                    .unwrap_or(uploaded_at),
+            );
+            result.newest_uploaded_at_unix = Some(
+                result
+                    .newest_uploaded_at_unix
+                    .map(|current| current.max(uploaded_at))
+                    .unwrap_or(uploaded_at),
+            );
+        }
+    }
+    result
+}
+
+fn attachment_uploaded_at(metadata: &fs::Metadata) -> Option<SystemTime> {
+    match (metadata.created().ok(), metadata.modified().ok()) {
+        (Some(created), Some(modified)) => Some(created.max(modified)),
+        (Some(created), None) => Some(created),
+        (None, Some(modified)) => Some(modified),
+        (None, None) => None,
+    }
+}
+
 pub fn import_chat_attachments(
     database_path: &Path,
     source_paths: &[String],
@@ -615,5 +745,45 @@ mod tests {
         assert!(note.contains("```txt\n"));
         assert!(note.ends_with("（内容已截断）"));
         assert!(!note.contains("读取失败"));
+    }
+
+    #[test]
+    fn attachment_stats_and_cleanup_are_scoped_to_the_database_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("data.db");
+        let root = directory.path().join("chat_attachments");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("one.txt"), b"one").unwrap();
+        fs::write(root.join("two.txt"), b"second").unwrap();
+        let outside = directory.path().join("outside.txt");
+        fs::write(&outside, b"outside").unwrap();
+        let database = Database::open(&database_path).unwrap();
+        let conversation = database.create_conversation("Ran", "", "").unwrap();
+        database
+            .add_message(
+                conversation,
+                "user",
+                "attachment",
+                "",
+                Some(&json!([{"type": "file", "path": root.join("one.txt")}])),
+                None,
+            )
+            .unwrap();
+
+        let stats = chat_attachment_stats(&database_path);
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.total_bytes, 9);
+        let retained = cleanup_chat_attachments(&database_path, Some(1)).unwrap();
+        assert_eq!(retained.deleted_files, 0);
+        let cleared = cleanup_chat_attachments(&database_path, None).unwrap();
+        assert_eq!(cleared.deleted_files, 2);
+        assert_eq!(cleared.deleted_bytes, 9);
+        assert_eq!(cleared.removed_references, 1);
+        assert_eq!(cleared.remaining_files, 0);
+        assert_eq!(
+            database.get_messages(conversation, None, None).unwrap()[0].attachments_json,
+            ""
+        );
+        assert!(outside.exists());
     }
 }

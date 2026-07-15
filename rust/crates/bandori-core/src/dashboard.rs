@@ -43,6 +43,8 @@ pub struct NativeRuntimeSnapshot {
     pub drag_locked: bool,
     pub poke_motion: String,
     pub poke_expression: String,
+    pub chat_attachment_auto_cleanup_enabled: bool,
+    pub chat_attachment_retention_days: i64,
     pub configured_pets: Vec<ConfiguredPetSnapshot>,
 }
 
@@ -69,6 +71,8 @@ pub struct NativeSettingsUpdate {
     pub move_all_roles_together: Option<bool>,
     pub live2d_head_tracking_enabled: Option<bool>,
     pub live2d_mutual_gaze_enabled: Option<bool>,
+    pub chat_attachment_auto_cleanup_enabled: Option<bool>,
+    pub chat_attachment_retention_days: Option<i64>,
 }
 
 #[derive(Debug, Error)]
@@ -144,6 +148,15 @@ impl NativeSettingsUpdate {
         }
         if let Some(enabled) = self.live2d_mutual_gaze_enabled {
             config.set("live2d_mutual_gaze_enabled", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.chat_attachment_auto_cleanup_enabled {
+            config.set("chat_attachment_auto_cleanup_enabled", Value::Bool(enabled));
+        }
+        if let Some(days) = self.chat_attachment_retention_days {
+            config.set(
+                "chat_attachment_retention_days",
+                Value::from(days.clamp(1, 3650)),
+            );
         }
         Ok(())
     }
@@ -268,6 +281,13 @@ impl NativeRuntimeSnapshot {
             drag_locked: global_drag_locked,
             poke_motion: string_value(values, "poke_motion", ""),
             poke_expression: string_value(values, "poke_expression", ""),
+            chat_attachment_auto_cleanup_enabled: bool_value(
+                values,
+                "chat_attachment_auto_cleanup_enabled",
+                false,
+            ),
+            chat_attachment_retention_days: int_value(values, "chat_attachment_retention_days", 30)
+                .clamp(1, 3650),
             configured_pets,
         }
     }
@@ -406,6 +426,8 @@ mod tests {
                 "live2d_idle_actions_enabled": false,
                 "live2d_random_actions_enabled": false,
                 "drag_locked": true,
+                "chat_attachment_auto_cleanup_enabled": true,
+                "chat_attachment_retention_days": 45,
                 "active_user_profile": "alice",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
@@ -436,6 +458,8 @@ mod tests {
         assert_eq!(snapshot.live2d_scale, 250);
         assert!(!snapshot.idle_actions_enabled);
         assert!(!snapshot.random_actions_enabled);
+        assert!(snapshot.chat_attachment_auto_cleanup_enabled);
+        assert_eq!(snapshot.chat_attachment_retention_days, 45);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -539,7 +563,9 @@ mod tests {
                 "drag_locked": true,
                 "move_all_roles_together": true,
                 "live2d_head_tracking_enabled": false,
-                "live2d_mutual_gaze_enabled": true
+                "live2d_mutual_gaze_enabled": true,
+                "chat_attachment_auto_cleanup_enabled": true,
+                "chat_attachment_retention_days": 9999
             }"#,
         )
         .unwrap();
@@ -553,8 +579,12 @@ mod tests {
         assert!(!runtime.idle_actions_enabled);
         assert!(!runtime.random_actions_enabled);
         assert!(runtime.drag_locked);
+        assert!(runtime.chat_attachment_auto_cleanup_enabled);
+        assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
+        assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
+        assert_eq!(saved["chat_attachment_retention_days"], 3650);
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub mod ffi {
         #[qproperty(QString, history_result_json)]
         #[qproperty(QString, statistics_snapshot_json)]
         #[qproperty(QString, data_operation_json)]
+        #[qproperty(QString, attachment_management_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -219,6 +220,18 @@ pub mod ffi {
             self: Pin<&mut Self>,
             database_path: &QString,
             source_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadAttachmentStats"]
+        fn load_attachment_stats(self: Pin<&mut Self>, database_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "cleanupChatAttachments"]
+        fn cleanup_chat_attachments(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            older_than_days: i32,
         ) -> bool;
 
         #[qinvokable]
@@ -424,6 +437,7 @@ pub mod ffi {
 
 use bandori_core::chat_actions::parse_chat_response;
 use bandori_core::chat_attachments::{
+    chat_attachment_stats, cleanup_chat_attachments as cleanup_native_chat_attachments,
     discard_imported_chat_attachments, import_chat_attachments as import_attachment_files,
 };
 use bandori_core::chat_context::build_native_chat_request;
@@ -560,6 +574,7 @@ pub struct BackendRust {
     history_result_json: QString,
     statistics_snapshot_json: QString,
     data_operation_json: QString,
+    attachment_management_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -615,6 +630,7 @@ impl Default for BackendRust {
             history_result_json: QString::from("{}"),
             statistics_snapshot_json: QString::from("{}"),
             data_operation_json: QString::from("{}"),
+            attachment_management_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -1412,6 +1428,39 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Database restore error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_attachment_stats(mut self: Pin<&mut Self>, database_path: &QString) -> bool {
+        let stats = chat_attachment_stats(Path::new(&database_path.to_string()));
+        let payload = serde_json::to_string(&stats)
+            .expect("native attachment statistics serialization cannot fail");
+        self.as_mut()
+            .set_attachment_management_json(QString::from(&payload));
+        true
+    }
+
+    pub fn cleanup_chat_attachments(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        older_than_days: i32,
+    ) -> bool {
+        let retention = (older_than_days > 0).then_some(i64::from(older_than_days));
+        match cleanup_native_chat_attachments(Path::new(&database_path.to_string()), retention) {
+            Ok(result) => {
+                let payload = serde_json::to_string(&result)
+                    .expect("native attachment cleanup serialization cannot fail");
+                self.as_mut()
+                    .set_attachment_management_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native chat attachment cleanup completed"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Attachment cleanup error: {error}")));
                 false
             }
         }
