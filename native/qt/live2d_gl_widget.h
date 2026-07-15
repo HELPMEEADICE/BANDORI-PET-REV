@@ -3,8 +3,11 @@
 #include "bandori_live2d_ffi.h"
 
 #include <QElapsedTimer>
+#include <QImage>
+#include <QJsonObject>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <QPixmap>
 #include <QSize>
 #include <QString>
 #include <QTimer>
@@ -14,6 +17,10 @@
 
 class QMouseEvent;
 class QOpenGLFramebufferObject;
+class QEnterEvent;
+class QEvent;
+class QHideEvent;
+class QShowEvent;
 
 namespace bandori {
 
@@ -26,6 +33,11 @@ public:
         Moc3 = 3,
     };
 
+    enum class RenderMode : std::uint32_t {
+        Live2d = 0,
+        Pixel = 1,
+    };
+
     static void configureDefaultSurfaceFormat(bool vsync = true);
 
     Live2dGlWidget(
@@ -33,6 +45,7 @@ public:
         QString userModelsRoot,
         QString modelPath,
         ModelFormat format,
+        RenderMode renderMode = RenderMode::Live2d,
         QWidget* parent = nullptr);
     ~Live2dGlWidget() override;
 
@@ -46,6 +59,12 @@ public:
     void setHitAlphaThreshold(int threshold);
     void setLipSyncMaxOpen(double value);
     void setLipSyncPose(double level, double form = 0.0);
+    bool loadPixelSprite(const QString& imagePath, const QString& framesPath);
+    bool setPixelMode(bool enabled);
+    bool pixelMode() const;
+    bool pixelAvailable() const;
+    QSize pixelFrameSize() const;
+    void setLive2dWindowSize(const QSize& size);
     bool triggerAction(const QString& action, const QString& character);
     bool applyDefaultState(
         const QString& configuredMotion,
@@ -76,9 +95,14 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+    void enterEvent(QEnterEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
 private:
     static std::uintptr_t resolveGlProcedure(const char* name, void* userData);
+    bool initializeLive2dRuntime();
     bool ensureSsaaFramebuffer(const QSize& size);
     bool syncRendererTarget(const QSize& size);
     bool blitSsaaToDefault(const QSize& targetSize);
@@ -93,6 +117,13 @@ private:
     void resetInteractionExpression(std::uint64_t token);
     bool applyDefaultStateNow(bool applyMotion, bool applyExpression);
     void restoreDefaultMotionIfFinished();
+    void setPixelAnimation(const QString& name);
+    void restartPixelAnimationTimer();
+    void advancePixelFrame();
+    void choosePixelWanderTarget();
+    void stepPixelWander();
+    int pixelAlphaAt(const QPoint& localPosition) const;
+    QJsonObject activePixelAnimation() const;
     void disposeRuntime();
     void reportLastError(const char* operation);
 
@@ -100,6 +131,7 @@ private:
     QString userModelsRoot_;
     QString modelPath_;
     ModelFormat format_;
+    RenderMode renderMode_ = RenderMode::Live2d;
     BandoriLive2dHost* host_ = nullptr;
     QElapsedTimer frameClock_;
     qint64 lastFrameMsec_ = 0;
@@ -114,6 +146,20 @@ private:
     QTimer renderTimer_;
     QTimer alphaHitTimer_;
     QTimer defaultStateTimer_;
+    QTimer pixelAnimationTimer_;
+    QTimer pixelWanderTimer_;
+    QPixmap pixelSheet_;
+    QImage pixelSheetImage_;
+    QJsonObject pixelAnimations_;
+    QString pixelAnimation_ = QStringLiteral("idle");
+    QSize pixelFrameSize_;
+    QSize live2dWindowSize_;
+    QPoint pixelWanderTarget_;
+    int pixelTotalColumns_ = 0;
+    int pixelTotalRows_ = 0;
+    int pixelFrameIndex_ = 0;
+    bool pixelWaitingForTarget_ = false;
+    bool pixelHovering_ = false;
     QString configuredDefaultMotion_;
     QString configuredDefaultExpression_;
     QString defaultStateCharacter_;

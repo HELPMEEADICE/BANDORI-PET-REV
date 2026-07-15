@@ -3,7 +3,13 @@
 #include <QByteArray>
 #include <QCursor>
 #include <QDebug>
+#include <QEnterEvent>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QHideEvent>
+#include <QImageReader>
+#include <QJsonDocument>
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
@@ -11,10 +17,15 @@
 #include <QOpenGLFramebufferObjectFormat>
 #include <QOpenGLFunctions>
 #include <QSurfaceFormat>
+#include <QPainter>
+#include <QRandomGenerator>
+#include <QScreen>
+#include <QShowEvent>
 #include <QWindow>
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <utility>
 
 #ifdef Q_OS_WIN
@@ -29,6 +40,10 @@ constexpr int kAlphaHitIntervalMsec = 16;
 constexpr int kAlphaHitGraceMsec = 80;
 constexpr int kAlphaHitGraceDistance = 12;
 constexpr int kDragThresholdSquared = 16;
+constexpr int kPixelFrameHoldBeats = 3;
+constexpr int kMaximumPixelFramesFileBytes = 1024 * 1024;
+constexpr qint64 kMaximumPixelSheetFileBytes = 32LL * 1024 * 1024;
+constexpr qint64 kMaximumPixelSheetPixels = 100'000'000;
 }
 
 void Live2dGlWidget::configureDefaultSurfaceFormat(bool vsync) {
@@ -49,12 +64,14 @@ Live2dGlWidget::Live2dGlWidget(
     QString userModelsRoot,
     QString modelPath,
     ModelFormat format,
+    RenderMode renderMode,
     QWidget* parent)
     : QOpenGLWidget(parent),
       projectRoot_(std::move(projectRoot)),
       userModelsRoot_(std::move(userModelsRoot)),
       modelPath_(std::move(modelPath)),
-      format_(format) {
+      format_(format),
+      renderMode_(renderMode) {
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_OpaquePaintEvent, false);
@@ -73,6 +90,19 @@ Live2dGlWidget::Live2dGlWidget(
         &QTimer::timeout,
         this,
         &Live2dGlWidget::restoreDefaultMotionIfFinished);
+    pixelAnimationTimer_.setTimerType(Qt::CoarseTimer);
+    connect(
+        &pixelAnimationTimer_,
+        &QTimer::timeout,
+        this,
+        &Live2dGlWidget::advancePixelFrame);
+    pixelWanderTimer_.setTimerType(Qt::PreciseTimer);
+    pixelWanderTimer_.setInterval(33);
+    connect(
+        &pixelWanderTimer_,
+        &QTimer::timeout,
+        this,
+        &Live2dGlWidget::stepPixelWander);
     setFramesPerSecond(120);
     alphaHitTimer_.start();
 }
@@ -88,7 +118,7 @@ Live2dGlWidget::~Live2dGlWidget() {
 void Live2dGlWidget::setFramesPerSecond(int fps) {
     fps = std::clamp(fps, 10, 240);
     renderTimer_.setInterval(std::max(1, qRound(1000.0 / fps)));
-    if (isVisible()) {
+    if (isVisible() && !pixelMode()) {
         renderTimer_.start();
     }
 }
@@ -106,6 +136,16 @@ void Live2dGlWidget::setRenderQuality(const QString& quality) {
 
 void Live2dGlWidget::setDragLocked(bool locked) {
     dragLocked_ = locked;
+    if (!pixelMode()) {
+        return;
+    }
+    if (locked) {
+        pixelWanderTimer_.stop();
+        setPixelAnimation(QStringLiteral("idle"));
+    } else if (isVisible()) {
+        choosePixelWanderTarget();
+        pixelWanderTimer_.start();
+    }
 }
 
 bool Live2dGlWidget::dragLocked() const {
@@ -136,13 +176,183 @@ void Live2dGlWidget::setLipSyncMaxOpen(double value) {
 }
 
 void Live2dGlWidget::setLipSyncPose(double level, double form) {
+    if (pixelMode()) {
+        return;
+    }
     lipSyncTarget_ = std::clamp(level, 0.0, lipSyncMaxOpen_);
     lipSyncFormTarget_ = std::clamp(form, -1.0, 1.0);
     lipSyncLastMsec_ = frameClock_.isValid() ? frameClock_.elapsed() : 0;
     update();
 }
 
+bool Live2dGlWidget::loadPixelSprite(
+    const QString& imagePath,
+    const QString& framesPath) {
+    const QFileInfo framesInfo(framesPath);
+    if (!framesInfo.isFile() || framesInfo.size() <= 0
+        || framesInfo.size() > kMaximumPixelFramesFileBytes) {
+        return false;
+    }
+    QFile framesFile(framesPath);
+    if (!framesFile.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(framesFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return false;
+    }
+    const QJsonObject root = document.object();
+    const QJsonObject sheet = root.value(QStringLiteral("spriteSheet")).toObject();
+    const QJsonObject animations = root.value(QStringLiteral("animations")).toObject();
+    const int columns = sheet.value(QStringLiteral("totalCols")).toInt();
+    const int rows = sheet.value(QStringLiteral("totalRows")).toInt();
+    if (columns <= 0 || columns > 256 || rows <= 0 || rows > 256
+        || animations.isEmpty() || animations.size() > 256) {
+        return false;
+    }
+    const QFileInfo imageInfo(imagePath);
+    if (!imageInfo.isFile() || imageInfo.size() <= 0
+        || imageInfo.size() > kMaximumPixelSheetFileBytes) {
+        return false;
+    }
+    QImageReader reader(imagePath);
+    reader.setAutoTransform(false);
+    const QSize imageSize = reader.size();
+    if (!imageSize.isValid() || imageSize.width() < columns || imageSize.height() < rows
+        || imageSize.width() % columns != 0 || imageSize.height() % rows != 0
+        || static_cast<qint64>(imageSize.width()) * imageSize.height()
+            > kMaximumPixelSheetPixels) {
+        return false;
+    }
+    const int frameWidth = imageSize.width() / columns;
+    const int frameHeight = imageSize.height() / rows;
+    const int declaredFrameWidth = sheet.value(QStringLiteral("frameWidth")).toInt(frameWidth);
+    const int declaredFrameHeight =
+        sheet.value(QStringLiteral("frameHeight")).toInt(frameHeight);
+    if (frameWidth != declaredFrameWidth || frameHeight != declaredFrameHeight) {
+        return false;
+    }
+    QImage image = reader.read();
+    if (image.isNull() || image.size() != imageSize) {
+        return false;
+    }
+    pixelSheetImage_ = image.convertToFormat(QImage::Format_ARGB32);
+    pixelSheet_ = QPixmap::fromImage(pixelSheetImage_);
+    if (pixelSheet_.isNull()) {
+        pixelSheetImage_ = {};
+        return false;
+    }
+    pixelAnimations_ = animations;
+    pixelTotalColumns_ = columns;
+    pixelTotalRows_ = rows;
+    pixelFrameSize_ = {
+        frameWidth,
+        frameHeight,
+    };
+    pixelFrameIndex_ = 0;
+    setPixelAnimation(QStringLiteral("idle"));
+    return true;
+}
+
+bool Live2dGlWidget::setPixelMode(bool enabled) {
+    const RenderMode next = enabled ? RenderMode::Pixel : RenderMode::Live2d;
+    if (next == renderMode_) {
+        return true;
+    }
+    if (enabled && !pixelAvailable()) {
+        return false;
+    }
+    if (enabled) {
+        if (width() > 0 && height() > 0) {
+            live2dWindowSize_ = size();
+        }
+        renderMode_ = RenderMode::Pixel;
+        renderTimer_.stop();
+        defaultStateTimer_.stop();
+        setFixedSize(pixelFrameSize_);
+        setPixelAnimation(QStringLiteral("idle"));
+        if (!dragLocked_ && isVisible()) {
+            choosePixelWanderTarget();
+            pixelWanderTimer_.start();
+        }
+        update();
+        return true;
+    }
+
+    renderMode_ = RenderMode::Live2d;
+    pixelAnimationTimer_.stop();
+    pixelWanderTimer_.stop();
+    if (live2dWindowSize_.isValid()) {
+        setFixedSize(live2dWindowSize_);
+    }
+    if (context() != nullptr && host_ == nullptr) {
+        makeCurrent();
+        const bool loaded = initializeLive2dRuntime();
+        doneCurrent();
+        if (!loaded) {
+            renderMode_ = RenderMode::Pixel;
+            setFixedSize(pixelFrameSize_);
+            restartPixelAnimationTimer();
+            alphaHitTimer_.start();
+            if (!dragLocked_ && isVisible()) {
+                choosePixelWanderTarget();
+                pixelWanderTimer_.start();
+            }
+            return false;
+        }
+    }
+    renderTimer_.start();
+    update();
+    return true;
+}
+
+bool Live2dGlWidget::pixelMode() const {
+    return renderMode_ == RenderMode::Pixel;
+}
+
+bool Live2dGlWidget::pixelAvailable() const {
+    return !pixelSheet_.isNull() && !pixelSheetImage_.isNull()
+        && !pixelAnimations_.isEmpty() && pixelFrameSize_.isValid();
+}
+
+QSize Live2dGlWidget::pixelFrameSize() const {
+    return pixelFrameSize_;
+}
+
+void Live2dGlWidget::setLive2dWindowSize(const QSize& size) {
+    if (!size.isValid()) {
+        return;
+    }
+    live2dWindowSize_ = size;
+    if (!pixelMode()) {
+        setFixedSize(size);
+    }
+}
+
 bool Live2dGlWidget::triggerAction(const QString& action, const QString& character) {
+    if (pixelMode()) {
+        const QString normalized = action.trimmed().toLower();
+        QString animation;
+        if (pixelAnimations_.contains(action)) {
+            animation = action;
+        } else if (normalized.contains(QStringLiteral("fail"))) {
+            animation = QStringLiteral("failed");
+        } else if (normalized.contains(QStringLiteral("jump"))
+                   || normalized.contains(QStringLiteral("poke"))) {
+            animation = QStringLiteral("jumping");
+        } else if (normalized.contains(QStringLiteral("wave"))
+                   || normalized == QStringLiteral("__random__")) {
+            animation = QStringLiteral("waving");
+        } else if (normalized.contains(QStringLiteral("wait"))) {
+            animation = QStringLiteral("waiting");
+        } else {
+            animation = QStringLiteral("review");
+        }
+        setPixelAnimation(animation);
+        return pixelAnimations_.contains(animation);
+    }
     if (host_ == nullptr || action.trimmed().isEmpty()) {
         return false;
     }
@@ -183,6 +393,10 @@ bool Live2dGlWidget::applyDefaultState(
     idleActionsEnabled_ = idleActionsEnabled;
     randomActionsEnabled_ = randomActionsEnabled;
     defaultStateChoice_ = 0;
+    if (pixelMode()) {
+        setPixelAnimation(QStringLiteral("idle"));
+        return true;
+    }
     if (host_ == nullptr) {
         return false;
     }
@@ -258,6 +472,14 @@ bool Live2dGlWidget::triggerInteraction(
     const QString& configuredMotion,
     const QString& configuredExpression,
     const QString& character) {
+    if (pixelMode()) {
+        const QString normalized = region.trimmed().toLower();
+        setPixelAnimation(
+            normalized.contains(QStringLiteral("head"))
+                ? QStringLiteral("waving")
+                : QStringLiteral("jumping"));
+        return true;
+    }
     if (host_ == nullptr || region.trimmed().isEmpty()) {
         return false;
     }
@@ -301,6 +523,26 @@ void Live2dGlWidget::initializeGL() {
     gl->glDisable(GL_DEPTH_TEST);
     gl->glDisable(GL_DITHER);
 
+    frameClock_.start();
+    lastFrameMsec_ = 0;
+    alphaHitTimer_.start();
+    if (pixelMode()) {
+        restartPixelAnimationTimer();
+        if (!dragLocked_) {
+            choosePixelWanderTarget();
+            pixelWanderTimer_.start();
+        }
+        emit runtimeReady();
+        return;
+    }
+    initializeLive2dRuntime();
+}
+
+bool Live2dGlWidget::initializeLive2dRuntime() {
+    if (host_ != nullptr) {
+        return true;
+    }
+
     const QByteArray projectRoot = projectRoot_.toUtf8();
     const QByteArray userModelsRoot = userModelsRoot_.toUtf8();
     host_ = bandori_live2d_create(
@@ -313,7 +555,7 @@ void Live2dGlWidget::initializeGL() {
         this);
     if (host_ == nullptr) {
         reportLastError("create");
-        return;
+        return false;
     }
 
     const QByteArray modelPath = modelPath_.toUtf8();
@@ -325,7 +567,7 @@ void Live2dGlWidget::initializeGL() {
             textureQuality_)) {
         reportLastError("load model");
         disposeRuntime();
-        return;
+        return false;
     }
     if (format_ == ModelFormat::Moc3 && !bandori_live2d_set_scale(host_, 1.35)) {
         reportLastError("set Cubism 3 scale");
@@ -336,15 +578,19 @@ void Live2dGlWidget::initializeGL() {
         &QOpenGLContext::aboutToBeDestroyed,
         this,
         &Live2dGlWidget::disposeRuntime,
-        Qt::DirectConnection);
+        static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::UniqueConnection));
     frameClock_.start();
     lastFrameMsec_ = 0;
     renderTimer_.start();
     alphaHitTimer_.start();
     emit runtimeReady();
+    return true;
 }
 
 void Live2dGlWidget::resizeGL(int width, int height) {
+    if (pixelMode()) {
+        return;
+    }
     if (host_ == nullptr) {
         return;
     }
@@ -371,6 +617,28 @@ void Live2dGlWidget::paintGL() {
     const QSize targetSize(
         std::max(1, qRound(width() * ratio)),
         std::max(1, qRound(height() * ratio)));
+    if (pixelMode()) {
+        clearTarget(targetSize);
+        if (pixelAvailable()) {
+            const QJsonObject animation = activePixelAnimation();
+            const int row = std::clamp(
+                animation.value(QStringLiteral("row")).toInt(),
+                0,
+                std::max(pixelTotalRows_ - 1, 0));
+            const int frame = std::clamp(
+                pixelFrameIndex_, 0, std::max(pixelTotalColumns_ - 1, 0));
+            const QRect source(
+                frame * pixelFrameSize_.width(),
+                row * pixelFrameSize_.height(),
+                pixelFrameSize_.width(),
+                pixelFrameSize_.height());
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+            painter.drawPixmap(rect(), pixelSheet_, source);
+        }
+        readPendingAlphaSample(targetSize);
+        return;
+    }
     if (host_ == nullptr) {
         clearTarget(targetSize);
         readPendingAlphaSample(targetSize);
@@ -538,6 +806,176 @@ void Live2dGlWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     const QPointF position = event->position();
     emit doubleClicked(position.x(), position.y());
     event->accept();
+}
+
+void Live2dGlWidget::showEvent(QShowEvent* event) {
+    QOpenGLWidget::showEvent(event);
+    if (!pixelMode()) {
+        renderTimer_.start();
+        return;
+    }
+    restartPixelAnimationTimer();
+    if (!dragLocked_) {
+        choosePixelWanderTarget();
+        pixelWanderTimer_.start();
+    }
+}
+
+void Live2dGlWidget::hideEvent(QHideEvent* event) {
+    renderTimer_.stop();
+    pixelAnimationTimer_.stop();
+    pixelWanderTimer_.stop();
+    QOpenGLWidget::hideEvent(event);
+}
+
+void Live2dGlWidget::enterEvent(QEnterEvent* event) {
+    pixelHovering_ = true;
+    if (pixelMode()) {
+        setPixelAnimation(QStringLiteral("waiting"));
+    }
+    QOpenGLWidget::enterEvent(event);
+}
+
+void Live2dGlWidget::leaveEvent(QEvent* event) {
+    pixelHovering_ = false;
+    if (pixelMode()) {
+        choosePixelWanderTarget();
+    }
+    QOpenGLWidget::leaveEvent(event);
+}
+
+QJsonObject Live2dGlWidget::activePixelAnimation() const {
+    return pixelAnimations_.value(pixelAnimation_).toObject();
+}
+
+void Live2dGlWidget::setPixelAnimation(const QString& requestedName) {
+    QString name = requestedName;
+    if (!pixelAnimations_.contains(name)) {
+        name = pixelAnimations_.contains(QStringLiteral("idle"))
+            ? QStringLiteral("idle")
+            : pixelAnimations_.keys().value(0);
+    }
+    if (name.isEmpty()) {
+        return;
+    }
+    if (pixelAnimation_ == name && pixelAnimationTimer_.isActive()) {
+        return;
+    }
+    pixelAnimation_ = name;
+    pixelFrameIndex_ = 0;
+    restartPixelAnimationTimer();
+    update();
+}
+
+void Live2dGlWidget::restartPixelAnimationTimer() {
+    if (!pixelMode() || !pixelAvailable()) {
+        pixelAnimationTimer_.stop();
+        return;
+    }
+    const int fps = std::clamp(
+        activePixelAnimation().value(QStringLiteral("fps")).toInt(8), 1, 60);
+    pixelAnimationTimer_.start(
+        std::max(1, qRound(1000.0 / fps * kPixelFrameHoldBeats)));
+}
+
+void Live2dGlWidget::advancePixelFrame() {
+    const QJsonObject animation = activePixelAnimation();
+    const int frames = std::clamp(
+        animation.value(QStringLiteral("frames")).toInt(1),
+        1,
+        std::max(pixelTotalColumns_, 1));
+    ++pixelFrameIndex_;
+    if (pixelFrameIndex_ >= frames) {
+        if (animation.value(QStringLiteral("loop")).toBool(true)) {
+            pixelFrameIndex_ = 0;
+        } else {
+            setPixelAnimation(QStringLiteral("idle"));
+            return;
+        }
+    }
+    update();
+}
+
+void Live2dGlWidget::choosePixelWanderTarget() {
+    pixelWaitingForTarget_ = false;
+    QScreen* screen = QGuiApplication::screenAt(window()->geometry().center());
+    if (screen == nullptr) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    if (screen == nullptr) {
+        pixelWanderTarget_ = window()->pos();
+        return;
+    }
+    const QRect available = screen->availableGeometry();
+    const int maximumX = std::max(available.left(), available.right() - window()->width() + 1);
+    const int maximumY = std::max(available.top(), available.bottom() - window()->height() + 1);
+    pixelWanderTarget_ = {
+        QRandomGenerator::global()->bounded(available.left(), maximumX + 1),
+        QRandomGenerator::global()->bounded(available.top(), maximumY + 1),
+    };
+}
+
+void Live2dGlWidget::stepPixelWander() {
+    if (!pixelMode() || dragLocked_ || draggingWindow_ || !isVisible()) {
+        return;
+    }
+    if (pixelHovering_) {
+        setPixelAnimation(QStringLiteral("waiting"));
+        return;
+    }
+    if (pixelWaitingForTarget_) {
+        return;
+    }
+    const QPoint position = window()->pos();
+    if ((position - pixelWanderTarget_).manhattanLength() < 8) {
+        QStringList resting {QStringLiteral("idle"), QStringLiteral("waiting")};
+        if (pixelAnimations_.contains(QStringLiteral("review"))) {
+            resting.append(QStringLiteral("review"));
+        }
+        setPixelAnimation(
+            resting.at(QRandomGenerator::global()->bounded(
+                static_cast<int>(resting.size()))));
+        pixelWaitingForTarget_ = true;
+        QTimer::singleShot(
+            QRandomGenerator::global()->bounded(1'200, 3'501),
+            this,
+            &Live2dGlWidget::choosePixelWanderTarget);
+        return;
+    }
+    const int deltaX = pixelWanderTarget_.x() - position.x();
+    const int deltaY = pixelWanderTarget_.y() - position.y();
+    const int stepX = std::clamp(deltaX, -3, 3);
+    const int stepY = std::clamp(deltaY, -2, 2);
+    if (stepX > 0) {
+        setPixelAnimation(QStringLiteral("running_right"));
+    } else if (stepX < 0) {
+        setPixelAnimation(QStringLiteral("running_left"));
+    } else {
+        setPixelAnimation(QStringLiteral("running_alt"));
+    }
+    window()->move(position + QPoint(stepX, stepY));
+}
+
+int Live2dGlWidget::pixelAlphaAt(const QPoint& localPosition) const {
+    if (!pixelAvailable() || !rect().contains(localPosition)) {
+        return 0;
+    }
+    const QJsonObject animation = activePixelAnimation();
+    const int row = std::clamp(
+        animation.value(QStringLiteral("row")).toInt(),
+        0,
+        std::max(pixelTotalRows_ - 1, 0));
+    const int frame = std::clamp(
+        pixelFrameIndex_, 0, std::max(pixelTotalColumns_ - 1, 0));
+    const int sourceX = frame * pixelFrameSize_.width()
+        + localPosition.x() * pixelFrameSize_.width() / std::max(width(), 1);
+    const int sourceY = row * pixelFrameSize_.height()
+        + localPosition.y() * pixelFrameSize_.height() / std::max(height(), 1);
+    if (sourceX < 0 || sourceY < 0 || sourceX >= pixelSheetImage_.width()
+        || sourceY >= pixelSheetImage_.height()) {
+        return 0;
+    }
+    return qAlpha(pixelSheetImage_.pixel(sourceX, sourceY));
 }
 
 void Live2dGlWidget::finishWindowDrag() {
@@ -709,6 +1147,13 @@ void Live2dGlWidget::readPendingAlphaSample(const QSize& targetSize) {
         lastAlphaSampleValid_ = false;
         return;
     }
+    if (pixelMode()) {
+        lastAlphaSampleGlobal_ = pendingAlphaSampleGlobal_;
+        lastAlphaSampleOpaque_ = pixelAlphaAt(localPosition) > hitAlphaThreshold_;
+        lastAlphaSampleValid_ = true;
+        QTimer::singleShot(0, this, &Live2dGlWidget::applyInputPassthroughFromSample);
+        return;
+    }
     const qreal ratio = std::max<qreal>(devicePixelRatioF(), 1.0);
     const int sampleX = std::clamp(
         qFloor(localPosition.x() * ratio), 0, std::max(targetSize.width() - 1, 0));
@@ -727,11 +1172,20 @@ void Live2dGlWidget::readPendingAlphaSample(const QSize& targetSize) {
 }
 
 bool Live2dGlWidget::isOpaqueAtGlobal(const QPoint& globalPosition) {
-    if (context() == nullptr) {
-        return false;
-    }
     const QPoint localPosition = mapFromGlobal(globalPosition);
     if (!rect().contains(localPosition)) {
+        return false;
+    }
+    if (pixelMode()) {
+        constexpr QPoint probes[] {
+            {0, 0}, {-2, 0}, {2, 0}, {0, -2}, {0, 2},
+            {-4, 0}, {4, 0}, {0, -4}, {0, 4},
+        };
+        return std::any_of(std::begin(probes), std::end(probes), [this, localPosition](QPoint offset) {
+            return pixelAlphaAt(localPosition + offset) > hitAlphaThreshold_;
+        });
+    }
+    if (context() == nullptr) {
         return false;
     }
     const bool needsCurrent = QOpenGLContext::currentContext() != context();
@@ -822,6 +1276,8 @@ void Live2dGlWidget::disposeRuntime() {
     renderTimer_.stop();
     alphaHitTimer_.stop();
     defaultStateTimer_.stop();
+    pixelAnimationTimer_.stop();
+    pixelWanderTimer_.stop();
     setInputPassthrough(false);
     if (host_ == nullptr) {
         return;

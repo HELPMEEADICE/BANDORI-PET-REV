@@ -319,11 +319,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   optionally birthday notices, with that preference persisted through the
   whitelisted native settings boundary. No Python timer or event-calendar helper
   remains on this runtime path.
+  Pixel pets now run inside the same isolated native Qt renderer as Live2D pets.
+  Qt validates and animates the bounded `pixels/frames.json` sprite sheet,
+  preserves nearest-neighbor drawing and alpha hit testing, performs autonomous
+  screen-bounded wandering, and exposes live Live2D/pixel switching through the
+  native radial menu. The Rust config boundary persists `pet_mode` and separate
+  pixel coordinates without overwriting the corresponding Live2D geometry; the
+  compatibility Python supervisor passes the same mode and position contract.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: pixel pet and remaining native visual/driver parity;
-  remaining integration services; packaged offline ASR sidecar,
+- Pending: remaining native visual/driver parity; remaining integration
+  services; packaged offline ASR sidecar,
   default-launcher cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because

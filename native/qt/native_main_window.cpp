@@ -636,7 +636,7 @@ QWidget* NativeMainWindow::createModelsPage() {
     layout->setContentsMargins(40, 52, 40, 40);
     layout->setSpacing(12);
 
-    auto* title = new qfw::TitleLabel(tr("Available Live2D models"), page);
+    auto* title = new qfw::TitleLabel(tr("Available pet models"), page);
     modelCountLabel_ = new qfw::CaptionLabel(page);
     modelList_ = new qfw::ListWidget(page);
     modelList_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -2963,7 +2963,7 @@ void NativeMainWindow::applyBackendState() {
     startConfiguredButton_->setText(
         configured > 1
             ? tr("Start %1 configured pets").arg(configured)
-            : (configured == 1 ? tr("Start configured pet") : tr("No Live2D pet available")));
+            : (configured == 1 ? tr("Start configured pet") : tr("No pet model available")));
     startConfiguredButton_->setEnabled(configured > 0);
 }
 
@@ -6165,12 +6165,26 @@ void NativeMainWindow::updateModelDetails() {
     const std::optional<ModelCatalogItem> model = selectedModel();
     launchSelectedButton_->setEnabled(model.has_value());
     if (!model.has_value()) {
-        modelDetailsLabel_->setText(tr("No Live2D model was found in either model root"));
+        modelDetailsLabel_->setText(tr("No pet model was found in either model root"));
         return;
     }
+    const QJsonObject configured = configuredPetFor(*model);
+    const QString mode =
+        configured.value(QStringLiteral("pet_mode")).toString(QStringLiteral("live2d"));
+    const bool pixelAvailable = QFileInfo::exists(
+        QDir(projectRoot_)
+            .filePath(QStringLiteral("pixels/%1.webp").arg(model->character)));
     modelDetailsLabel_->setText(
-        QStringLiteral("%1\n%2 · %3\n%4")
-            .arg(modelTitle(*model), model->character, model->costume, model->path));
+        QStringLiteral("%1\n%2 · %3\n%4\n%5")
+            .arg(
+                modelTitle(*model),
+                model->character,
+                model->costume,
+                model->path,
+                tr("Configured mode: %1 · pixel assets: %2")
+                    .arg(
+                        mode == QStringLiteral("pixel") ? tr("pixel") : tr("Live2D"),
+                        pixelAvailable ? tr("available") : tr("unavailable"))));
 }
 
 void NativeMainWindow::populateChatCharacters() {
@@ -7466,10 +7480,6 @@ QList<ModelCatalogItem> NativeMainWindow::configuredModels() const {
     const QJsonArray configured = runtime_.value(QStringLiteral("configured_pets")).toArray();
     for (const QJsonValue& value : configured) {
         const QJsonObject pet = value.toObject();
-        if (pet.value(QStringLiteral("pet_mode")).toString(QStringLiteral("live2d"))
-            != QStringLiteral("live2d")) {
-            continue;
-        }
         const QString path = pet.value(QStringLiteral("path")).toString();
         const auto found = std::find_if(
             catalog_.cbegin(),
@@ -7539,11 +7549,33 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     spec.modelPath = model.path;
     spec.character = model.character;
     spec.language = runtime_.value(QStringLiteral("language")).toString();
+    spec.petMode = pet.contains(QStringLiteral("pet_mode"))
+        ? pet.value(QStringLiteral("pet_mode")).toString()
+        : runtime_.value(QStringLiteral("pet_mode")).toString(QStringLiteral("live2d"));
+    if (spec.petMode != QStringLiteral("pixel")) {
+        spec.petMode = QStringLiteral("live2d");
+    }
     spec.format = model.format;
-    spec.width = pet.value(QStringLiteral("window_width")).toInt(400);
-    spec.height = pet.value(QStringLiteral("window_height")).toInt(500);
-    spec.x = pet.value(QStringLiteral("window_x")).toInt(-1);
-    spec.y = pet.value(QStringLiteral("window_y")).toInt(-1);
+    spec.width = pet.contains(QStringLiteral("window_width"))
+        ? pet.value(QStringLiteral("window_width")).toInt(400)
+        : runtime_.value(QStringLiteral("window_width")).toInt(400);
+    spec.height = pet.contains(QStringLiteral("window_height"))
+        ? pet.value(QStringLiteral("window_height")).toInt(500)
+        : runtime_.value(QStringLiteral("window_height")).toInt(500);
+    spec.x = spec.petMode == QStringLiteral("pixel")
+        ? (pet.contains(QStringLiteral("pixel_window_x"))
+               ? pet.value(QStringLiteral("pixel_window_x")).toInt(-1)
+               : runtime_.value(QStringLiteral("pixel_window_x")).toInt(-1))
+        : (pet.contains(QStringLiteral("window_x"))
+               ? pet.value(QStringLiteral("window_x")).toInt(-1)
+               : runtime_.value(QStringLiteral("window_x")).toInt(-1));
+    spec.y = spec.petMode == QStringLiteral("pixel")
+        ? (pet.contains(QStringLiteral("pixel_window_y"))
+               ? pet.value(QStringLiteral("pixel_window_y")).toInt(-1)
+               : runtime_.value(QStringLiteral("pixel_window_y")).toInt(-1))
+        : (pet.contains(QStringLiteral("window_y"))
+               ? pet.value(QStringLiteral("window_y")).toInt(-1)
+               : runtime_.value(QStringLiteral("window_y")).toInt(-1));
     spec.fps = runtime_.value(QStringLiteral("fps")).toInt(120);
     spec.opacity = runtime_.value(QStringLiteral("opacity")).toDouble(1.0);
     spec.vsync = runtime_.value(QStringLiteral("vsync")).toBool(true);
@@ -7606,7 +7638,7 @@ bool NativeMainWindow::startConfiguredPet() {
 bool NativeMainWindow::startConfiguredPets() {
     const QList<ModelCatalogItem> models = configuredModels();
     if (models.isEmpty()) {
-        rendererStatusLabel_->setText(tr("No configured Live2D models are available"));
+        rendererStatusLabel_->setText(tr("No configured pet models are available"));
         return false;
     }
     QList<PetLaunchSpec> specs;

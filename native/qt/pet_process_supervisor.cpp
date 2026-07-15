@@ -280,6 +280,8 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         spec.character,
         QStringLiteral("--language"),
         spec.language,
+        QStringLiteral("--pet-mode"),
+        spec.petMode,
         QStringLiteral("--format"),
         spec.format,
         QStringLiteral("--width"),

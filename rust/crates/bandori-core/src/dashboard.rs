@@ -15,6 +15,8 @@ pub struct ConfiguredPetSnapshot {
     pub window_y: i64,
     pub window_width: i64,
     pub window_height: i64,
+    pub pixel_window_x: i64,
+    pub pixel_window_y: i64,
     pub drag_locked: bool,
     pub default_motion: String,
     pub default_expression: String,
@@ -25,6 +27,13 @@ pub struct ConfiguredPetSnapshot {
 pub struct NativeRuntimeSnapshot {
     pub selected_character: String,
     pub selected_costume: String,
+    pub pet_mode: String,
+    pub window_x: i64,
+    pub window_y: i64,
+    pub window_width: i64,
+    pub window_height: i64,
+    pub pixel_window_x: i64,
+    pub pixel_window_y: i64,
     pub language: String,
     pub active_user_key: String,
     pub dark_theme: String,
@@ -239,6 +248,16 @@ impl NativeRuntimeSnapshot {
                     window_y: object_int(entry, "window_y", global_y),
                     window_width: object_int(entry, "window_width", global_width),
                     window_height: object_int(entry, "window_height", global_height),
+                    pixel_window_x: object_int(
+                        entry,
+                        "pixel_window_x",
+                        int_value(values, "pixel_window_x", -1),
+                    ),
+                    pixel_window_y: object_int(
+                        entry,
+                        "pixel_window_y",
+                        int_value(values, "pixel_window_y", -1),
+                    ),
                     drag_locked: object_bool(entry, "drag_locked", global_drag_locked),
                     default_motion: non_empty_or_profile(default_motion, profile, "default_motion"),
                     default_expression: non_empty_or_profile(
@@ -267,6 +286,16 @@ impl NativeRuntimeSnapshot {
         Self {
             selected_character: string_value(values, "character", ""),
             selected_costume: string_value(values, "costume", ""),
+            pet_mode: match string_value(values, "pet_mode", "live2d").as_str() {
+                "pixel" => "pixel".to_owned(),
+                _ => "live2d".to_owned(),
+            },
+            window_x: global_x,
+            window_y: global_y,
+            window_width: global_width,
+            window_height: global_height,
+            pixel_window_x: int_value(values, "pixel_window_x", -1),
+            pixel_window_y: int_value(values, "pixel_window_y", -1),
             language: string_value(values, "language", ""),
             active_user_key,
             dark_theme: string_value(values, "dark_theme", "follow_system"),
@@ -439,6 +468,9 @@ mod tests {
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 45,
                 "birthday_tray_notifications_enabled": false,
+                "pet_mode": "pixel",
+                "pixel_window_x": 77,
+                "pixel_window_y": 88,
                 "active_user_profile": "alice",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
@@ -472,6 +504,9 @@ mod tests {
         assert!(snapshot.chat_attachment_auto_cleanup_enabled);
         assert_eq!(snapshot.chat_attachment_retention_days, 45);
         assert!(!snapshot.birthday_tray_notifications_enabled);
+        assert_eq!(snapshot.pet_mode, "pixel");
+        assert_eq!(snapshot.pixel_window_x, 77);
+        assert_eq!(snapshot.pixel_window_y, 88);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -489,6 +524,7 @@ mod tests {
         let snapshot = NativeRuntimeSnapshot::from_config(&ConfigDocument::default());
         assert_eq!(snapshot.active_user_key, "__default__");
         assert!(snapshot.birthday_tray_notifications_enabled);
+        assert_eq!(snapshot.pet_mode, "live2d");
     }
 
     #[test]

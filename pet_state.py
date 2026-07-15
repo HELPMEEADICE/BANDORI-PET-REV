@@ -22,13 +22,24 @@ def persist_pet_window_state(config, line: str) -> bool:
     placement = state.get("placement", {})
     if not isinstance(placement, dict):
         placement = {}
-    window_fields = {
-        "window_x": x,
-        "window_y": y,
-        "window_width": width,
-        "window_height": height,
-        "window_placement": placement,
-    }
+    pixel_mode = str(state.get("pet_mode", "live2d") or "live2d").strip().lower() == "pixel"
+    window_fields = (
+        {
+            "pet_mode": "pixel",
+            "pixel_window_x": x,
+            "pixel_window_y": y,
+            "pixel_window_placement": placement,
+        }
+        if pixel_mode
+        else {
+            "pet_mode": "live2d",
+            "window_x": x,
+            "window_y": y,
+            "window_width": width,
+            "window_height": height,
+            "window_placement": placement,
+        }
+    )
     config.load()
     if isinstance(state.get("drag_locked"), bool):
         config.set("drag_locked", state["drag_locked"])

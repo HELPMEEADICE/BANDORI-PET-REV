@@ -112,6 +112,16 @@ QString compactJson(const QJsonObject& value) {
     return QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Compact));
 }
 
+QString pixelSpritePath(const QString& pixelsRoot, const QString& character) {
+    const QString normalized = character.trimmed();
+    if (normalized.isEmpty() || normalized.size() > 128
+        || normalized.contains(u'/') || normalized.contains(u'\\')
+        || normalized.contains(QChar(u'\0'))) {
+        return {};
+    }
+    return QDir(pixelsRoot).filePath(normalized + QStringLiteral(".webp"));
+}
+
 struct PeerDragState {
     QString dragId;
     QPoint origin;
@@ -199,7 +209,7 @@ QJsonArray rectangleJson(const QRect& rectangle) {
 }
 
 QJsonObject petWindowState(
-    const QWidget& widget,
+    const bandori::Live2dGlWidget& widget,
     const QString& character,
     const QString& modelPath) {
     const QRect geometry = widget.geometry();
@@ -232,13 +242,15 @@ QJsonObject petWindowState(
         {QStringLiteral("width"), geometry.width()},
         {QStringLiteral("height"), geometry.height()},
         {QStringLiteral("drag_locked"), widget.dragLocked()},
+        {QStringLiteral("pet_mode"),
+         widget.pixelMode() ? QStringLiteral("pixel") : QStringLiteral("live2d")},
         {QStringLiteral("placement"), placement},
     };
 }
 
 bool publishPetWindowState(
     bandori::PetIpcClient* client,
-    const QWidget& widget,
+    const bandori::Live2dGlWidget& widget,
     const QString& character,
     const QString& modelPath) {
     return client != nullptr
@@ -259,7 +271,8 @@ int main(int argc, char* argv[]) {
     QApplication::setQuitOnLastWindowClosed(true);
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Isolated Rust + LuaJIT Live2D pet renderer"));
+    parser.setApplicationDescription(
+        QStringLiteral("Isolated Rust + LuaJIT + Qt pet renderer"));
     parser.addHelpOption();
     QCommandLineOption projectRoot(
         QStringLiteral("project-root"),
@@ -288,6 +301,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Model format: moc or moc3"),
         QStringLiteral("format"),
         QStringLiteral("moc3"));
+    QCommandLineOption petMode(
+        QStringLiteral("pet-mode"),
+        QStringLiteral("Pet renderer mode: live2d or pixel"),
+        QStringLiteral("mode"),
+        QStringLiteral("live2d"));
     QCommandLineOption width(
         QStringLiteral("width"), QStringLiteral("Pet width"), QStringLiteral("pixels"), QStringLiteral("400"));
     QCommandLineOption height(
@@ -395,6 +413,7 @@ int main(int argc, char* argv[]) {
          character,
          language,
          format,
+         petMode,
          width,
          height,
          positionX,
@@ -428,6 +447,12 @@ int main(int argc, char* argv[]) {
         ? bandori::Live2dGlWidget::ModelFormat::Moc
         : bandori::Live2dGlWidget::ModelFormat::Moc3;
     const QString modelPath = parser.value(model);
+    QString characterId = parser.value(character).trimmed();
+    if (characterId.isEmpty()) {
+        characterId = QFileInfo(modelPath).completeBaseName();
+    }
+    const bool requestedPixel =
+        parser.value(petMode).compare(QStringLiteral("pixel"), Qt::CaseInsensitive) == 0;
     bandori::Live2dGlWidget widget(
         parser.value(projectRoot),
         parser.value(userModels),
@@ -445,7 +470,17 @@ int main(int argc, char* argv[]) {
     widget.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     widget.setAttribute(Qt::WA_TranslucentBackground, true);
     int currentScale = normalizedLive2dScale(parser.value(live2dScale).toInt());
-    widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale));
+    widget.setLive2dWindowSize(scaledLive2dSize(modelFormat, currentScale));
+    const QString pixelsRoot =
+        QDir(parser.value(projectRoot)).filePath(QStringLiteral("pixels"));
+    const bool pixelLoaded = widget.loadPixelSprite(
+        pixelSpritePath(pixelsRoot, characterId),
+        QDir(pixelsRoot).filePath(QStringLiteral("frames.json")));
+    if (requestedPixel && (!pixelLoaded || !widget.setPixelMode(true))) {
+        qWarning().noquote()
+            << "Pixel pet assets are unavailable for" << characterId
+            << "; using Live2D renderer";
+    }
     const int initialX = parser.value(positionX).toInt();
     const int initialY = parser.value(positionY).toInt();
     const QRect requestedGeometry(initialX, initialY, widget.width(), widget.height());
@@ -481,7 +516,8 @@ int main(int argc, char* argv[]) {
     bandori::NativeRadialMenu radialMenu;
     radialMenu.setLocked(widget.dragLocked());
     radialMenu.setLanguage(parser.value(language));
-    radialMenu.setPixelAvailable(false);
+    radialMenu.setPixelAvailable(widget.pixelAvailable());
+    radialMenu.setPixelActive(widget.pixelMode());
 
     QTimer parentWatch;
     const qint64 supervisorPid = parser.value(parentPid).toLongLong();
@@ -495,10 +531,6 @@ int main(int argc, char* argv[]) {
         parentWatch.start();
     }
 
-    QString characterId = parser.value(character).trimmed();
-    if (characterId.isEmpty()) {
-        characterId = QFileInfo(modelPath).completeBaseName();
-    }
     const QJsonDocument clickActionsDocument =
         QJsonDocument::fromJson(parser.value(clickMotionActions).toUtf8());
     QJsonObject configuredClickActions = clickActionsDocument.isObject()
@@ -647,7 +679,7 @@ int main(int argc, char* argv[]) {
         &radialMenu,
         &bandori::NativeRadialMenu::actionTriggered,
         &widget,
-        [ipcClient, &widget, characterId](const QString& action) {
+        [ipcClient, &widget, &radialMenu, characterId, modelPath](const QString& action) {
             if (action == QStringLiteral("chat")) {
                 const QRect geometry = widget.geometry();
                 ipcClient->publishLine(
@@ -670,6 +702,12 @@ int main(int argc, char* argv[]) {
                     QStringLiteral("__random__"),
                     {},
                     characterId);
+            } else if (action == QStringLiteral("pixel")) {
+                publishPetWindowState(ipcClient, widget, characterId, modelPath);
+                if (widget.setPixelMode(!widget.pixelMode())) {
+                    radialMenu.setPixelActive(widget.pixelMode());
+                    publishPetWindowState(ipcClient, widget, characterId, modelPath);
+                }
             }
         });
     QObject::connect(
@@ -696,7 +734,9 @@ int main(int argc, char* argv[]) {
                 QStringLiteral("POKE_USER\t")
                     + compactJson({
                         {QStringLiteral("character"), characterId},
-                        {QStringLiteral("source"), QStringLiteral("live2d")},
+                        {QStringLiteral("source"),
+                         widget.pixelMode() ? QStringLiteral("pixel")
+                                            : QStringLiteral("live2d")},
                     }),
                 true);
         });
@@ -914,7 +954,8 @@ int main(int argc, char* argv[]) {
                 }
                 const QString source =
                     event.value(QStringLiteral("source")).toString().trimmed().toLower();
-                if (source == QStringLiteral("live2d")) {
+                if (source == QStringLiteral("live2d")
+                    || source == QStringLiteral("pixel")) {
                     return;
                 }
                 const QString direction =
@@ -988,7 +1029,7 @@ int main(int argc, char* argv[]) {
             if (settings.contains(QStringLiteral("live2d_scale"))) {
                 currentScale = normalizedLive2dScale(
                     settings.value(QStringLiteral("live2d_scale")).toInt(100));
-                widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale));
+                widget.setLive2dWindowSize(scaledLive2dSize(modelFormat, currentScale));
             }
             if (settings.contains(QStringLiteral("drag_locked"))) {
                 const bool locked =
@@ -1050,6 +1091,20 @@ int main(int argc, char* argv[]) {
                 if (!characterMatch.isEmpty()) {
                     configuredClickActions =
                         characterMatch.value(QStringLiteral("click_motion_actions")).toObject();
+                    const bool wantsPixel =
+                        characterMatch
+                            .value(QStringLiteral("pet_mode"))
+                            .toString(QStringLiteral("live2d"))
+                            == QStringLiteral("pixel");
+                    if (wantsPixel != widget.pixelMode()) {
+                        publishPetWindowState(
+                            ipcClient, widget, characterId, modelPath);
+                        if (widget.setPixelMode(wantsPixel)) {
+                            radialMenu.setPixelActive(widget.pixelMode());
+                            publishPetWindowState(
+                                ipcClient, widget, characterId, modelPath);
+                        }
+                    }
                 }
             }
             widget.setHeadTrackingEnabled(headTracking && !mutualGaze);

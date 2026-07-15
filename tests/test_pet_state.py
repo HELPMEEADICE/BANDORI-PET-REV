@@ -67,6 +67,32 @@ def test_single_pet_state_keeps_legacy_top_level_position_compatible():
     assert config.save_count == 1
 
 
+def test_pixel_pet_state_keeps_live2d_geometry_and_saves_pixel_position():
+    config = ConfigHarness({
+        "window_x": 20,
+        "window_width": 400,
+        "models": [{
+            "character": "ran",
+            "path": "ran/model.json",
+            "window_x": 20,
+            "window_width": 400,
+        }],
+    })
+    state = json.loads(state_line().split("\t", 1)[1])
+    state["pet_mode"] = "pixel"
+    state["width"] = 128
+    state["height"] = 128
+
+    assert persist_pet_window_state(
+        config, "PET_STATE\t" + json.dumps(state)
+    )
+    assert config.values["pet_mode"] == "pixel"
+    assert config.values["pixel_window_x"] == 120
+    assert config.values["window_x"] == 20
+    assert config.values["models"][0]["pixel_window_y"] == -40
+    assert config.values["models"][0]["window_width"] == 400
+
+
 def test_unknown_multi_pet_and_malformed_states_are_not_persisted():
     config = ConfigHarness({
         "models": [

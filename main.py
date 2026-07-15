@@ -1443,6 +1443,11 @@ def main():
             process = QProcess(app)
             if native_renderer:
                 model_format = mgr.get_model_format(model["character"], model["costume"])
+                pet_mode = str(model.get("pet_mode", "live2d") or "live2d").strip().lower()
+                if pet_mode not in {"live2d", "pixel"}:
+                    pet_mode = "live2d"
+                position_x_key = "pixel_window_x" if pet_mode == "pixel" else "window_x"
+                position_y_key = "pixel_window_y" if pet_mode == "pixel" else "window_y"
                 program = native_renderer
                 arguments = [
                     "--project-root", BASE_DIR,
@@ -1450,11 +1455,12 @@ def main():
                     "--model", model["path"],
                     "--character", model["character"],
                     "--language", str(cfg.get("language", "") or ""),
+                    "--pet-mode", pet_mode,
                     "--format", model_format or "moc3",
                     "--width", str(cfg.get("window_width", 400)),
                     "--height", str(cfg.get("window_height", 500)),
-                    "--x", str(model.get("window_x", cfg.get("window_x", -1))),
-                    "--y", str(model.get("window_y", cfg.get("window_y", -1))),
+                    "--x", str(model.get(position_x_key, cfg.get(position_x_key, -1))),
+                    "--y", str(model.get(position_y_key, cfg.get(position_y_key, -1))),
                     "--fps", str(cfg.get("fps", 120)),
                     "--opacity", str(cfg.get("opacity", 1.0)),
                     "--vsync", str(bool(cfg.get("vsync", True))).lower(),

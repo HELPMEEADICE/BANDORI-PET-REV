@@ -25,6 +25,7 @@ public:
     void setLocked(bool locked);
     void setLanguage(const QString& language);
     void setPixelAvailable(bool available);
+    void setPixelActive(bool active);
     void showAt(const QPoint& globalCenter);
     void dismiss();
 
@@ -66,6 +67,7 @@ private:
     int hoverIndex_ = -1;
     bool centerHover_ = false;
     bool locked_ = false;
+    bool pixelActive_ = false;
     bool open_ = false;
     bool closing_ = false;
     bool ignoreReleaseUntilButtonsUp_ = false;

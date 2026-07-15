@@ -35,6 +35,8 @@ pub struct PetWindowState {
     pub width: i64,
     pub height: i64,
     #[serde(default)]
+    pub pet_mode: String,
+    #[serde(default)]
     pub drag_locked: Option<bool>,
     #[serde(default)]
     pub placement: Option<Map<String, Value>>,
@@ -130,6 +132,7 @@ impl ConfigDocument {
             return false;
         }
         let model_path = state.model_path.trim();
+        let pixel_mode = state.pet_mode.trim().eq_ignore_ascii_case("pixel");
         if let Some(locked) = state.drag_locked {
             self.values
                 .insert("drag_locked".into(), Value::Bool(locked));
@@ -157,15 +160,32 @@ impl ConfigDocument {
             }
         }
         if model_count <= 1 {
-            self.values.insert("window_x".into(), Value::from(state.x));
-            self.values.insert("window_y".into(), Value::from(state.y));
-            self.values
-                .insert("window_width".into(), Value::from(state.width));
-            self.values
-                .insert("window_height".into(), Value::from(state.height));
-            if let Some(placement) = &state.placement {
+            self.values.insert(
+                "pet_mode".into(),
+                Value::String(if pixel_mode { "pixel" } else { "live2d" }.into()),
+            );
+            if pixel_mode {
                 self.values
-                    .insert("window_placement".into(), Value::Object(placement.clone()));
+                    .insert("pixel_window_x".into(), Value::from(state.x));
+                self.values
+                    .insert("pixel_window_y".into(), Value::from(state.y));
+                if let Some(placement) = &state.placement {
+                    self.values.insert(
+                        "pixel_window_placement".into(),
+                        Value::Object(placement.clone()),
+                    );
+                }
+            } else {
+                self.values.insert("window_x".into(), Value::from(state.x));
+                self.values.insert("window_y".into(), Value::from(state.y));
+                self.values
+                    .insert("window_width".into(), Value::from(state.width));
+                self.values
+                    .insert("window_height".into(), Value::from(state.height));
+                if let Some(placement) = &state.placement {
+                    self.values
+                        .insert("window_placement".into(), Value::Object(placement.clone()));
+                }
             }
             return true;
         }
@@ -243,6 +263,19 @@ impl ConfigDocument {
 }
 
 fn apply_window_state_fields(entry: &mut Map<String, Value>, state: &PetWindowState) {
+    if state.pet_mode.trim().eq_ignore_ascii_case("pixel") {
+        entry.insert("pet_mode".into(), Value::String("pixel".into()));
+        entry.insert("pixel_window_x".into(), Value::from(state.x));
+        entry.insert("pixel_window_y".into(), Value::from(state.y));
+        if let Some(placement) = &state.placement {
+            entry.insert(
+                "pixel_window_placement".into(),
+                Value::Object(placement.clone()),
+            );
+        }
+        return;
+    }
+    entry.insert("pet_mode".into(), Value::String("live2d".into()));
     entry.insert("window_x".into(), Value::from(state.x));
     entry.insert("window_y".into(), Value::from(state.y));
     entry.insert("window_width".into(), Value::from(state.width));
@@ -353,6 +386,7 @@ mod tests {
             y: -40,
             width: 400,
             height: 500,
+            pet_mode: "live2d".into(),
             drag_locked: Some(true),
             placement: Some(
                 serde_json::json!({"screen_name":"right","relative_x":0.25})
@@ -378,6 +412,42 @@ mod tests {
         assert!(single.apply_pet_window_state(&state));
         assert_eq!(single.get("window_x"), Some(&Value::from(120)));
         assert_eq!(single.get("window_height"), Some(&Value::from(500)));
+    }
+
+    #[test]
+    fn pixel_pet_state_preserves_live2d_geometry_and_uses_pixel_position() {
+        let mut config = ConfigDocument::default();
+        config.set(
+            "models",
+            serde_json::json!([{
+                "character":"rana",
+                "path":"models/rana/model.json",
+                "window_x":40,
+                "window_y":50,
+                "window_width":400,
+                "window_height":800
+            }]),
+        );
+        let state = PetWindowState {
+            character: "rana".into(),
+            model_path: "models/rana/model.json".into(),
+            x: 640,
+            y: 320,
+            width: 128,
+            height: 128,
+            pet_mode: "pixel".into(),
+            drag_locked: Some(false),
+            placement: None,
+        };
+        assert!(config.apply_pet_window_state(&state));
+        let model = &config.get("models").unwrap().as_array().unwrap()[0];
+        assert_eq!(model["pet_mode"], "pixel");
+        assert_eq!(model["pixel_window_x"], 640);
+        assert_eq!(model["pixel_window_y"], 320);
+        assert_eq!(model["window_x"], 40);
+        assert_eq!(model["window_height"], 800);
+        assert_eq!(config.get("pixel_window_x"), Some(&Value::from(640)));
+        assert_eq!(config.get("window_x"), Some(&Value::from(-1)));
     }
 
     #[test]

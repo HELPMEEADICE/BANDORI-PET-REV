@@ -18,6 +18,7 @@ struct PetLaunchSpec {
     QString modelPath;
     QString character;
     QString language;
+    QString petMode = QStringLiteral("live2d");
     QString format = QStringLiteral("moc3");
     int width = 400;
     int height = 650;

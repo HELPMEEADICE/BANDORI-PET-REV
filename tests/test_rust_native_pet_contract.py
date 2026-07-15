@@ -57,8 +57,8 @@ def test_native_pet_restores_visible_position_and_accepts_motion_preview():
     assert 'QStringLiteral("PREVIEW_MOTION\\t")' in pet
     assert "availableGeometry().intersects(requestedGeometry)" in pet
     assert "QGuiApplication::primaryScreen()" in pet
-    assert '"--x", str(model.get("window_x"' in main
-    assert '"--y", str(model.get("window_y"' in main
+    assert 'position_x_key = "pixel_window_x" if pet_mode == "pixel" else "window_x"' in main
+    assert 'position_y_key = "pixel_window_y" if pet_mode == "pixel" else "window_y"' in main
 
 
 def test_native_pet_state_is_persisted_through_rust_config_boundary():
@@ -138,7 +138,7 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert "defaultStateTimer_.setInterval(500)" in widget
     assert "earlyBooleanOption" in pet
     assert "scaledLive2dSize" in pet
-    assert "widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale))" in pet
+    assert "widget.setLive2dWindowSize(scaledLive2dSize(modelFormat, currentScale))" in pet
     assert pet.index("configureDefaultSurfaceFormat(initialVsync)") < pet.index("QApplication app")
     assert "&bandori::Live2dGlWidget::runtimeReady" in pet
     assert "apply_default_state" in live2d_ffi
@@ -174,6 +174,40 @@ def test_native_radial_menu_routes_actions_and_uses_shaped_popup():
     assert 'QStringLiteral("__random__")' in pet
     assert 'line.startswith("OPEN_CHAT_NATIVE\\t")' in main
     assert "launch_chat_process(native_request=request)" in main
+
+
+def test_native_pixel_pet_uses_qt_sprite_animation_and_rust_mode_specific_persistence():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    config = source("rust/crates/bandori-core/src/config.rs")
+    widget_header = source("native/qt/live2d_gl_widget.h")
+    widget = source("native/qt/live2d_gl_widget.cpp")
+    pet = source("native/qt/pet_main.cpp")
+    radial_menu = source("native/qt/native_radial_menu.cpp")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    window = source("native/qt/native_main_window.cpp")
+    main = source("main.py")
+
+    assert "pub pixel_window_x: i64" in dashboard
+    assert "pub pixel_window_y: i64" in dashboard
+    assert "pub pet_mode: String" in config
+    assert "pixel_pet_state_preserves_live2d_geometry_and_uses_pixel_position" in config
+    assert 'entry.insert("pixel_window_x".into()' in config
+    assert "enum class RenderMode" in widget_header
+    assert "bool loadPixelSprite" in widget_header
+    assert "bool setPixelMode(bool enabled)" in widget_header
+    assert "void Live2dGlWidget::advancePixelFrame()" in widget
+    assert "void Live2dGlWidget::stepPixelWander()" in widget
+    assert "int Live2dGlWidget::pixelAlphaAt" in widget
+    assert 'QStringLiteral("pet-mode")' in pet
+    assert 'QStringLiteral("frames.json")' in pet
+    assert 'action == QStringLiteral("pixel")' in pet
+    assert "radialMenu.setPixelActive(widget.pixelMode())" in pet
+    assert "void NativeRadialMenu::setPixelActive" in radial_menu
+    assert 'QString petMode = QStringLiteral("live2d")' in supervisor_header
+    assert 'QStringLiteral("--pet-mode")' in supervisor
+    assert "spec.petMode" in window
+    assert '"--pet-mode", pet_mode' in main
 
 
 def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():

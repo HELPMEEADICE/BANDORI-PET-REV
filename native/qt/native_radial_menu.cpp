@@ -79,6 +79,15 @@ void NativeRadialMenu::setPixelAvailable(bool available) {
     update();
 }
 
+void NativeRadialMenu::setPixelActive(bool active) {
+    if (pixelActive_ == active) {
+        return;
+    }
+    pixelActive_ = active;
+    updateLabels();
+    update();
+}
+
 void NativeRadialMenu::showAt(const QPoint& globalCenter) {
     if (animation_ != nullptr) {
         animation_->stop();
@@ -320,7 +329,9 @@ void NativeRadialMenu::updateLabels() {
     items_[0].label = chinese ? QStringLiteral("聊天") : QStringLiteral("Chat");
     items_[1].label = chinese ? QStringLiteral("换装") : QStringLiteral("Outfit");
     items_[2].label = chinese ? QStringLiteral("动作") : QStringLiteral("Motion");
-    items_[3].label = chinese ? QStringLiteral("像素") : QStringLiteral("Pixel");
+    items_[3].label = pixelActive_
+        ? QStringLiteral("Live2D")
+        : (chinese ? QStringLiteral("像素") : QStringLiteral("Pixel"));
 }
 
 void NativeRadialMenu::updateInteractiveMask() {
