@@ -1,6 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from process_utils import clamp_int
 
 
 class ASRPageMixin:
@@ -204,7 +205,13 @@ class ASRPageMixin:
                     self._asr_insert_mode.setCurrentIndex(i)
                     break
             self._asr_auto_send.setChecked(bool(self._cfg.get("asr_auto_send", False)))
-            self._asr_max_record_seconds.setValue(int(self._cfg.get("asr_max_record_seconds", 60) or 60))
+            max_record_seconds = clamp_int(
+                self._cfg.get("asr_max_record_seconds", 60) or 60,
+                3,
+                300,
+                60,
+            )
+            self._asr_max_record_seconds.setValue(max_record_seconds)
 
     def _current_asr_config(self) -> dict:
         max_record_seconds = int(self._asr_max_record_seconds.value())
