@@ -81,3 +81,17 @@ def test_aux_translation_removes_reasoning_before_tts():
         result = _translate_to_selected_language(config, "你好", "English")
 
     assert result == "Hello!"
+
+
+def test_aux_translation_removes_generated_action_tags_before_tts():
+    response = _json_response("[smile][mtn_wave]Hello!")
+    config = {
+        "llm_aux_api_url": "https://example.com/v1",
+        "llm_aux_api_key": "secret",
+        "llm_aux_model_id": "translation-model",
+    }
+
+    with patch("tts_manager.urllib.request.urlopen", return_value=response):
+        result = _translate_to_selected_language(config, "你好", "English")
+
+    assert result == "Hello!"
