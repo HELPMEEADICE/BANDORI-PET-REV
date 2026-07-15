@@ -11,6 +11,10 @@
 
 #include "pet_process_supervisor.h"
 
+class QAction;
+class QCloseEvent;
+class QSystemTrayIcon;
+
 namespace bandori {
 
 struct ModelCatalogItem {
@@ -38,6 +42,9 @@ public:
 
 private:
     void setupUi();
+    void setupTray();
+    void showControlCenter();
+    void quitFromTray();
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
     QWidget* createSettingsPage();
@@ -55,6 +62,10 @@ private:
     PetLaunchSpec launchSpecFor(const ModelCatalogItem& model) const;
     QJsonObject configuredPetFor(const ModelCatalogItem& model) const;
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private:
     QString projectRoot_;
     QString userModelsRoot_;
     QString configPath_;
@@ -85,6 +96,11 @@ private:
     qfw::SwitchButton* mutualGazeSwitch_ = nullptr;
     qfw::ComboBox* themeComboBox_ = nullptr;
     qfw::PrimaryPushButton* saveSettingsButton_ = nullptr;
+    QSystemTrayIcon* trayIcon_ = nullptr;
+    QAction* startTrayAction_ = nullptr;
+    QAction* stopTrayAction_ = nullptr;
+    bool exitRequested_ = false;
+    bool trayHintShown_ = false;
 };
 
 }  // namespace bandori

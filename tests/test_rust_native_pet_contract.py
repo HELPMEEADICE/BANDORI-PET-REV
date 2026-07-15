@@ -169,3 +169,18 @@ def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     assert 'QStringLiteral("PEER_OFFLINE\\t")' in supervisor
     assert "supervisor_.startAll(activeSpecs_)" in window
     assert "bool NativeMainWindow::startConfiguredPets()" in window
+
+
+def test_native_control_center_owns_cross_platform_tray_lifecycle():
+    main = source("native/qt/main.cpp")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "QApplication::setQuitOnLastWindowClosed(false)" in main
+    assert "void closeEvent(QCloseEvent* event) override" in window_header
+    assert "QSystemTrayIcon::isSystemTrayAvailable()" in window
+    assert "trayIcon_->setContextMenu(menu)" in window
+    assert "startConfiguredPets()" in window
+    assert "&PetProcessSupervisor::stop" in window
+    assert "event->ignore()" in window
+    assert "QCoreApplication::quit()" in window

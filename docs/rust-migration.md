@@ -112,6 +112,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   persists them through the same locked atomic config path, updates the
   Qt-Fluent theme immediately, and reliably broadcasts live changes to every
   active native pet. Unknown fields cannot cross this write boundary.
+  A cross-platform `QSystemTrayIcon` now owns the native main-process lifecycle:
+  closing the control center hides it without killing pets, while the tray can
+  restore the window, start/stop the configured fleet, or perform a bounded
+  graceful exit.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

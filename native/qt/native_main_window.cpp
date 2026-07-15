@@ -1,6 +1,9 @@
 #include "native_main_window.h"
 
 #include <QAbstractItemView>
+#include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -8,7 +11,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QScrollArea>
+#include <QSystemTrayIcon>
 #include <QVariant>
 #include <QVBoxLayout>
 
@@ -79,6 +84,7 @@ NativeMainWindow::NativeMainWindow(
       supervisor_(this) {
     setupUi();
     reloadBackendState();
+    setupTray();
 
     connect(
         &supervisor_,
@@ -89,6 +95,10 @@ NativeMainWindow::NativeMainWindow(
             runtimeCard_->setContent(status);
             restartButton_->setEnabled(!activeSpecs_.isEmpty());
             stopButton_->setEnabled(supervisor_.isRunning());
+            if (startTrayAction_ != nullptr) {
+                startTrayAction_->setEnabled(!supervisor_.isRunning());
+                stopTrayAction_->setEnabled(supervisor_.isRunning());
+            }
         });
     connect(
         &supervisor_,
@@ -109,6 +119,93 @@ NativeMainWindow::NativeMainWindow(
                     tr("Native chat UI is not ported yet; renderer remains active"));
             }
         });
+}
+
+void NativeMainWindow::setupTray() {
+    const QString iconPath = QDir(projectRoot_).filePath(QStringLiteral("logo.ico"));
+    const QIcon icon(iconPath);
+    if (!icon.isNull()) {
+        setWindowIcon(icon);
+        QApplication::setWindowIcon(icon);
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        return;
+    }
+
+    trayIcon_ = new QSystemTrayIcon(icon.isNull() ? windowIcon() : icon, this);
+    trayIcon_->setToolTip(QStringLiteral("BandoriPet Rust + Qt"));
+    auto* menu = new QMenu(this);
+    QAction* openAction = menu->addAction(tr("Open control center"));
+    startTrayAction_ = menu->addAction(tr("Start configured pets"));
+    stopTrayAction_ = menu->addAction(tr("Stop active pets"));
+    menu->addSeparator();
+    QAction* quitAction = menu->addAction(tr("Exit BandoriPet"));
+    trayIcon_->setContextMenu(menu);
+    stopTrayAction_->setEnabled(supervisor_.isRunning());
+
+    connect(openAction, &QAction::triggered, this, [this]() { showControlCenter(); });
+    connect(startTrayAction_, &QAction::triggered, this, [this]() {
+        startConfiguredPets();
+    });
+    connect(stopTrayAction_, &QAction::triggered, &supervisor_, &PetProcessSupervisor::stop);
+    connect(quitAction, &QAction::triggered, this, [this]() { quitFromTray(); });
+    connect(
+        trayIcon_,
+        &QSystemTrayIcon::activated,
+        this,
+        [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger
+                || reason == QSystemTrayIcon::DoubleClick) {
+                showControlCenter();
+            }
+        });
+    connect(QApplication::instance(), &QCoreApplication::aboutToQuit, this, [this]() {
+        if (trayIcon_ != nullptr) {
+            trayIcon_->hide();
+        }
+    });
+    trayIcon_->show();
+}
+
+void NativeMainWindow::showControlCenter() {
+    showNormal();
+    raise();
+    activateWindow();
+}
+
+void NativeMainWindow::quitFromTray() {
+    if (exitRequested_) {
+        return;
+    }
+    exitRequested_ = true;
+    if (trayIcon_ != nullptr) {
+        trayIcon_->hide();
+    }
+    const bool waitForPets = supervisor_.isRunning();
+    supervisor_.stop();
+    QTimer::singleShot(waitForPets ? 700 : 0, QApplication::instance(), []() {
+        QCoreApplication::quit();
+    });
+}
+
+void NativeMainWindow::closeEvent(QCloseEvent* event) {
+    if (!exitRequested_ && trayIcon_ != nullptr && trayIcon_->isVisible()) {
+        event->ignore();
+        hide();
+        if (!trayHintShown_) {
+            trayHintShown_ = true;
+            trayIcon_->showMessage(
+                tr("BandoriPet is still running"),
+                tr("Use the tray icon to restore the control center or exit."),
+                QSystemTrayIcon::Information,
+                2'500);
+        }
+        return;
+    }
+    qfw::FluentWindow::closeEvent(event);
+    if (trayIcon_ == nullptr) {
+        QCoreApplication::quit();
+    }
 }
 
 void NativeMainWindow::setupUi() {

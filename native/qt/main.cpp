@@ -12,6 +12,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("BandoriPet"));
     QApplication::setOrganizationName(QStringLiteral("BandoriPet"));
+    QApplication::setQuitOnLastWindowClosed(false);
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("BandoriPet Rust + Qt migration shell"));
