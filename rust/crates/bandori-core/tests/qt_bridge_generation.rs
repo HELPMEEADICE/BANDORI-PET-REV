@@ -40,6 +40,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "getReminderEventsJson",
         "getReminderStateJson",
         "getLlmSettingsJson",
+        "getTtsSettingsJson",
         "getMemorySnapshotJson",
         "getUserProfilesJson",
         "getPersonaSettingsJson",
@@ -59,6 +60,10 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "mutateLlmProfile",
         "startProviderOperation",
         "cancelProviderOperation",
+        "loadTtsSettings",
+        "saveTtsSettings",
+        "startTtsSynthesis",
+        "cancelTtsSynthesis",
         "loadMemoryState",
         "mutateMemory",
         "loadUserProfiles",
@@ -96,6 +101,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "chatStreamEvent",
         "chatMemoryEvent",
         "providerOperationEvent",
+        "ttsAudioEvent",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

@@ -280,10 +280,21 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   cleanup. Rust scopes every scan and deletion to `chat_attachments` beside the
   selected `data.db`, sanitizes broken private/group message references, and can
   run the saved policy once at native startup.
+  Native TTS is now owned by the Rust `bandori-tts` transport and a whitelisted
+  core settings boundary. It preserves GPT-SoVITS reference-audio, Japanese
+  prompt and optional LoRA metadata, strips action/source metadata, bounds text
+  and audio, supports cancellation, parses framed OGG incrementally and retries
+  incompatible streaming endpoints once with WAV. CXX-Qt carries structured
+  metadata plus binary audio without JSON/base64 expansion. The Qt-Fluent page
+  edits and tests the service; Qt Multimedia queues temporary OGG/WAV chunks,
+  chat and reminder completions trigger serialized synthesis, and playback drives
+  the existing native `LIP` lane for approximate mouth motion. Optional
+  non-Chinese translation uses the auxiliary LLM and safely falls back to the
+  original line.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
+- Pending: pixel pet and remaining native visual/driver parity; ASR,
   screen-awareness and remaining integration services; default-launcher
   cutover, packaging and multi-platform validation.
 
@@ -296,6 +307,7 @@ and Python compatibility checks remain independent of that local limitation.
 - Core checks: `cargo test -p bandori-core`
 - LLM protocol and transport: `cargo test -p bandori-llm-protocol` and
   `cargo test -p bandori-llm`
+- TTS transport: `cargo test -p bandori-tts`
 - Live2D host checks: `cargo test -p bandori-live2d`
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by
@@ -307,7 +319,8 @@ pet renderer during the compatibility window, set
 native executable is outside the standard `build-rust` locations. Failure to
 find the helper logs a warning and safely falls back to the Python renderer.
 
-The native build requires Qt 6.5+ with Core, Gui, Widgets, OpenGLWidgets and Svg,
+The native build requires Qt 6.5+ with Core, Gui, Widgets, Multimedia,
+OpenGLWidgets and Svg,
 a C++17 compiler, Rust 1.85+, CMake 3.24+, and CXX-Qt 0.9. CMake can discover an
 installed CXX-Qt package or fetch its pinned CMake integration at configure time.
 GNU-target Windows builds of vendored LuaJIT also require a `make` command (the

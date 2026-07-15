@@ -83,12 +83,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bandori-tts"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "bandori_qt_bridge"
 version = "0.1.0"
 dependencies = [
  "bandori-core",
  "bandori-live2d",
  "bandori-llm",
+ "bandori-tts",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",

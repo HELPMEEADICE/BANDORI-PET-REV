@@ -3,6 +3,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QAudioOutput>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDebug>
@@ -18,6 +19,7 @@
 #include <QListWidgetItem>
 #include <QMap>
 #include <QMenu>
+#include <QMediaPlayer>
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -25,13 +27,16 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSystemTrayIcon>
+#include <QTemporaryFile>
 #include <QTextBrowser>
 #include <QTableWidget>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QUuid>
+#include <QUrl>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace bandori {
@@ -282,6 +287,13 @@ NativeMainWindow::NativeMainWindow(
         &Backend::providerOperationEvent,
         this,
         [this](const QString& payloadJson) { handleNativeProviderOperation(payloadJson); });
+    connect(
+        &backend_,
+        &Backend::ttsAudioEvent,
+        this,
+        [this](const QString& payloadJson, const QByteArray& audio) {
+            handleNativeTtsAudio(payloadJson, audio);
+        });
     reloadBackendState();
     setupTray();
     reminderTimer_.setInterval(15'000);
@@ -382,6 +394,7 @@ void NativeMainWindow::quitFromTray() {
         return;
     }
     exitRequested_ = true;
+    stopNativeTts();
     clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
         trayIcon_->hide();
@@ -408,6 +421,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
         return;
     }
     clearPendingChatAttachments();
+    stopNativeTts();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
@@ -429,6 +443,7 @@ void NativeMainWindow::setupUi() {
     QWidget* userProfiles = createUserProfilesPage();
     QWidget* personas = createPersonaPage();
     QWidget* llmSettings = createLlmSettingsPage();
+    QWidget* ttsSettings = createTtsSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
@@ -440,6 +455,7 @@ void NativeMainWindow::setupUi() {
     userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
     personas->setObjectName(QStringLiteral("personasPage"));
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
+    ttsSettings->setObjectName(QStringLiteral("ttsSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
@@ -451,6 +467,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
     addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
+    addSubInterface(ttsSettings, qfw::FluentIconEnum::Volume, tr("TTS settings"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -1990,6 +2007,182 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     return page;
 }
 
+QWidget* NativeMainWindow::createTtsSettingsPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native text-to-speech"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Rust sends bounded GPT-SoVITS/Qwen-compatible requests; Qt Multimedia owns playback and forwards lip-sync poses to the matching pet process."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* endpoint = new qfw::GroupHeaderCardWidget(tr("Synthesis service"), content);
+    ttsEnabledSwitch_ = new qfw::SwitchButton(endpoint);
+    ttsApiUrlEdit_ = new qfw::LineEdit(endpoint);
+    ttsApiUrlEdit_->setPlaceholderText(QStringLiteral("http://127.0.0.1:9880/"));
+    ttsApiUrlEdit_->setMinimumWidth(380);
+    endpoint->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Volume),
+        tr("Chat and reminder TTS"),
+        tr("Disabled requests are skipped unless you explicitly run the test below"),
+        ttsEnabledSwitch_);
+    endpoint->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("API endpoint"),
+        tr("HTTP(S) GPT-SoVITS or compatible root endpoint"),
+        ttsApiUrlEdit_);
+
+    auto* voice = new qfw::GroupHeaderCardWidget(tr("Voice and language"), content);
+    ttsLanguageComboBox_ = new qfw::ComboBox(voice);
+    ttsLanguageComboBox_->addItem(tr("Chinese"), QVariant(), QStringLiteral("Chinese"));
+    ttsLanguageComboBox_->addItem(tr("Japanese"), QVariant(), QStringLiteral("Japanese"));
+    ttsLanguageComboBox_->addItem(tr("English"), QVariant(), QStringLiteral("English"));
+    ttsLanguageComboBox_->setFixedWidth(170);
+    ttsReferenceCharacterComboBox_ = new qfw::ComboBox(voice);
+    ttsReferenceCharacterComboBox_->setMinimumWidth(220);
+    ttsTemperatureSpinBox_ = new qfw::DoubleSpinBox(voice);
+    ttsTemperatureSpinBox_->setRange(0.01, 2.0);
+    ttsTemperatureSpinBox_->setSingleStep(0.05);
+    ttsTemperatureSpinBox_->setDecimals(2);
+    ttsTemperatureSpinBox_->setValue(0.9);
+    ttsTemperatureSpinBox_->setFixedWidth(120);
+    voice->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("TTS text language"),
+        tr("Non-Chinese output can be translated first by the configured auxiliary model"),
+        ttsLanguageComboBox_);
+    voice->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Reference voice"),
+        tr("Automatic follows the speaking character and resolves audio_reference files in Rust"),
+        ttsReferenceCharacterComboBox_);
+    voice->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::SpeedHigh),
+        tr("Sampling temperature"),
+        tr("Validated and clamped to 0.01-2.00"),
+        ttsTemperatureSpinBox_);
+
+    auto* delivery = new qfw::GroupHeaderCardWidget(tr("Delivery"), content);
+    ttsStreamingSwitch_ = new qfw::SwitchButton(delivery);
+    ttsTranslateSwitch_ = new qfw::SwitchButton(delivery);
+    delivery->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Play),
+        tr("Stream audio"),
+        tr("Framed OGG is parsed incrementally; incompatible endpoints retry once with WAV"),
+        ttsStreamingSwitch_);
+    delivery->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Translate non-Chinese speech"),
+        tr("Uses the auxiliary LLM when configured and falls back to the original text on failure"),
+        ttsTranslateSwitch_);
+
+    auto* test = new qfw::GroupHeaderCardWidget(tr("Playback test"), content);
+    ttsTestTextEdit_ = new qfw::PlainTextEdit(test);
+    ttsTestTextEdit_->setPlaceholderText(
+        tr("Enter test text; blank uses a short default sentence."));
+    ttsTestTextEdit_->setMinimumHeight(80);
+    ttsTestTextEdit_->setMaximumHeight(130);
+    auto* actions = new QWidget(test);
+    auto* actionsLayout = new QHBoxLayout(actions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+    ttsTestButton_ = new qfw::PushButton(tr("Test playback"), actions);
+    ttsStopButton_ = new qfw::PushButton(tr("Stop"), actions);
+    ttsSaveButton_ = new qfw::PrimaryPushButton(tr("Save TTS settings"), actions);
+    actionsLayout->addWidget(ttsTestButton_);
+    actionsLayout->addWidget(ttsStopButton_);
+    actionsLayout->addStretch(1);
+    actionsLayout->addWidget(ttsSaveButton_);
+    test->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Test text"),
+        tr("Action tags and appended search-source metadata are removed before synthesis"),
+        ttsTestTextEdit_);
+    test->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::PlaySolid),
+        tr("Actions"),
+        tr("Test playback may run even when automatic TTS is disabled"),
+        actions);
+
+    ttsStatusLabel_ = new qfw::CaptionLabel(tr("Loading native TTS settings"), content);
+    ttsStatusLabel_->setWordWrap(true);
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(endpoint);
+    layout->addWidget(voice);
+    layout->addWidget(delivery);
+    layout->addWidget(test);
+    layout->addWidget(ttsStatusLabel_);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    ttsAudioOutput_ = new QAudioOutput(this);
+    ttsMediaPlayer_ = new QMediaPlayer(this);
+    ttsMediaPlayer_->setAudioOutput(ttsAudioOutput_);
+    ttsLipSyncTimer_.setInterval(40);
+    connect(&ttsLipSyncTimer_, &QTimer::timeout, this, [this]() {
+        updateNativeTtsLipSync();
+    });
+    connect(
+        ttsMediaPlayer_,
+        &QMediaPlayer::mediaStatusChanged,
+        this,
+        [this](QMediaPlayer::MediaStatus status) {
+            if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
+                if (status == QMediaPlayer::InvalidMedia) {
+                    ttsStatusLabel_->setText(tr("Qt Multimedia could not decode a TTS audio chunk"));
+                }
+                playNextNativeTtsAudio();
+            }
+        });
+    connect(
+        ttsMediaPlayer_,
+        &QMediaPlayer::playbackStateChanged,
+        this,
+        [this](QMediaPlayer::PlaybackState state) {
+            if (state == QMediaPlayer::PlayingState) {
+                ttsLipSyncTimer_.start();
+            } else {
+                ttsLipSyncTimer_.stop();
+                if (!ttsPlayingCharacter_.isEmpty()) {
+                    supervisor_.broadcastControlLine(
+                        QStringLiteral("LIP\t%1\t0\t0").arg(ttsPlayingCharacter_), false);
+                }
+            }
+        });
+    connect(ttsSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeTtsSettings();
+    });
+    connect(ttsTestButton_, &QPushButton::clicked, this, [this]() {
+        if (!saveNativeTtsSettings()) {
+            return;
+        }
+        QString text = ttsTestTextEdit_->toPlainText().trimmed();
+        if (text.isEmpty()) {
+            text = tr("Hello, this is a native TTS playback test.");
+        }
+        QString character = ttsReferenceCharacterComboBox_->currentData().toString();
+        if (character.isEmpty() && !catalog_.isEmpty()) {
+            character = catalog_.first().character;
+        }
+        if (character.isEmpty()) {
+            ttsStatusLabel_->setText(tr("No character is available for reference audio"));
+            return;
+        }
+        enqueueNativeTts(text, character, true);
+    });
+    connect(ttsStopButton_, &QPushButton::clicked, this, [this]() { stopNativeTts(); });
+    ttsStopButton_->setEnabled(false);
+    return page;
+}
+
 QWidget* NativeMainWindow::createSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
@@ -2359,6 +2552,7 @@ void NativeMainWindow::applyBackendState() {
     populateReminderCharacters();
     loadNativeReminderState();
     loadNativeLlmSettings();
+    loadNativeTtsSettings();
     refreshNativeMemoryState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
@@ -2933,6 +3127,274 @@ void NativeMainWindow::setNativeProviderBusy(bool busy) {
     llmPrimaryTestButton_->setEnabled(!busy);
     llmAuxFetchModelsButton_->setEnabled(!busy);
     llmAuxTestButton_->setEnabled(!busy);
+}
+
+void NativeMainWindow::loadNativeTtsSettings() {
+    if (ttsApiUrlEdit_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadTtsSettings(configPath_)) {
+        ttsStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    ttsSettings_ = parseObject(backend_.getTtsSettingsJson());
+    syncNativeTtsSettingsControls();
+}
+
+void NativeMainWindow::syncNativeTtsSettingsControls() {
+    if (ttsApiUrlEdit_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker enabledBlocker(ttsEnabledSwitch_);
+    const QSignalBlocker languageBlocker(ttsLanguageComboBox_);
+    const QSignalBlocker referenceBlocker(ttsReferenceCharacterComboBox_);
+    const QSignalBlocker streamingBlocker(ttsStreamingSwitch_);
+    const QSignalBlocker translateBlocker(ttsTranslateSwitch_);
+    ttsEnabledSwitch_->setChecked(ttsSettings_.value(QStringLiteral("enabled")).toBool());
+    ttsApiUrlEdit_->setText(
+        ttsSettings_
+            .value(QStringLiteral("api_url"))
+            .toString(QStringLiteral("http://127.0.0.1:9880/")));
+    const QString language = ttsSettings_
+                                 .value(QStringLiteral("language"))
+                                 .toString(QStringLiteral("Chinese"));
+    const int languageIndex = ttsLanguageComboBox_->findData(language);
+    ttsLanguageComboBox_->setCurrentIndex(languageIndex < 0 ? 0 : languageIndex);
+
+    const QString reference =
+        ttsSettings_.value(QStringLiteral("reference_character")).toString();
+    ttsReferenceCharacterComboBox_->clear();
+    ttsReferenceCharacterComboBox_->addItem(
+        tr("Follow speaking character"), QVariant(), QString());
+    QStringList added;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character.isEmpty() || added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        ttsReferenceCharacterComboBox_->addItem(
+            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
+            QVariant(),
+            model.character);
+    }
+    if (!reference.isEmpty() && !added.contains(reference)) {
+        ttsReferenceCharacterComboBox_->addItem(reference, QVariant(), reference);
+    }
+    const int referenceIndex = ttsReferenceCharacterComboBox_->findData(reference);
+    ttsReferenceCharacterComboBox_->setCurrentIndex(referenceIndex < 0 ? 0 : referenceIndex);
+    ttsTemperatureSpinBox_->setValue(
+        ttsSettings_.value(QStringLiteral("temperature")).toDouble(0.9));
+    ttsStreamingSwitch_->setChecked(
+        ttsSettings_.value(QStringLiteral("streaming")).toBool(true));
+    ttsTranslateSwitch_->setChecked(
+        ttsSettings_
+            .value(QStringLiteral("translate_to_selected_language"))
+            .toBool(true));
+    ttsStatusLabel_->setText(
+        ttsEnabledSwitch_->isChecked()
+            ? tr("Native chat and reminder TTS is enabled")
+            : tr("Native automatic TTS is disabled; test playback remains available"));
+}
+
+bool NativeMainWindow::saveNativeTtsSettings() {
+    const QJsonObject settings {
+        {QStringLiteral("enabled"), ttsEnabledSwitch_->isChecked()},
+        {QStringLiteral("api_url"), ttsApiUrlEdit_->text().trimmed()},
+        {QStringLiteral("language"), ttsLanguageComboBox_->currentData().toString()},
+        {QStringLiteral("reference_character"),
+         ttsReferenceCharacterComboBox_->currentData().toString()},
+        {QStringLiteral("streaming"), ttsStreamingSwitch_->isChecked()},
+        {QStringLiteral("temperature"), ttsTemperatureSpinBox_->value()},
+        {QStringLiteral("translate_to_selected_language"), ttsTranslateSwitch_->isChecked()},
+    };
+    if (!backend_.saveTtsSettings(configPath_, compactJson(settings))) {
+        ttsStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    ttsSettings_ = parseObject(backend_.getTtsSettingsJson());
+    syncNativeTtsSettingsControls();
+    serviceStatusLabel_->setText(backend_.getStatus());
+    ttsStatusLabel_->setText(tr("Native TTS settings saved"));
+    return true;
+}
+
+void NativeMainWindow::enqueueNativeTts(
+    const QString& text,
+    const QString& character,
+    bool force,
+    double speedFactor) {
+    if (text.trimmed().isEmpty() || character.trimmed().isEmpty()) {
+        return;
+    }
+    if (!force && !ttsSettings_.value(QStringLiteral("enabled")).toBool()) {
+        return;
+    }
+    ttsSynthesisQueue_.enqueue({
+        {QStringLiteral("text"), text},
+        {QStringLiteral("character"), character.trimmed()},
+        {QStringLiteral("force"), force},
+        {QStringLiteral("speed_factor"), std::clamp(speedFactor, 0.75, 1.25)},
+    });
+    ttsStopButton_->setEnabled(true);
+    startNextNativeTtsSynthesis();
+}
+
+void NativeMainWindow::startNextNativeTtsSynthesis() {
+    if (activeTtsRequestId_ != 0 || ttsSynthesisQueue_.isEmpty()) {
+        return;
+    }
+    const QJsonObject request = ttsSynthesisQueue_.dequeue();
+    const qint64 requestId = backend_.startTtsSynthesis(
+        configPath_,
+        projectRoot_,
+        request.value(QStringLiteral("text")).toString(),
+        request.value(QStringLiteral("character")).toString(),
+        request.value(QStringLiteral("speed_factor")).toDouble(1.0),
+        request.value(QStringLiteral("force")).toBool());
+    if (requestId <= 0) {
+        ttsStatusLabel_->setText(backend_.getStatus());
+        QTimer::singleShot(0, this, [this]() { startNextNativeTtsSynthesis(); });
+        return;
+    }
+    activeTtsRequestId_ = requestId;
+    ttsStatusLabel_->setText(tr("Synthesizing native speech…"));
+}
+
+void NativeMainWindow::handleNativeTtsAudio(
+    const QString& payloadJson,
+    const QByteArray& audio) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (requestId <= 0 || requestId != activeTtsRequestId_) {
+        return;
+    }
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    if (state == QStringLiteral("audio")) {
+        if (audio.isEmpty()) {
+            return;
+        }
+        const QString mediaType =
+            payload.value(QStringLiteral("media_type")).toString() == QStringLiteral("ogg")
+            ? QStringLiteral("ogg")
+            : QStringLiteral("wav");
+        auto* file = new QTemporaryFile(
+            QDir::temp().filePath(QStringLiteral("bandori-native-tts-XXXXXX.%1").arg(mediaType)),
+            this);
+        file->setAutoRemove(true);
+        if (!file->open() || file->write(audio) != audio.size() || !file->flush()) {
+            ttsStatusLabel_->setText(tr("Could not stage native TTS audio for Qt playback"));
+            delete file;
+            return;
+        }
+        file->close();
+        file->setProperty(
+            "ttsCharacter", payload.value(QStringLiteral("character")).toString());
+        ttsAudioQueue_.enqueue(file);
+        ttsStatusLabel_->setText(
+            tr("Received %1 native audio chunk(s)").arg(ttsAudioQueue_.size()));
+        if (currentTtsAudioFile_ == nullptr) {
+            playNextNativeTtsAudio();
+        }
+        return;
+    }
+
+    activeTtsRequestId_ = 0;
+    if (state == QStringLiteral("finished")) {
+        const QString warning =
+            payload.value(QStringLiteral("translation_warning")).toString().trimmed();
+        ttsStatusLabel_->setText(
+            warning.isEmpty()
+                ? tr("TTS synthesis finished · %1 chunks · %2")
+                      .arg(payload.value(QStringLiteral("chunk_count")).toInteger())
+                      .arg(formatAttachmentSize(
+                          payload.value(QStringLiteral("total_bytes")).toInteger()))
+                : tr("TTS synthesis finished; translation fallback: %1").arg(warning));
+    } else if (state == QStringLiteral("cancelled")) {
+        ttsStatusLabel_->setText(tr("Native TTS synthesis cancelled"));
+    } else {
+        ttsStatusLabel_->setText(
+            payload.value(QStringLiteral("message")).toString(backend_.getStatus()));
+    }
+    startNextNativeTtsSynthesis();
+    ttsStopButton_->setEnabled(
+        activeTtsRequestId_ != 0 || !ttsSynthesisQueue_.isEmpty()
+        || currentTtsAudioFile_ != nullptr || !ttsAudioQueue_.isEmpty());
+}
+
+void NativeMainWindow::playNextNativeTtsAudio() {
+    if (ttsMediaPlayer_ == nullptr) {
+        return;
+    }
+    ttsMediaPlayer_->stop();
+    ttsMediaPlayer_->setSource(QUrl());
+    if (currentTtsAudioFile_ != nullptr) {
+        currentTtsAudioFile_->deleteLater();
+        currentTtsAudioFile_ = nullptr;
+    }
+    if (ttsAudioQueue_.isEmpty()) {
+        if (!ttsPlayingCharacter_.isEmpty()) {
+            supervisor_.broadcastControlLine(
+                QStringLiteral("LIP\t%1\t0\t0").arg(ttsPlayingCharacter_), false);
+        }
+        ttsPlayingCharacter_.clear();
+        ttsLipSyncTimer_.stop();
+        ttsStopButton_->setEnabled(
+            activeTtsRequestId_ != 0 || !ttsSynthesisQueue_.isEmpty());
+        return;
+    }
+    currentTtsAudioFile_ = ttsAudioQueue_.dequeue();
+    ttsPlayingCharacter_ = currentTtsAudioFile_->property("ttsCharacter").toString();
+    ttsMediaPlayer_->setSource(QUrl::fromLocalFile(currentTtsAudioFile_->fileName()));
+    ttsMediaPlayer_->play();
+    ttsStopButton_->setEnabled(true);
+}
+
+void NativeMainWindow::stopNativeTts() {
+    ttsSynthesisQueue_.clear();
+    if (activeTtsRequestId_ != 0) {
+        backend_.cancelTtsSynthesis(activeTtsRequestId_);
+    }
+    if (ttsMediaPlayer_ != nullptr) {
+        ttsMediaPlayer_->stop();
+        ttsMediaPlayer_->setSource(QUrl());
+    }
+    if (currentTtsAudioFile_ != nullptr) {
+        delete currentTtsAudioFile_;
+        currentTtsAudioFile_ = nullptr;
+    }
+    while (!ttsAudioQueue_.isEmpty()) {
+        delete ttsAudioQueue_.dequeue();
+    }
+    if (!ttsPlayingCharacter_.isEmpty()) {
+        supervisor_.broadcastControlLine(
+            QStringLiteral("LIP\t%1\t0\t0").arg(ttsPlayingCharacter_), false);
+    }
+    ttsPlayingCharacter_.clear();
+    ttsLipSyncTimer_.stop();
+    if (ttsStatusLabel_ != nullptr) {
+        ttsStatusLabel_->setText(tr("Native TTS playback stopped"));
+    }
+    if (ttsStopButton_ != nullptr) {
+        ttsStopButton_->setEnabled(activeTtsRequestId_ != 0);
+    }
+}
+
+void NativeMainWindow::updateNativeTtsLipSync() {
+    if (ttsMediaPlayer_ == nullptr || ttsPlayingCharacter_.isEmpty()
+        || ttsMediaPlayer_->playbackState() != QMediaPlayer::PlayingState) {
+        return;
+    }
+    const double position = static_cast<double>(ttsMediaPlayer_->position());
+    const double level = 0.14 + 0.38 * std::abs(std::sin(position / 82.0));
+    const double form = 0.45 * std::sin(position / 190.0);
+    supervisor_.broadcastControlLine(
+        QStringLiteral("LIP\t%1\t%2\t%3")
+            .arg(ttsPlayingCharacter_)
+            .arg(level, 0, 'f', 3)
+            .arg(form, 0, 'f', 3),
+        false);
 }
 
 void NativeMainWindow::populateMemoryCharacters() {
@@ -5089,6 +5551,7 @@ void NativeMainWindow::sendNativeChat() {
     if (character.isEmpty()) {
         return;
     }
+    stopNativeTts();
     const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
@@ -5155,6 +5618,7 @@ void NativeMainWindow::sendNativeGroupChat(
         chatStatusLabel_->setText(tr("Select at least two group members"));
         return;
     }
+    stopNativeTts();
     const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
@@ -5423,6 +5887,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
                           .arg(actionsSent)
                     : backend_.getStatus();
                 groupSpokenNames_.append(characterDisplay);
+                enqueueNativeTts(chatStreamText_, character);
             } else {
                 terminalStatus = backend_.getStatus();
             }
@@ -5479,6 +5944,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
             terminalStatus = actionsSent > 0
                 ? tr("%1 · %2 Live2D action(s) sent").arg(savedStatus).arg(actionsSent)
                 : savedStatus;
+            enqueueNativeTts(chatStreamText_, character);
         } else {
             terminalStatus = backend_.getStatus();
         }
@@ -5563,6 +6029,18 @@ void NativeMainWindow::pollNativeReminders() {
             displayName = QStringLiteral("BandoriPet");
         }
         const QString text = reminderFallbackText(event, displayName);
+        QString ttsCharacter = character;
+        if (ttsCharacter.isEmpty()) {
+            ttsCharacter =
+                ttsSettings_.value(QStringLiteral("reference_character")).toString().trimmed();
+        }
+        if (ttsCharacter.isEmpty()) {
+            const std::optional<ModelCatalogItem> model = configuredModel();
+            if (model.has_value()) {
+                ttsCharacter = model->character;
+            }
+        }
+        enqueueNativeTts(text, ttsCharacter);
         const bool systemMode =
             event.value(QStringLiteral("display_mode")).toString() == QStringLiteral("system");
         if (systemMode && trayIcon_ != nullptr) {

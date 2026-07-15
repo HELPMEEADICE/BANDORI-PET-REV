@@ -1,7 +1,9 @@
 #[cxx_qt::bridge]
 pub mod ffi {
     unsafe extern "C++" {
+        include!("cxx-qt-lib/qbytearray.h");
         include!("cxx-qt-lib/qstring.h");
+        type QByteArray = cxx_qt_lib::QByteArray;
         type QString = cxx_qt_lib::QString;
     }
 
@@ -21,6 +23,7 @@ pub mod ffi {
         #[qproperty(QString, reminder_events_json)]
         #[qproperty(QString, reminder_state_json)]
         #[qproperty(QString, llm_settings_json)]
+        #[qproperty(QString, tts_settings_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
         #[qproperty(QString, persona_settings_json)]
@@ -115,6 +118,34 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "cancelProviderOperation"]
         fn cancel_provider_operation(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadTtsSettings"]
+        fn load_tts_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveTtsSettings"]
+        fn save_tts_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startTtsSynthesis"]
+        fn start_tts_synthesis(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            project_root: &QString,
+            text: &QString,
+            character: &QString,
+            speed_factor: f64,
+            force: bool,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelTtsSynthesis"]
+        fn cancel_tts_synthesis(self: Pin<&mut Self>, request_id: i64) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadMemoryState"]
@@ -430,6 +461,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "providerOperationEvent"]
         fn provider_operation_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "ttsAudioEvent"]
+        fn tts_audio_event(self: Pin<&mut Self>, payload_json: &QString, audio: &QByteArray);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -484,14 +519,16 @@ use bandori_core::reminder::{
     LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
 };
 use bandori_core::statistics_dashboard::load_native_statistics;
+use bandori_core::tts_settings::{load_native_tts_settings, save_native_tts_settings};
 use bandori_core::user_profiles::{load_native_user_profiles, mutate_native_user_profiles};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest, TokenUsage,
 };
+use bandori_tts::{TtsAudioChunk, TtsConfig, TtsRequest, TtsTransport, clean_tts_text};
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QByteArray, QString};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -567,6 +604,7 @@ pub struct BackendRust {
     reminder_events_json: QString,
     reminder_state_json: QString,
     llm_settings_json: QString,
+    tts_settings_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
     persona_settings_json: QString,
@@ -602,6 +640,9 @@ pub struct BackendRust {
     next_provider_request_id: i64,
     active_provider_request_id: i64,
     provider_cancellation: Option<CancellationToken>,
+    next_tts_request_id: i64,
+    active_tts_request_id: i64,
+    tts_cancellation: Option<CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -623,6 +664,7 @@ impl Default for BackendRust {
                 "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[]}",
             ),
             llm_settings_json: QString::from("{}"),
+            tts_settings_json: QString::from("{}"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
             persona_settings_json: QString::from("{}"),
@@ -658,6 +700,9 @@ impl Default for BackendRust {
             next_provider_request_id: 1,
             active_provider_request_id: 0,
             provider_cancellation: None,
+            next_tts_request_id: 1,
+            active_tts_request_id: 0,
+            tts_cancellation: None,
             memory_cancellations: HashMap::new(),
         }
     }
@@ -669,6 +714,9 @@ impl Drop for BackendRust {
             cancellation.cancel();
         }
         if let Some(cancellation) = self.provider_cancellation.take() {
+            cancellation.cancel();
+        }
+        if let Some(cancellation) = self.tts_cancellation.take() {
             cancellation.cancel();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
@@ -1019,6 +1067,126 @@ impl ffi::Backend {
         cancellation.cancel();
         self.as_mut()
             .set_status(QString::from("Provider operation cancellation requested"));
+        true
+    }
+
+    pub fn load_tts_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_tts_settings(Path::new(&config_path.to_string())) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native TTS settings serialization cannot fail");
+                self.as_mut().set_tts_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native TTS settings loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("TTS settings error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn save_tts_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_tts_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+        ) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native TTS settings serialization cannot fail");
+                self.as_mut().set_tts_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native TTS settings saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("TTS settings save error: {error}")));
+                false
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_tts_synthesis(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        project_root: &QString,
+        text: &QString,
+        character: &QString,
+        speed_factor: f64,
+        force: bool,
+    ) -> i64 {
+        if self.as_ref().get_ref().rust().active_tts_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native TTS request is already running"));
+            return 0;
+        }
+        let job = match prepare_tts_synthesis_job(
+            Path::new(&config_path.to_string()),
+            Path::new(&project_root.to_string()),
+            &text.to_string(),
+            &character.to_string(),
+            speed_factor,
+            force,
+        ) {
+            Ok(Some(job)) => job,
+            Ok(None) => {
+                self.as_mut()
+                    .set_status(QString::from("Native TTS is disabled"));
+                return 0;
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_tts_request_id.max(1);
+            state.next_tts_request_id = request_id.saturating_add(1);
+            state.active_tts_request_id = request_id;
+            state.tts_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from("Native TTS synthesis started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-tts-{request_id}"))
+            .spawn(move || run_tts_synthesis(qt_thread, request_id, job, cancellation))
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_tts_request_id = 0;
+            state.tts_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native TTS synthesis: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_tts_synthesis(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        if state.active_tts_request_id == 0
+            || (request_id > 0 && request_id != state.active_tts_request_id)
+        {
+            return false;
+        }
+        let Some(cancellation) = state.tts_cancellation.as_ref() else {
+            return false;
+        };
+        cancellation.cancel();
+        self.as_mut()
+            .set_status(QString::from("Native TTS cancellation requested"));
         true
     }
 
@@ -3002,6 +3170,41 @@ impl ffi::Backend {
         self.as_mut()
             .provider_operation_event(&QString::from(payload.as_str()));
     }
+
+    fn emit_tts_audio_payload(
+        mut self: Pin<&mut Self>,
+        request_id: i64,
+        payload: String,
+        audio: Vec<u8>,
+        terminal: bool,
+    ) {
+        if self.as_ref().get_ref().rust().active_tts_request_id != request_id {
+            return;
+        }
+        if terminal {
+            let status = serde_json::from_str::<Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .map(|state| match state.as_str() {
+                    "finished" => "Native TTS synthesis completed".to_owned(),
+                    "cancelled" => "Native TTS synthesis cancelled".to_owned(),
+                    _ => "Native TTS synthesis failed".to_owned(),
+                })
+                .unwrap_or_else(|| "Native TTS synthesis ended".to_owned());
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_tts_request_id = 0;
+            state.tts_cancellation = None;
+            self.as_mut().set_status(QString::from(&status));
+        }
+        let payload = QString::from(payload.as_str());
+        let audio = QByteArray::from(audio.as_slice());
+        self.as_mut().tts_audio_event(&payload, &audio);
+    }
 }
 
 #[derive(Clone)]
@@ -3009,6 +3212,14 @@ struct ProviderOperationJob {
     target: String,
     operation: String,
     config: LlmTransportConfig,
+}
+
+#[derive(Clone)]
+struct TtsSynthesisJob {
+    config: TtsConfig,
+    request: TtsRequest,
+    character: String,
+    translation: Option<LlmTransportConfig>,
 }
 
 #[derive(Clone)]
@@ -3086,6 +3297,43 @@ fn load_llm_transport_config(path: &Path) -> Result<LlmTransportConfig, String> 
         mode: LlmApiMode::from_config(&config_string(&config, "llm_api_mode")),
         enable_thinking: config.get("llm_enable_thinking").and_then(Value::as_bool),
     })
+}
+
+fn prepare_tts_synthesis_job(
+    config_path: &Path,
+    project_root: &Path,
+    text: &str,
+    character: &str,
+    speed_factor: f64,
+    force: bool,
+) -> Result<Option<TtsSynthesisJob>, String> {
+    let settings = load_native_tts_settings(config_path)
+        .map_err(|error| format!("TTS settings error: {error}"))?;
+    if !settings.enabled && !force {
+        return Ok(None);
+    }
+    let translation = if settings.translate_to_selected_language && settings.language != "Chinese" {
+        load_memory_transport_config(config_path)?
+    } else {
+        None
+    };
+    Ok(Some(TtsSynthesisJob {
+        config: TtsConfig {
+            api_url: settings.api_url,
+            language: settings.language,
+            reference_character: settings.reference_character,
+            streaming: settings.streaming,
+            temperature: settings.temperature,
+            project_root: project_root.to_owned(),
+        },
+        request: TtsRequest {
+            text: text.to_owned(),
+            character: character.trim().to_owned(),
+            speed_factor,
+        },
+        character: character.trim().to_owned(),
+        translation,
+    }))
 }
 
 fn load_memory_transport_config(path: &Path) -> Result<Option<LlmTransportConfig>, String> {
@@ -3292,6 +3540,175 @@ fn checked_provider_value(value: String, max_bytes: usize, label: &str) -> Resul
     } else {
         Ok(value)
     }
+}
+
+fn run_tts_synthesis(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: TtsSynthesisJob,
+    cancellation: CancellationToken,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_tts_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "state":"error",
+                    "message":format!("TTS async runtime error: {error}")
+                }),
+                Vec::new(),
+                true,
+            );
+            return;
+        }
+    };
+    runtime.block_on(execute_tts_synthesis(
+        qt_thread,
+        request_id,
+        job,
+        cancellation,
+    ));
+}
+
+async fn execute_tts_synthesis(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    mut job: TtsSynthesisJob,
+    cancellation: CancellationToken,
+) {
+    let mut translation_warning = String::new();
+    if let Some(config) = job.translation.take() {
+        match LlmTransport::new(config) {
+            Ok(transport) => {
+                let target = match job.config.language.as_str() {
+                    "Japanese" => "自然日语",
+                    "English" => "自然英语",
+                    _ => "所选语言",
+                };
+                let request = LlmTransportRequest {
+                    messages: vec![
+                        json!({
+                            "role":"system",
+                            "content":format!("把用户给出的中文聊天台词翻译成{target}，只输出译文，不要解释。保留语气，不要输出动作标签。")
+                        }),
+                        json!({"role":"user","content":job.request.text.clone()}),
+                    ],
+                    ..Default::default()
+                };
+                let mut translated = String::new();
+                let result = transport
+                    .stream(&request, &cancellation, |event| {
+                        if let LlmStreamEvent::TextDelta { text } = event
+                            && translated.len().saturating_add(text.len()) <= 64 * 1024
+                        {
+                            translated.push_str(&text);
+                        }
+                    })
+                    .await;
+                match result {
+                    Ok(_) if !translated.trim().is_empty() => {
+                        job.request.text = translated.trim().to_owned();
+                    }
+                    Ok(_) => translation_warning = "translation returned no text".into(),
+                    Err(LlmTransportError::Cancelled) => {
+                        queue_tts_payload(
+                            &qt_thread,
+                            request_id,
+                            json!({"request_id":request_id,"state":"cancelled"}),
+                            Vec::new(),
+                            true,
+                        );
+                        return;
+                    }
+                    Err(error) => translation_warning = error.to_string(),
+                }
+            }
+            Err(error) => translation_warning = error.to_string(),
+        }
+    }
+    if cancellation.is_cancelled() {
+        queue_tts_payload(
+            &qt_thread,
+            request_id,
+            json!({"request_id":request_id,"state":"cancelled"}),
+            Vec::new(),
+            true,
+        );
+        return;
+    }
+    let transport = match TtsTransport::new(job.config.clone()) {
+        Ok(transport) => transport,
+        Err(error) => {
+            queue_tts_payload(
+                &qt_thread,
+                request_id,
+                json!({"request_id":request_id,"state":"error","message":error.to_string()}),
+                Vec::new(),
+                true,
+            );
+            return;
+        }
+    };
+    let audio_thread = qt_thread.clone();
+    let character = job.character.clone();
+    let prepared_text = clean_tts_text(&job.request.text);
+    let language = job.config.language.clone();
+    let outcome = transport
+        .synthesize(&job.request, &cancellation, move |chunk: TtsAudioChunk| {
+            queue_tts_payload(
+                &audio_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "state":"audio",
+                    "media_type":chunk.media_type,
+                    "character":character.clone(),
+                    "prepared_text":prepared_text.clone(),
+                    "language":language.clone()
+                }),
+                chunk.bytes,
+                false,
+            );
+        })
+        .await;
+    let payload = match outcome {
+        Ok(outcome) => json!({
+            "request_id":request_id,
+            "state":"finished",
+            "chunk_count":outcome.chunk_count,
+            "total_bytes":outcome.total_bytes,
+            "used_streaming":outcome.used_streaming,
+            "translation_warning":translation_warning
+        }),
+        Err(bandori_tts::TtsError::Cancelled) => {
+            json!({"request_id":request_id,"state":"cancelled"})
+        }
+        Err(error) => {
+            json!({"request_id":request_id,"state":"error","message":error.to_string(),"translation_warning":translation_warning})
+        }
+    };
+    queue_tts_payload(&qt_thread, request_id, payload, Vec::new(), true);
+}
+
+fn queue_tts_payload(
+    qt_thread: &ffi::BackendCxxQtThread,
+    request_id: i64,
+    payload: Value,
+    audio: Vec<u8>,
+    terminal: bool,
+) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_tts_audio_payload(request_id, payload, audio, terminal);
+        })
+        .ok();
 }
 
 fn run_provider_operation(

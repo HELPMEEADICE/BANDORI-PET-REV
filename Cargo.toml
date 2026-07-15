@@ -5,6 +5,7 @@ members = [
     "rust/crates/bandori-llm-protocol",
     "rust/crates/bandori-live2d",
     "rust/crates/bandori-qt-bridge",
+    "rust/crates/bandori-tts",
 ]
 default-members = ["rust/crates/bandori-core"]
 resolver = "3"

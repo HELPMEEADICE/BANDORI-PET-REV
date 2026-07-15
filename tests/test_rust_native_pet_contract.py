@@ -631,6 +631,48 @@ def test_native_provider_discovery_and_connection_tests_are_bounded_and_async():
     assert "&Backend::providerOperationEvent" in window
 
 
+def test_native_tts_is_rust_owned_streamed_and_played_through_qt_multimedia():
+    workspace = source("Cargo.toml")
+    transport = source("rust/crates/bandori-tts/src/lib.rs")
+    settings = source("rust/crates/bandori-core/src/tts_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    cmake = source("CMakeLists.txt") + source("native/qt/CMakeLists.txt")
+
+    assert '"rust/crates/bandori-tts"' in workspace
+    assert "pub struct TtsTransport" in transport
+    assert "pub async fn synthesize" in transport
+    assert "pub fn prepare_tts_request" in transport
+    assert "struct FramedAudioDecoder" in transport
+    assert "MAX_AUDIO_BYTES" in transport
+    assert "pub fn clean_tts_text" in transport
+    assert "pub struct NativeTtsSettings" in settings
+    assert "load_native_tts_settings" in settings
+    assert "save_native_tts_settings" in settings
+    assert "deny_unknown_fields" in settings
+    assert "tts_settings_json" in backend
+    assert "startTtsSynthesis" in backend
+    assert "cancelTtsSynthesis" in backend
+    assert "ttsAudioEvent" in backend
+    assert "QByteArray" in backend
+    assert "run_tts_synthesis" in backend
+    assert "startTtsSynthesis" in generation
+    assert "ttsAudioEvent" in generation
+    assert "QMediaPlayer* ttsMediaPlayer_" in window_header
+    assert "QQueue<QTemporaryFile*> ttsAudioQueue_" in window_header
+    assert "QWidget* NativeMainWindow::createTtsSettingsPage()" in window
+    assert "backend_.loadTtsSettings" in window
+    assert "backend_.saveTtsSettings" in window
+    assert "backend_.startTtsSynthesis" in window
+    assert "backend_.cancelTtsSynthesis" in window
+    assert "enqueueNativeTts(chatStreamText_, character)" in window
+    assert "enqueueNativeTts(text, ttsCharacter)" in window
+    assert 'QStringLiteral("LIP\\t%1\\t%2\\t%3")' in window
+    assert "Qt6::Multimedia" in cmake
+
+
 def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     core = source("rust/crates/bandori-core/src/lib.rs")
     memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")

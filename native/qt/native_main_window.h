@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QQueue>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -15,8 +16,12 @@
 #include "pet_process_supervisor.h"
 
 class QAction;
+class QAudioOutput;
+class QByteArray;
 class QCloseEvent;
+class QMediaPlayer;
 class QSystemTrayIcon;
+class QTemporaryFile;
 class QTextBrowser;
 
 namespace bandori {
@@ -59,6 +64,7 @@ private:
     QWidget* createUserProfilesPage();
     QWidget* createPersonaPage();
     QWidget* createLlmSettingsPage();
+    QWidget* createTtsSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
     void syncSettingsControls();
@@ -87,6 +93,19 @@ private:
     void startNativeProviderOperation(const QString& target, const QString& operation);
     void handleNativeProviderOperation(const QString& payloadJson);
     void setNativeProviderBusy(bool busy);
+    void loadNativeTtsSettings();
+    void syncNativeTtsSettingsControls();
+    bool saveNativeTtsSettings();
+    void enqueueNativeTts(
+        const QString& text,
+        const QString& character,
+        bool force = false,
+        double speedFactor = 1.0);
+    void startNextNativeTtsSynthesis();
+    void handleNativeTtsAudio(const QString& payloadJson, const QByteArray& audio);
+    void playNextNativeTtsAudio();
+    void stopNativeTts();
+    void updateNativeTtsLipSync();
     void populateMemoryCharacters();
     void refreshNativeMemoryState();
     void renderNativeMemories();
@@ -320,6 +339,27 @@ private:
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;
     qfw::CaptionLabel* llmSettingsStatusLabel_ = nullptr;
+    QJsonObject ttsSettings_;
+    qfw::SwitchButton* ttsEnabledSwitch_ = nullptr;
+    qfw::LineEdit* ttsApiUrlEdit_ = nullptr;
+    qfw::ComboBox* ttsLanguageComboBox_ = nullptr;
+    qfw::ComboBox* ttsReferenceCharacterComboBox_ = nullptr;
+    qfw::DoubleSpinBox* ttsTemperatureSpinBox_ = nullptr;
+    qfw::SwitchButton* ttsStreamingSwitch_ = nullptr;
+    qfw::SwitchButton* ttsTranslateSwitch_ = nullptr;
+    qfw::PlainTextEdit* ttsTestTextEdit_ = nullptr;
+    qfw::PrimaryPushButton* ttsSaveButton_ = nullptr;
+    qfw::PushButton* ttsTestButton_ = nullptr;
+    qfw::PushButton* ttsStopButton_ = nullptr;
+    qfw::CaptionLabel* ttsStatusLabel_ = nullptr;
+    QMediaPlayer* ttsMediaPlayer_ = nullptr;
+    QAudioOutput* ttsAudioOutput_ = nullptr;
+    QQueue<QTemporaryFile*> ttsAudioQueue_;
+    QQueue<QJsonObject> ttsSynthesisQueue_;
+    QTemporaryFile* currentTtsAudioFile_ = nullptr;
+    QTimer ttsLipSyncTimer_;
+    qint64 activeTtsRequestId_ = 0;
+    QString ttsPlayingCharacter_;
     qint64 activeProviderRequestId_ = 0;
     QJsonObject memorySnapshot_;
     bool updatingMemoryControls_ = false;

@@ -29,6 +29,7 @@ target_link_libraries(bandori-pet-rust PRIVATE
     qtfluentwidgets
     Qt6::Core
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Widgets
     Qt6::Svg
 )
