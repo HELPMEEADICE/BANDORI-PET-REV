@@ -32,6 +32,16 @@ class LocalToolSafetyTests(unittest.TestCase):
         self.assertFalse(local_tools.should_prefetch_web_search("search latest news"))
         self.assertFalse(local_tools.should_prefetch_web_search("今天天气"))
 
+    def test_auto_continue_tolerates_infinite_limit_and_runtime_count(self):
+        self.assertEqual(5, local_tools._normalize_auto_continue_max_turns(float("inf")))
+
+        result = local_tools._run_auto_continue_tool_call({}, {
+            "llm_auto_continue_max_turns": 5,
+            "_auto_continue_count": float("inf"),
+        })
+
+        self.assertIn("剩余", result["content"])
+
     def test_invalid_json_never_reaches_side_effecting_tool_handlers(self):
         invalid = '{"value":'
         with (

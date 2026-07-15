@@ -8,6 +8,7 @@ def test_stream_workers_share_auto_continue_and_prefetch_helpers():
     assert _auto_continue_limit({}) == 0
     assert _auto_continue_limit({"llm_auto_continue_enabled": True, "llm_auto_continue_max_turns": 99}) == 20
     assert _auto_continue_limit({"llm_auto_continue_enabled": True, "llm_auto_continue_max_turns": "bad"}) == 5
+    assert _auto_continue_limit({"llm_auto_continue_enabled": True, "llm_auto_continue_max_turns": float("inf")}) == 5
     assert _prefetch_web_search_context({"_latest_user_text": "latest news"}) == ""
 
 

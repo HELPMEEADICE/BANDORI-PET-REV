@@ -733,7 +733,7 @@ def _auto_continue_limit(tool_config: dict) -> int:
         return 0
     try:
         return max(1, min(20, int(tool_config.get("llm_auto_continue_max_turns", 5))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 5
 
 
