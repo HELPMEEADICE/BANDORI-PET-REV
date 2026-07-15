@@ -260,12 +260,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   count-aware 50-row pagination in Qt. Character album-chain ordering also uses
   the latest matching speaker message, so a later reply from another group
   member cannot reorder the selected character's conversation chain.
+  Native statistics now aggregate relationship events, application usage,
+  per-character and daily message counts, and a seven-day hourly heatmap for the
+  active user/role partition. The Qt-Fluent page renders these through standard
+  tables and cards, so the native SDK requirement does not grow to include the
+  optional Qt Charts module; group messages remain attributed through validated
+  character display aliases.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
   screen-awareness and remaining integration services; the remaining
-  statistics/data-management pages; provider model
+  data-management pages; provider model
   discovery/connection checks; default-launcher cutover, packaging and
   multi-platform validation.
 

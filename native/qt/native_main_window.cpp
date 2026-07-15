@@ -10,11 +10,13 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
 #include <QListWidgetItem>
+#include <QMap>
 #include <QMenu>
 #include <QMessageBox>
 #include <QRegularExpression>
@@ -24,6 +26,7 @@
 #include <QSignalBlocker>
 #include <QSystemTrayIcon>
 #include <QTextBrowser>
+#include <QTableWidget>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QUuid>
@@ -88,6 +91,19 @@ QString repeatDaysLabel(const QJsonArray& source) {
         selected.append(labels.at(day));
     }
     return selected.join(QStringLiteral("、"));
+}
+
+QString durationLabel(qint64 seconds) {
+    seconds = std::max<qint64>(0, seconds);
+    const qint64 hours = seconds / 3600;
+    const qint64 minutes = (seconds % 3600) / 60;
+    if (hours > 0) {
+        return QStringLiteral("%1 h %2 min").arg(hours).arg(minutes);
+    }
+    if (minutes > 0) {
+        return QStringLiteral("%1 min").arg(minutes);
+    }
+    return seconds > 0 ? QStringLiteral("< 1 min") : QStringLiteral("0 min");
 }
 
 QString currentTimeInstruction() {
@@ -398,6 +414,7 @@ void NativeMainWindow::setupUi() {
     QWidget* models = createModelsPage();
     chatPage_ = createChatPage();
     QWidget* history = createHistorySearchPage();
+    QWidget* statistics = createStatisticsPage();
     QWidget* memory = createMemoryPage();
     QWidget* userProfiles = createUserProfilesPage();
     QWidget* personas = createPersonaPage();
@@ -407,6 +424,7 @@ void NativeMainWindow::setupUi() {
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
     history->setObjectName(QStringLiteral("historySearchPage"));
+    statistics->setObjectName(QStringLiteral("statisticsPage"));
     memory->setObjectName(QStringLiteral("memoryPage"));
     userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
     personas->setObjectName(QStringLiteral("personasPage"));
@@ -416,6 +434,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
     addSubInterface(history, qfw::FluentIconEnum::Search, tr("History search"));
+    addSubInterface(statistics, qfw::FluentIconEnum::Market, tr("Statistics"));
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
     addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
     addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
@@ -819,6 +838,160 @@ QWidget* NativeMainWindow::createHistorySearchPage() {
         searchNativeHistory(false);
     });
     historyLoadMoreButton_->setEnabled(false);
+    return page;
+}
+
+QWidget* NativeMainWindow::createStatisticsPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native statistics"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Relationship trends and message activity are scoped to the selected user partition; overview usage remains application-wide."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* filters = new qfw::GroupHeaderCardWidget(tr("Statistics filters"), content);
+    statisticsRangeComboBox_ = new qfw::ComboBox(filters);
+    statisticsRangeComboBox_->addItem(tr("Last 7 days"), QVariant(), 7);
+    statisticsRangeComboBox_->addItem(tr("Last 30 days"), QVariant(), 30);
+    statisticsRangeComboBox_->addItem(tr("All time"), QVariant(), 0);
+    statisticsRangeComboBox_->setCurrentIndex(1);
+    statisticsCharacterComboBox_ = new qfw::ComboBox(filters);
+    statisticsRefreshButton_ = new qfw::PushButton(tr("Refresh"), filters);
+    statisticsStatusLabel_ = new qfw::CaptionLabel(tr("Statistics have not loaded"), filters);
+    auto* statisticsActions = new QWidget(filters);
+    auto* statisticsActionsLayout = new QHBoxLayout(statisticsActions);
+    statisticsActionsLayout->setContentsMargins(0, 0, 0, 0);
+    statisticsActionsLayout->setSpacing(8);
+    statisticsActionsLayout->addWidget(statisticsStatusLabel_, 1);
+    statisticsActionsLayout->addWidget(statisticsRefreshButton_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::DateTime),
+        tr("Time range"),
+        tr("All-time mode uses the latest 30 days for daily messages and 14 days for usage"),
+        statisticsRangeComboBox_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Relationship character"),
+        tr("Only the relationship trend uses this character selector"),
+        statisticsCharacterComboBox_);
+    filters->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Sync),
+        tr("Refresh snapshot"),
+        tr("Reads the current active user or role-POV partition from Rust runtime state"),
+        statisticsActions);
+
+    auto* overview = new qfw::GroupHeaderCardWidget(tr("Overview"), content);
+    statisticsMessagesLabel_ = new qfw::BodyLabel(overview);
+    statisticsUsageTodayLabel_ = new qfw::BodyLabel(overview);
+    statisticsUsageWeekLabel_ = new qfw::BodyLabel(overview);
+    statisticsUsageAllLabel_ = new qfw::BodyLabel(overview);
+    overview->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Messages"),
+        tr("Private and group messages across the database"),
+        statisticsMessagesLabel_);
+    overview->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Clock),
+        tr("Usage today"),
+        tr("Tracked application usage for today"),
+        statisticsUsageTodayLabel_);
+    overview->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
+        tr("Usage this week"),
+        tr("Tracked application usage over the last seven days"),
+        statisticsUsageWeekLabel_);
+    overview->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::History),
+        tr("Usage all time"),
+        tr("All completed and active usage sessions"),
+        statisticsUsageAllLabel_);
+
+    auto setupTable = [](qfw::TableWidget* table, const QStringList& headers, int height) {
+        table->setColumnCount(headers.size());
+        table->setHorizontalHeaderLabels(headers);
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setSelectionMode(QAbstractItemView::NoSelection);
+        table->setAlternatingRowColors(true);
+        table->setMinimumHeight(height);
+        table->horizontalHeader()->setStretchLastSection(true);
+        table->verticalHeader()->setVisible(false);
+    };
+
+    auto* relationship = new qfw::GroupHeaderCardWidget(tr("Relationship trend"), content);
+    statisticsRelationshipTable_ = new qfw::TableWidget(relationship);
+    setupTable(
+        statisticsRelationshipTable_,
+        {tr("Time"), tr("Affection"), tr("Trust"), tr("Familiarity")},
+        210);
+    relationship->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Heart),
+        tr("Relationship events"),
+        tr("Latest saved state per day, capped to the most recent 366 days"),
+        statisticsRelationshipTable_);
+
+    auto* messages = new qfw::GroupHeaderCardWidget(tr("Message activity"), content);
+    statisticsCharacterTable_ = new qfw::TableWidget(messages);
+    setupTable(statisticsCharacterTable_, {tr("Character"), tr("Messages")}, 220);
+    statisticsDailyTable_ = new qfw::TableWidget(messages);
+    setupTable(
+        statisticsDailyTable_,
+        {tr("Date"), tr("Messages"), tr("Usage")},
+        260);
+    messages->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Messages per character"),
+        tr("Group assistant messages are attributed to the detected speaker"),
+        statisticsCharacterTable_);
+    messages->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Market),
+        tr("Daily activity"),
+        tr("Message count and tracked usage by day"),
+        statisticsDailyTable_);
+
+    auto* heatmap = new qfw::GroupHeaderCardWidget(tr("Seven-day hourly heatmap"), content);
+    statisticsHeatmapTable_ = new qfw::TableWidget(heatmap);
+    QStringList hourLabels;
+    for (int hour = 0; hour < 24; ++hour) {
+        hourLabels.append(QString::number(hour));
+    }
+    setupTable(statisticsHeatmapTable_, hourLabels, 250);
+    statisticsHeatmapTable_->verticalHeader()->setVisible(true);
+    statisticsHeatmapTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    heatmap->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::DateTime),
+        tr("Messages by weekday and hour"),
+        tr("Rows use Monday through Sunday; columns use local hour 0 through 23"),
+        statisticsHeatmapTable_);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(filters);
+    layout->addWidget(overview);
+    layout->addWidget(relationship);
+    layout->addWidget(messages);
+    layout->addWidget(heatmap);
+    layout->addStretch(1);
+    content->setMinimumWidth(680);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(statisticsRangeComboBox_, &qfw::ComboBox::currentIndexChanged, this, [this](int) {
+        refreshNativeStatistics();
+    });
+    connect(
+        statisticsCharacterComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) { refreshNativeStatistics(); });
+    connect(statisticsRefreshButton_, &QPushButton::clicked, this, [this]() {
+        refreshNativeStatistics();
+    });
     return page;
 }
 
@@ -1904,6 +2077,8 @@ void NativeMainWindow::applyBackendState() {
     loadNativeUserProfiles();
     loadNativePersonaSettings();
     loadNativeHistoryFilters();
+    populateNativeStatisticsCharacters();
+    refreshNativeStatistics();
     populateChatCharacters();
     populateMemoryCharacters();
     populateReminderCharacters();
@@ -2693,6 +2868,7 @@ bool NativeMainWindow::mutateNativeUserProfile(const QJsonObject& command) {
     serviceStatusLabel_->setText(backend_.getStatus());
     syncNativeUserProfileControls();
     refreshNativeMemoryState();
+    refreshNativeStatistics();
     if (activeChatRequestId_ == 0 && !groupSequenceActive_) {
         refreshChatState({}, true);
     }
@@ -3038,6 +3214,7 @@ bool NativeMainWindow::mutateNativePersona(const QJsonObject& command) {
     updateNativePovModeControls();
     if (operation == QStringLiteral("save_pov")) {
         refreshNativeMemoryState();
+        refreshNativeStatistics();
         if (activeChatRequestId_ == 0 && !groupSequenceActive_) {
             refreshChatState({}, true);
         }
@@ -3319,6 +3496,200 @@ void NativeMainWindow::resetNativeHistoryFilters() {
     historyCharacterComboBox_->setCurrentIndex(0);
     historyUserComboBox_->setCurrentIndex(0);
     loadNativeHistoryFilters();
+}
+
+void NativeMainWindow::populateNativeStatisticsCharacters() {
+    if (statisticsCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString previous = statisticsCharacterComboBox_->currentData().toString();
+    const QSignalBlocker blocker(statisticsCharacterComboBox_);
+    statisticsCharacterComboBox_->clear();
+    statisticsCharacterComboBox_->addItem(
+        tr("No relationship character"), QVariant(), QString());
+    QStringList added;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character.isEmpty() || added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        statisticsCharacterComboBox_->addItem(
+            displayNameForCharacter(model.character), QVariant(), model.character);
+    }
+    for (const QJsonValue& value :
+         historyFiltersState_.value(QStringLiteral("characters")).toArray()) {
+        const QString character = value.toString().trimmed();
+        if (character.isEmpty() || added.contains(character)) {
+            continue;
+        }
+        added.append(character);
+        statisticsCharacterComboBox_->addItem(
+            displayNameForCharacter(character), QVariant(), character);
+    }
+    QString selected = previous;
+    if (selected.isEmpty() || statisticsCharacterComboBox_->findData(selected) < 0) {
+        selected = runtime_.value(QStringLiteral("character")).toString();
+    }
+    const int index = statisticsCharacterComboBox_->findData(selected);
+    statisticsCharacterComboBox_->setCurrentIndex(index < 0 ? 0 : index);
+}
+
+void NativeMainWindow::refreshNativeStatistics() {
+    if (statisticsRangeComboBox_ == nullptr || statisticsCharacterComboBox_ == nullptr) {
+        return;
+    }
+    statisticsRefreshButton_->setEnabled(false);
+    statisticsStatusLabel_->setText(tr("Refreshing statistics…"));
+    QJsonObject aliases;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character.isEmpty() || model.characterDisplay.isEmpty()) {
+            continue;
+        }
+        QJsonArray values = aliases.value(model.character).toArray();
+        bool exists = false;
+        for (const QJsonValue& value : values) {
+            if (value.toString() == model.characterDisplay) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            values.append(model.characterDisplay);
+            aliases.insert(model.character, values);
+        }
+    }
+    const QJsonObject query {
+        {QStringLiteral("days"), statisticsRangeComboBox_->currentData().toInt()},
+        {QStringLiteral("character"),
+         statisticsCharacterComboBox_->currentData().toString()},
+        {QStringLiteral("user_key"),
+         runtime_.value(QStringLiteral("active_user_key"))
+             .toString(QStringLiteral("__default__"))},
+        {QStringLiteral("display_aliases"), aliases},
+    };
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.loadStatistics(databasePath, compactJson(query))) {
+        statisticsStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        statisticsRefreshButton_->setEnabled(true);
+        return;
+    }
+    statisticsSnapshot_ = parseObject(backend_.getStatisticsSnapshotJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    renderNativeStatistics();
+    statisticsRefreshButton_->setEnabled(true);
+}
+
+void NativeMainWindow::renderNativeStatistics() {
+    if (statisticsRelationshipTable_ == nullptr) {
+        return;
+    }
+    const QJsonObject summary = statisticsSnapshot_.value(QStringLiteral("summary")).toObject();
+    statisticsMessagesLabel_->setText(
+        tr("%1 messages · %2 private conversations")
+            .arg(statisticsSnapshot_.value(QStringLiteral("total_messages")).toInteger())
+            .arg(summary.value(QStringLiteral("total_conversations")).toInteger()));
+    statisticsUsageTodayLabel_->setText(durationLabel(
+        statisticsSnapshot_.value(QStringLiteral("usage_today_seconds")).toInteger()));
+    statisticsUsageWeekLabel_->setText(durationLabel(
+        statisticsSnapshot_.value(QStringLiteral("usage_week_seconds")).toInteger()));
+    statisticsUsageAllLabel_->setText(durationLabel(
+        statisticsSnapshot_.value(QStringLiteral("usage_all_seconds")).toInteger()));
+
+    const QJsonArray relationship =
+        statisticsSnapshot_.value(QStringLiteral("relationship_trend")).toArray();
+    statisticsRelationshipTable_->setRowCount(relationship.size());
+    for (int row = 0; row < relationship.size(); ++row) {
+        const QJsonObject point = relationship.at(row).toObject();
+        const QStringList values {
+            point.value(QStringLiteral("day")).toString(),
+            QString::number(point.value(QStringLiteral("affection")).toInteger()),
+            QString::number(point.value(QStringLiteral("trust")).toInteger()),
+            QString::number(point.value(QStringLiteral("familiarity")).toInteger()),
+        };
+        for (int column = 0; column < values.size(); ++column) {
+            statisticsRelationshipTable_->setItem(
+                row, column, new QTableWidgetItem(values.at(column)));
+        }
+    }
+    statisticsRelationshipTable_->resizeRowsToContents();
+
+    const QJsonArray perCharacter =
+        statisticsSnapshot_.value(QStringLiteral("messages_per_character")).toArray();
+    statisticsCharacterTable_->setRowCount(perCharacter.size());
+    for (int row = 0; row < perCharacter.size(); ++row) {
+        const QJsonObject item = perCharacter.at(row).toObject();
+        statisticsCharacterTable_->setItem(
+            row,
+            0,
+            new QTableWidgetItem(
+                displayNameForCharacter(item.value(QStringLiteral("character")).toString())));
+        statisticsCharacterTable_->setItem(
+            row,
+            1,
+            new QTableWidgetItem(
+                QString::number(item.value(QStringLiteral("count")).toInteger())));
+    }
+    statisticsCharacterTable_->resizeRowsToContents();
+
+    QMap<QString, qint64> messagesByDay;
+    QMap<QString, qint64> usageByDay;
+    for (const QJsonValue& value :
+         statisticsSnapshot_.value(QStringLiteral("daily_messages")).toArray()) {
+        const QJsonObject item = value.toObject();
+        messagesByDay.insert(
+            item.value(QStringLiteral("day")).toString(),
+            item.value(QStringLiteral("count")).toInteger());
+    }
+    for (const QJsonValue& value :
+         statisticsSnapshot_.value(QStringLiteral("daily_usage")).toArray()) {
+        const QJsonObject item = value.toObject();
+        usageByDay.insert(
+            item.value(QStringLiteral("day")).toString(),
+            item.value(QStringLiteral("seconds")).toInteger());
+    }
+    QStringList days = messagesByDay.keys();
+    for (const QString& day : usageByDay.keys()) {
+        if (!days.contains(day)) {
+            days.append(day);
+        }
+    }
+    std::sort(days.begin(), days.end());
+    statisticsDailyTable_->setRowCount(days.size());
+    for (int row = 0; row < days.size(); ++row) {
+        const QString day = days.at(row);
+        statisticsDailyTable_->setItem(row, 0, new QTableWidgetItem(day));
+        statisticsDailyTable_->setItem(
+            row, 1, new QTableWidgetItem(QString::number(messagesByDay.value(day))));
+        statisticsDailyTable_->setItem(
+            row, 2, new QTableWidgetItem(durationLabel(usageByDay.value(day))));
+    }
+    statisticsDailyTable_->resizeRowsToContents();
+
+    const QJsonArray heatmap =
+        statisticsSnapshot_.value(QStringLiteral("hourly_heatmap")).toArray();
+    const QStringList weekdays {
+        tr("Mon"), tr("Tue"), tr("Wed"), tr("Thu"), tr("Fri"), tr("Sat"), tr("Sun"),
+    };
+    statisticsHeatmapTable_->setRowCount(7);
+    statisticsHeatmapTable_->setVerticalHeaderLabels(weekdays);
+    for (int day = 0; day < 7; ++day) {
+        const QJsonArray hours = day < heatmap.size() ? heatmap.at(day).toArray() : QJsonArray();
+        for (int hour = 0; hour < 24; ++hour) {
+            const qint64 count = hour < hours.size() ? hours.at(hour).toInteger() : 0;
+            statisticsHeatmapTable_->setItem(
+                day, hour, new QTableWidgetItem(count == 0 ? QString() : QString::number(count)));
+        }
+    }
+    statisticsHeatmapTable_->resizeRowsToContents();
+
+    const QString userKey = statisticsSnapshot_
+                                .value(QStringLiteral("query"))
+                                .toObject()
+                                .value(QStringLiteral("user_key"))
+                                .toString();
+    statisticsStatusLabel_->setText(
+        tr("Statistics refreshed for user partition %1").arg(userKey));
 }
 
 void NativeMainWindow::syncSettingsControls() {

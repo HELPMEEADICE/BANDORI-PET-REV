@@ -26,6 +26,7 @@ pub mod ffi {
         #[qproperty(QString, persona_settings_json)]
         #[qproperty(QString, history_filters_json)]
         #[qproperty(QString, history_result_json)]
+        #[qproperty(QString, statistics_snapshot_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -153,6 +154,14 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "searchHistory"]
         fn search_history(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            query_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadStatistics"]
+        fn load_statistics(
             self: Pin<&mut Self>,
             database_path: &QString,
             query_json: &QString,
@@ -396,6 +405,7 @@ use bandori_core::relationship_analysis::{
 use bandori_core::reminder::{
     LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
 };
+use bandori_core::statistics_dashboard::load_native_statistics;
 use bandori_core::user_profiles::{load_native_user_profiles, mutate_native_user_profiles};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
@@ -418,6 +428,7 @@ const MAX_MEMORY_COMMAND_BYTES: usize = 128 * 1024;
 const MAX_USER_PROFILE_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_PERSONA_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY_QUERY_BYTES: usize = 64 * 1024;
+const MAX_STATISTICS_QUERY_BYTES: usize = 64 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -482,6 +493,7 @@ pub struct BackendRust {
     persona_settings_json: QString,
     history_filters_json: QString,
     history_result_json: QString,
+    statistics_snapshot_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -532,6 +544,7 @@ impl Default for BackendRust {
             persona_settings_json: QString::from("{}"),
             history_filters_json: QString::from("{}"),
             history_result_json: QString::from("{}"),
+            statistics_snapshot_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -1106,6 +1119,33 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("History query error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_statistics(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        query_json: &QString,
+    ) -> bool {
+        match load_native_statistics(
+            Path::new(&database_path.to_string()),
+            &query_json.to_string(),
+            MAX_STATISTICS_QUERY_BYTES,
+        ) {
+            Ok(snapshot) => {
+                let payload = serde_json::to_string(&snapshot)
+                    .expect("native statistics snapshot serialization cannot fail");
+                self.as_mut()
+                    .set_statistics_snapshot_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native statistics refreshed"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Statistics load error: {error}")));
                 false
             }
         }

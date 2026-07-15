@@ -27,6 +27,7 @@ pub mod model;
 pub mod persona_settings;
 pub mod relationship_analysis;
 pub mod reminder;
+pub mod statistics_dashboard;
 pub mod user_profiles;
 
 pub use bandori_llm_protocol as llm_protocol;

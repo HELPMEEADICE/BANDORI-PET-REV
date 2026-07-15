@@ -723,6 +723,38 @@ def test_native_history_search_is_bounded_unified_and_paginated():
     assert "loadNativeHistoryFilters();" in window
 
 
+def test_native_statistics_are_user_scoped_and_do_not_require_qt_charts():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    statistics = source("rust/crates/bandori-core/src/statistics_dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    cmake = source("CMakeLists.txt")
+
+    assert "pub mod statistics_dashboard;" in core
+    assert "pub struct NativeStatisticsQuery" in statistics
+    assert "pub struct NativeStatisticsSnapshot" in statistics
+    assert '#[serde(default, deny_unknown_fields)]' in statistics
+    assert "pub fn load_native_statistics" in statistics
+    assert "messages_per_character_range" in statistics
+    assert "hourly_heatmap" in statistics
+    assert "statistics_snapshot_is_user_scoped_and_attributes_group_speakers" in statistics
+    assert "statistics_snapshot_json" in backend
+    assert "MAX_STATISTICS_QUERY_BYTES" in backend
+    assert "fn load_statistics(" in backend
+    assert '"getStatisticsSnapshotJson"' in bridge_test
+    assert '"loadStatistics"' in bridge_test
+    assert "QWidget* createStatisticsPage()" in header
+    assert "qfw::TableWidget* statisticsRelationshipTable_" in header
+    assert "qfw::TableWidget* statisticsHeatmapTable_" in header
+    assert "backend_.loadStatistics" in window
+    assert 'QStringLiteral("display_aliases")' in window
+    assert "durationLabel" in window
+    assert "QChart" not in window
+    assert "Charts" not in cmake
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

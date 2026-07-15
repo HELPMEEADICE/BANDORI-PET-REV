@@ -53,6 +53,7 @@ private:
     QWidget* createModelsPage();
     QWidget* createChatPage();
     QWidget* createHistorySearchPage();
+    QWidget* createStatisticsPage();
     QWidget* createMemoryPage();
     QWidget* createUserProfilesPage();
     QWidget* createPersonaPage();
@@ -115,6 +116,9 @@ private:
     void syncNativeHistoryFilters();
     void searchNativeHistory(bool append);
     void resetNativeHistoryFilters();
+    void populateNativeStatisticsCharacters();
+    void refreshNativeStatistics();
+    void renderNativeStatistics();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -227,6 +231,19 @@ private:
     qfw::ListWidget* historyList_ = nullptr;
     qfw::PushButton* historyLoadMoreButton_ = nullptr;
     qfw::CaptionLabel* historyStatusLabel_ = nullptr;
+    QJsonObject statisticsSnapshot_;
+    qfw::ComboBox* statisticsRangeComboBox_ = nullptr;
+    qfw::ComboBox* statisticsCharacterComboBox_ = nullptr;
+    qfw::PushButton* statisticsRefreshButton_ = nullptr;
+    qfw::BodyLabel* statisticsMessagesLabel_ = nullptr;
+    qfw::BodyLabel* statisticsUsageTodayLabel_ = nullptr;
+    qfw::BodyLabel* statisticsUsageWeekLabel_ = nullptr;
+    qfw::BodyLabel* statisticsUsageAllLabel_ = nullptr;
+    qfw::TableWidget* statisticsRelationshipTable_ = nullptr;
+    qfw::TableWidget* statisticsCharacterTable_ = nullptr;
+    qfw::TableWidget* statisticsDailyTable_ = nullptr;
+    qfw::TableWidget* statisticsHeatmapTable_ = nullptr;
+    qfw::CaptionLabel* statisticsStatusLabel_ = nullptr;
     QTimer reminderTimer_;
     QJsonObject reminderState_;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;
