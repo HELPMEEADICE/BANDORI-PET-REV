@@ -11,5 +11,6 @@ pub mod dashboard;
 pub mod database;
 pub mod ipc;
 pub mod ipc_ffi;
-pub mod llm_protocol;
 pub mod model;
+
+pub use bandori_llm_protocol as llm_protocol;

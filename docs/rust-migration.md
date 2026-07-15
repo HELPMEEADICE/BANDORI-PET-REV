@@ -144,12 +144,19 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   is deliberately read-only until the LLM/tool
   orchestration path is ported, so dual-track operation cannot append orphaned
   user messages without an assistant response.
-  The first transport-independent LLM protocol layer is also in Rust. It keeps
+  The first transport-independent LLM protocol layer is also in Rust. The
+  lightweight `bandori-llm-protocol` crate keeps database and archive native
+  dependencies out of network clients while preserving the public
+  `bandori-core::llm_protocol` compatibility path. It keeps
   the Python endpoint rules for Chat Completions, Responses and Google OpenAI
   compatibility, converts messages into Responses input items, builds thinking
   and tool-aware request bodies, and normalizes both SSE dialects into shared
   text, reasoning, tool-call, usage, response-id and completion events. Network
-  I/O, cancellation and local-tool execution remain staged behind this boundary.
+  I/O now has its own `bandori-llm` service crate: async Rust TLS transport,
+  bounded SSE/error buffers, secret-redacted diagnostics, status decoding and a
+  cancellation token that interrupts connect or an open stream. Local loopback
+  tests exercise chunk-split UTF-8 streaming and prompt cancellation without
+  contacting a real provider. Qt wiring and local-tool execution remain staged.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
@@ -163,6 +170,8 @@ and Python compatibility checks remain independent of that local limitation.
 ## Build entry points
 
 - Core checks: `cargo test -p bandori-core`
+- LLM protocol and transport: `cargo test -p bandori-llm-protocol` and
+  `cargo test -p bandori-llm`
 - Live2D host checks: `cargo test -p bandori-live2d`
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by

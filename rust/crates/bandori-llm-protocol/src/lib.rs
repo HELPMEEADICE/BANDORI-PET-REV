@@ -1,3 +1,9 @@
+//! Provider-compatible LLM request construction and streaming event decoding.
+//!
+//! The protocol crate is intentionally independent from database and UI code
+//! so native transports, bridges, and compatibility tests can share it without
+//! pulling in unrelated native dependencies.
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use thiserror::Error;

@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "rust/crates/bandori-core",
+    "rust/crates/bandori-llm",
+    "rust/crates/bandori-llm-protocol",
     "rust/crates/bandori-live2d",
     "rust/crates/bandori-qt-bridge",
 ]
@@ -14,6 +16,7 @@ license = "GPL-3.0-only"
 rust-version = "1.85"
 
 [workspace.dependencies]
+bandori-llm-protocol = { path = "rust/crates/bandori-llm-protocol" }
 dunce = "1.0.5"
 fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -21,8 +24,12 @@ serde_json = { version = "1.0.140", features = ["preserve_order"] }
 sha1 = "0.10.6"
 rusqlite = { version = "0.40.0", features = ["backup", "bundled"] }
 mlua = { version = "0.11.6", features = ["luajit", "send", "vendored"] }
+futures-util = "0.3.31"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "stream"] }
 tempfile = "3.19.1"
 thiserror = "2.0.12"
+tokio = { version = "1.47.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7.16", features = ["rt"] }
 tar = "0.4.44"
 zstd = "0.13.3"
 
