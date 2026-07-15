@@ -31,6 +31,7 @@ bool bandori_live2d_resize_renderer(
     std::uint32_t width,
     std::uint32_t height);
 bool bandori_live2d_draw(BandoriLive2dHost* host, double timeMsec, double deltaSeconds);
+bool bandori_live2d_render_only(BandoriLive2dHost* host);
 bool bandori_live2d_drag(BandoriLive2dHost* host, double x, double y);
 bool bandori_live2d_set_scale(BandoriLive2dHost* host, double scale);
 void bandori_live2d_destroy(BandoriLive2dHost* host);

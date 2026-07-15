@@ -66,13 +66,14 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   backup/restore are also ported.
 - In progress: the Rust LuaJIT host, secure directory/`.zst` resource loader,
   MOC/MOC3 runtime isolation, Qt GL-procedure callback, logical/physical resize
-  split and side-effect-free MOC3 redraw are implemented. The native
+  split, 2x MOC3 SSAA framebuffer/blit, and side-effect-free fallback redraw are
+  implemented. The native
   `bandori-pet-renderer-rust` executable provides the isolated QOpenGLWidget pet
   process boundary. Headless runtime/contract tests pass; native GL comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: production pet IPC/supervision, SSAA framebuffer parity, application
-  services, full UI replacement and packaging.
+- Pending: production pet IPC/supervision, native visual/driver parity,
+  application services, full UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain

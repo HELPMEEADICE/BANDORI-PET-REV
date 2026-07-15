@@ -5,6 +5,8 @@
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
+#include <QOpenGLFramebufferObject>
+#include <QOpenGLFramebufferObjectFormat>
 #include <QOpenGLFunctions>
 #include <QSurfaceFormat>
 
@@ -13,6 +15,10 @@
 #include <utility>
 
 namespace bandori {
+
+namespace {
+constexpr int kMoc3BalancedSsaaScale = 2;
+}
 
 void Live2dGlWidget::configureDefaultSurfaceFormat(bool vsync) {
     QSurfaceFormat format = QSurfaceFormat::defaultFormat();
@@ -121,24 +127,41 @@ void Live2dGlWidget::resizeGL(int width, int height) {
     }
     if (format_ == ModelFormat::Moc3) {
         const qreal ratio = std::max<qreal>(devicePixelRatioF(), 1.0);
-        const auto renderWidth = static_cast<std::uint32_t>(std::max(1, qRound(width * ratio)));
-        const auto renderHeight = static_cast<std::uint32_t>(std::max(1, qRound(height * ratio)));
-        if (!bandori_live2d_resize_renderer(host_, renderWidth, renderHeight)) {
+        const QSize renderSize(
+            std::max(1, qRound(width * ratio)) * kMoc3BalancedSsaaScale,
+            std::max(1, qRound(height * ratio)) * kMoc3BalancedSsaaScale);
+        rendererTargetSize_ = {};
+        if (!syncRendererTarget(renderSize)) {
             reportLastError("resize physical renderer");
         }
     }
 }
 
 void Live2dGlWidget::paintGL() {
-    auto* gl = context()->functions();
-    auto* extra = context()->extraFunctions();
-    gl->glEnable(GL_BLEND);
-    extra->glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-    gl->glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-    gl->glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    const qreal ratio = std::max<qreal>(devicePixelRatioF(), 1.0);
+    const QSize targetSize(
+        std::max(1, qRound(width() * ratio)),
+        std::max(1, qRound(height() * ratio)));
     if (host_ == nullptr) {
+        clearTarget(targetSize);
         return;
     }
+
+    bool usingSsaa = false;
+    if (format_ == ModelFormat::Moc3) {
+        const QSize ssaaSize = targetSize * kMoc3BalancedSsaaScale;
+        usingSsaa = ensureSsaaFramebuffer(ssaaSize);
+        const QSize renderSize = usingSsaa ? ssaaSize : targetSize;
+        if (!syncRendererTarget(renderSize)) {
+            reportLastError("synchronize renderer target");
+            renderTimer_.stop();
+            return;
+        }
+    }
+    if (!usingSsaa) {
+        context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+    }
+    clearTarget(usingSsaa ? ssaaFramebufferSize_ : targetSize);
 
     const qint64 now = frameClock_.elapsed();
     const double delta = lastFrameMsec_ > 0
@@ -146,8 +169,20 @@ void Live2dGlWidget::paintGL() {
         : 0.0;
     lastFrameMsec_ = now;
     if (!bandori_live2d_draw(host_, static_cast<double>(now), delta)) {
+        if (usingSsaa) {
+            ssaaFramebuffer_->release();
+            context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+        }
         reportLastError("draw frame");
         renderTimer_.stop();
+        return;
+    }
+    if (usingSsaa) {
+        ssaaFramebuffer_->release();
+        if (!blitSsaaToDefault(targetSize)) {
+            reportLastError("SSAA fallback render");
+            renderTimer_.stop();
+        }
     }
 }
 
@@ -170,6 +205,83 @@ std::uintptr_t Live2dGlWidget::resolveGlProcedure(const char* name, void*) {
     return reinterpret_cast<std::uintptr_t>(procedure);
 }
 
+bool Live2dGlWidget::ensureSsaaFramebuffer(const QSize& size) {
+    if (ssaaFramebuffer_ == nullptr || ssaaFramebufferSize_ != size) {
+        ssaaFramebuffer_.reset();
+        QOpenGLFramebufferObjectFormat format;
+        format.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        format.setSamples(0);
+        ssaaFramebuffer_ = std::make_unique<QOpenGLFramebufferObject>(size, format);
+        ssaaFramebufferSize_ = size;
+    }
+    if (!ssaaFramebuffer_->isValid() || !ssaaFramebuffer_->bind()) {
+        ssaaFramebuffer_.reset();
+        ssaaFramebufferSize_ = {};
+        return false;
+    }
+    return true;
+}
+
+bool Live2dGlWidget::syncRendererTarget(const QSize& size) {
+    if (rendererTargetSize_ == size) {
+        return true;
+    }
+    if (!bandori_live2d_resize_renderer(
+            host_,
+            static_cast<std::uint32_t>(size.width()),
+            static_cast<std::uint32_t>(size.height()))) {
+        return false;
+    }
+    rendererTargetSize_ = size;
+    return true;
+}
+
+bool Live2dGlWidget::blitSsaaToDefault(const QSize& targetSize) {
+    auto* gl = context()->functions();
+    auto* extra = context()->extraFunctions();
+    while (gl->glGetError() != GL_NO_ERROR) {
+    }
+    extra->glBindFramebuffer(GL_READ_FRAMEBUFFER, ssaaFramebuffer_->handle());
+    extra->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFramebufferObject());
+    clearTarget(targetSize);
+    extra->glBlitFramebuffer(
+        0,
+        0,
+        ssaaFramebufferSize_.width(),
+        ssaaFramebufferSize_.height(),
+        0,
+        0,
+        targetSize.width(),
+        targetSize.height(),
+        GL_COLOR_BUFFER_BIT,
+        GL_LINEAR);
+    extra->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+    if (gl->glGetError() == GL_NO_ERROR) {
+        return true;
+    }
+
+    // The simulation already advanced into the SSAA target. If the driver
+    // cannot blit it, draw that exact state again at native resolution.
+    ssaaFramebuffer_.reset();
+    ssaaFramebufferSize_ = {};
+    rendererTargetSize_ = {};
+    if (!syncRendererTarget(targetSize)) {
+        return false;
+    }
+    clearTarget(targetSize);
+    return bandori_live2d_render_only(host_);
+}
+
+void Live2dGlWidget::clearTarget(const QSize& size) {
+    auto* gl = context()->functions();
+    auto* extra = context()->extraFunctions();
+    gl->glViewport(0, 0, size.width(), size.height());
+    gl->glEnable(GL_BLEND);
+    extra->glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    gl->glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+    gl->glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
 void Live2dGlWidget::disposeRuntime() {
     renderTimer_.stop();
     if (host_ == nullptr) {
@@ -179,6 +291,9 @@ void Live2dGlWidget::disposeRuntime() {
     if (needsCurrent) {
         makeCurrent();
     }
+    ssaaFramebuffer_.reset();
+    ssaaFramebufferSize_ = {};
+    rendererTargetSize_ = {};
     bandori_live2d_destroy(host_);
     host_ = nullptr;
     if (needsCurrent) {

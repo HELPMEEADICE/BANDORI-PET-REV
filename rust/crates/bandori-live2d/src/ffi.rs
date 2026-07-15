@@ -186,6 +186,22 @@ pub unsafe extern "C" fn bandori_live2d_draw(
 }
 
 #[unsafe(no_mangle)]
+/// Renders the current Cubism 3 state without advancing its simulation.
+///
+/// # Safety
+/// `host` must be a live Cubism 3 handle and its owning GL context must be
+/// current.
+pub unsafe extern "C" fn bandori_live2d_render_only(host: *mut BandoriLive2dHost) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        unsafe { required_host(host) }?
+            .runtime
+            .render_only(&FrameInput::default())
+            .map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
 /// Updates the gaze target in logical widget coordinates.
 ///
 /// # Safety

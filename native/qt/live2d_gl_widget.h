@@ -4,10 +4,14 @@
 
 #include <QElapsedTimer>
 #include <QOpenGLWidget>
+#include <QSize>
 #include <QString>
 #include <QTimer>
 
+#include <memory>
+
 class QMouseEvent;
+class QOpenGLFramebufferObject;
 
 namespace bandori {
 
@@ -40,6 +44,10 @@ protected:
 
 private:
     static std::uintptr_t resolveGlProcedure(const char* name, void* userData);
+    bool ensureSsaaFramebuffer(const QSize& size);
+    bool syncRendererTarget(const QSize& size);
+    bool blitSsaaToDefault(const QSize& targetSize);
+    void clearTarget(const QSize& size);
     void disposeRuntime();
     void reportLastError(const char* operation);
 
@@ -51,6 +59,9 @@ private:
     QElapsedTimer frameClock_;
     qint64 lastFrameMsec_ = 0;
     QTimer renderTimer_;
+    std::unique_ptr<QOpenGLFramebufferObject> ssaaFramebuffer_;
+    QSize ssaaFramebufferSize_;
+    QSize rendererTargetSize_;
 };
 
 } // namespace bandori
