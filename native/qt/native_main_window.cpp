@@ -4,20 +4,25 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeySequence>
 #include <QListWidgetItem>
 #include <QMenu>
+#include <QRegularExpression>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QShortcut>
+#include <QSignalBlocker>
 #include <QSystemTrayIcon>
 #include <QTextBrowser>
 #include <QVariant>
 #include <QVBoxLayout>
-#include <QSignalBlocker>
 
 #include <algorithm>
 #include <utility>
@@ -32,6 +37,30 @@ constexpr int kCostumeRole = Qt::UserRole + 2;
 constexpr int kFormatRole = Qt::UserRole + 3;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
+
+QString currentTimeInstruction() {
+    const QDateTime now = QDateTime::currentDateTime();
+    const int hour = now.time().hour();
+    const QString period = hour < 5   ? QStringLiteral("凌晨")
+        : hour < 9                    ? QStringLiteral("早上")
+        : hour < 12                   ? QStringLiteral("上午")
+        : hour < 14                   ? QStringLiteral("中午")
+        : hour < 18                   ? QStringLiteral("下午")
+                                      : QStringLiteral("晚上");
+    return QStringLiteral(
+               "当前时间：%1（%2）\n"
+               "现在的时间判断只以上面这条为准。历史消息、长期记忆或引用内容里如果提到晚上、"
+               "凌晨、昨天等，都只代表当时情境，不代表现在。")
+        .arg(now.toString(QStringLiteral("yyyy-MM-dd HH:mm")), period);
+}
+
+QString stripActionTags(QString text) {
+    static const QRegularExpression pattern(
+        QStringLiteral("\\[(?:DONE|[A-Za-z0-9_.\\-]+)\\]"),
+        QRegularExpression::CaseInsensitiveOption);
+    text.remove(pattern);
+    return text.trimmed();
+}
 
 QJsonObject parseObject(const QString& json) {
     QJsonParseError error;
@@ -131,6 +160,11 @@ NativeMainWindow::NativeMainWindow(
       configPath_(QDir::cleanPath(std::move(configPath))),
       supervisor_(this) {
     setupUi();
+    connect(
+        &backend_,
+        &Backend::chatStreamEvent,
+        this,
+        [this](const QString& payloadJson) { handleChatStreamEvent(payloadJson); });
     reloadBackendState();
     setupTray();
 
@@ -373,16 +407,16 @@ QWidget* NativeMainWindow::createChatPage() {
     layout->setContentsMargins(40, 42, 40, 40);
     layout->setSpacing(12);
 
-    auto* title = new qfw::TitleLabel(tr("Native chat history"), page);
+    auto* title = new qfw::TitleLabel(tr("Native chat"), page);
     auto* explanation = new qfw::CaptionLabel(
-        tr("Read-only Rust view of the existing data.db. LLM composition remains on the staged Python chat path."),
+        tr("Rust owns the prompt, cancellable LLM stream and transactional data.db history. Advanced context, local tools and attachments remain staged."),
         page);
     explanation->setWordWrap(true);
     chatCharacterComboBox_ = new qfw::ComboBox(page);
     chatCharacterComboBox_->setMinimumWidth(160);
     chatConversationComboBox_ = new qfw::ComboBox(page);
     chatConversationComboBox_->setMinimumWidth(280);
-    auto* refreshButton = new qfw::PushButton(tr("Refresh"), page);
+    chatRefreshButton_ = new qfw::PushButton(tr("Refresh"), page);
     chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
     chatLoadOlderButton_->setEnabled(false);
     auto* controls = new QHBoxLayout();
@@ -392,20 +426,38 @@ QWidget* NativeMainWindow::createChatPage() {
     controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
     controls->addWidget(chatConversationComboBox_, 1);
     controls->addWidget(chatLoadOlderButton_);
-    controls->addWidget(refreshButton);
+    controls->addWidget(chatRefreshButton_);
 
     chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
     chatTranscript_ = new QTextBrowser(page);
     chatTranscript_->setOpenExternalLinks(false);
     chatTranscript_->setReadOnly(true);
+    chatInput_ = new qfw::PlainTextEdit(page);
+    chatInput_->setPlaceholderText(tr("Write a message · Ctrl+Enter to send"));
+    chatInput_->setMinimumHeight(72);
+    chatInput_->setMaximumHeight(120);
+    chatSendButton_ = new qfw::PrimaryPushButton(tr("Send"), page);
+    chatCancelButton_ = new qfw::PushButton(tr("Cancel"), page);
+    chatSendButton_->setEnabled(false);
+    chatCancelButton_->setEnabled(false);
+    auto* composerButtons = new QVBoxLayout();
+    composerButtons->setSpacing(8);
+    composerButtons->addWidget(chatSendButton_);
+    composerButtons->addWidget(chatCancelButton_);
+    composerButtons->addStretch(1);
+    auto* composer = new QHBoxLayout();
+    composer->setSpacing(10);
+    composer->addWidget(chatInput_, 1);
+    composer->addLayout(composerButtons);
 
     layout->addWidget(title);
     layout->addWidget(explanation);
     layout->addLayout(controls);
     layout->addWidget(chatStatusLabel_);
     layout->addWidget(chatTranscript_, 1);
+    layout->addLayout(composer);
 
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
+    connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
         refreshChatState(chatConversationComboBox_->currentData().toString());
     });
     connect(chatLoadOlderButton_, &QPushButton::clicked, this, [this]() {
@@ -430,6 +482,13 @@ QWidget* NativeMainWindow::createChatPage() {
                 refreshChatState(chatConversationComboBox_->currentData().toString(), true);
             }
         });
+    connect(chatInput_, &QPlainTextEdit::textChanged, this, [this]() {
+        setChatBusy(activeChatRequestId_ != 0);
+    });
+    connect(chatSendButton_, &QPushButton::clicked, this, [this]() { sendNativeChat(); });
+    connect(chatCancelButton_, &QPushButton::clicked, this, [this]() { cancelNativeChat(); });
+    auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
+    connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     return page;
 }
 
@@ -825,6 +884,7 @@ void NativeMainWindow::refreshChatState(
     }
     if (character.isEmpty()) {
         chatConversationComboBox_->clear();
+        chatTranscriptBase_.clear();
         chatTranscript_->clear();
         chatLoadOlderButton_->setEnabled(false);
         chatStatusLabel_->setText(tr("No character is available"));
@@ -832,7 +892,7 @@ void NativeMainWindow::refreshChatState(
     }
     const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
     const QString userKey =
-        runtime_.value(QStringLiteral("active_user_key")).toString(QStringLiteral("default"));
+        runtime_.value(QStringLiteral("active_user_key")).toString(QStringLiteral("__default__"));
     if (!backend_.loadChatState(
             databasePath,
             character,
@@ -840,6 +900,7 @@ void NativeMainWindow::refreshChatState(
             requestedConversationId,
             chatMessageLimit_)) {
         chatStatusLabel_->setText(backend_.getStatus());
+        chatTranscriptBase_.clear();
         chatTranscript_->clear();
         chatLoadOlderButton_->setEnabled(false);
         return;
@@ -891,19 +952,208 @@ void NativeMainWindow::refreshChatState(
             message.value(QStringLiteral("attachments_json")).toString()));
         transcript.append(QString());
     }
-    chatTranscript_->setPlainText(transcript.join(u'\n'));
+    chatTranscriptBase_ = transcript.join(u'\n');
+    if (activeChatRequestId_ == 0) {
+        chatTranscript_->setPlainText(chatTranscriptBase_);
+    } else {
+        renderChatStreamPreview();
+    }
     chatStatusLabel_->setText(
         conversations.isEmpty()
             ? tr("No saved conversation for %1 and user %2").arg(character, userKey)
-            : tr("%1 conversations · %2 messages shown%3 · read-only")
+            : tr("%1 conversations · %2 messages shown%3")
                   .arg(conversations.size())
                   .arg(messages.size())
                   .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
+    setChatBusy(activeChatRequestId_ != 0);
+}
+
+void NativeMainWindow::sendNativeChat() {
+    if (activeChatRequestId_ != 0 || chatInput_ == nullptr) {
+        return;
+    }
+    const QString content = chatInput_->toPlainText().trimmed();
+    const QString character = chatCharacterComboBox_->currentData().toString().trimmed();
+    if (content.isEmpty() || character.isEmpty()) {
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    const QString requestedConversationId =
+        chatConversationComboBox_->currentData().toString();
+    if (!backend_.prepareChatTurn(
+            databasePath,
+            character,
+            userKey,
+            requestedConversationId,
+            content)) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    chatInput_->clear();
+    const QString conversationId = backend_.getChatActiveConversationId();
+    if (!backend_.buildChatRequest(
+            databasePath,
+            configPath_,
+            projectRoot_,
+            chatCharacterComboBox_->currentText(),
+            currentTimeInstruction())) {
+        const QString status = backend_.getStatus();
+        refreshChatState(conversationId);
+        chatStatusLabel_->setText(status);
+        return;
+    }
+    const qint64 requestId =
+        backend_.startChatStream(configPath_, backend_.getChatRequestJson());
+    if (requestId <= 0) {
+        const QString status = backend_.getStatus();
+        refreshChatState(conversationId);
+        chatStatusLabel_->setText(status);
+        return;
+    }
+
+    activeChatRequestId_ = requestId;
+    activeChatCharacter_ = character;
+    activeChatConversationId_ = conversationId;
+    chatStreamText_.clear();
+    chatStreamReasoning_.clear();
+    setChatBusy(true);
+    refreshChatState(conversationId);
+    renderChatStreamPreview();
+    chatStatusLabel_->setText(tr("Streaming native response…"));
+}
+
+void NativeMainWindow::cancelNativeChat() {
+    if (activeChatRequestId_ == 0) {
+        return;
+    }
+    if (backend_.cancelChatStream(activeChatRequestId_)) {
+        chatStatusLabel_->setText(tr("Cancelling native response…"));
+        chatCancelButton_->setEnabled(false);
+    } else {
+        chatStatusLabel_->setText(backend_.getStatus());
+    }
+}
+
+void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (requestId <= 0 || requestId != activeChatRequestId_) {
+        return;
+    }
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    if (state == QStringLiteral("event")) {
+        const QJsonObject event = payload.value(QStringLiteral("event")).toObject();
+        const QString kind = event.value(QStringLiteral("kind")).toString();
+        if (kind == QStringLiteral("text_delta")) {
+            chatStreamText_ += event.value(QStringLiteral("text")).toString();
+            renderChatStreamPreview();
+        } else if (kind == QStringLiteral("reasoning_delta")) {
+            chatStreamReasoning_ += event.value(QStringLiteral("text")).toString();
+            renderChatStreamPreview();
+        }
+        return;
+    }
+
+    const QString character = activeChatCharacter_;
+    const QString conversationId = activeChatConversationId_;
+    QString terminalStatus;
+    if (state == QStringLiteral("finished")) {
+        const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        if (backend_.saveChatAssistant(
+                databasePath,
+                requestId,
+                chatStreamText_,
+                chatStreamReasoning_,
+                compactJson(payload))) {
+            const QJsonObject turn = parseObject(backend_.getChatTurnJson());
+            int actionsSent = 0;
+            for (const QJsonValue& value : turn.value(QStringLiteral("actions")).toArray()) {
+                const QString action = value.toString();
+                if (!action.isEmpty()
+                    && supervisor_.broadcastControlLine(
+                        QStringLiteral("ACTION\t%1\t%2").arg(character, action))) {
+                    ++actionsSent;
+                }
+            }
+            terminalStatus = actionsSent > 0
+                ? tr("Native response saved · %1 Live2D action(s) sent").arg(actionsSent)
+                : tr("Native response saved");
+        } else {
+            terminalStatus = backend_.getStatus();
+        }
+    } else if (state == QStringLiteral("cancelled")) {
+        terminalStatus = tr("Native response cancelled; the user message remains in history");
+    } else {
+        terminalStatus = payload.value(QStringLiteral("message")).toString();
+        if (terminalStatus.isEmpty()) {
+            terminalStatus = tr("Native LLM request failed");
+        }
+    }
+
+    activeChatRequestId_ = 0;
+    activeChatCharacter_.clear();
+    activeChatConversationId_.clear();
+    chatStreamText_.clear();
+    chatStreamReasoning_.clear();
+    setChatBusy(false);
+    refreshChatState(conversationId);
+    chatStatusLabel_->setText(terminalStatus);
+    chatInput_->setFocus();
+}
+
+void NativeMainWindow::setChatBusy(bool busy) {
+    if (chatInput_ == nullptr) {
+        return;
+    }
+    chatCharacterComboBox_->setEnabled(!busy);
+    chatConversationComboBox_->setEnabled(!busy);
+    chatRefreshButton_->setEnabled(!busy);
+    chatLoadOlderButton_->setEnabled(
+        !busy && backend_.getChatHasOlderMessages() && chatMessageLimit_ < kChatMessageLimit);
+    chatInput_->setEnabled(!busy);
+    chatSendButton_->setEnabled(
+        !busy && !chatInput_->toPlainText().trimmed().isEmpty()
+        && !chatCharacterComboBox_->currentData().toString().isEmpty());
+    chatCancelButton_->setEnabled(busy);
+}
+
+void NativeMainWindow::renderChatStreamPreview() {
+    if (chatTranscript_ == nullptr || activeChatRequestId_ == 0) {
+        return;
+    }
+    QString transcript = chatTranscriptBase_.trimmed();
+    const QString reasoning = stripActionTags(chatStreamReasoning_);
+    const QString response = stripActionTags(chatStreamText_);
+    if (!reasoning.isEmpty()) {
+        if (!transcript.isEmpty()) {
+            transcript += QStringLiteral("\n\n");
+        }
+        transcript += QStringLiteral("[reasoning · streaming]\n") + reasoning;
+    }
+    if (!transcript.isEmpty()) {
+        transcript += QStringLiteral("\n\n");
+    }
+    transcript += QStringLiteral("[assistant · streaming]\n");
+    transcript += response.isEmpty() ? QStringLiteral("…") : response;
+    chatTranscript_->setPlainText(transcript);
+    QScrollBar* scrollBar = chatTranscript_->verticalScrollBar();
+    scrollBar->setValue(scrollBar->maximum());
 }
 
 void NativeMainWindow::openNativeChat(const QString& character) {
     showControlCenter();
     populateChatCharacters();
+    if (activeChatRequestId_ != 0
+        && !character.trimmed().isEmpty()
+        && character.trimmed() != activeChatCharacter_) {
+        switchTo(chatPage_);
+        chatStatusLabel_->setText(
+            tr("Finish or cancel the active native response before switching characters"));
+        return;
+    }
     if (!character.trimmed().isEmpty()) {
         const QSignalBlocker blocker(chatCharacterComboBox_);
         const int index = chatCharacterComboBox_->findData(character.trimmed());

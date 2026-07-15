@@ -31,6 +31,8 @@ def rendered_contracts() -> dict[Path, str]:
         _MOC3_ACTION_TAGS,
         _build_key_to_name_mapping,
         build_system_prompt,
+        parse_action_tags,
+        strip_action_tags,
     )
     from relationship_memory import build_relationship_context
     from model_manager import ModelManager
@@ -157,6 +159,20 @@ def rendered_contracts() -> dict[Path, str]:
         "character_display_names": _build_key_to_name_mapping(),
         "cases": prompt_cases,
         "relationship_cases": relationship_cases,
+        "action_cases": [
+            {
+                "input": source,
+                "actions": parse_action_tags(source),
+                "stripped": strip_action_tags(source),
+            }
+            for source in (
+                "[smile]你好[smile][DONE]",
+                "keep [not valid] [mtn_01.idle-2]",
+                "[Smile][smile]mixed case",
+                "partial [mtn_",
+                "nested [bad[smile] tail",
+            )
+        ],
     }
 
     key_cases = [

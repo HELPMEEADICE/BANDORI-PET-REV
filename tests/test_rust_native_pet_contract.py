@@ -231,6 +231,32 @@ def test_native_chat_history_reads_existing_database_through_rust():
     assert "Native chat UI is not ported yet" not in window
 
 
+def test_native_chat_composer_streams_persists_and_dispatches_actions_through_rust():
+    actions = source("rust/crates/bandori-core/src/chat_actions.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub fn parse_chat_response" in actions
+    assert "generated_python_action_vectors_match_rust" in actions
+    assert "parse_chat_response" in backend
+    assert '"actions": response.actions' in backend
+    assert "qfw::PlainTextEdit* chatInput_" in window_header
+    assert "void NativeMainWindow::sendNativeChat()" in window
+    assert "backend_.prepareChatTurn" in window
+    assert "backend_.buildChatRequest" in window
+    assert "backend_.startChatStream" in window
+    assert "backend_.cancelChatStream" in window
+    assert "backend_.saveChatAssistant" in window
+    assert "&Backend::chatStreamEvent" in window
+    assert 'QStringLiteral("ACTION\\t%1\\t%2")' in window
+    assert "bool broadcastControlLine" in supervisor_header
+    assert "PetProcessSupervisor::broadcastControlLine" in supervisor
+    assert 'QStringLiteral("__default__")' in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

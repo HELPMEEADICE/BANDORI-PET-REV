@@ -221,5 +221,39 @@
       ],
       "expected": "【长期记忆与关系状态】\n这些内容是程序保存的长期互动状态。把它当作背景，只在自然相关时使用，不要主动逐条复述。\n互动对象：皮上角色：moca\n关系：好感度 87/100（非常亲近），信任 72/100，熟悉度 61/100。\n当前心情：害羞，强度 76/100。\n用户档案（跨角色长期偏好，对每位角色都适用）：\n- 偏好：喜欢草莓蛋糕\n长期记忆：\n- 关系：约好一起去看演出\n- custom：共同口头禅是哦豁\n互动要求：随着好感、信任和心情变化调整语气亲近度，但仍必须保持角色本人的性格边界。"
     }
+  ],
+  "action_cases": [
+    {
+      "input": "[smile]你好[smile][DONE]",
+      "actions": [
+        "smile"
+      ],
+      "stripped": "你好"
+    },
+    {
+      "input": "keep [not valid] [mtn_01.idle-2]",
+      "actions": [
+        "mtn_01.idle-2"
+      ],
+      "stripped": "keep [not valid]"
+    },
+    {
+      "input": "[Smile][smile]mixed case",
+      "actions": [
+        "Smile",
+        "smile"
+      ],
+      "stripped": "mixed case"
+    },
+    {
+      "input": "partial [mtn_",
+      "actions": [],
+      "stripped": "partial [mtn_"
+    },
+    {
+      "input": "nested [bad[smile] tail",
+      "actions": [],
+      "stripped": "nested [bad tail"
+    }
   ]
 }

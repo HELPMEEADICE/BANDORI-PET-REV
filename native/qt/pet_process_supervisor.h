@@ -53,6 +53,7 @@ public:
     void start(PetLaunchSpec spec);
     void startAll(QList<PetLaunchSpec> specs);
     void stop();
+    bool broadcastControlLine(const QString& line, bool reliable = true);
     bool broadcastSettings(const QString& settingsJson);
     bool isRunning() const;
     int runningCount() const;

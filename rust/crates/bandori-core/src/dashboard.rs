@@ -232,12 +232,18 @@ impl NativeRuntimeSnapshot {
                 })
             })
             .collect();
+        let active_user_key = string_value(values, "active_user_profile", "__default__");
+        let active_user_key = if active_user_key.trim().is_empty() {
+            "__default__".to_owned()
+        } else {
+            active_user_key
+        };
 
         Self {
             selected_character: string_value(values, "character", ""),
             selected_costume: string_value(values, "costume", ""),
             language: string_value(values, "language", ""),
-            active_user_key: string_value(values, "active_user_profile", "default"),
+            active_user_key,
             dark_theme: string_value(values, "dark_theme", "follow_system"),
             vsync: bool_value(values, "vsync", true),
             live2d_quality: normalized_live2d_quality(values),
@@ -433,6 +439,12 @@ mod tests {
         );
         assert!(!serialized.contains("must-not-leak"));
         assert!(!serialized.contains("llm_api_key"));
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_python_default_user_key() {
+        let snapshot = NativeRuntimeSnapshot::from_config(&ConfigDocument::default());
+        assert_eq!(snapshot.active_user_key, "__default__");
     }
 
     #[test]

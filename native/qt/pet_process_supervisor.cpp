@@ -139,15 +139,19 @@ void PetProcessSupervisor::stop() {
 }
 
 bool PetProcessSupervisor::broadcastSettings(const QString& settingsJson) {
-    if (controlQueue_ == nullptr || settingsJson.trimmed().isEmpty()) {
+    if (settingsJson.trimmed().isEmpty()) {
         return false;
     }
-    return controlQueue_->publish(encodeIpcEnvelope(
-        supervisorPeerId_,
-        QStringLiteral("SETTINGS\t") + settingsJson,
-        {},
-        {},
-        true));
+    return broadcastControlLine(QStringLiteral("SETTINGS\t") + settingsJson);
+}
+
+bool PetProcessSupervisor::broadcastControlLine(const QString& line, bool reliable) {
+    SharedMemoryLineQueue* queue = reliable ? controlQueue_.get() : broadcastQueue_.get();
+    if (queue == nullptr || line.trimmed().isEmpty()) {
+        return false;
+    }
+    return queue->publish(
+        encodeIpcEnvelope(supervisorPeerId_, line, {}, {}, reliable));
 }
 
 bool PetProcessSupervisor::isRunning() const {

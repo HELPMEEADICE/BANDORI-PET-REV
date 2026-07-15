@@ -106,6 +106,7 @@ pub mod ffi {
     impl cxx_qt::Threading for Backend {}
 }
 
+use bandori_core::chat_actions::parse_chat_response;
 use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::config::ConfigDocument;
@@ -501,9 +502,11 @@ impl ffi::Backend {
                 .set_status(QString::from("Native chat completion has no conversation"));
             return false;
         }
-        let content = content.to_string();
-        let reasoning = reasoning.to_string();
-        if content.trim().is_empty() && reasoning.trim().is_empty() {
+        let response = parse_chat_response(&content.to_string(), &reasoning.to_string());
+        if response.content.is_empty()
+            && response.reasoning.is_empty()
+            && response.actions.is_empty()
+        {
             self.as_mut()
                 .set_status(QString::from("Native assistant response is empty"));
             return false;
@@ -520,8 +523,8 @@ impl ffi::Backend {
         match database.add_message(
             conversation_id,
             "assistant",
-            &content,
-            &reasoning,
+            &response.content,
+            &response.reasoning,
             None,
             trace.as_ref(),
         ) {
@@ -530,12 +533,16 @@ impl ffi::Backend {
                     "conversation_id": conversation_id,
                     "assistant_message_id": message_id,
                     "request_id": request_id,
+                    "content": response.content,
+                    "reasoning": response.reasoning,
+                    "actions": response.actions,
                 })
                 .to_string();
                 let state = self.as_mut().rust_mut().get_mut();
                 state.completed_chat_request_id = 0;
                 state.completed_chat_conversation_id = 0;
                 self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
                 self.as_mut()
                     .set_status(QString::from("Native assistant response saved"));
                 true

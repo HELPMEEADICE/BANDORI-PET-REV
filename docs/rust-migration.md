@@ -96,7 +96,7 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   suppresses clicks; double-clicks publish reliable `POKE_USER` events and both
   local and remote pokes receive native model/window feedback. The widget also
   exposes exact-hit right-click coordinates to a shaped native Qt radial menu.
-  Its chat action bridges to the staged Python chat process, costume opens the
+  Its chat action opens the native control-center chat flow, costume opens the
   settings flow, motion stays inside the Rust Live2D host, and the center lock
   persists through `PET_STATE`; pixel mode remains disabled until its renderer
   is ported. Menu open/closed lifecycle remains reliable IPC so peer z-order
@@ -141,9 +141,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   increments up to 1000 records, with Rust reporting whether older rows remain;
   stored attachment type, name and size metadata is shown without opening paths.
   Pet radial-menu chat requests switch directly to that character. The surface
-  is deliberately read-only until the LLM/tool
-  orchestration path is ported, so dual-track operation cannot append orphaned
-  user messages without an assistant response.
+  now includes a multiline composer, Ctrl+Enter/send controls, cancellation,
+  reasoning/text stream preview and terminal persistence. Character and
+  conversation selectors are frozen while a request is active; failures and
+  cancellations leave the already-saved user turn visible instead of losing it.
   The first transport-independent LLM protocol layer is also in Rust. The
   lightweight `bandori-llm-protocol` crate keeps database and archive native
   dependencies out of network clients while preserving the public
@@ -160,8 +161,8 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   named Rust worker thread, queues structured events back onto the Qt event
   loop, filters superseded request IDs and cancels work when the backend is
   destroyed. API credentials stay inside Rust and never enter QObject
-  properties or event JSON. Native composer and local-tool execution remain
-  staged. The database layer now also starts private chat
+  properties or event JSON. Local-tool execution remains staged. The database
+  layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -175,7 +176,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   context only to the latest user message, and exposes the resulting request
   JSON through CXX-Qt without exposing the API key. Cross-chat excerpts,
   attachment rendering, event-calendar context, group prompts and local tools
-  remain staged with the composer rather than being silently approximated.
+  remain staged beyond the current composer rather than being silently
+  approximated. Completed responses are cleaned with Python-generated action-tag
+  fixtures before persistence; parsed actions cross the reliable native IPC lane
+  to the matching Live2D process. Empty active-profile keys also normalize to
+  Python's `__default__` user partition.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
