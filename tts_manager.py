@@ -15,6 +15,7 @@ from llm_api_compat import (
     openai_compat_headers,
     sanitize_chat_body_for_url,
 )
+from llm_thinking import split_thinking_text
 from process_utils import app_base_dir
 from tts_common import strip_tts_action_tags
 
@@ -223,7 +224,20 @@ def _translate_to_selected_language(config: dict, text: str, target_language: st
     choices = data.get("choices", [])
     if not choices:
         return ""
-    return choices[0].get("message", {}).get("content", "").strip()
+    message = choices[0].get("message", {})
+    reasoning = next(
+        (
+            message.get(key)
+            for key in ("reasoning_content", "reasoning", "thinking")
+            if isinstance(message.get(key), str) and message.get(key)
+        ),
+        "",
+    )
+    translated, _reasoning = split_thinking_text(
+        message.get("content", ""),
+        reasoning,
+    )
+    return translated
 
 
 _VISEME_POSES = {
