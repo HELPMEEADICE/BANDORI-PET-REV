@@ -356,6 +356,36 @@ def test_native_group_chat_core_is_python_contract_backed_and_user_partitioned()
     assert '"group_chat": _group_chat_contract()' in exporter
 
 
+def test_native_group_chat_bridge_sequences_planner_speakers_and_group_memory_sources():
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+
+    assert "enum ActiveChatKind" in backend
+    assert "GroupPlan" in backend
+    assert "GroupSpeaker" in backend
+    assert "struct GroupTurnContext" in backend
+    assert "pub fn prepare_group_chat_turn" in backend
+    assert "pub fn build_group_plan_request" in backend
+    assert "pub fn resolve_group_plan" in backend
+    assert "pub fn build_group_chat_request" in backend
+    assert "pub fn start_group_plan_stream" in backend
+    assert "pub fn start_group_chat_stream" in backend
+    assert "pub fn save_group_chat_assistant" in backend
+    assert "Some(context.user_message_id)" in backend
+    assert "source_group_message_id" in backend
+    assert "group_assistant_content" in backend
+    for method in (
+        "prepareGroupChatTurn",
+        "buildGroupPlanRequest",
+        "resolveGroupPlan",
+        "buildGroupChatRequest",
+        "startGroupPlanStream",
+        "startGroupChatStream",
+        "saveGroupChatAssistant",
+    ):
+        assert method in generation
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

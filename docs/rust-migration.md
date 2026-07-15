@@ -219,7 +219,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   turns are inserted atomically into an exact user/group partition, planner and
   per-speaker prompts read only that partition, group history is paginated, and
   safe deletion also removes copied attachments. Qt orchestration for the planner
-  and sequential speaker streams is the next integration step.
+  and sequential speaker streams now has a generated CXX-Qt bridge contract:
+  planner and speaker requests have distinct cancellable states, a prepared group
+  turn survives across sequential speakers, and each saved response keeps its
+  speaker label, Live2D actions, relationship update and group-message memory
+  source. The native control-center widgets are the next integration step.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

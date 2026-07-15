@@ -55,6 +55,17 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "loadGroupChatState"]
+        fn load_group_chat_state(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            group_key: &QString,
+            user_key: &QString,
+            requested_conversation_id: &QString,
+            message_limit: i32,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "prepareChatTurn"]
         fn prepare_chat_turn(
             self: Pin<&mut Self>,
@@ -62,6 +73,19 @@ pub mod ffi {
             character: &QString,
             user_key: &QString,
             requested_conversation_id: &QString,
+            content: &QString,
+            attachments_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "prepareGroupChatTurn"]
+        fn prepare_group_chat_turn(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            group_key: &QString,
+            user_key: &QString,
+            requested_conversation_id: &QString,
+            new_conversation_id: &QString,
             content: &QString,
             attachments_json: &QString,
         ) -> bool;
@@ -93,6 +117,16 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "deleteGroupChatConversation"]
+        fn delete_group_chat_conversation(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            group_key: &QString,
+            user_key: &QString,
+            conversation_id: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "buildChatRequest"]
         fn build_chat_request(
             self: Pin<&mut Self>,
@@ -100,6 +134,38 @@ pub mod ffi {
             config_path: &QString,
             project_root: &QString,
             character_display_name: &QString,
+            current_time_instruction: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "buildGroupPlanRequest"]
+        fn build_group_plan_request(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            members_json: &QString,
+            priority_speaker: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "resolveGroupPlan"]
+        fn resolve_group_plan(
+            self: Pin<&mut Self>,
+            members_json: &QString,
+            priority_speaker: &QString,
+            response: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "buildGroupChatRequest"]
+        fn build_group_chat_request(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            config_path: &QString,
+            project_root: &QString,
+            character: &QString,
+            character_display_name: &QString,
+            members_json: &QString,
+            spoken_names_json: &QString,
             current_time_instruction: &QString,
         ) -> bool;
 
@@ -117,12 +183,44 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "saveGroupChatAssistant"]
+        fn save_group_chat_assistant(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            config_path: &QString,
+            request_id: i64,
+            content: &QString,
+            reasoning: &QString,
+            outcome_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "startChatStream"]
         fn start_chat_stream(
             self: Pin<&mut Self>,
             config_path: &QString,
             request_json: &QString,
         ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "startGroupPlanStream"]
+        fn start_group_plan_stream(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            request_json: &QString,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "startGroupChatStream"]
+        fn start_group_chat_stream(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            request_json: &QString,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "finishGroupChatTurn"]
+        fn finish_group_chat_turn(self: Pin<&mut Self>);
 
         #[qinvokable]
         #[cxx_name = "cancelChatStream"]
@@ -146,12 +244,19 @@ use bandori_core::chat_attachments::{
 };
 use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
-use bandori_core::chat_management::delete_owned_private_conversation;
+use bandori_core::chat_management::{
+    delete_owned_group_conversation, delete_owned_private_conversation,
+};
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
 use bandori_core::database::Database;
+use bandori_core::group_chat::{
+    GroupMember, apply_group_plan_priority, build_group_planner_request_from_database,
+    build_native_group_chat_request, conversation_key_for, fallback_group_plan,
+    group_assistant_content, load_native_group_chat_snapshot, parse_group_plan,
+};
 use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
@@ -167,12 +272,34 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
+const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ActiveChatKind {
+    #[default]
+    None,
+    Private,
+    GroupPlan,
+    GroupSpeaker,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GroupTurnContext {
+    group_key: String,
+    conversation_id: String,
+    user_message_id: i64,
+    user_key: String,
+    user_content: String,
+    members: Vec<GroupMember>,
+    character: String,
+    character_display_name: String,
+}
 
 pub struct BackendRust {
     status: QString,
@@ -192,6 +319,7 @@ pub struct BackendRust {
     prepared_chat_user_key: String,
     prepared_chat_user_content: String,
     active_chat_request_id: i64,
+    active_chat_kind: ActiveChatKind,
     active_chat_request_conversation_id: i64,
     active_chat_user_message_id: i64,
     active_chat_character: String,
@@ -203,6 +331,9 @@ pub struct BackendRust {
     completed_chat_character: String,
     completed_chat_user_key: String,
     completed_chat_user_content: String,
+    prepared_group_turn: Option<GroupTurnContext>,
+    active_group_reply: Option<GroupTurnContext>,
+    completed_group_reply: Option<(i64, GroupTurnContext)>,
     next_chat_request_id: i64,
     active_chat_cancellation: Option<CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
@@ -228,6 +359,7 @@ impl Default for BackendRust {
             prepared_chat_user_key: String::new(),
             prepared_chat_user_content: String::new(),
             active_chat_request_id: 0,
+            active_chat_kind: ActiveChatKind::None,
             active_chat_request_conversation_id: 0,
             active_chat_user_message_id: 0,
             active_chat_character: String::new(),
@@ -239,6 +371,9 @@ impl Default for BackendRust {
             completed_chat_character: String::new(),
             completed_chat_user_key: String::new(),
             completed_chat_user_content: String::new(),
+            prepared_group_turn: None,
+            active_group_reply: None,
+            completed_group_reply: None,
             next_chat_request_id: 1,
             active_chat_cancellation: None,
             memory_cancellations: HashMap::new(),
@@ -423,6 +558,57 @@ impl ffi::Backend {
         }
     }
 
+    pub fn load_group_chat_state(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        group_key: &QString,
+        user_key: &QString,
+        requested_conversation_id: &QString,
+        message_limit: i32,
+    ) -> bool {
+        match load_native_group_chat_snapshot(
+            Path::new(&database_path.to_string()),
+            &group_key.to_string(),
+            &user_key.to_string(),
+            Some(&requested_conversation_id.to_string()),
+            i64::from(message_limit),
+        ) {
+            Ok(snapshot) => {
+                let conversations_json = serde_json::to_string(&snapshot.conversations)
+                    .expect("group conversation serialization cannot fail");
+                let messages_json = serde_json::to_string(&snapshot.messages)
+                    .expect("group message serialization cannot fail");
+                let snapshot_json = serde_json::to_string(&snapshot)
+                    .expect("group chat snapshot serialization cannot fail");
+                self.as_mut()
+                    .set_chat_conversations_json(QString::from(&conversations_json));
+                self.as_mut()
+                    .set_chat_messages_json(QString::from(&messages_json));
+                self.as_mut().set_chat_active_conversation_id(QString::from(
+                    &snapshot.active_conversation_id,
+                ));
+                self.as_mut()
+                    .set_chat_has_older_messages(snapshot.has_older_messages);
+                self.as_mut()
+                    .set_chat_turn_json(QString::from(&snapshot_json));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group chat database error: {error}"
+                )));
+                self.as_mut()
+                    .set_chat_conversations_json(QString::from("[]"));
+                self.as_mut().set_chat_messages_json(QString::from("[]"));
+                self.as_mut()
+                    .set_chat_active_conversation_id(QString::default());
+                self.as_mut().set_chat_has_older_messages(false);
+                self.as_mut().set_chat_turn_json(QString::from("{}"));
+                false
+            }
+        }
+    }
+
     pub fn import_chat_attachments(
         mut self: Pin<&mut Self>,
         database_path: &QString,
@@ -563,6 +749,57 @@ impl ffi::Backend {
         }
     }
 
+    pub fn delete_group_chat_conversation(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        group_key: &QString,
+        user_key: &QString,
+        conversation_id: &QString,
+    ) -> bool {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut().set_status(QString::from(
+                "Cannot delete a conversation while chat is active",
+            ));
+            return false;
+        }
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match delete_owned_group_conversation(
+            &database,
+            &group_key.to_string(),
+            &user_key.to_string(),
+            &conversation_id.to_string(),
+        ) {
+            Ok(result) if result.deleted => {
+                let payload = serde_json::to_string(&result)
+                    .expect("group conversation delete serialization cannot fail");
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group conversation deleted; {} attachment copy/copies removed",
+                    result.attachments_removed
+                )));
+                true
+            }
+            Ok(_) => {
+                self.as_mut()
+                    .set_status(QString::from("Group conversation was already unavailable"));
+                false
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group conversation delete error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
     pub fn prepare_chat_turn(
         mut self: Pin<&mut Self>,
         database_path: &QString,
@@ -631,6 +868,9 @@ impl ffi::Backend {
                 state.completed_chat_character.clear();
                 state.completed_chat_user_key.clear();
                 state.completed_chat_user_content.clear();
+                state.prepared_group_turn = None;
+                state.active_group_reply = None;
+                state.completed_group_reply = None;
                 self.as_mut().set_chat_active_conversation_id(QString::from(
                     &turn.conversation_id.to_string(),
                 ));
@@ -643,6 +883,86 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Chat turn error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn prepare_group_chat_turn(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        group_key: &QString,
+        user_key: &QString,
+        requested_conversation_id: &QString,
+        new_conversation_id: &QString,
+        content: &QString,
+        attachments_json: &QString,
+    ) -> bool {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native LLM request is already running"));
+            return false;
+        }
+        let attachments = match parse_attachments_json(&attachments_json.to_string()) {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return false;
+            }
+        };
+        let requested = requested_conversation_id.to_string();
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match database.begin_group_chat_turn(
+            &group_key.to_string(),
+            &user_key.to_string(),
+            Some(&requested),
+            &new_conversation_id.to_string(),
+            &content.to_string(),
+            Some(&attachments),
+        ) {
+            Ok(turn) => {
+                let payload = serde_json::to_string(&turn)
+                    .expect("group chat turn serialization cannot fail");
+                let state = self.as_mut().rust_mut().get_mut();
+                state.prepared_chat_conversation_id = 0;
+                state.prepared_chat_user_message_id = 0;
+                state.prepared_chat_character.clear();
+                state.prepared_chat_user_key.clear();
+                state.prepared_chat_user_content.clear();
+                state.completed_chat_request_id = 0;
+                state.completed_chat_conversation_id = 0;
+                state.completed_chat_user_message_id = 0;
+                state.completed_chat_character.clear();
+                state.completed_chat_user_key.clear();
+                state.completed_chat_user_content.clear();
+                state.prepared_group_turn = Some(GroupTurnContext {
+                    group_key: turn.group_key.clone(),
+                    conversation_id: turn.conversation_id.clone(),
+                    user_message_id: turn.user_message_id,
+                    user_key: user_key.to_string(),
+                    user_content: content.to_string().trim().to_owned(),
+                    ..GroupTurnContext::default()
+                });
+                state.active_group_reply = None;
+                state.completed_group_reply = None;
+                self.as_mut()
+                    .set_chat_active_conversation_id(QString::from(&turn.conversation_id));
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
+                self.as_mut()
+                    .set_status(QString::from("Native group chat turn saved"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Group chat turn error: {error}")));
                 false
             }
         }
@@ -711,6 +1031,215 @@ impl ffi::Backend {
                 self.as_mut()
                     .set_status(QString::from(&format!("Chat request error: {error}")));
                 self.as_mut().set_chat_request_json(QString::from("{}"));
+                false
+            }
+        }
+    }
+
+    pub fn build_group_plan_request(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        members_json: &QString,
+        priority_speaker: &QString,
+    ) -> bool {
+        let context = match self.as_ref().get_ref().rust().prepared_group_turn.clone() {
+            Some(context) => context,
+            None => {
+                self.as_mut().set_status(QString::from(
+                    "Prepare a native group turn before planning speakers",
+                ));
+                return false;
+            }
+        };
+        let members = match parse_group_members(&members_json.to_string()) {
+            Ok(members) if group_members_match_key(&members, &context.group_key) => members,
+            Ok(_) => {
+                self.as_mut()
+                    .set_status(QString::from("Group members do not match the active group"));
+                return false;
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return false;
+            }
+        };
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match build_group_planner_request_from_database(
+            &database,
+            &context.group_key,
+            &context.conversation_id,
+            &context.user_key,
+            &members,
+            &context.user_content,
+            &priority_speaker.to_string(),
+        ) {
+            Ok(request) => {
+                let payload = serde_json::to_string(&request)
+                    .expect("group planner request serialization cannot fail");
+                if let Some(prepared) = self
+                    .as_mut()
+                    .rust_mut()
+                    .get_mut()
+                    .prepared_group_turn
+                    .as_mut()
+                {
+                    prepared.members = members;
+                }
+                self.as_mut().set_chat_request_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native group speaker plan ready"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Group speaker plan error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn resolve_group_plan(
+        mut self: Pin<&mut Self>,
+        members_json: &QString,
+        priority_speaker: &QString,
+        response: &QString,
+    ) -> bool {
+        let members = match parse_group_members(&members_json.to_string()) {
+            Ok(members) => members,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return false;
+            }
+        };
+        let priority = priority_speaker.to_string();
+        let parsed = parse_group_plan(&response.to_string(), &members);
+        let used_fallback = parsed.is_empty();
+        let speakers = if used_fallback {
+            fallback_group_plan(&members, &priority)
+        } else {
+            apply_group_plan_priority(&parsed, &priority, &members)
+        };
+        let payload = json!({
+            "speakers": speakers,
+            "used_fallback": used_fallback,
+        })
+        .to_string();
+        self.as_mut().set_chat_turn_json(QString::from(&payload));
+        self.as_mut().set_status(QString::from(if used_fallback {
+            "Native group speaker fallback plan ready"
+        } else {
+            "Native group speaker plan accepted"
+        }));
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_group_chat_request(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        config_path: &QString,
+        project_root: &QString,
+        character: &QString,
+        character_display_name: &QString,
+        members_json: &QString,
+        spoken_names_json: &QString,
+        current_time_instruction: &QString,
+    ) -> bool {
+        let mut context = match self.as_ref().get_ref().rust().prepared_group_turn.clone() {
+            Some(context) => context,
+            None => {
+                self.as_mut().set_status(QString::from(
+                    "Prepare a native group turn before building a reply",
+                ));
+                return false;
+            }
+        };
+        let members = match parse_group_members(&members_json.to_string()) {
+            Ok(members) if group_members_match_key(&members, &context.group_key) => members,
+            Ok(_) => {
+                self.as_mut()
+                    .set_status(QString::from("Group members do not match the active group"));
+                return false;
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return false;
+            }
+        };
+        let character = character.to_string();
+        let character_display_name = character_display_name.to_string();
+        if !members
+            .iter()
+            .any(|member| member.key == character && member.name == character_display_name)
+        {
+            self.as_mut().set_status(QString::from(
+                "Group reply character does not match the selected members",
+            ));
+            return false;
+        }
+        let spoken_names = match parse_string_array(
+            &spoken_names_json.to_string(),
+            MAX_GROUP_MEMBERS_JSON_BYTES,
+            "Group spoken-name list",
+        ) {
+            Ok(values) => values,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return false;
+            }
+        };
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        let config = match ConfigDocument::load(Path::new(&config_path.to_string())) {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat config error: {error}")));
+                return false;
+            }
+        };
+        match build_native_group_chat_request(
+            &database,
+            &config,
+            Path::new(&project_root.to_string()),
+            &character,
+            &character_display_name,
+            &context.user_key,
+            &context.group_key,
+            &context.conversation_id,
+            &members,
+            &spoken_names,
+            &current_time_instruction.to_string(),
+        ) {
+            Ok(request) => {
+                let payload = serde_json::to_string(&request)
+                    .expect("native group chat request serialization cannot fail");
+                context.members = members;
+                context.character = character;
+                context.character_display_name = character_display_name;
+                self.as_mut().rust_mut().get_mut().prepared_group_turn = Some(context);
+                self.as_mut().set_chat_request_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native group reply request ready"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group reply request error: {error}"
+                )));
                 false
             }
         }
@@ -794,7 +1323,8 @@ impl ffi::Backend {
                         &user_key,
                         &user_content,
                         &response.content,
-                        user_message_id,
+                        Some(user_message_id),
+                        None,
                         fallback,
                     )
                 });
@@ -909,6 +1439,203 @@ impl ffi::Backend {
         }
     }
 
+    pub fn save_group_chat_assistant(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        config_path: &QString,
+        request_id: i64,
+        content: &QString,
+        reasoning: &QString,
+        outcome_json: &QString,
+    ) -> bool {
+        let context = match self
+            .as_ref()
+            .get_ref()
+            .rust()
+            .completed_group_reply
+            .as_ref()
+        {
+            Some((completed_request_id, context))
+                if request_id > 0 && *completed_request_id == request_id =>
+            {
+                context.clone()
+            }
+            _ => {
+                self.as_mut().set_status(QString::from(
+                    "Native group completion is stale or unavailable",
+                ));
+                return false;
+            }
+        };
+        let response = parse_chat_response(&content.to_string(), &reasoning.to_string());
+        if response.content.is_empty()
+            && response.reasoning.is_empty()
+            && response.actions.is_empty()
+        {
+            self.as_mut()
+                .set_status(QString::from("Native group assistant response is empty"));
+            return false;
+        }
+        let stored_content = match group_assistant_content(
+            &context.character,
+            &context.members,
+            &response.content,
+        ) {
+            Ok(content) => content,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group assistant response error: {error}"
+                )));
+                return false;
+            }
+        };
+        let trace = assistant_tool_trace(&outcome_json.to_string());
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match database.add_group_message(
+            &context.group_key,
+            &context.conversation_id,
+            "assistant",
+            &stored_content,
+            &response.reasoning,
+            None,
+            trace.as_ref(),
+            &context.user_key,
+        ) {
+            Ok(message_id) => {
+                let fallback = (!context.character.is_empty() && !context.user_content.is_empty())
+                    .then(|| analyze_interaction(&context.user_content, &response.actions));
+                let memory_job = fallback.as_ref().map(|fallback| {
+                    prepare_memory_extraction_job(
+                        &database,
+                        Path::new(&config_path.to_string()),
+                        &database_path.to_string(),
+                        &context.character,
+                        &context.character_display_name,
+                        &context.user_key,
+                        &context.user_content,
+                        &response.content,
+                        None,
+                        Some(context.user_message_id),
+                        fallback,
+                    )
+                });
+                let mut relationship_state = None;
+                let mut relationship_error = None;
+                let mut relationship_pending = false;
+                match memory_job {
+                    Some(Ok(Some(job))) => {
+                        let cancellation = CancellationToken::new();
+                        self.as_mut()
+                            .rust_mut()
+                            .get_mut()
+                            .memory_cancellations
+                            .insert(request_id, cancellation.clone());
+                        let qt_thread = self.qt_thread();
+                        if let Err(error) = std::thread::Builder::new()
+                            .name(format!("bandori-group-memory-{request_id}"))
+                            .spawn(move || {
+                                run_memory_extraction(qt_thread, request_id, job, cancellation);
+                            })
+                        {
+                            self.as_mut()
+                                .rust_mut()
+                                .get_mut()
+                                .memory_cancellations
+                                .remove(&request_id);
+                            relationship_error =
+                                Some(format!("Could not start native memory worker: {error}"));
+                            match apply_interaction_analysis(
+                                &database,
+                                &context.character,
+                                &context.user_key,
+                                &context.user_content,
+                                &response.actions,
+                                "chat",
+                            ) {
+                                Ok(state) => relationship_state = Some(state),
+                                Err(error) => relationship_error = Some(error.to_string()),
+                            }
+                        } else {
+                            relationship_pending = true;
+                        }
+                    }
+                    Some(Ok(None)) | None => {
+                        if fallback.is_some() {
+                            match apply_interaction_analysis(
+                                &database,
+                                &context.character,
+                                &context.user_key,
+                                &context.user_content,
+                                &response.actions,
+                                "chat",
+                            ) {
+                                Ok(state) => relationship_state = Some(state),
+                                Err(error) => relationship_error = Some(error.to_string()),
+                            }
+                        }
+                    }
+                    Some(Err(error)) => {
+                        relationship_error = Some(error);
+                        match apply_interaction_analysis(
+                            &database,
+                            &context.character,
+                            &context.user_key,
+                            &context.user_content,
+                            &response.actions,
+                            "chat",
+                        ) {
+                            Ok(state) => relationship_state = Some(state),
+                            Err(error) => relationship_error = Some(error.to_string()),
+                        }
+                    }
+                }
+                let relationship_updated = relationship_state.is_some();
+                let payload = json!({
+                    "group_key": context.group_key,
+                    "conversation_id": context.conversation_id,
+                    "user_message_id": context.user_message_id,
+                    "assistant_message_id": message_id,
+                    "request_id": request_id,
+                    "character": context.character,
+                    "character_display_name": context.character_display_name,
+                    "content": response.content,
+                    "stored_content": stored_content,
+                    "reasoning": response.reasoning,
+                    "actions": response.actions,
+                    "relationship_state": relationship_state,
+                    "relationship_error": relationship_error,
+                    "relationship_pending": relationship_pending,
+                })
+                .to_string();
+                self.as_mut().rust_mut().get_mut().completed_group_reply = None;
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
+                self.as_mut()
+                    .set_status(QString::from(if relationship_pending {
+                        "Native group response saved; memory analysis is running"
+                    } else if relationship_updated {
+                        "Native group response and relationship state saved"
+                    } else {
+                        "Native group response saved; relationship update was unavailable"
+                    }));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Group assistant save error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
     pub fn start_chat_stream(
         mut self: Pin<&mut Self>,
         config_path: &QString,
@@ -949,6 +1676,7 @@ impl ffi::Backend {
             request_conversation_id = state.prepared_chat_conversation_id;
             state.prepared_chat_conversation_id = 0;
             state.active_chat_request_id = request_id;
+            state.active_chat_kind = ActiveChatKind::Private;
             state.active_chat_request_conversation_id = request_conversation_id;
             state.active_chat_user_message_id = state.prepared_chat_user_message_id;
             state.prepared_chat_user_message_id = 0;
@@ -961,6 +1689,7 @@ impl ffi::Backend {
             state.completed_chat_character.clear();
             state.completed_chat_user_key.clear();
             state.completed_chat_user_content.clear();
+            state.completed_group_reply = None;
             state.active_chat_cancellation = Some(cancellation.clone());
         }
         self.as_mut()
@@ -980,6 +1709,7 @@ impl ffi::Backend {
             state.prepared_chat_user_key = std::mem::take(&mut state.active_chat_user_key);
             state.prepared_chat_user_content = std::mem::take(&mut state.active_chat_user_content);
             state.active_chat_request_id = 0;
+            state.active_chat_kind = ActiveChatKind::None;
             state.active_chat_request_conversation_id = 0;
             state.active_chat_cancellation = None;
             self.as_mut().set_status(QString::from(&format!(
@@ -988,6 +1718,167 @@ impl ffi::Backend {
             return 0;
         }
         request_id
+    }
+
+    pub fn start_group_plan_stream(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        request_json: &QString,
+    ) -> i64 {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native LLM request is already running"));
+            return 0;
+        }
+        let has_prepared_group = self
+            .as_ref()
+            .get_ref()
+            .rust()
+            .prepared_group_turn
+            .as_ref()
+            .is_some_and(|context| context.members.len() >= 2);
+        if !has_prepared_group {
+            self.as_mut().set_status(QString::from(
+                "Prepare and build a native group plan before starting its stream",
+            ));
+            return 0;
+        }
+        let config = match load_group_planner_transport_config(Path::new(&config_path.to_string()))
+        {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let request = match parse_llm_request(&request_json.to_string()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_chat_request_id.max(1);
+            state.next_chat_request_id = request_id.checked_add(1).unwrap_or(1);
+            state.active_chat_request_id = request_id;
+            state.active_chat_kind = ActiveChatKind::GroupPlan;
+            state.active_group_reply = None;
+            state.completed_group_reply = None;
+            state.active_chat_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from("Native group planner request started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-group-plan-{request_id}"))
+            .spawn(move || {
+                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+            })
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_chat_request_id = 0;
+            state.active_chat_kind = ActiveChatKind::None;
+            state.active_chat_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native group planner: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn start_group_chat_stream(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        request_json: &QString,
+    ) -> i64 {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native LLM request is already running"));
+            return 0;
+        }
+        let context = match self.as_ref().get_ref().rust().prepared_group_turn.clone() {
+            Some(context)
+                if !context.character.is_empty()
+                    && context
+                        .members
+                        .iter()
+                        .any(|member| member.key == context.character) =>
+            {
+                context
+            }
+            _ => {
+                self.as_mut().set_status(QString::from(
+                    "Build a native group reply before starting its stream",
+                ));
+                return 0;
+            }
+        };
+        let config = match load_llm_transport_config(Path::new(&config_path.to_string())) {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let request = match parse_llm_request(&request_json.to_string()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_chat_request_id.max(1);
+            state.next_chat_request_id = request_id.checked_add(1).unwrap_or(1);
+            state.active_chat_request_id = request_id;
+            state.active_chat_kind = ActiveChatKind::GroupSpeaker;
+            state.active_group_reply = Some(context);
+            state.completed_group_reply = None;
+            state.active_chat_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from("Native group reply request started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-group-reply-{request_id}"))
+            .spawn(move || {
+                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+            })
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_chat_request_id = 0;
+            state.active_chat_kind = ActiveChatKind::None;
+            state.active_group_reply = None;
+            state.active_chat_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native group reply: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn finish_group_chat_turn(mut self: Pin<&mut Self>) {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut().set_status(QString::from(
+                "Cannot finish a group turn while a request is active",
+            ));
+            return;
+        }
+        let state = self.as_mut().rust_mut().get_mut();
+        state.prepared_group_turn = None;
+        state.active_group_reply = None;
+        state.completed_group_reply = None;
+        self.as_mut()
+            .set_status(QString::from("Native group chat turn finished"));
     }
 
     pub fn cancel_chat_stream(mut self: Pin<&mut Self>, request_id: i64) -> bool {
@@ -1026,28 +1917,44 @@ impl ffi::Backend {
                 })
                 .is_some_and(|state| state == "finished");
             let state = self.as_mut().rust_mut().get_mut();
-            if finished && state.active_chat_request_conversation_id > 0 {
-                state.completed_chat_request_id = request_id;
-                state.completed_chat_conversation_id = state.active_chat_request_conversation_id;
-                state.completed_chat_user_message_id = state.active_chat_user_message_id;
-                state.completed_chat_character = std::mem::take(&mut state.active_chat_character);
-                state.completed_chat_user_key = std::mem::take(&mut state.active_chat_user_key);
-                state.completed_chat_user_content =
-                    std::mem::take(&mut state.active_chat_user_content);
-            } else {
-                state.completed_chat_request_id = 0;
-                state.completed_chat_conversation_id = 0;
-                state.completed_chat_user_message_id = 0;
-                state.completed_chat_character.clear();
-                state.completed_chat_user_key.clear();
-                state.completed_chat_user_content.clear();
+            match state.active_chat_kind {
+                ActiveChatKind::Private
+                    if finished && state.active_chat_request_conversation_id > 0 =>
+                {
+                    state.completed_chat_request_id = request_id;
+                    state.completed_chat_conversation_id =
+                        state.active_chat_request_conversation_id;
+                    state.completed_chat_user_message_id = state.active_chat_user_message_id;
+                    state.completed_chat_character =
+                        std::mem::take(&mut state.active_chat_character);
+                    state.completed_chat_user_key = std::mem::take(&mut state.active_chat_user_key);
+                    state.completed_chat_user_content =
+                        std::mem::take(&mut state.active_chat_user_content);
+                }
+                ActiveChatKind::GroupSpeaker if finished => {
+                    state.completed_group_reply = state
+                        .active_group_reply
+                        .take()
+                        .map(|context| (request_id, context));
+                }
+                _ => {
+                    state.completed_chat_request_id = 0;
+                    state.completed_chat_conversation_id = 0;
+                    state.completed_chat_user_message_id = 0;
+                    state.completed_chat_character.clear();
+                    state.completed_chat_user_key.clear();
+                    state.completed_chat_user_content.clear();
+                    state.completed_group_reply = None;
+                }
             }
             state.active_chat_request_id = 0;
+            state.active_chat_kind = ActiveChatKind::None;
             state.active_chat_request_conversation_id = 0;
             state.active_chat_user_message_id = 0;
             state.active_chat_character.clear();
             state.active_chat_user_key.clear();
             state.active_chat_user_content.clear();
+            state.active_group_reply = None;
             state.active_chat_cancellation = None;
         }
         self.as_mut()
@@ -1070,7 +1977,8 @@ struct MemoryExtractionJob {
     database_path: String,
     character: String,
     user_key: String,
-    source_message_id: i64,
+    source_message_id: Option<i64>,
+    source_group_message_id: Option<i64>,
     fallback: InteractionAnalysis,
     config: LlmTransportConfig,
     request: LlmTransportRequest,
@@ -1086,7 +1994,8 @@ fn prepare_memory_extraction_job(
     user_key: &str,
     user_text: &str,
     assistant_text: &str,
-    source_message_id: i64,
+    source_message_id: Option<i64>,
+    source_group_message_id: Option<i64>,
     fallback: &InteractionAnalysis,
 ) -> Result<Option<MemoryExtractionJob>, String> {
     let Some(config) = load_memory_transport_config(config_path)? else {
@@ -1103,6 +2012,7 @@ fn prepare_memory_extraction_job(
         character: character.to_owned(),
         user_key: user_key.to_owned(),
         source_message_id,
+        source_group_message_id,
         fallback: fallback.clone(),
         config,
         request: LlmTransportRequest {
@@ -1157,6 +2067,29 @@ fn load_memory_transport_config(path: &Path) -> Result<Option<LlmTransportConfig
     }))
 }
 
+fn load_group_planner_transport_config(path: &Path) -> Result<LlmTransportConfig, String> {
+    let config =
+        ConfigDocument::load(path).map_err(|error| format!("Planner LLM config error: {error}"))?;
+    let api_url = nonempty_config_string(&config, "llm_aux_api_url", "llm_api_url");
+    let api_key = nonempty_config_string(&config, "llm_aux_api_key", "llm_api_key");
+    let model = nonempty_config_string(&config, "llm_aux_model_id", "llm_model_id");
+    if api_url.is_empty() {
+        return Err("Planner LLM API URL is not configured".to_owned());
+    }
+    if model.is_empty() {
+        return Err("Planner LLM model is not configured".to_owned());
+    }
+    Ok(LlmTransportConfig {
+        api_url,
+        api_key,
+        model,
+        mode: LlmApiMode::ChatCompletions,
+        enable_thinking: config
+            .get("llm_aux_enable_thinking")
+            .and_then(Value::as_bool),
+    })
+}
+
 fn nonempty_config_string(config: &ConfigDocument, preferred: &str, fallback: &str) -> String {
     let value = config_string(config, preferred);
     if value.is_empty() {
@@ -1173,6 +2106,49 @@ fn config_string(config: &ConfigDocument, key: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_owned()
+}
+
+fn parse_attachments_json(source: &str) -> Result<Value, String> {
+    if source.len() > MAX_ATTACHMENT_JSON_BYTES {
+        return Err("Chat attachment list is too large".to_owned());
+    }
+    match serde_json::from_str::<Value>(source) {
+        Ok(Value::Array(items)) => Ok(Value::Array(items)),
+        Ok(_) => Err("Chat attachments must be a JSON array".to_owned()),
+        Err(error) => Err(format!("Chat attachment error: {error}")),
+    }
+}
+
+fn parse_string_array(source: &str, max_bytes: usize, label: &str) -> Result<Vec<String>, String> {
+    if source.len() > max_bytes {
+        return Err(format!("{label} is too large"));
+    }
+    serde_json::from_str::<Vec<String>>(source).map_err(|error| format!("{label} error: {error}"))
+}
+
+fn parse_group_members(source: &str) -> Result<Vec<GroupMember>, String> {
+    if source.len() > MAX_GROUP_MEMBERS_JSON_BYTES {
+        return Err("Group member list is too large".to_owned());
+    }
+    let members = serde_json::from_str::<Vec<GroupMember>>(source)
+        .map_err(|error| format!("Group member list error: {error}"))?;
+    let unique_keys = members
+        .iter()
+        .filter(|member| !member.key.is_empty() && !member.name.is_empty())
+        .map(|member| member.key.as_str())
+        .collect::<HashSet<_>>();
+    if members.len() < 2 || unique_keys.len() != members.len() {
+        return Err("Group chat needs at least two distinct named members".to_owned());
+    }
+    Ok(members)
+}
+
+fn group_members_match_key(members: &[GroupMember], group_key: &str) -> bool {
+    let keys = members
+        .iter()
+        .map(|member| member.key.clone())
+        .collect::<Vec<_>>();
+    conversation_key_for(&keys, "") == group_key
 }
 
 fn parse_llm_request(source: &str) -> Result<LlmTransportRequest, String> {
@@ -1353,8 +2329,8 @@ fn run_memory_extraction(
                 &job.character,
                 &job.user_key,
                 &parsed,
-                Some(job.source_message_id),
-                None,
+                job.source_message_id,
+                job.source_group_message_id,
             ) {
                 Ok(stored) => queue_memory_payload(
                     &qt_thread,
