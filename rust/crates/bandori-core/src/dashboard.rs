@@ -232,7 +232,14 @@ impl NativeRuntimeSnapshot {
                 })
             })
             .collect();
-        let active_user_key = string_value(values, "active_user_profile", "__default__");
+        let role_character = string_value(values, "pov_role_character", "");
+        let active_user_key = if string_value(values, "pov_mode", "off") == "role"
+            && !role_character.trim().is_empty()
+        {
+            format!("__role__:{role_character}")
+        } else {
+            string_value(values, "active_user_profile", "__default__")
+        };
         let active_user_key = if active_user_key.trim().is_empty() {
             "__default__".to_owned()
         } else {
@@ -445,6 +452,37 @@ mod tests {
     fn runtime_snapshot_uses_python_default_user_key() {
         let snapshot = NativeRuntimeSnapshot::from_config(&ConfigDocument::default());
         assert_eq!(snapshot.active_user_key, "__default__");
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_role_partition_only_for_active_role_pov() {
+        let role = ConfigDocument::from_value(
+            json!({
+                "active_user_profile": "alice",
+                "pov_mode": "role",
+                "pov_role_character": "moca"
+            }),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            NativeRuntimeSnapshot::from_config(&role).active_user_key,
+            "__role__:moca"
+        );
+
+        let custom = ConfigDocument::from_value(
+            json!({
+                "active_user_profile": "alice",
+                "pov_mode": "custom",
+                "pov_role_character": "moca"
+            }),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            NativeRuntimeSnapshot::from_config(&custom).active_user_key,
+            "alice"
+        );
     }
 
     #[test]

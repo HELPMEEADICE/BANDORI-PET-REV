@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -398,6 +399,7 @@ void NativeMainWindow::setupUi() {
     chatPage_ = createChatPage();
     QWidget* memory = createMemoryPage();
     QWidget* userProfiles = createUserProfilesPage();
+    QWidget* personas = createPersonaPage();
     QWidget* llmSettings = createLlmSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
@@ -405,6 +407,7 @@ void NativeMainWindow::setupUi() {
     chatPage_->setObjectName(QStringLiteral("chatPage"));
     memory->setObjectName(QStringLiteral("memoryPage"));
     userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
+    personas->setObjectName(QStringLiteral("personasPage"));
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
@@ -412,6 +415,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
     addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
+    addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(
         settings,
@@ -969,6 +973,211 @@ QWidget* NativeMainWindow::createUserProfilesPage() {
     });
     connect(userProfileDeleteButton_, &QPushButton::clicked, this, [this]() {
         deleteSelectedNativeUserProfile();
+    });
+    return page;
+}
+
+QWidget* NativeMainWindow::createPersonaPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("POV and character personas"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Rust owns preset normalization, activation and atomic persistence. Character personas replace the default characters-directory dossier."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* pov = new qfw::GroupHeaderCardWidget(tr("User point of view"), content);
+    povModeComboBox_ = new qfw::ComboBox(pov);
+    povModeComboBox_->addItem(tr("Off"), QVariant(), QStringLiteral("off"));
+    povModeComboBox_->addItem(tr("Who I am (custom prompt)"), QVariant(), QStringLiteral("custom"));
+    povModeComboBox_->addItem(tr("Character POV"), QVariant(), QStringLiteral("role"));
+    povCustomPromptEdit_ = new qfw::PlainTextEdit(pov);
+    povCustomPromptEdit_->setPlaceholderText(
+        tr("Describe who the user is, their background, and how the character should understand them."));
+    povCustomPromptEdit_->setFixedHeight(96);
+    povPersonaComboBox_ = new qfw::ComboBox(pov);
+    povSavePersonaButton_ = new qfw::PushButton(tr("Save preset"), pov);
+    povDeletePersonaButton_ = new qfw::PushButton(tr("Delete preset"), pov);
+    auto* povPresetEditor = new QWidget(pov);
+    auto* povPresetLayout = new QHBoxLayout(povPresetEditor);
+    povPresetLayout->setContentsMargins(0, 0, 0, 0);
+    povPresetLayout->setSpacing(8);
+    povPresetLayout->addWidget(povPersonaComboBox_, 1);
+    povPresetLayout->addWidget(povSavePersonaButton_);
+    povPresetLayout->addWidget(povDeletePersonaButton_);
+    povRoleCharacterComboBox_ = new qfw::ComboBox(pov);
+    povSaveButton_ = new qfw::PrimaryPushButton(tr("Save POV settings"), pov);
+    personaStatusLabel_ = new qfw::CaptionLabel(tr("Loading persona settings"), pov);
+    auto* povActions = new QWidget(pov);
+    auto* povActionsLayout = new QHBoxLayout(povActions);
+    povActionsLayout->setContentsMargins(0, 0, 0, 0);
+    povActionsLayout->setSpacing(8);
+    povActionsLayout->addWidget(personaStatusLabel_, 1);
+    povActionsLayout->addWidget(povSaveButton_);
+    pov->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("POV mode"),
+        tr("Choose whether the user is unnamed, custom-defined, or role-playing a character"),
+        povModeComboBox_);
+    pov->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Custom user prompt"),
+        tr("Used only by custom POV mode"),
+        povCustomPromptEdit_);
+    pov->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Saved custom POV presets"),
+        tr("Selecting a preset fills the editor; Save POV settings applies the mode"),
+        povPresetEditor);
+    pov->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Role character"),
+        tr("The character dossier is injected as the user-side role without replacing the assistant identity"),
+        povRoleCharacterComboBox_);
+    pov->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Apply POV"),
+        tr("New chat requests read the saved mode immediately"),
+        povActions);
+
+    auto* character = new qfw::GroupHeaderCardWidget(tr("Character persona presets"), content);
+    characterPersonaCharacterComboBox_ = new qfw::ComboBox(character);
+    characterPersonaPresetComboBox_ = new qfw::ComboBox(character);
+    characterPersonaImportButton_ = new qfw::PushButton(tr("Import documents"), character);
+    auto* characterPresetEditor = new QWidget(character);
+    auto* characterPresetLayout = new QHBoxLayout(characterPresetEditor);
+    characterPresetLayout->setContentsMargins(0, 0, 0, 0);
+    characterPresetLayout->setSpacing(8);
+    characterPresetLayout->addWidget(characterPersonaPresetComboBox_, 1);
+    characterPresetLayout->addWidget(characterPersonaImportButton_);
+    characterPersonaTitleEdit_ = new qfw::LineEdit(character);
+    characterPersonaTitleEdit_->setPlaceholderText(tr("Preset name (derived from the first line when blank)"));
+    characterPersonaPromptEdit_ = new qfw::PlainTextEdit(character);
+    characterPersonaPromptEdit_->setPlaceholderText(
+        tr("Describe this character's personality, history, speech style, and behavior rules."));
+    characterPersonaPromptEdit_->setMinimumHeight(180);
+    characterPersonaDefaultPreview_ = new qfw::PlainTextEdit(character);
+    characterPersonaDefaultPreview_->setReadOnly(true);
+    characterPersonaDefaultPreview_->setMinimumHeight(110);
+    characterPersonaDefaultPreview_->setPlaceholderText(
+        tr("No characters-directory Markdown dossier is available for this character."));
+    characterPersonaSaveNewButton_ = new qfw::PushButton(tr("Save as new"), character);
+    characterPersonaSaveButton_ = new qfw::PrimaryPushButton(tr("Save and activate"), character);
+    characterPersonaDeleteButton_ = new qfw::PushButton(tr("Delete preset"), character);
+    auto* characterActions = new QWidget(character);
+    auto* characterActionsLayout = new QHBoxLayout(characterActions);
+    characterActionsLayout->setContentsMargins(0, 0, 0, 0);
+    characterActionsLayout->setSpacing(8);
+    characterActionsLayout->addWidget(characterPersonaSaveNewButton_);
+    characterActionsLayout->addWidget(characterPersonaSaveButton_);
+    characterActionsLayout->addWidget(characterPersonaDeleteButton_);
+    characterActionsLayout->addStretch(1);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Character"),
+        tr("Each character owns an independent preset list"),
+        characterPersonaCharacterComboBox_);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Active preset"),
+        tr("Selecting Use default restores the characters-directory persona"),
+        characterPresetEditor);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Preset name"),
+        tr("A short label for the preset list"),
+        characterPersonaTitleEdit_);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Persona prompt"),
+        tr("An active custom prompt replaces the default dossier"),
+        characterPersonaPromptEdit_);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Default persona preview"),
+        tr("Read-only Markdown loaded by Rust from the characters directory"),
+        characterPersonaDefaultPreview_);
+    character->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Preset actions"),
+        tr("Saving always activates the resulting preset; deleting an active preset falls back to default"),
+        characterActions);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(pov);
+    layout->addWidget(character);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(povModeComboBox_, &qfw::ComboBox::currentIndexChanged, this, [this](int) {
+        updateNativePovModeControls();
+    });
+    connect(povPersonaComboBox_, &qfw::ComboBox::currentIndexChanged, this, [this](int) {
+        if (updatingPersonaControls_) {
+            return;
+        }
+        const QString prompt = povPersonaComboBox_->currentData().toString();
+        povCustomPromptEdit_->setPlainText(prompt);
+        const int modeIndex = povModeComboBox_->findData(QStringLiteral("custom"));
+        povModeComboBox_->setCurrentIndex(std::max(0, modeIndex));
+        updateNativePovModeControls();
+    });
+    connect(povSavePersonaButton_, &QPushButton::clicked, this, [this]() {
+        saveNativePovPersona();
+    });
+    connect(povDeletePersonaButton_, &QPushButton::clicked, this, [this]() {
+        deleteSelectedNativePovPersona();
+    });
+    connect(povSaveButton_, &QPushButton::clicked, this, [this]() { saveNativePov(); });
+    connect(
+        characterPersonaCharacterComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (!updatingPersonaControls_) {
+                syncSelectedNativeCharacterPersona();
+            }
+        });
+    connect(
+        characterPersonaPresetComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (updatingPersonaControls_) {
+                return;
+            }
+            const QString characterKey =
+                characterPersonaCharacterComboBox_->currentData().toString();
+            if (characterKey.isEmpty()) {
+                return;
+            }
+            mutateNativePersona({
+                {QStringLiteral("op"), QStringLiteral("activate_character_persona")},
+                {QStringLiteral("character"), characterKey},
+                {QStringLiteral("preset_id"),
+                 characterPersonaPresetComboBox_->currentData().toString()},
+                {QStringLiteral("now"), currentLocalDateTime()},
+            });
+        });
+    connect(characterPersonaImportButton_, &QPushButton::clicked, this, [this]() {
+        importNativeCharacterPersonaDocuments();
+    });
+    connect(characterPersonaSaveNewButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeCharacterPersona(true);
+    });
+    connect(characterPersonaSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeCharacterPersona(false);
+    });
+    connect(characterPersonaDeleteButton_, &QPushButton::clicked, this, [this]() {
+        deleteSelectedNativeCharacterPersona();
     });
     return page;
 }
@@ -1573,6 +1782,7 @@ void NativeMainWindow::applyBackendState() {
     }
     populateModelList();
     loadNativeUserProfiles();
+    loadNativePersonaSettings();
     populateChatCharacters();
     populateMemoryCharacters();
     populateReminderCharacters();
@@ -2444,6 +2654,397 @@ void NativeMainWindow::chooseNativeUserAvatar() {
     if (!selected.isEmpty()) {
         userProfileAvatarPathEdit_->setText(QDir::cleanPath(selected));
     }
+}
+
+void NativeMainWindow::loadNativePersonaSettings() {
+    if (povModeComboBox_ == nullptr) {
+        return;
+    }
+    QJsonArray characters;
+    QStringList seen;
+    auto appendCharacter = [&characters, &seen](const QString& rawCharacter) {
+        const QString character = rawCharacter.trimmed();
+        if (!character.isEmpty() && !seen.contains(character)) {
+            seen.append(character);
+            characters.append(character);
+        }
+    };
+    for (const ModelCatalogItem& model : catalog_) {
+        appendCharacter(model.character);
+    }
+    appendCharacter(runtime_.value(QStringLiteral("character")).toString());
+    const QString charactersJson = QString::fromUtf8(
+        QJsonDocument(characters).toJson(QJsonDocument::Compact));
+    if (!backend_.loadPersonaSettings(configPath_, projectRoot_, charactersJson)) {
+        personaStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    personaSettingsState_ = parseObject(backend_.getPersonaSettingsJson());
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    syncNativePersonaControls();
+    personaStatusLabel_->setText(tr("Persona settings loaded from Rust"));
+}
+
+void NativeMainWindow::syncNativePersonaControls() {
+    if (povModeComboBox_ == nullptr || updatingPersonaControls_) {
+        return;
+    }
+    const QString selectedCharacter =
+        characterPersonaCharacterComboBox_->currentData().toString();
+    updatingPersonaControls_ = true;
+
+    const QString mode =
+        personaSettingsState_.value(QStringLiteral("pov_mode")).toString(QStringLiteral("off"));
+    const int modeIndex = povModeComboBox_->findData(mode);
+    povModeComboBox_->setCurrentIndex(modeIndex < 0 ? 0 : modeIndex);
+    const QString customPrompt =
+        personaSettingsState_.value(QStringLiteral("pov_custom_prompt")).toString();
+    povCustomPromptEdit_->setPlainText(customPrompt);
+
+    povPersonaComboBox_->clear();
+    povPersonaComboBox_->addItem(tr("New custom POV preset"), QVariant(), QString());
+    int selectedPovPersona = 0;
+    for (const QJsonValue& value :
+         personaSettingsState_.value(QStringLiteral("pov_personas")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject persona = value.toObject();
+        const QString prompt = persona.value(QStringLiteral("prompt")).toString();
+        if (prompt.isEmpty()) {
+            continue;
+        }
+        QString title = persona.value(QStringLiteral("title")).toString().trimmed();
+        if (title.isEmpty()) {
+            title = tr("Persona");
+        }
+        povPersonaComboBox_->addItem(title, QVariant(), prompt);
+        if (prompt == customPrompt) {
+            selectedPovPersona = povPersonaComboBox_->count() - 1;
+        }
+    }
+    povPersonaComboBox_->setCurrentIndex(selectedPovPersona);
+
+    QStringList characters;
+    for (const QJsonValue& value :
+         personaSettingsState_.value(QStringLiteral("characters")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QString character =
+            value.toObject().value(QStringLiteral("character")).toString();
+        if (!character.isEmpty() && !characters.contains(character)) {
+            characters.append(character);
+        }
+    }
+    for (const ModelCatalogItem& model : catalog_) {
+        if (!model.character.isEmpty() && !characters.contains(model.character)) {
+            characters.append(model.character);
+        }
+    }
+    std::sort(characters.begin(), characters.end());
+    povRoleCharacterComboBox_->clear();
+    characterPersonaCharacterComboBox_->clear();
+    for (const QString& character : characters) {
+        const QString display = displayNameForCharacter(character);
+        povRoleCharacterComboBox_->addItem(display, QVariant(), character);
+        characterPersonaCharacterComboBox_->addItem(display, QVariant(), character);
+    }
+    const QString roleCharacter =
+        personaSettingsState_.value(QStringLiteral("pov_role_character")).toString();
+    const int roleIndex = povRoleCharacterComboBox_->findData(roleCharacter);
+    povRoleCharacterComboBox_->setCurrentIndex(roleIndex < 0 ? 0 : roleIndex);
+    QString characterToSelect = selectedCharacter;
+    if (characterToSelect.isEmpty()
+        || characterPersonaCharacterComboBox_->findData(characterToSelect) < 0) {
+        characterToSelect = runtime_.value(QStringLiteral("character")).toString();
+    }
+    const int characterIndex =
+        characterPersonaCharacterComboBox_->findData(characterToSelect);
+    characterPersonaCharacterComboBox_->setCurrentIndex(characterIndex < 0 ? 0 : characterIndex);
+    updatingPersonaControls_ = false;
+
+    updateNativePovModeControls();
+    syncSelectedNativeCharacterPersona();
+}
+
+void NativeMainWindow::updateNativePovModeControls() {
+    if (povModeComboBox_ == nullptr) {
+        return;
+    }
+    const QString mode = povModeComboBox_->currentData().toString();
+    const bool custom = mode == QStringLiteral("custom");
+    const bool role = mode == QStringLiteral("role");
+    povCustomPromptEdit_->setEnabled(custom);
+    povPersonaComboBox_->setEnabled(custom);
+    povSavePersonaButton_->setEnabled(custom);
+    povDeletePersonaButton_->setEnabled(
+        custom && !povPersonaComboBox_->currentData().toString().isEmpty());
+    povRoleCharacterComboBox_->setEnabled(role);
+}
+
+void NativeMainWindow::syncSelectedNativeCharacterPersona() {
+    if (characterPersonaCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString character =
+        characterPersonaCharacterComboBox_->currentData().toString();
+    QJsonObject collection;
+    for (const QJsonValue& value :
+         personaSettingsState_.value(QStringLiteral("characters")).toArray()) {
+        if (value.isObject()
+            && value.toObject().value(QStringLiteral("character")).toString() == character) {
+            collection = value.toObject();
+            break;
+        }
+    }
+    updatingPersonaControls_ = true;
+    characterPersonaPresetComboBox_->clear();
+    characterPersonaPresetComboBox_->addItem(
+        tr("Use default persona"), QVariant(), QString());
+    const QString activeId = collection.value(QStringLiteral("active_id")).toString();
+    int selectedPreset = 0;
+    for (const QJsonValue& value : collection.value(QStringLiteral("presets")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject preset = value.toObject();
+        const QString id = preset.value(QStringLiteral("id")).toString();
+        QString title = preset.value(QStringLiteral("title")).toString().trimmed();
+        if (id.isEmpty()) {
+            continue;
+        }
+        if (title.isEmpty()) {
+            title = tr("Persona");
+        }
+        characterPersonaPresetComboBox_->addItem(title, QVariant(), id);
+        if (id == activeId) {
+            selectedPreset = characterPersonaPresetComboBox_->count() - 1;
+        }
+    }
+    characterPersonaPresetComboBox_->setCurrentIndex(selectedPreset);
+    characterPersonaDefaultPreview_->setPlainText(
+        collection.value(QStringLiteral("default_prompt")).toString());
+    updatingPersonaControls_ = false;
+    loadSelectedNativeCharacterPersona();
+}
+
+void NativeMainWindow::loadSelectedNativeCharacterPersona() {
+    if (characterPersonaPresetComboBox_ == nullptr || updatingPersonaControls_) {
+        return;
+    }
+    const QString character =
+        characterPersonaCharacterComboBox_->currentData().toString();
+    const QString presetId = characterPersonaPresetComboBox_->currentData().toString();
+    QJsonObject selected;
+    for (const QJsonValue& value :
+         personaSettingsState_.value(QStringLiteral("characters")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject collection = value.toObject();
+        if (collection.value(QStringLiteral("character")).toString() != character) {
+            continue;
+        }
+        for (const QJsonValue& presetValue :
+             collection.value(QStringLiteral("presets")).toArray()) {
+            if (presetValue.isObject()
+                && presetValue.toObject().value(QStringLiteral("id")).toString() == presetId) {
+                selected = presetValue.toObject();
+                break;
+            }
+        }
+        break;
+    }
+    characterPersonaTitleEdit_->setText(
+        selected.value(QStringLiteral("title")).toString());
+    characterPersonaPromptEdit_->setPlainText(
+        selected.value(QStringLiteral("prompt")).toString());
+    characterPersonaDeleteButton_->setEnabled(!presetId.isEmpty() && !selected.isEmpty());
+}
+
+bool NativeMainWindow::mutateNativePersona(const QJsonObject& command) {
+    const QString operation = command.value(QStringLiteral("op")).toString();
+    const QString draftPovMode = povModeComboBox_->currentData().toString();
+    const QString draftPovPrompt = povCustomPromptEdit_->toPlainText();
+    const QString draftRoleCharacter = povRoleCharacterComboBox_->currentData().toString();
+    const QString draftCharacterTitle = characterPersonaTitleEdit_->text();
+    const QString draftCharacterPrompt = characterPersonaPromptEdit_->toPlainText();
+    QJsonArray characters;
+    QStringList seen;
+    auto appendCharacter = [&characters, &seen](const QString& rawCharacter) {
+        const QString character = rawCharacter.trimmed();
+        if (!character.isEmpty() && !seen.contains(character)) {
+            seen.append(character);
+            characters.append(character);
+        }
+    };
+    for (const ModelCatalogItem& model : catalog_) {
+        appendCharacter(model.character);
+    }
+    for (const QJsonValue& value :
+         personaSettingsState_.value(QStringLiteral("characters")).toArray()) {
+        if (value.isObject()) {
+            appendCharacter(value.toObject().value(QStringLiteral("character")).toString());
+        }
+    }
+    const QString charactersJson = QString::fromUtf8(
+        QJsonDocument(characters).toJson(QJsonDocument::Compact));
+    if (!backend_.mutatePersonaSettings(
+            configPath_, projectRoot_, charactersJson, compactJson(command))) {
+        personaStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    personaSettingsState_ = parseObject(backend_.getPersonaSettingsJson());
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    syncNativePersonaControls();
+    updatingPersonaControls_ = true;
+    if (operation != QStringLiteral("save_pov")) {
+        const int modeIndex = povModeComboBox_->findData(draftPovMode);
+        povModeComboBox_->setCurrentIndex(modeIndex < 0 ? 0 : modeIndex);
+        povCustomPromptEdit_->setPlainText(draftPovPrompt);
+        const int roleIndex = povRoleCharacterComboBox_->findData(draftRoleCharacter);
+        povRoleCharacterComboBox_->setCurrentIndex(roleIndex < 0 ? 0 : roleIndex);
+    }
+    if (!operation.contains(QStringLiteral("character_persona"))) {
+        characterPersonaTitleEdit_->setText(draftCharacterTitle);
+        characterPersonaPromptEdit_->setPlainText(draftCharacterPrompt);
+    }
+    updatingPersonaControls_ = false;
+    updateNativePovModeControls();
+    if (operation == QStringLiteral("save_pov")) {
+        refreshNativeMemoryState();
+        if (activeChatRequestId_ == 0 && !groupSequenceActive_) {
+            refreshChatState({}, true);
+        }
+    }
+    personaStatusLabel_->setText(tr("Persona settings saved atomically"));
+    return true;
+}
+
+void NativeMainWindow::saveNativePov() {
+    if (mutateNativePersona({
+            {QStringLiteral("op"), QStringLiteral("save_pov")},
+            {QStringLiteral("mode"), povModeComboBox_->currentData().toString()},
+            {QStringLiteral("custom_prompt"), povCustomPromptEdit_->toPlainText().trimmed()},
+            {QStringLiteral("role_character"),
+             povRoleCharacterComboBox_->currentData().toString()},
+            {QStringLiteral("now"), currentLocalDateTime()},
+        })) {
+        personaStatusLabel_->setText(tr("POV mode saved; new chat requests use it immediately"));
+    }
+}
+
+void NativeMainWindow::saveNativePovPersona() {
+    const QString prompt = povCustomPromptEdit_->toPlainText().trimmed();
+    if (prompt.isEmpty()) {
+        personaStatusLabel_->setText(tr("Enter a custom POV prompt first"));
+        return;
+    }
+    if (mutateNativePersona({
+            {QStringLiteral("op"), QStringLiteral("save_pov_persona")},
+            {QStringLiteral("title"), QString()},
+            {QStringLiteral("prompt"), prompt},
+            {QStringLiteral("now"), currentLocalDateTime()},
+        })) {
+        personaStatusLabel_->setText(tr("Custom POV preset saved"));
+    }
+}
+
+void NativeMainWindow::deleteSelectedNativePovPersona() {
+    const QString prompt = povPersonaComboBox_->currentData().toString();
+    if (prompt.isEmpty()) {
+        return;
+    }
+    if (mutateNativePersona({
+            {QStringLiteral("op"), QStringLiteral("delete_pov_persona")},
+            {QStringLiteral("prompt"), prompt},
+            {QStringLiteral("now"), currentLocalDateTime()},
+        })) {
+        personaStatusLabel_->setText(tr("Custom POV preset deleted"));
+    }
+}
+
+void NativeMainWindow::saveNativeCharacterPersona(bool asNew) {
+    const QString character =
+        characterPersonaCharacterComboBox_->currentData().toString();
+    const QString prompt = characterPersonaPromptEdit_->toPlainText().trimmed();
+    if (character.isEmpty() || prompt.isEmpty()) {
+        personaStatusLabel_->setText(tr("Choose a character and enter a persona prompt first"));
+        return;
+    }
+    const QString presetId = asNew
+        ? QString()
+        : characterPersonaPresetComboBox_->currentData().toString();
+    if (mutateNativePersona({
+            {QStringLiteral("op"), QStringLiteral("save_character_persona")},
+            {QStringLiteral("character"), character},
+            {QStringLiteral("preset_id"), presetId},
+            {QStringLiteral("title"), characterPersonaTitleEdit_->text().trimmed()},
+            {QStringLiteral("prompt"), prompt},
+            {QStringLiteral("now"), currentLocalDateTime()},
+        })) {
+        personaStatusLabel_->setText(tr("Character persona saved and activated"));
+    }
+}
+
+void NativeMainWindow::deleteSelectedNativeCharacterPersona() {
+    const QString character =
+        characterPersonaCharacterComboBox_->currentData().toString();
+    const QString presetId = characterPersonaPresetComboBox_->currentData().toString();
+    if (character.isEmpty() || presetId.isEmpty()) {
+        return;
+    }
+    if (mutateNativePersona({
+            {QStringLiteral("op"), QStringLiteral("delete_character_persona")},
+            {QStringLiteral("character"), character},
+            {QStringLiteral("preset_id"), presetId},
+            {QStringLiteral("now"), currentLocalDateTime()},
+        })) {
+        personaStatusLabel_->setText(tr("Character persona deleted; default persona restored"));
+    }
+}
+
+void NativeMainWindow::importNativeCharacterPersonaDocuments() {
+    QStringList paths = QFileDialog::getOpenFileNames(
+        this,
+        tr("Import character persona documents"),
+        QString(),
+        tr("Text files (*.md *.txt);;All files (*)"));
+    if (paths.isEmpty()) {
+        return;
+    }
+    std::sort(paths.begin(), paths.end());
+    QStringList sections;
+    QStringList failed;
+    for (const QString& path : paths) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            failed.append(path);
+            continue;
+        }
+        const QString text = QString::fromUtf8(file.readAll()).trimmed();
+        if (text.isEmpty()) {
+            failed.append(path);
+            continue;
+        }
+        sections.append(QStringLiteral("# %1\n\n%2").arg(QFileInfo(path).fileName(), text));
+    }
+    if (sections.isEmpty()) {
+        personaStatusLabel_->setText(tr("No readable persona text was found"));
+        return;
+    }
+    const QFileInfo first(paths.first());
+    characterPersonaTitleEdit_->setText(
+        paths.size() == 1 ? first.completeBaseName() : tr("%1 and others").arg(first.completeBaseName()));
+    characterPersonaPromptEdit_->setPlainText(sections.join(QStringLiteral("\n\n")));
+    personaStatusLabel_->setText(
+        failed.isEmpty()
+            ? tr("Persona documents imported into the editor; save to persist them")
+            : tr("Imported readable documents; %1 file(s) failed").arg(failed.size()));
 }
 
 void NativeMainWindow::syncSettingsControls() {

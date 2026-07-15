@@ -23,6 +23,7 @@ pub mod llm_settings;
 pub mod memory_dashboard;
 pub mod memory_extraction;
 pub mod model;
+pub mod persona_settings;
 pub mod relationship_analysis;
 pub mod reminder;
 pub mod user_profiles;

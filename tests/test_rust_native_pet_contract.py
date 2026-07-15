@@ -643,6 +643,51 @@ def test_native_user_profiles_normalize_sync_runtime_and_refresh_owned_views():
     assert "refreshChatState({}, true);" in window
 
 
+def test_native_persona_settings_are_rust_owned_and_qt_fluent_managed():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    personas = source("rust/crates/bandori-core/src/persona_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod persona_settings;" in core
+    assert "pub struct NativePersonaSettingsState" in personas
+    assert "pub struct NativeCharacterPersonaCollection" in personas
+    assert "enum NativePersonaMutation" in personas
+    assert '#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]' in personas
+    assert "pub fn load_native_persona_settings" in personas
+    assert "pub fn mutate_native_persona_settings" in personas
+    assert "normalized_pov_personas" in personas
+    assert "normalized_character_presets" in personas
+    assert "persist_state" in personas
+    assert "character_persona_crud_activates_and_falls_back_to_default" in personas
+    assert 'format!("__role__:{role_character}")' in source(
+        "rust/crates/bandori-core/src/dashboard.rs"
+    )
+    assert "persona_settings_json" in backend
+    assert "MAX_PERSONA_COMMAND_BYTES" in backend
+    assert "fn load_persona_settings(" in backend
+    assert "fn mutate_persona_settings(" in backend
+    assert '"getPersonaSettingsJson"' in bridge_test
+    assert '"loadPersonaSettings"' in bridge_test
+    assert '"mutatePersonaSettings"' in bridge_test
+    assert "QWidget* createPersonaPage()" in header
+    assert "qfw::ComboBox* povModeComboBox_" in header
+    assert "qfw::ComboBox* characterPersonaPresetComboBox_" in header
+    assert "backend_.loadPersonaSettings" in window
+    assert "backend_.mutatePersonaSettings" in window
+    assert 'QStringLiteral("save_pov")' in window
+    assert 'QStringLiteral("save_pov_persona")' in window
+    assert 'QStringLiteral("activate_character_persona")' in window
+    assert 'QStringLiteral("save_character_persona")' in window
+    assert 'QStringLiteral("delete_character_persona")' in window
+    assert "importNativeCharacterPersonaDocuments" in window
+    assert "refreshNativeMemoryState();" in window
+    assert "refreshChatState({}, true);" in window
+    assert "qfw::GroupHeaderCardWidget" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

@@ -54,6 +54,7 @@ private:
     QWidget* createChatPage();
     QWidget* createMemoryPage();
     QWidget* createUserProfilesPage();
+    QWidget* createPersonaPage();
     QWidget* createLlmSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
@@ -97,6 +98,18 @@ private:
     void saveSelectedNativeUserProfile();
     void deleteSelectedNativeUserProfile();
     void chooseNativeUserAvatar();
+    void loadNativePersonaSettings();
+    void syncNativePersonaControls();
+    void updateNativePovModeControls();
+    void syncSelectedNativeCharacterPersona();
+    void loadSelectedNativeCharacterPersona();
+    bool mutateNativePersona(const QJsonObject& command);
+    void saveNativePov();
+    void saveNativePovPersona();
+    void deleteSelectedNativePovPersona();
+    void saveNativeCharacterPersona(bool asNew);
+    void deleteSelectedNativeCharacterPersona();
+    void importNativeCharacterPersonaDocuments();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -265,6 +278,25 @@ private:
     qfw::PrimaryPushButton* userProfileSaveButton_ = nullptr;
     qfw::PushButton* userProfileDeleteButton_ = nullptr;
     qfw::CaptionLabel* userProfileStatusLabel_ = nullptr;
+    QJsonObject personaSettingsState_;
+    bool updatingPersonaControls_ = false;
+    qfw::ComboBox* povModeComboBox_ = nullptr;
+    qfw::PlainTextEdit* povCustomPromptEdit_ = nullptr;
+    qfw::ComboBox* povPersonaComboBox_ = nullptr;
+    qfw::ComboBox* povRoleCharacterComboBox_ = nullptr;
+    qfw::PushButton* povSavePersonaButton_ = nullptr;
+    qfw::PushButton* povDeletePersonaButton_ = nullptr;
+    qfw::PrimaryPushButton* povSaveButton_ = nullptr;
+    qfw::ComboBox* characterPersonaCharacterComboBox_ = nullptr;
+    qfw::ComboBox* characterPersonaPresetComboBox_ = nullptr;
+    qfw::LineEdit* characterPersonaTitleEdit_ = nullptr;
+    qfw::PlainTextEdit* characterPersonaPromptEdit_ = nullptr;
+    qfw::PlainTextEdit* characterPersonaDefaultPreview_ = nullptr;
+    qfw::PushButton* characterPersonaImportButton_ = nullptr;
+    qfw::PushButton* characterPersonaSaveNewButton_ = nullptr;
+    qfw::PrimaryPushButton* characterPersonaSaveButton_ = nullptr;
+    qfw::PushButton* characterPersonaDeleteButton_ = nullptr;
+    qfw::CaptionLabel* personaStatusLabel_ = nullptr;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

@@ -23,6 +23,7 @@ pub mod ffi {
         #[qproperty(QString, llm_settings_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
+        #[qproperty(QString, persona_settings_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -121,6 +122,25 @@ pub mod ffi {
         fn mutate_user_profile(
             self: Pin<&mut Self>,
             config_path: &QString,
+            command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadPersonaSettings"]
+        fn load_persona_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            project_root: &QString,
+            characters_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "mutatePersonaSettings"]
+        fn mutate_persona_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            project_root: &QString,
+            characters_json: &QString,
             command_json: &QString,
         ) -> bool;
 
@@ -352,6 +372,9 @@ use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
 };
+use bandori_core::persona_settings::{
+    load_native_persona_settings, mutate_native_persona_settings,
+};
 use bandori_core::relationship_analysis::{
     InteractionAnalysis, analyze_interaction, apply_interaction_analysis,
 };
@@ -378,6 +401,7 @@ const MAX_REMINDER_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_LLM_SETTINGS_BYTES: usize = 256 * 1024;
 const MAX_MEMORY_COMMAND_BYTES: usize = 128 * 1024;
 const MAX_USER_PROFILE_COMMAND_BYTES: usize = 64 * 1024;
+const MAX_PERSONA_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -439,6 +463,7 @@ pub struct BackendRust {
     llm_settings_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
+    persona_settings_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -486,6 +511,7 @@ impl Default for BackendRust {
             llm_settings_json: QString::from("{}"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
+            persona_settings_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -915,6 +941,105 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut().set_status(QString::from(&format!(
                     "User profile change error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn load_persona_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        project_root: &QString,
+        characters_json: &QString,
+    ) -> bool {
+        let characters = match serde_json::from_str::<Vec<String>>(&characters_json.to_string()) {
+            Ok(characters) => characters,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Persona character list error: {error}"
+                )));
+                return false;
+            }
+        };
+        match load_native_persona_settings(
+            Path::new(&config_path.to_string()),
+            Path::new(&project_root.to_string()),
+            &characters,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native persona settings serialization cannot fail");
+                self.as_mut()
+                    .set_persona_settings_json(QString::from(&payload));
+                if let Ok(config) = ConfigDocument::load(Path::new(&config_path.to_string())) {
+                    let runtime = NativeRuntimeSnapshot::from_config(&config);
+                    let runtime_json = serde_json::to_string(&runtime)
+                        .expect("native runtime snapshot serialization cannot fail");
+                    self.as_mut()
+                        .set_runtime_config_json(QString::from(&runtime_json));
+                }
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Persona settings load error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn mutate_persona_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        project_root: &QString,
+        characters_json: &QString,
+        command_json: &QString,
+    ) -> bool {
+        let characters = match serde_json::from_str::<Vec<String>>(&characters_json.to_string()) {
+            Ok(characters) => characters,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Persona character list error: {error}"
+                )));
+                return false;
+            }
+        };
+        match mutate_native_persona_settings(
+            Path::new(&config_path.to_string()),
+            Path::new(&project_root.to_string()),
+            &characters,
+            &command_json.to_string(),
+            MAX_PERSONA_COMMAND_BYTES,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native persona settings serialization cannot fail");
+                self.as_mut()
+                    .set_persona_settings_json(QString::from(&payload));
+                match ConfigDocument::load(Path::new(&config_path.to_string())) {
+                    Ok(config) => {
+                        let runtime = NativeRuntimeSnapshot::from_config(&config);
+                        let runtime_json = serde_json::to_string(&runtime)
+                            .expect("native runtime snapshot serialization cannot fail");
+                        self.as_mut()
+                            .set_runtime_config_json(QString::from(&runtime_json));
+                    }
+                    Err(error) => {
+                        self.as_mut().set_status(QString::from(&format!(
+                            "Persona settings saved but runtime reload failed: {error}"
+                        )));
+                        return false;
+                    }
+                }
+                self.as_mut()
+                    .set_status(QString::from("Native persona settings saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Persona settings change error: {error}"
                 )));
                 false
             }

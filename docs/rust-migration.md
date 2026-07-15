@@ -248,12 +248,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   memory analysis. Native user-profile create/edit/activate/delete support keeps
   stable profile keys, synchronizes the legacy top-level identity fields and
   immediately refreshes chat and memory partitions when the active user changes.
+  POV and character-persona management is native as well. Rust normalizes custom
+  POV presets and per-character persona collections, owns activation and atomic
+  CRUD, loads read-only default Markdown previews, and enforces the compatible
+  `__role__:<character>` chat/relationship/memory partition when role POV is
+  active. The Qt-Fluent page also imports local Markdown/text documents without
+  moving configuration rules into C++.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
   screen-awareness and remaining integration services; the remaining
-  history/statistics/data-management and persona settings pages; provider model
+  history/statistics/data-management pages; provider model
   discovery/connection checks; default-launcher cutover, packaging and
   multi-platform validation.
 
