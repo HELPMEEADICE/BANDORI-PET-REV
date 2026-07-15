@@ -448,7 +448,7 @@ def clamp_int(value: object, minimum: int, maximum: int, default: int | None = N
         default = minimum
     try:
         number = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         number = default
     return max(minimum, min(maximum, number))
 
