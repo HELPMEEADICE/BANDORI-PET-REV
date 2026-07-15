@@ -1,6 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from process_utils import clamp_int
 from token_usage import (
     HISTORY_MESSAGE_LIMIT_SLIDER_MAX,
     history_message_limit_from_slider,
@@ -35,6 +36,10 @@ LLM_API_PROFILE_KEYS = (
 
 
 class LLMPageMixin:
+
+    @staticmethod
+    def _auto_continue_max_turns(value) -> int:
+        return clamp_int(value or 5, 1, 20, 5)
 
     @staticmethod
     def _history_message_limit(value, default: int) -> int:
@@ -744,11 +749,11 @@ class LLMPageMixin:
             self._llm_web_search_show_sources.setChecked(bool(self._cfg.get("llm_web_search_show_sources", True)))
             self._llm_web_fetch_enabled.setChecked(bool(self._cfg.get("llm_web_fetch_enabled", False)))
             self._llm_auto_continue_enabled.setChecked(bool(self._cfg.get("llm_auto_continue_enabled", False)))
-            try:
-                auto_continue_max = int(self._cfg.get("llm_auto_continue_max_turns", 5) or 5)
-            except (TypeError, ValueError):
-                auto_continue_max = 5
-            self._llm_auto_continue_max_turns.setValue(max(1, min(20, auto_continue_max)))
+            self._llm_auto_continue_max_turns.setValue(
+                self._auto_continue_max_turns(
+                    self._cfg.get("llm_auto_continue_max_turns", 5)
+                )
+            )
             self._llm_chat_history_message_limit.setValue(
                 self._history_message_limit_slider_value(
                     self._cfg.get("llm_chat_history_message_limit", 40),
@@ -843,8 +848,9 @@ class LLMPageMixin:
                 "llm_web_search_show_sources": bool(profile.get("llm_web_search_show_sources", True)),
                 "llm_web_fetch_enabled": bool(profile.get("llm_web_fetch_enabled", False)),
                 "llm_auto_continue_enabled": bool(profile.get("llm_auto_continue_enabled", False)),
-                "llm_auto_continue_max_turns": max(1, min(20, int(profile.get("llm_auto_continue_max_turns", 5) or 5)))
-                if str(profile.get("llm_auto_continue_max_turns", 5) or "").strip().lstrip("-").isdigit() else 5,
+                "llm_auto_continue_max_turns": self._auto_continue_max_turns(
+                    profile.get("llm_auto_continue_max_turns", 5)
+                ),
                 "llm_chat_history_message_limit": self._history_message_limit(
                     profile.get("llm_chat_history_message_limit", 40),
                     40,
@@ -915,8 +921,9 @@ class LLMPageMixin:
             "llm_web_search_show_sources": bool(self._cfg.get("llm_web_search_show_sources", True)),
             "llm_web_fetch_enabled": bool(self._cfg.get("llm_web_fetch_enabled", False)),
             "llm_auto_continue_enabled": bool(self._cfg.get("llm_auto_continue_enabled", False)),
-            "llm_auto_continue_max_turns": max(1, min(20, int(self._cfg.get("llm_auto_continue_max_turns", 5) or 5)))
-            if str(self._cfg.get("llm_auto_continue_max_turns", 5) or "").strip().lstrip("-").isdigit() else 5,
+            "llm_auto_continue_max_turns": self._auto_continue_max_turns(
+                self._cfg.get("llm_auto_continue_max_turns", 5)
+            ),
             "llm_chat_history_message_limit": self._history_message_limit(
                 self._cfg.get("llm_chat_history_message_limit", 40),
                 40,
@@ -1069,11 +1076,11 @@ class LLMPageMixin:
         self._llm_web_search_show_sources.setChecked(bool(profile.get("llm_web_search_show_sources", True)))
         self._llm_web_fetch_enabled.setChecked(bool(profile.get("llm_web_fetch_enabled", False)))
         self._llm_auto_continue_enabled.setChecked(bool(profile.get("llm_auto_continue_enabled", False)))
-        try:
-            auto_continue_max = int(profile.get("llm_auto_continue_max_turns", 5) or 5)
-        except (TypeError, ValueError):
-            auto_continue_max = 5
-        self._llm_auto_continue_max_turns.setValue(max(1, min(20, auto_continue_max)))
+        self._llm_auto_continue_max_turns.setValue(
+            self._auto_continue_max_turns(
+                profile.get("llm_auto_continue_max_turns", 5)
+            )
+        )
         self._llm_chat_history_message_limit.setValue(
             self._history_message_limit_slider_value(
                 profile.get("llm_chat_history_message_limit", 40),
