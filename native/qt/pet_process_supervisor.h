@@ -27,6 +27,7 @@ struct PetLaunchSpec {
     double opacity = 1.0;
     bool vsync = true;
     QString live2dQuality = QStringLiteral("balanced");
+    int live2dScale = 100;
     double lipSyncMaxOpen = 0.55;
     int hitAlphaThreshold = 8;
     QString clickMotionActions = QStringLiteral("{}");

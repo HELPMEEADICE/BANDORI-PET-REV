@@ -16,6 +16,7 @@
 #include <QRect>
 #include <QScreen>
 #include <QSet>
+#include <QSize>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTimer>
@@ -82,6 +83,19 @@ bool earlyBooleanOption(
         }
     }
     return fallback;
+}
+
+int normalizedLive2dScale(int value) {
+    return value <= 0 ? 100 : std::clamp(value, 25, 500);
+}
+
+QSize scaledLive2dSize(bandori::Live2dGlWidget::ModelFormat format, int scale) {
+    scale = normalizedLive2dScale(scale);
+    const int baseHeight = format == bandori::Live2dGlWidget::ModelFormat::Moc3 ? 800 : 500;
+    return {
+        std::max(1, (400 * scale + 50) / 100),
+        std::max(1, (baseHeight * scale + 50) / 100),
+    };
 }
 
 QJsonObject ipcJsonPayload(const QString& line) {
@@ -298,6 +312,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Live2D texture and Cubism 3 SSAA quality: performance or balanced"),
         QStringLiteral("quality"),
         QStringLiteral("balanced"));
+    QCommandLineOption live2dScale(
+        QStringLiteral("scale"),
+        QStringLiteral("Live2D window scale percentage (25-500)"),
+        QStringLiteral("percent"),
+        QStringLiteral("100"));
     QCommandLineOption lipSyncMaxOpen(
         QStringLiteral("lip-sync-max-open"),
         QStringLiteral("Maximum mouth-open parameter used by lip sync"),
@@ -383,6 +402,7 @@ int main(int argc, char* argv[]) {
          opacity,
          vsync,
          quality,
+         live2dScale,
          lipSyncMaxOpen,
          hitAlphaThreshold,
          clickMotionActions,
@@ -423,7 +443,8 @@ int main(int argc, char* argv[]) {
     widget.setWindowOpacity(std::clamp(parser.value(opacity).toDouble(), 0.05, 1.0));
     widget.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     widget.setAttribute(Qt::WA_TranslucentBackground, true);
-    widget.resize(std::max(parser.value(width).toInt(), 1), std::max(parser.value(height).toInt(), 1));
+    int currentScale = normalizedLive2dScale(parser.value(live2dScale).toInt());
+    widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale));
     const int initialX = parser.value(positionX).toInt();
     const int initialY = parser.value(positionY).toInt();
     const QRect requestedGeometry(initialX, initialY, widget.width(), widget.height());
@@ -747,6 +768,8 @@ int main(int argc, char* argv[]) {
          configuredDefaultExpression,
          &idleActions,
          &randomActions,
+         &currentScale,
+         modelFormat,
          &triggerPokeFeedback,
          &radialMenu,
          ipcClient,
@@ -908,6 +931,11 @@ int main(int argc, char* argv[]) {
                 randomActions =
                     settings.value(QStringLiteral("live2d_random_actions_enabled")).toBool(true);
                 defaultStateChanged = true;
+            }
+            if (settings.contains(QStringLiteral("live2d_scale"))) {
+                currentScale = normalizedLive2dScale(
+                    settings.value(QStringLiteral("live2d_scale")).toInt(100));
+                widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale));
             }
             if (settings.contains(QStringLiteral("drag_locked"))) {
                 const bool locked =

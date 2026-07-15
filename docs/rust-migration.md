@@ -125,6 +125,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   `is_motion_finished` method. Temporary expressions now reset back to the
   configured or metadata-derived default instead of leaving stale feedback.
   Idle and random-action switches are writable and apply live over shared IPC.
+  The global Live2D scale now preserves the Python sizing contract exactly:
+  values are clamped to 25-500%, zero resolves to 100%, MOC uses a 400x500
+  baseline and MOC3 uses 400x800. Native pets resize in place over IPC, so the
+  OpenGL target, alpha hit testing and persisted geometry remain one window.
   Unknown fields cannot cross this write boundary.
   A cross-platform `QSystemTrayIcon` now owns the native main-process lifecycle:
   closing the control center hides it without killing pets, while the tray can

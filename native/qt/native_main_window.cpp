@@ -338,6 +338,10 @@ QWidget* NativeMainWindow::createSettingsPage() {
     qualityComboBox_->addItem(tr("Performance"), QVariant(), QStringLiteral("performance"));
     qualityComboBox_->addItem(tr("Balanced"), QVariant(), QStringLiteral("balanced"));
     qualityComboBox_->setFixedWidth(148);
+    scaleSpinBox_ = new qfw::SpinBox(live2d);
+    scaleSpinBox_->setRange(25, 500);
+    scaleSpinBox_->setSuffix(QStringLiteral(" %"));
+    scaleSpinBox_->setFixedWidth(112);
     idleActionsSwitch_ = new qfw::SwitchButton(live2d);
     randomActionsSwitch_ = new qfw::SwitchButton(live2d);
     dragLockedSwitch_ = new qfw::SwitchButton(live2d);
@@ -370,6 +374,11 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Render quality"),
         tr("Performance uses native resolution; balanced enables Cubism 3 SSAA"),
         qualityComboBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Model scale"),
+        tr("Resize MOC from 400x500 and MOC3 from 400x800 baselines"),
+        scaleSpinBox_);
     live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Robot),
         tr("Idle motion"),
@@ -502,6 +511,7 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
     const int qualityIndex = qualityComboBox_->findData(quality);
     qualityComboBox_->setCurrentIndex(qualityIndex < 0 ? 1 : qualityIndex);
+    scaleSpinBox_->setValue(runtime_.value(QStringLiteral("live2d_scale")).toInt(100));
     idleActionsSwitch_->setChecked(
         runtime_.value(QStringLiteral("idle_actions_enabled")).toBool(true));
     randomActionsSwitch_->setChecked(
@@ -531,6 +541,7 @@ void NativeMainWindow::saveNativeSettings() {
         {QStringLiteral("opacity"), opacitySpinBox_->value()},
         {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
         {QStringLiteral("live2d_quality"), quality},
+        {QStringLiteral("live2d_scale"), scaleSpinBox_->value()},
         {QStringLiteral("live2d_idle_actions_enabled"), idleActionsSwitch_->isChecked()},
         {QStringLiteral("live2d_random_actions_enabled"), randomActionsSwitch_->isChecked()},
         {QStringLiteral("dark_theme"), themeComboBox_->currentData().toString()},
@@ -550,6 +561,7 @@ void NativeMainWindow::saveNativeSettings() {
         spec.opacity = opacitySpinBox_->value();
         spec.vsync = vsyncSwitch_->isChecked();
         spec.live2dQuality = quality;
+        spec.live2dScale = scaleSpinBox_->value();
         spec.idleActionsEnabled = idleActionsSwitch_->isChecked();
         spec.randomActionsEnabled = randomActionsSwitch_->isChecked();
         spec.dragLocked = dragLockedSwitch_->isChecked();
@@ -762,6 +774,7 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     spec.vsync = runtime_.value(QStringLiteral("vsync")).toBool(true);
     spec.live2dQuality =
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
+    spec.live2dScale = runtime_.value(QStringLiteral("live2d_scale")).toInt(100);
     spec.lipSyncMaxOpen =
         runtime_.value(QStringLiteral("lip_sync_max_open")).toDouble(0.55);
     spec.hitAlphaThreshold =

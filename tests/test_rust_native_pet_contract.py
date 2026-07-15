@@ -115,6 +115,7 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
 
     assert "pub vsync: bool" in dashboard
     assert "pub live2d_quality: String" in dashboard
+    assert "pub live2d_scale: i64" in dashboard
     assert "pub default_motion: String" in dashboard
     assert "pub default_expression: String" in dashboard
     assert "pub idle_actions_enabled: bool" in dashboard
@@ -123,6 +124,7 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert 'QString live2dQuality = QStringLiteral("balanced")' in supervisor_header
     assert 'QStringLiteral("--vsync")' in supervisor
     assert 'QStringLiteral("--quality")' in supervisor
+    assert 'QStringLiteral("--scale")' in supervisor
     assert 'QStringLiteral("--default-motion")' in supervisor
     assert 'QStringLiteral("--default-expression")' in supervisor
     assert 'QStringLiteral("--idle-actions-enabled")' in supervisor
@@ -135,6 +137,8 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert "bandori_live2d_is_motion_finished" in widget
     assert "defaultStateTimer_.setInterval(500)" in widget
     assert "earlyBooleanOption" in pet
+    assert "scaledLive2dSize" in pet
+    assert "widget.setFixedSize(scaledLive2dSize(modelFormat, currentScale))" in pet
     assert pet.index("configureDefaultSurfaceFormat(initialVsync)") < pet.index("QApplication app")
     assert "&bandori::Live2dGlWidget::runtimeReady" in pet
     assert "apply_default_state" in live2d_ffi
@@ -146,6 +150,7 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert "supervisor_.startAll(activeSpecs_)" in window
     assert '"--vsync", str(bool(cfg.get("vsync"' in main
     assert '"--quality", str(cfg.get("live2d_quality"' in main
+    assert '"--scale", str(cfg.get("live2d_scale"' in main
     assert '"--default-motion", str(model.get("default_motion"' in main
     assert '"--idle-actions-enabled", str(bool(cfg.get("live2d_idle_actions_enabled"' in main
 

@@ -44,6 +44,7 @@ PetLaunchSpec normalizedSpec(PetLaunchSpec spec) {
         spec.live2dQuality.trimmed().compare(QStringLiteral("performance"), Qt::CaseInsensitive) == 0
         ? QStringLiteral("performance")
         : QStringLiteral("balanced");
+    spec.live2dScale = std::clamp(spec.live2dScale, 25, 500);
     spec.lipSyncMaxOpen = std::clamp(spec.lipSyncMaxOpen, 0.0, 1.0);
     spec.hitAlphaThreshold = std::clamp(spec.hitAlphaThreshold, 0, 255);
     return spec;
@@ -293,6 +294,8 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         spec.vsync ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--quality"),
         spec.live2dQuality,
+        QStringLiteral("--scale"),
+        QString::number(spec.live2dScale),
         QStringLiteral("--lip-sync-max-open"),
         QString::number(spec.lipSyncMaxOpen, 'f', 3),
         QStringLiteral("--hit-alpha-threshold"),

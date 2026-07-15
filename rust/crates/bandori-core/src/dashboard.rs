@@ -29,6 +29,7 @@ pub struct NativeRuntimeSnapshot {
     pub dark_theme: String,
     pub vsync: bool,
     pub live2d_quality: String,
+    pub live2d_scale: i64,
     pub fps: i64,
     pub opacity: f64,
     pub lip_sync_max_open: f64,
@@ -60,6 +61,7 @@ pub struct NativeSettingsUpdate {
     pub dark_theme: Option<String>,
     pub vsync: Option<bool>,
     pub live2d_quality: Option<String>,
+    pub live2d_scale: Option<i64>,
     pub live2d_idle_actions_enabled: Option<bool>,
     pub live2d_random_actions_enabled: Option<bool>,
     pub drag_locked: Option<bool>,
@@ -115,6 +117,14 @@ impl NativeSettingsUpdate {
                 return Err(NativeSettingsError::UnsupportedLive2dQuality(quality));
             }
             config.set("live2d_quality", Value::String(quality));
+        }
+        if let Some(scale) = self.live2d_scale {
+            let scale = if scale <= 0 {
+                100
+            } else {
+                scale.clamp(25, 500)
+            };
+            config.set("live2d_scale", Value::from(scale));
         }
         if let Some(enabled) = self.live2d_idle_actions_enabled {
             config.set("live2d_idle_actions_enabled", Value::Bool(enabled));
@@ -229,6 +239,7 @@ impl NativeRuntimeSnapshot {
             dark_theme: string_value(values, "dark_theme", "follow_system"),
             vsync: bool_value(values, "vsync", true),
             live2d_quality: normalized_live2d_quality(values),
+            live2d_scale: normalized_live2d_scale(values),
             fps: int_value(values, "fps", 120).clamp(1, 1000),
             opacity: float_value(values, "opacity", 1.0).clamp(0.05, 1.0),
             lip_sync_max_open: float_value(values, "live2d_lip_sync_max_open", 0.55)
@@ -322,6 +333,15 @@ fn normalized_live2d_quality(values: &Map<String, Value>) -> String {
     }
 }
 
+fn normalized_live2d_scale(values: &Map<String, Value>) -> i64 {
+    let scale = int_value(values, "live2d_scale", 0);
+    if scale <= 0 {
+        100
+    } else {
+        scale.clamp(25, 500)
+    }
+}
+
 fn model_action_profile<'a>(
     values: &'a Map<String, Value>,
     character: &str,
@@ -367,6 +387,7 @@ mod tests {
                 "opacity": 0.7,
                 "vsync": false,
                 "live2d_quality": "performance",
+                "live2d_scale": 250,
                 "live2d_idle_actions_enabled": false,
                 "live2d_random_actions_enabled": false,
                 "drag_locked": true,
@@ -395,6 +416,7 @@ mod tests {
         assert_eq!(snapshot.fps, 240);
         assert!(!snapshot.vsync);
         assert_eq!(snapshot.live2d_quality, "performance");
+        assert_eq!(snapshot.live2d_scale, 250);
         assert!(!snapshot.idle_actions_enabled);
         assert!(!snapshot.random_actions_enabled);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
@@ -457,6 +479,7 @@ mod tests {
                 "dark_theme": "on",
                 "vsync": false,
                 "live2d_quality": "performance",
+                "live2d_scale": 999,
                 "live2d_idle_actions_enabled": false,
                 "live2d_random_actions_enabled": false,
                 "drag_locked": true,
@@ -472,6 +495,7 @@ mod tests {
         assert_eq!(runtime.dark_theme, "on");
         assert!(!runtime.vsync);
         assert_eq!(runtime.live2d_quality, "performance");
+        assert_eq!(runtime.live2d_scale, 500);
         assert!(!runtime.idle_actions_enabled);
         assert!(!runtime.random_actions_enabled);
         assert!(runtime.drag_locked);

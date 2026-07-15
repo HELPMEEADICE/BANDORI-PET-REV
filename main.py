@@ -1459,6 +1459,7 @@ def main():
                     "--opacity", str(cfg.get("opacity", 1.0)),
                     "--vsync", str(bool(cfg.get("vsync", True))).lower(),
                     "--quality", str(cfg.get("live2d_quality", "balanced") or "balanced"),
+                    "--scale", str(cfg.get("live2d_scale", 0) or 100),
                     "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),
                     "--hit-alpha-threshold", str(cfg.get("live2d_hit_alpha_threshold", 8)),
                     "--click-motion-actions", json.dumps(
