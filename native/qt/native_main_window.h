@@ -52,6 +52,7 @@ private:
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
     QWidget* createChatPage();
+    QWidget* createLlmSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
     void syncSettingsControls();
@@ -70,6 +71,9 @@ private:
     void addNativePomodoro();
     void toggleSelectedNativeAlarm();
     void deleteSelectedNativeReminder();
+    void loadNativeLlmSettings();
+    void syncNativeLlmSettingsControls();
+    void saveNativeLlmSettings();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -184,6 +188,27 @@ private:
     qfw::PushButton* toggleReminderButton_ = nullptr;
     qfw::PushButton* deleteReminderButton_ = nullptr;
     qfw::CaptionLabel* reminderStatusLabel_ = nullptr;
+    QJsonObject llmSettings_;
+    qfw::LineEdit* llmApiUrlEdit_ = nullptr;
+    qfw::LineEdit* llmApiKeyEdit_ = nullptr;
+    qfw::CheckBox* llmClearApiKeyCheckBox_ = nullptr;
+    qfw::LineEdit* llmModelIdEdit_ = nullptr;
+    qfw::ComboBox* llmApiModeComboBox_ = nullptr;
+    qfw::ComboBox* llmThinkingComboBox_ = nullptr;
+    qfw::LineEdit* llmAuxApiUrlEdit_ = nullptr;
+    qfw::LineEdit* llmAuxApiKeyEdit_ = nullptr;
+    qfw::CheckBox* llmClearAuxApiKeyCheckBox_ = nullptr;
+    qfw::LineEdit* llmAuxModelIdEdit_ = nullptr;
+    qfw::ComboBox* llmAuxThinkingComboBox_ = nullptr;
+    qfw::SwitchButton* llmAuxVisionSwitch_ = nullptr;
+    qfw::SwitchButton* llmOutfitRecognitionSwitch_ = nullptr;
+    qfw::SpinBox* llmHistoryLimitSpinBox_ = nullptr;
+    qfw::SpinBox* llmCompactHistoryLimitSpinBox_ = nullptr;
+    qfw::SwitchButton* llmCrossChatHistorySwitch_ = nullptr;
+    qfw::SwitchButton* llmCustomPromptSwitch_ = nullptr;
+    qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
+    qfw::PrimaryPushButton* llmSaveButton_ = nullptr;
+    qfw::CaptionLabel* llmSettingsStatusLabel_ = nullptr;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

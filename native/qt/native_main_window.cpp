@@ -392,14 +392,17 @@ void NativeMainWindow::setupUi() {
     QWidget* dashboard = createDashboardPage();
     QWidget* models = createModelsPage();
     chatPage_ = createChatPage();
+    QWidget* llmSettings = createLlmSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
+    llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
+    addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -682,6 +685,216 @@ QWidget* NativeMainWindow::createChatPage() {
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
+    return page;
+}
+
+QWidget* NativeMainWindow::createLlmSettingsPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native LLM settings"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("API keys are write-only in this page. Leave a password field blank to keep its saved value."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto addThinkingItems = [this](qfw::ComboBox* combo) {
+        combo->addItem(tr("Provider default"), QVariant(), QStringLiteral("default"));
+        combo->addItem(tr("Enabled"), QVariant(), QStringLiteral("on"));
+        combo->addItem(tr("Disabled"), QVariant(), QStringLiteral("off"));
+        combo->setFixedWidth(178);
+    };
+
+    auto* primary = new qfw::GroupHeaderCardWidget(tr("Primary model"), content);
+    llmApiUrlEdit_ = new qfw::LineEdit(primary);
+    llmApiUrlEdit_->setPlaceholderText(
+        QStringLiteral("https://api.example.com/v1/chat/completions"));
+    llmApiUrlEdit_->setMinimumWidth(380);
+    llmModelIdEdit_ = new qfw::LineEdit(primary);
+    llmModelIdEdit_->setPlaceholderText(tr("Model ID"));
+    llmApiModeComboBox_ = new qfw::ComboBox(primary);
+    llmApiModeComboBox_->addItem(
+        tr("Chat Completions compatible"), QVariant(), QStringLiteral("chat_completions"));
+    llmApiModeComboBox_->addItem(
+        tr("OpenAI Responses"), QVariant(), QStringLiteral("responses"));
+    llmApiModeComboBox_->setFixedWidth(220);
+    llmThinkingComboBox_ = new qfw::ComboBox(primary);
+    addThinkingItems(llmThinkingComboBox_);
+
+    auto* primaryKeyEditor = new QWidget(primary);
+    auto* primaryKeyLayout = new QHBoxLayout(primaryKeyEditor);
+    primaryKeyLayout->setContentsMargins(0, 0, 0, 0);
+    primaryKeyLayout->setSpacing(8);
+    llmApiKeyEdit_ = new qfw::LineEdit(primaryKeyEditor);
+    llmApiKeyEdit_->setEchoMode(QLineEdit::Password);
+    llmApiKeyEdit_->setPlaceholderText(tr("Leave blank to keep the saved key"));
+    llmClearApiKeyCheckBox_ = new qfw::CheckBox(tr("Clear saved key"), primaryKeyEditor);
+    primaryKeyLayout->addWidget(llmApiKeyEdit_, 1);
+    primaryKeyLayout->addWidget(llmClearApiKeyCheckBox_);
+
+    primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("API endpoint"),
+        tr("HTTP(S) Chat Completions or Responses endpoint"),
+        llmApiUrlEdit_);
+    primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::VPN),
+        tr("API key"),
+        tr("The saved secret is never returned to Qt"),
+        primaryKeyEditor);
+    primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Model"),
+        tr("Provider model identifier"),
+        llmModelIdEdit_);
+    primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Code),
+        tr("API mode"),
+        tr("Responses automatically falls back when an endpoint is incompatible"),
+        llmApiModeComboBox_);
+    primary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Brightness),
+        tr("Reasoning request"),
+        tr("Ask compatible providers to enable or disable thinking"),
+        llmThinkingComboBox_);
+
+    auto* auxiliary = new qfw::GroupHeaderCardWidget(tr("Auxiliary model"), content);
+    llmAuxApiUrlEdit_ = new qfw::LineEdit(auxiliary);
+    llmAuxApiUrlEdit_->setPlaceholderText(tr("Blank uses the primary endpoint"));
+    llmAuxApiUrlEdit_->setMinimumWidth(380);
+    llmAuxModelIdEdit_ = new qfw::LineEdit(auxiliary);
+    llmAuxModelIdEdit_->setPlaceholderText(tr("Blank uses the primary model"));
+    llmAuxThinkingComboBox_ = new qfw::ComboBox(auxiliary);
+    addThinkingItems(llmAuxThinkingComboBox_);
+    llmAuxVisionSwitch_ = new qfw::SwitchButton(auxiliary);
+    llmOutfitRecognitionSwitch_ = new qfw::SwitchButton(auxiliary);
+
+    auto* auxiliaryKeyEditor = new QWidget(auxiliary);
+    auto* auxiliaryKeyLayout = new QHBoxLayout(auxiliaryKeyEditor);
+    auxiliaryKeyLayout->setContentsMargins(0, 0, 0, 0);
+    auxiliaryKeyLayout->setSpacing(8);
+    llmAuxApiKeyEdit_ = new qfw::LineEdit(auxiliaryKeyEditor);
+    llmAuxApiKeyEdit_->setEchoMode(QLineEdit::Password);
+    llmAuxApiKeyEdit_->setPlaceholderText(tr("Leave blank to keep the saved key"));
+    llmClearAuxApiKeyCheckBox_ =
+        new qfw::CheckBox(tr("Clear saved key"), auxiliaryKeyEditor);
+    auxiliaryKeyLayout->addWidget(llmAuxApiKeyEdit_, 1);
+    auxiliaryKeyLayout->addWidget(llmClearAuxApiKeyCheckBox_);
+
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("API endpoint"),
+        tr("Optional endpoint for planning and memory analysis"),
+        llmAuxApiUrlEdit_);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::VPN),
+        tr("API key"),
+        tr("Blank falls back to the primary saved key"),
+        auxiliaryKeyEditor);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Model"),
+        tr("Optional smaller model for background work"),
+        llmAuxModelIdEdit_);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Brightness),
+        tr("Reasoning request"),
+        tr("Independent thinking preference for the auxiliary model"),
+        llmAuxThinkingComboBox_);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Photo),
+        tr("Vision fallback"),
+        tr("Allow the auxiliary model to handle image context when supported"),
+        llmAuxVisionSwitch_);
+    auxiliary->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Recognize Live2D outfit"),
+        tr("Inject visual outfit context into compatible character prompts"),
+        llmOutfitRecognitionSwitch_);
+
+    auto* context = new qfw::GroupHeaderCardWidget(tr("Conversation context"), content);
+    llmHistoryLimitSpinBox_ = new qfw::SpinBox(context);
+    llmHistoryLimitSpinBox_->setRange(0, 100);
+    llmHistoryLimitSpinBox_->setSpecialValueText(tr("Unlimited"));
+    llmHistoryLimitSpinBox_->setFixedWidth(130);
+    llmCompactHistoryLimitSpinBox_ = new qfw::SpinBox(context);
+    llmCompactHistoryLimitSpinBox_->setRange(0, 100);
+    llmCompactHistoryLimitSpinBox_->setSpecialValueText(tr("Unlimited"));
+    llmCompactHistoryLimitSpinBox_->setFixedWidth(130);
+    llmCrossChatHistorySwitch_ = new qfw::SwitchButton(context);
+    llmCustomPromptSwitch_ = new qfw::SwitchButton(context);
+    llmCustomPromptEdit_ = new qfw::PlainTextEdit(context);
+    llmCustomPromptEdit_->setPlaceholderText(
+        tr("Highest-priority global instruction placed before character personas"));
+    llmCustomPromptEdit_->setMinimumHeight(90);
+    llmCustomPromptEdit_->setMaximumHeight(150);
+
+    context->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Chat history messages"),
+        tr("0 is unlimited; otherwise 2-100 messages"),
+        llmHistoryLimitSpinBox_);
+    context->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Compact overlay history"),
+        tr("Retained for compatibility with the compact chat migration"),
+        llmCompactHistoryLimitSpinBox_);
+    context->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::History),
+        tr("Cross-chat context"),
+        tr("Include bounded recent excerpts from other owned conversations"),
+        llmCrossChatHistorySwitch_);
+    context->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Code),
+        tr("Custom system prompt"),
+        tr("Disable without deleting the saved instruction"),
+        llmCustomPromptSwitch_);
+    context->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("System instruction"),
+        tr("Maximum 64 KiB; whitespace is trimmed on save"),
+        llmCustomPromptEdit_);
+
+    auto* actionRow = new QHBoxLayout();
+    llmSettingsStatusLabel_ = new qfw::CaptionLabel(
+        tr("Loading redacted LLM configuration"), content);
+    llmSaveButton_ = new qfw::PrimaryPushButton(tr("Save LLM settings"), content);
+    actionRow->addWidget(llmSettingsStatusLabel_, 1);
+    actionRow->addWidget(llmSaveButton_);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(primary);
+    layout->addWidget(auxiliary);
+    layout->addWidget(context);
+    layout->addLayout(actionRow);
+    layout->addStretch(1);
+    content->setMinimumWidth(600);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(
+        llmClearApiKeyCheckBox_,
+        &QCheckBox::toggled,
+        this,
+        [this](bool clear) { llmApiKeyEdit_->setEnabled(!clear); });
+    connect(
+        llmClearAuxApiKeyCheckBox_,
+        &QCheckBox::toggled,
+        this,
+        [this](bool clear) { llmAuxApiKeyEdit_->setEnabled(!clear); });
+    connect(
+        llmCustomPromptSwitch_,
+        &qfw::SwitchButton::checkedChanged,
+        this,
+        [this](bool enabled) { llmCustomPromptEdit_->setEnabled(enabled); });
+    connect(llmSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeLlmSettings();
+    });
     return page;
 }
 
@@ -1024,6 +1237,7 @@ void NativeMainWindow::applyBackendState() {
     populateChatCharacters();
     populateReminderCharacters();
     loadNativeReminderState();
+    loadNativeLlmSettings();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
         configured > 1
@@ -1274,6 +1488,146 @@ void NativeMainWindow::deleteSelectedNativeReminder() {
              : QStringLiteral("delete_pomodoro")},
         {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
     });
+}
+
+void NativeMainWindow::loadNativeLlmSettings() {
+    if (llmApiUrlEdit_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadLlmSettings(configPath_)) {
+        llmSettingsStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    llmSettings_ = parseObject(backend_.getLlmSettingsJson());
+    syncNativeLlmSettingsControls();
+}
+
+void NativeMainWindow::syncNativeLlmSettingsControls() {
+    if (llmApiUrlEdit_ == nullptr) {
+        return;
+    }
+    llmApiUrlEdit_->setText(llmSettings_.value(QStringLiteral("api_url")).toString());
+    llmModelIdEdit_->setText(llmSettings_.value(QStringLiteral("model_id")).toString());
+    const QString apiMode = llmSettings_
+                                .value(QStringLiteral("api_mode"))
+                                .toString(QStringLiteral("chat_completions"));
+    const int apiModeIndex = llmApiModeComboBox_->findData(apiMode);
+    llmApiModeComboBox_->setCurrentIndex(apiModeIndex < 0 ? 0 : apiModeIndex);
+
+    auto setThinking = [](qfw::ComboBox* combo, const QJsonValue& value) {
+        const QString mode = value.isBool()
+            ? (value.toBool() ? QStringLiteral("on") : QStringLiteral("off"))
+            : QStringLiteral("default");
+        const int index = combo->findData(mode);
+        combo->setCurrentIndex(index < 0 ? 0 : index);
+    };
+    setThinking(llmThinkingComboBox_, llmSettings_.value(QStringLiteral("enable_thinking")));
+
+    llmAuxApiUrlEdit_->setText(
+        llmSettings_.value(QStringLiteral("aux_api_url")).toString());
+    llmAuxModelIdEdit_->setText(
+        llmSettings_.value(QStringLiteral("aux_model_id")).toString());
+    setThinking(
+        llmAuxThinkingComboBox_,
+        llmSettings_.value(QStringLiteral("aux_enable_thinking")));
+    llmAuxVisionSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("aux_vision_fallback_enabled")).toBool());
+    llmOutfitRecognitionSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("live2d_outfit_recognition_enabled")).toBool());
+    llmHistoryLimitSpinBox_->setValue(
+        llmSettings_.value(QStringLiteral("chat_history_message_limit")).toInt(40));
+    llmCompactHistoryLimitSpinBox_->setValue(
+        llmSettings_.value(QStringLiteral("compact_history_message_limit")).toInt(12));
+    llmCrossChatHistorySwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("cross_chat_history_enabled")).toBool(true));
+    const bool customPromptEnabled =
+        llmSettings_.value(QStringLiteral("custom_system_prompt_enabled")).toBool(true);
+    llmCustomPromptSwitch_->setChecked(customPromptEnabled);
+    llmCustomPromptEdit_->setEnabled(customPromptEnabled);
+    llmCustomPromptEdit_->setPlainText(
+        llmSettings_.value(QStringLiteral("custom_system_prompt")).toString());
+
+    llmApiKeyEdit_->clear();
+    llmAuxApiKeyEdit_->clear();
+    llmClearApiKeyCheckBox_->setChecked(false);
+    llmClearAuxApiKeyCheckBox_->setChecked(false);
+    llmApiKeyEdit_->setEnabled(true);
+    llmAuxApiKeyEdit_->setEnabled(true);
+    const bool primaryKeyConfigured =
+        llmSettings_.value(QStringLiteral("api_key_configured")).toBool();
+    const bool auxiliaryKeyConfigured =
+        llmSettings_.value(QStringLiteral("aux_api_key_configured")).toBool();
+    llmApiKeyEdit_->setPlaceholderText(
+        primaryKeyConfigured
+            ? tr("Saved key configured — blank keeps it")
+            : tr("No saved key — local services may leave this blank"));
+    llmAuxApiKeyEdit_->setPlaceholderText(
+        auxiliaryKeyConfigured
+            ? tr("Saved auxiliary key configured — blank keeps it")
+            : tr("Blank falls back to the primary saved key"));
+    const QString activeProfile =
+        llmSettings_.value(QStringLiteral("active_api_profile")).toString().trimmed();
+    llmSettingsStatusLabel_->setText(
+        activeProfile.isEmpty()
+            ? tr("Editing the current custom LLM configuration")
+            : tr("Loaded profile “%1”; saving edits detaches the current configuration")
+                  .arg(activeProfile));
+}
+
+void NativeMainWindow::saveNativeLlmSettings() {
+    auto thinkingValue = [](const qfw::ComboBox* combo) -> QJsonValue {
+        const QString mode = combo->currentData().toString();
+        if (mode == QStringLiteral("on")) {
+            return true;
+        }
+        if (mode == QStringLiteral("off")) {
+            return false;
+        }
+        return QJsonValue(QJsonValue::Null);
+    };
+    QJsonObject settings {
+        {QStringLiteral("api_url"), llmApiUrlEdit_->text().trimmed()},
+        {QStringLiteral("clear_api_key"), llmClearApiKeyCheckBox_->isChecked()},
+        {QStringLiteral("model_id"), llmModelIdEdit_->text().trimmed()},
+        {QStringLiteral("api_mode"), llmApiModeComboBox_->currentData().toString()},
+        {QStringLiteral("enable_thinking"), thinkingValue(llmThinkingComboBox_)},
+        {QStringLiteral("aux_api_url"), llmAuxApiUrlEdit_->text().trimmed()},
+        {QStringLiteral("clear_aux_api_key"),
+         llmClearAuxApiKeyCheckBox_->isChecked()},
+        {QStringLiteral("aux_model_id"), llmAuxModelIdEdit_->text().trimmed()},
+        {QStringLiteral("aux_enable_thinking"),
+         thinkingValue(llmAuxThinkingComboBox_)},
+        {QStringLiteral("aux_vision_fallback_enabled"), llmAuxVisionSwitch_->isChecked()},
+        {QStringLiteral("live2d_outfit_recognition_enabled"),
+         llmOutfitRecognitionSwitch_->isChecked()},
+        {QStringLiteral("chat_history_message_limit"), llmHistoryLimitSpinBox_->value()},
+        {QStringLiteral("compact_history_message_limit"),
+         llmCompactHistoryLimitSpinBox_->value()},
+        {QStringLiteral("cross_chat_history_enabled"),
+         llmCrossChatHistorySwitch_->isChecked()},
+        {QStringLiteral("custom_system_prompt_enabled"),
+         llmCustomPromptSwitch_->isChecked()},
+        {QStringLiteral("custom_system_prompt"),
+         llmCustomPromptEdit_->toPlainText().trimmed()},
+    };
+    const QString primaryKey = llmApiKeyEdit_->text().trimmed();
+    if (!primaryKey.isEmpty()) {
+        settings.insert(QStringLiteral("api_key"), primaryKey);
+    }
+    const QString auxiliaryKey = llmAuxApiKeyEdit_->text().trimmed();
+    if (!auxiliaryKey.isEmpty()) {
+        settings.insert(QStringLiteral("aux_api_key"), auxiliaryKey);
+    }
+    if (!backend_.saveLlmSettings(configPath_, compactJson(settings))) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        llmSettingsStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    llmSettings_ = parseObject(backend_.getLlmSettingsJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    syncNativeLlmSettingsControls();
+    llmSettingsStatusLabel_->setText(tr("Native LLM settings saved"));
 }
 
 void NativeMainWindow::syncSettingsControls() {

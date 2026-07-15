@@ -19,6 +19,7 @@ pub mod database;
 pub mod group_chat;
 pub mod ipc;
 pub mod ipc_ffi;
+pub mod llm_settings;
 pub mod memory_extraction;
 pub mod model;
 pub mod relationship_analysis;

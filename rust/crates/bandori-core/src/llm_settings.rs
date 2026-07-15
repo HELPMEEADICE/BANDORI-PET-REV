@@ -1,0 +1,396 @@
+use crate::config::{ConfigDocument, ConfigError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::Path;
+use thiserror::Error;
+
+const MAX_URL_BYTES: usize = 4 * 1024;
+const MAX_SECRET_BYTES: usize = 16 * 1024;
+const MAX_MODEL_BYTES: usize = 512;
+const MAX_SYSTEM_PROMPT_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeLlmSettingsState {
+    pub api_url: String,
+    pub api_key_configured: bool,
+    pub model_id: String,
+    pub api_mode: String,
+    pub enable_thinking: Option<bool>,
+    pub aux_api_url: String,
+    pub aux_api_key_configured: bool,
+    pub aux_model_id: String,
+    pub aux_enable_thinking: Option<bool>,
+    pub aux_vision_fallback_enabled: bool,
+    pub live2d_outfit_recognition_enabled: bool,
+    pub chat_history_message_limit: i64,
+    pub compact_history_message_limit: i64,
+    pub cross_chat_history_enabled: bool,
+    pub custom_system_prompt_enabled: bool,
+    pub custom_system_prompt: String,
+    pub active_api_profile: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLlmSettingsUpdate {
+    pub api_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub clear_api_key: bool,
+    pub model_id: String,
+    pub api_mode: String,
+    pub enable_thinking: Option<bool>,
+    pub aux_api_url: String,
+    #[serde(default)]
+    pub aux_api_key: Option<String>,
+    #[serde(default)]
+    pub clear_aux_api_key: bool,
+    pub aux_model_id: String,
+    pub aux_enable_thinking: Option<bool>,
+    pub aux_vision_fallback_enabled: bool,
+    pub live2d_outfit_recognition_enabled: bool,
+    pub chat_history_message_limit: i64,
+    pub compact_history_message_limit: i64,
+    pub cross_chat_history_enabled: bool,
+    pub custom_system_prompt_enabled: bool,
+    pub custom_system_prompt: String,
+}
+
+#[derive(Debug, Error)]
+pub enum NativeLlmSettingsError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("native LLM settings JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("native LLM settings are invalid: {0}")]
+    Invalid(String),
+}
+
+pub fn load_native_llm_settings(
+    config_path: &Path,
+) -> Result<NativeLlmSettingsState, NativeLlmSettingsError> {
+    let config = ConfigDocument::load(config_path)?;
+    Ok(NativeLlmSettingsState::from_config(&config))
+}
+
+pub fn save_native_llm_settings(
+    config_path: &Path,
+    settings_json: &str,
+    max_bytes: usize,
+) -> Result<NativeLlmSettingsState, NativeLlmSettingsError> {
+    if settings_json.len() > max_bytes {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "settings exceed the {max_bytes} byte limit"
+        )));
+    }
+    let update = serde_json::from_str::<NativeLlmSettingsUpdate>(settings_json)?;
+    let mut config = ConfigDocument::load(config_path)?;
+    update.apply_to(&mut config)?;
+    config.save(config_path)?;
+    Ok(NativeLlmSettingsState::from_config(&config))
+}
+
+impl NativeLlmSettingsState {
+    pub fn from_config(config: &ConfigDocument) -> Self {
+        Self {
+            api_url: config_string(config, "llm_api_url"),
+            api_key_configured: !config_string(config, "llm_api_key").is_empty(),
+            model_id: config_string(config, "llm_model_id"),
+            api_mode: normalized_api_mode(&config_string(config, "llm_api_mode")),
+            enable_thinking: config.get("llm_enable_thinking").and_then(Value::as_bool),
+            aux_api_url: config_string(config, "llm_aux_api_url"),
+            aux_api_key_configured: !config_string(config, "llm_aux_api_key").is_empty(),
+            aux_model_id: config_string(config, "llm_aux_model_id"),
+            aux_enable_thinking: config
+                .get("llm_aux_enable_thinking")
+                .and_then(Value::as_bool),
+            aux_vision_fallback_enabled: config_bool(
+                config,
+                "llm_aux_vision_fallback_enabled",
+                false,
+            ),
+            live2d_outfit_recognition_enabled: config_bool(
+                config,
+                "llm_live2d_outfit_recognition_enabled",
+                false,
+            ),
+            chat_history_message_limit: history_limit(config, "llm_chat_history_message_limit", 40),
+            compact_history_message_limit: history_limit(
+                config,
+                "llm_compact_history_message_limit",
+                12,
+            ),
+            cross_chat_history_enabled: config_bool(config, "llm_cross_chat_history_enabled", true),
+            custom_system_prompt_enabled: config_bool(
+                config,
+                "llm_custom_system_prompt_enabled",
+                true,
+            ),
+            custom_system_prompt: config_string(config, "llm_custom_system_prompt"),
+            active_api_profile: config_string(config, "llm_active_api_profile"),
+        }
+    }
+}
+
+impl NativeLlmSettingsUpdate {
+    pub fn apply_to(self, config: &mut ConfigDocument) -> Result<(), NativeLlmSettingsError> {
+        let api_url = checked_url(&self.api_url, "primary API URL")?;
+        let aux_api_url = checked_url(&self.aux_api_url, "auxiliary API URL")?;
+        let model_id = checked_text(&self.model_id, MAX_MODEL_BYTES, "primary model ID")?;
+        let aux_model_id = checked_text(&self.aux_model_id, MAX_MODEL_BYTES, "auxiliary model ID")?;
+        let api_mode = normalized_api_mode_checked(&self.api_mode)?;
+        let custom_system_prompt = checked_prompt(&self.custom_system_prompt)?;
+
+        config.set("llm_api_url", Value::String(api_url));
+        apply_secret(
+            config,
+            "llm_api_key",
+            self.api_key,
+            self.clear_api_key,
+            "primary API key",
+        )?;
+        config.set("llm_model_id", Value::String(model_id));
+        config.set("llm_api_mode", Value::String(api_mode));
+        config.set(
+            "llm_enable_thinking",
+            self.enable_thinking.map(Value::Bool).unwrap_or(Value::Null),
+        );
+        config.set("llm_aux_api_url", Value::String(aux_api_url));
+        apply_secret(
+            config,
+            "llm_aux_api_key",
+            self.aux_api_key,
+            self.clear_aux_api_key,
+            "auxiliary API key",
+        )?;
+        config.set("llm_aux_model_id", Value::String(aux_model_id));
+        config.set(
+            "llm_aux_enable_thinking",
+            self.aux_enable_thinking
+                .map(Value::Bool)
+                .unwrap_or(Value::Null),
+        );
+        config.set(
+            "llm_aux_vision_fallback_enabled",
+            Value::Bool(self.aux_vision_fallback_enabled),
+        );
+        config.set(
+            "llm_live2d_outfit_recognition_enabled",
+            Value::Bool(self.live2d_outfit_recognition_enabled),
+        );
+        config.set(
+            "llm_chat_history_message_limit",
+            Value::from(normalize_history_limit(self.chat_history_message_limit)),
+        );
+        config.set(
+            "llm_compact_history_message_limit",
+            Value::from(normalize_history_limit(self.compact_history_message_limit)),
+        );
+        config.set(
+            "llm_cross_chat_history_enabled",
+            Value::Bool(self.cross_chat_history_enabled),
+        );
+        config.set(
+            "llm_custom_system_prompt_enabled",
+            Value::Bool(self.custom_system_prompt_enabled),
+        );
+        config.set(
+            "llm_custom_system_prompt",
+            Value::String(custom_system_prompt),
+        );
+        // Applying an edited current configuration intentionally detaches it
+        // from any named Python profile without mutating the saved profiles.
+        config.set("llm_active_api_profile", Value::String(String::new()));
+        Ok(())
+    }
+}
+
+fn apply_secret(
+    config: &mut ConfigDocument,
+    key: &str,
+    replacement: Option<String>,
+    clear: bool,
+    label: &str,
+) -> Result<(), NativeLlmSettingsError> {
+    if clear {
+        config.set(key, Value::String(String::new()));
+        return Ok(());
+    }
+    let Some(replacement) = replacement else {
+        return Ok(());
+    };
+    let replacement = replacement.trim();
+    if replacement.is_empty() {
+        return Ok(());
+    }
+    if replacement.len() > MAX_SECRET_BYTES || replacement.chars().any(char::is_control) {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "{label} is too long or contains control characters"
+        )));
+    }
+    config.set(key, Value::String(replacement.to_owned()));
+    Ok(())
+}
+
+fn checked_url(value: &str, label: &str) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim();
+    if value.len() > MAX_URL_BYTES || value.chars().any(char::is_control) {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "{label} is too long or contains control characters"
+        )));
+    }
+    if !value.is_empty()
+        && !value.to_ascii_lowercase().starts_with("http://")
+        && !value.to_ascii_lowercase().starts_with("https://")
+    {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "{label} must use http:// or https://"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn checked_text(
+    value: &str,
+    max_bytes: usize,
+    label: &str,
+) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim();
+    if value.len() > max_bytes || value.chars().any(char::is_control) {
+        return Err(NativeLlmSettingsError::Invalid(format!(
+            "{label} is too long or contains control characters"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn checked_prompt(value: &str) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim();
+    if value.len() > MAX_SYSTEM_PROMPT_BYTES {
+        return Err(NativeLlmSettingsError::Invalid(
+            "custom system prompt is too long".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalized_api_mode(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "responses" => "responses".to_owned(),
+        _ => "chat_completions".to_owned(),
+    }
+}
+
+fn normalized_api_mode_checked(value: &str) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim().to_ascii_lowercase();
+    if matches!(value.as_str(), "chat_completions" | "responses") {
+        Ok(value)
+    } else {
+        Err(NativeLlmSettingsError::Invalid(format!(
+            "unsupported API mode: {value}"
+        )))
+    }
+}
+
+fn normalize_history_limit(value: i64) -> i64 {
+    if value == 0 { 0 } else { value.clamp(2, 100) }
+}
+
+fn history_limit(config: &ConfigDocument, key: &str, default: i64) -> i64 {
+    normalize_history_limit(config.get(key).and_then(Value::as_i64).unwrap_or(default))
+}
+
+fn config_string(config: &ConfigDocument, key: &str) -> String {
+    config
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+fn config_bool(config: &ConfigDocument, key: &str, default: bool) -> bool {
+    config.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn full_update() -> Value {
+        json!({
+            "api_url":"http://127.0.0.1:8000/v1/chat/completions",
+            "model_id":"local-model",
+            "api_mode":"chat_completions",
+            "enable_thinking":null,
+            "aux_api_url":"",
+            "aux_model_id":"small-model",
+            "aux_enable_thinking":false,
+            "aux_vision_fallback_enabled":true,
+            "live2d_outfit_recognition_enabled":false,
+            "chat_history_message_limit":101,
+            "compact_history_message_limit":0,
+            "cross_chat_history_enabled":false,
+            "custom_system_prompt_enabled":true,
+            "custom_system_prompt":"  Always stay in character.  "
+        })
+    }
+
+    #[test]
+    fn state_is_redacted_and_blank_secret_input_preserves_existing_keys() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let mut config = ConfigDocument::default();
+        config.set("llm_api_key", json!("primary-secret"));
+        config.set("llm_aux_api_key", json!("aux-secret"));
+        config.set("llm_active_api_profile", json!("saved-profile"));
+        config.save(&path).unwrap();
+
+        let mut update = full_update();
+        update["api_key"] = json!("");
+        let state = save_native_llm_settings(&path, &update.to_string(), 128 * 1024).unwrap();
+        assert!(state.api_key_configured);
+        assert!(state.aux_api_key_configured);
+        assert_eq!(state.active_api_profile, "");
+        assert_eq!(state.chat_history_message_limit, 100);
+        assert_eq!(state.compact_history_message_limit, 0);
+        let serialized = serde_json::to_string(&state).unwrap();
+        assert!(!serialized.contains("primary-secret"));
+        assert!(!serialized.contains("aux-secret"));
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(saved.get("llm_api_key"), Some(&json!("primary-secret")));
+        assert_eq!(saved.get("llm_aux_api_key"), Some(&json!("aux-secret")));
+        assert_eq!(
+            saved.get("llm_custom_system_prompt"),
+            Some(&json!("Always stay in character."))
+        );
+    }
+
+    #[test]
+    fn explicit_secret_clear_and_replacement_are_distinct_and_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let mut config = ConfigDocument::default();
+        config.set("llm_api_key", json!("old-primary"));
+        config.set("llm_aux_api_key", json!("old-aux"));
+        config.save(&path).unwrap();
+
+        let mut update = full_update();
+        update["clear_api_key"] = json!(true);
+        update["aux_api_key"] = json!("new-aux");
+        let state = save_native_llm_settings(&path, &update.to_string(), 128 * 1024).unwrap();
+        assert!(!state.api_key_configured);
+        assert!(state.aux_api_key_configured);
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(saved.get("llm_api_key"), Some(&json!("")));
+        assert_eq!(saved.get("llm_aux_api_key"), Some(&json!("new-aux")));
+
+        update["unknown"] = json!(true);
+        assert!(save_native_llm_settings(&path, &update.to_string(), 128 * 1024).is_err());
+        update.as_object_mut().unwrap().remove("unknown");
+        update["api_url"] = json!("file:///secret");
+        assert!(save_native_llm_settings(&path, &update.to_string(), 128 * 1024).is_err());
+    }
+}

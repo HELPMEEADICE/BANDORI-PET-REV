@@ -20,6 +20,7 @@ pub mod ffi {
         #[qproperty(QString, chat_imported_attachments_json)]
         #[qproperty(QString, reminder_events_json)]
         #[qproperty(QString, reminder_state_json)]
+        #[qproperty(QString, llm_settings_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -68,6 +69,18 @@ pub mod ffi {
             config_path: &QString,
             local_datetime: &QString,
             command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadLlmSettings"]
+        fn load_llm_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveLlmSettings"]
+        fn save_llm_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -290,6 +303,7 @@ use bandori_core::group_chat::{
     build_native_group_chat_request, conversation_key_for, fallback_group_plan,
     group_assistant_content, load_native_group_chat_snapshot, parse_group_plan,
 };
+use bandori_core::llm_settings::{load_native_llm_settings, save_native_llm_settings};
 use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
@@ -316,6 +330,7 @@ const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
 const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
 const MAX_REMINDER_COMMAND_BYTES: usize = 64 * 1024;
+const MAX_LLM_SETTINGS_BYTES: usize = 256 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -374,6 +389,7 @@ pub struct BackendRust {
     chat_imported_attachments_json: QString,
     reminder_events_json: QString,
     reminder_state_json: QString,
+    llm_settings_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -418,6 +434,7 @@ impl Default for BackendRust {
             reminder_state_json: QString::from(
                 "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[]}",
             ),
+            llm_settings_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -653,6 +670,48 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Reminder change error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_llm_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_llm_settings(Path::new(&config_path.to_string())) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native LLM settings serialization cannot fail");
+                self.as_mut().set_llm_settings_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("LLM settings load error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn save_llm_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_llm_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+            MAX_LLM_SETTINGS_BYTES,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native LLM settings serialization cannot fail");
+                self.as_mut().set_llm_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native LLM settings saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("LLM settings save error: {error}")));
                 false
             }
         }
