@@ -149,6 +149,31 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(usage["untracked_count"], 1)
         self.assertTrue(usage["estimated"])
 
+    def test_database_usage_tolerates_overflowing_provider_counts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = DatabaseManager(os.path.join(temp_dir, "usage.db"))
+            conversation_id = db.create_conversation("test")
+            db.add_message(
+                conversation_id,
+                "assistant",
+                "overflow",
+                tool_trace={
+                    "llm_usage": {
+                        "input_tokens": float("inf"),
+                        "output_tokens": 25,
+                        "total_tokens": float("inf"),
+                    }
+                },
+            )
+
+            usage = db.get_conversation_token_usage(conversation_id)
+            db.close()
+
+        self.assertEqual(0, usage["input_tokens"])
+        self.assertEqual(25, usage["output_tokens"])
+        self.assertEqual(25, usage["total_tokens"])
+        self.assertEqual(1, usage["request_count"])
+
     def test_tokens_command_uses_resolver(self):
         result = handle_command(
             object(),
