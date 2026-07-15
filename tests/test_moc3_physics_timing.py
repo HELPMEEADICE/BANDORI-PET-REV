@@ -3,11 +3,23 @@ from pathlib import Path
 import pytest
 from lupa.luajit21 import LuaRuntime
 
+from live2d_lua_adapter_moc3 import _patch_lua_moc3_module
+
 
 def _physics_zero_delta_probe():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute("jit.off()")
     root = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()
+    physics_path = Path(root) / "live2d" / "cubism3" / "physics.lua"
+    physics_source = _patch_lua_moc3_module(
+        "live2d.cubism3.physics", physics_path.read_bytes()
+    )
+    lua.globals()["__bandori_test_physics_source"] = physics_source
+    lua.execute(
+        "package.preload['live2d.cubism3.physics'] = function() "
+        "local fn = assert(load(__bandori_test_physics_source, '@physics.lua')); "
+        "return fn() end"
+    )
     lua.execute(
         "package.path = package.path .. ';' .. ... .. '/?.lua;' .. ... .. '/?/init.lua'",
         root,
