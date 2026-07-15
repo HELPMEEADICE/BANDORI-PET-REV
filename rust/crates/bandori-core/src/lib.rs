@@ -5,6 +5,7 @@
 //! contracts while the application is migrated process by process.
 
 pub mod chat_actions;
+pub mod chat_attachments;
 pub mod chat_context;
 pub mod chat_dashboard;
 pub mod chat_prompt;

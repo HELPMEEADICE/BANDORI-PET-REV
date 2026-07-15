@@ -280,6 +280,30 @@ def test_native_chat_memory_extraction_uses_model_or_single_fallback_update():
     assert "&Backend::chatMemoryEvent" in window
 
 
+def test_native_chat_attachments_are_copied_sanitized_and_inlined_by_rust():
+    attachments = source("rust/crates/bandori-core/src/chat_attachments.rs")
+    context = source("rust/crates/bandori-core/src/chat_context.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "MAX_CHAT_ATTACHMENT_BYTES" in attachments
+    assert "create_new(true)" in attachments
+    assert "discard_imported_chat_attachments" in attachments
+    assert "resolve_chat_attachment" in attachments
+    assert '"type": "image_url"' in attachments
+    assert "FILE_INLINE_BYTES" in attachments
+    assert "chat_message_content" in context
+    assert "latest_user_message_id" in context
+    assert "importChatAttachments" in backend
+    assert "discardChatAttachments" in backend
+    assert "attachments_json: &QString" in backend
+    assert "QJsonArray pendingChatAttachments_" in window_header
+    assert "QFileDialog::getOpenFileNames" in window
+    assert "backend_.getChatImportedAttachmentsJson" in window
+    assert "backend_.prepareChatTurn" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

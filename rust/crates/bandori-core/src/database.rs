@@ -622,6 +622,12 @@ impl Database {
         })
     }
 
+    pub fn resolve_chat_attachment(&self, path: &str) -> Option<PathBuf> {
+        let safe_root = self.attachment_dir.canonicalize().ok()?;
+        let resolved = Path::new(path).canonicalize().ok()?;
+        (resolved.is_file() && resolved.strip_prefix(safe_root).is_ok()).then_some(resolved)
+    }
+
     pub fn begin_private_chat_turn(
         &self,
         character: &str,

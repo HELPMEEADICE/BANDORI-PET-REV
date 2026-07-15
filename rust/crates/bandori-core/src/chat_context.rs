@@ -12,7 +12,7 @@ const DEFAULT_HISTORY_MESSAGE_LIMIT: i64 = 40;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NativeChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -80,14 +80,23 @@ pub fn build_native_chat_request(
 
     let history_limit = history_message_limit(config.get("llm_chat_history_message_limit"));
     let history = database.get_messages(conversation_id, history_limit, None)?;
+    let latest_user_message_id = history
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .map(|message| message.id);
     let mut messages = Vec::with_capacity(history.len() + 1);
     messages.push(NativeChatMessage {
         role: "system".to_owned(),
-        content: system_prompt,
+        content: Value::String(system_prompt),
     });
     messages.extend(history.into_iter().map(|message| NativeChatMessage {
-        role: message.role,
-        content: message.content,
+        role: message.role.clone(),
+        content: chat_message_content(
+            database,
+            &message,
+            message.role == "user" && Some(message.id) == latest_user_message_id,
+        ),
     }));
     append_dynamic_context_to_last_user(&mut messages, &dynamic_context)?;
     Ok(NativeChatRequest { messages })
@@ -123,10 +132,31 @@ fn append_dynamic_context_to_last_user(
         ));
     };
     if !context.is_empty() {
-        message.content.push_str("\n\n【动态上下文】\n");
-        message.content.push_str(context);
+        append_text_content(&mut message.content, "\n\n【动态上下文】\n");
+        append_text_content(&mut message.content, context);
     }
     Ok(())
+}
+
+fn append_text_content(content: &mut Value, suffix: &str) {
+    if let Some(text) = content.as_str() {
+        let mut text = text.to_owned();
+        text.push_str(suffix);
+        *content = Value::String(text);
+        return;
+    }
+    if let Some(parts) = content.as_array_mut() {
+        if let Some(text) = parts.iter_mut().find_map(|part| {
+            let object = part.as_object_mut()?;
+            (object.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| object.get_mut("text"))
+                .flatten()
+        }) {
+            let mut value = text.as_str().unwrap_or_default().to_owned();
+            value.push_str(suffix);
+            *text = Value::String(value);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -205,24 +235,45 @@ mod tests {
         assert!(
             request.messages[0]
                 .content
+                .as_str()
+                .unwrap()
                 .starts_with("# Rust dossier\n\n你是Afterglow")
         );
         assert_eq!(request.messages[1].role, "assistant");
-        assert_eq!(request.messages[1].content, "old assistant");
+        assert_eq!(
+            request.messages[1].content,
+            Value::String("old assistant".to_owned())
+        );
         assert_eq!(request.messages[2].role, "user");
         assert!(
             request.messages[2]
                 .content
+                .as_str()
+                .unwrap()
                 .starts_with("latest user\n\n【动态上下文】\n")
         );
-        assert!(request.messages[2].content.contains("互动对象：Alice"));
         assert!(
             request.messages[2]
                 .content
+                .as_str()
+                .unwrap()
+                .contains("互动对象：Alice")
+        );
+        assert!(
+            request.messages[2]
+                .content
+                .as_str()
+                .unwrap()
                 .contains("好感度 86/100（非常亲近）")
         );
-        assert!(request.messages[2].content.contains("- 记录：一起练过吉他"));
-        assert!(request.messages[2].content.ends_with(
+        assert!(
+            request.messages[2]
+                .content
+                .as_str()
+                .unwrap()
+                .contains("- 记录：一起练过吉他")
+        );
+        assert!(request.messages[2].content.as_str().unwrap().ends_with(
             "【后置提示词】\n当前时间：2026-07-15 12:30（中午）\n现在的时间判断只以上面这条为准。"
         ));
     }
@@ -262,4 +313,60 @@ mod tests {
             ["system", "user", "assistant", "user"]
         );
     }
+
+    #[test]
+    fn latest_image_is_multimodal_and_dynamic_context_stays_in_its_text_part() {
+        let project = tempfile::tempdir().unwrap();
+        let attachment_root = project.path().join("chat_attachments");
+        fs::create_dir(&attachment_root).unwrap();
+        let image = attachment_root.join("latest.png");
+        fs::write(&image, b"image bytes").unwrap();
+        let database = Database::open(project.path().join("data.db")).unwrap();
+        let turn = database
+            .begin_private_chat_turn(
+                "ran",
+                "alice",
+                None,
+                "look",
+                Some(&json!([{
+                    "type": "image",
+                    "path": image,
+                    "name": "latest.png",
+                    "mime": "image/png",
+                    "size": 11
+                }])),
+            )
+            .unwrap();
+        let request = build_native_chat_request(
+            &database,
+            &ConfigDocument::default(),
+            project.path(),
+            "ran",
+            "美竹兰",
+            "alice",
+            turn.conversation_id,
+            "now",
+        )
+        .unwrap();
+        let parts = request.messages.last().unwrap().content.as_array().unwrap();
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("【动态上下文】")
+        );
+        assert!(
+            parts[0]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("【后置提示词】\nnow")
+        );
+        assert!(
+            parts[1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+    }
 }
+use crate::chat_attachments::chat_message_content;

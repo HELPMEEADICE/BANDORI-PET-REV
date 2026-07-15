@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -266,6 +267,7 @@ void NativeMainWindow::quitFromTray() {
         return;
     }
     exitRequested_ = true;
+    clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
         trayIcon_->hide();
     }
@@ -290,6 +292,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
         }
         return;
     }
+    clearPendingChatAttachments();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
@@ -414,7 +417,7 @@ QWidget* NativeMainWindow::createChatPage() {
 
     auto* title = new qfw::TitleLabel(tr("Native chat"), page);
     auto* explanation = new qfw::CaptionLabel(
-        tr("Rust owns the prompt, cancellable LLM stream and transactional data.db history. Advanced context, local tools and attachments remain staged."),
+        tr("Rust owns prompts, safe attachments, cancellable LLM streams and transactional data.db history. Advanced context and local tools remain staged."),
         page);
     explanation->setWordWrap(true);
     chatCharacterComboBox_ = new qfw::ComboBox(page);
@@ -443,6 +446,10 @@ QWidget* NativeMainWindow::createChatPage() {
     chatInput_->setMaximumHeight(120);
     chatSendButton_ = new qfw::PrimaryPushButton(tr("Send"), page);
     chatCancelButton_ = new qfw::PushButton(tr("Cancel"), page);
+    chatAttachButton_ = new qfw::PushButton(tr("Attach"), page);
+    chatClearAttachmentsButton_ = new qfw::PushButton(tr("Clear attachments"), page);
+    chatAttachmentLabel_ = new qfw::CaptionLabel(tr("No pending attachments"), page);
+    chatAttachmentLabel_->setWordWrap(true);
     chatSendButton_->setEnabled(false);
     chatCancelButton_->setEnabled(false);
     auto* composerButtons = new QVBoxLayout();
@@ -450,6 +457,11 @@ QWidget* NativeMainWindow::createChatPage() {
     composerButtons->addWidget(chatSendButton_);
     composerButtons->addWidget(chatCancelButton_);
     composerButtons->addStretch(1);
+    auto* attachmentControls = new QHBoxLayout();
+    attachmentControls->setSpacing(8);
+    attachmentControls->addWidget(chatAttachButton_);
+    attachmentControls->addWidget(chatClearAttachmentsButton_);
+    attachmentControls->addWidget(chatAttachmentLabel_, 1);
     auto* composer = new QHBoxLayout();
     composer->setSpacing(10);
     composer->addWidget(chatInput_, 1);
@@ -460,6 +472,7 @@ QWidget* NativeMainWindow::createChatPage() {
     layout->addLayout(controls);
     layout->addWidget(chatStatusLabel_);
     layout->addWidget(chatTranscript_, 1);
+    layout->addLayout(attachmentControls);
     layout->addLayout(composer);
 
     connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
@@ -492,8 +505,15 @@ QWidget* NativeMainWindow::createChatPage() {
     });
     connect(chatSendButton_, &QPushButton::clicked, this, [this]() { sendNativeChat(); });
     connect(chatCancelButton_, &QPushButton::clicked, this, [this]() { cancelNativeChat(); });
+    connect(chatAttachButton_, &QPushButton::clicked, this, [this]() { chooseChatAttachments(); });
+    connect(
+        chatClearAttachmentsButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { clearPendingChatAttachments(); });
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
+    updatePendingChatAttachments();
     return page;
 }
 
@@ -973,12 +993,113 @@ void NativeMainWindow::refreshChatState(
     setChatBusy(activeChatRequestId_ != 0);
 }
 
+void NativeMainWindow::chooseChatAttachments() {
+    if (activeChatRequestId_ != 0) {
+        return;
+    }
+    constexpr int kMaximumPendingAttachments = 32;
+    const int remaining = kMaximumPendingAttachments - pendingChatAttachments_.size();
+    if (remaining <= 0) {
+        chatStatusLabel_->setText(tr("At most 32 attachments can be pending"));
+        return;
+    }
+    QStringList paths = QFileDialog::getOpenFileNames(
+        this,
+        tr("Choose chat attachments"),
+        QString(),
+        tr("All files (*)"));
+    if (paths.isEmpty()) {
+        return;
+    }
+    paths = paths.mid(0, remaining);
+    QJsonArray sources;
+    for (const QString& path : paths) {
+        sources.append(path);
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString sourceJson =
+        QString::fromUtf8(QJsonDocument(sources).toJson(QJsonDocument::Compact));
+    const bool imported = backend_.importChatAttachments(databasePath, sourceJson);
+    const QJsonObject result = parseObject(backend_.getChatImportedAttachmentsJson());
+    for (const QJsonValue& value : result.value(QStringLiteral("attachments")).toArray()) {
+        if (value.isObject()) {
+            pendingChatAttachments_.append(value);
+        }
+    }
+    updatePendingChatAttachments();
+    const QJsonArray errors = result.value(QStringLiteral("errors")).toArray();
+    if (!errors.isEmpty()) {
+        QStringList messages;
+        for (const QJsonValue& error : errors) {
+            messages.append(error.toString());
+        }
+        chatStatusLabel_->setText(messages.join(QStringLiteral(" · ")));
+    } else if (imported) {
+        chatStatusLabel_->setText(backend_.getStatus());
+    }
+}
+
+void NativeMainWindow::clearPendingChatAttachments() {
+    if (pendingChatAttachments_.isEmpty()) {
+        updatePendingChatAttachments();
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString attachmentsJson = QString::fromUtf8(
+        QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
+    if (!backend_.discardChatAttachments(databasePath, attachmentsJson)) {
+        if (chatStatusLabel_ != nullptr) {
+            chatStatusLabel_->setText(backend_.getStatus());
+        }
+        return;
+    }
+    pendingChatAttachments_ = QJsonArray();
+    updatePendingChatAttachments();
+}
+
+void NativeMainWindow::updatePendingChatAttachments() {
+    if (chatAttachmentLabel_ == nullptr) {
+        return;
+    }
+    QStringList names;
+    for (const QJsonValue& value : pendingChatAttachments_) {
+        const QString name = value.toObject().value(QStringLiteral("name")).toString();
+        if (!name.isEmpty()) {
+            names.append(name);
+        }
+        if (names.size() >= 4) {
+            break;
+        }
+    }
+    chatAttachmentLabel_->setText(
+        pendingChatAttachments_.isEmpty()
+            ? tr("No pending attachments")
+            : tr("%1 attachment(s): %2%3")
+                  .arg(pendingChatAttachments_.size())
+                  .arg(names.join(QStringLiteral(", ")))
+                  .arg(pendingChatAttachments_.size() > names.size()
+                           ? tr(" and %1 more").arg(pendingChatAttachments_.size() - names.size())
+                           : QString()));
+    setChatBusy(activeChatRequestId_ != 0);
+}
+
 void NativeMainWindow::sendNativeChat() {
     if (activeChatRequestId_ != 0 || chatInput_ == nullptr) {
         return;
     }
-    const QString content = chatInput_->toPlainText().trimmed();
+    QString content = chatInput_->toPlainText().trimmed();
     const QString character = chatCharacterComboBox_->currentData().toString().trimmed();
+    if (content.isEmpty() && !pendingChatAttachments_.isEmpty()) {
+        const bool hasFile = std::any_of(
+            pendingChatAttachments_.begin(),
+            pendingChatAttachments_.end(),
+            [](const QJsonValue& value) {
+                return value.toObject().value(QStringLiteral("type")).toString()
+                    == QStringLiteral("file");
+            });
+        content = hasFile ? tr("Please inspect these attachments.")
+                          : tr("Please look at this image.");
+    }
     if (content.isEmpty() || character.isEmpty()) {
         return;
     }
@@ -988,16 +1109,21 @@ void NativeMainWindow::sendNativeChat() {
                                 .toString(QStringLiteral("__default__"));
     const QString requestedConversationId =
         chatConversationComboBox_->currentData().toString();
+    const QString attachmentsJson = QString::fromUtf8(
+        QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
     if (!backend_.prepareChatTurn(
             databasePath,
             character,
             userKey,
             requestedConversationId,
-            content)) {
+            content,
+            attachmentsJson)) {
         chatStatusLabel_->setText(backend_.getStatus());
         return;
     }
     chatInput_->clear();
+    pendingChatAttachments_ = QJsonArray();
+    updatePendingChatAttachments();
     const QString conversationId = backend_.getChatActiveConversationId();
     if (!backend_.buildChatRequest(
             databasePath,
@@ -1149,8 +1275,12 @@ void NativeMainWindow::setChatBusy(bool busy) {
     chatLoadOlderButton_->setEnabled(
         !busy && backend_.getChatHasOlderMessages() && chatMessageLimit_ < kChatMessageLimit);
     chatInput_->setEnabled(!busy);
+    chatAttachButton_->setEnabled(!busy && pendingChatAttachments_.size() < 32);
+    chatClearAttachmentsButton_->setEnabled(!busy && !pendingChatAttachments_.isEmpty());
     chatSendButton_->setEnabled(
-        !busy && !chatInput_->toPlainText().trimmed().isEmpty()
+        !busy
+        && (!chatInput_->toPlainText().trimmed().isEmpty()
+            || !pendingChatAttachments_.isEmpty())
         && !chatCharacterComboBox_->currentData().toString().isEmpty());
     chatCancelButton_->setEnabled(busy);
 }

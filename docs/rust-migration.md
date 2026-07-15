@@ -195,6 +195,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   update exactly once; it is never pre-applied and then doubled by a late model
   result. A cancelled extraction skips fallback and persistence once cancellation
   is observed, including the normal backend-destruction path.
+  Native private chat attachments are now supported end to end: Rust copies
+  selected local files into the compatible `chat_attachments` root with a 25 MB
+  per-file bound and create-new names, refuses references outside that root, and
+  owns cleanup of unsent native copies. Qt exposes selection, pending-file status
+  and clear/send controls without reading file content itself. Request composition
+  inlines bounded UTF-8 text-file previews and only emits raw image data URLs for
+  the latest user message, so historical images are not repeatedly expanded.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

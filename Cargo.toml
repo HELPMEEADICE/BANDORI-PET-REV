@@ -16,6 +16,7 @@ license = "GPL-3.0-only"
 rust-version = "1.85"
 
 [workspace.dependencies]
+base64 = "0.22.1"
 bandori-llm-protocol = { path = "rust/crates/bandori-llm-protocol" }
 dunce = "1.0.5"
 fs2 = "0.4.3"

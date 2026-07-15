@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QString>
@@ -65,6 +66,9 @@ private:
     void cancelNativeChat();
     void handleChatStreamEvent(const QString& payloadJson);
     void handleChatMemoryEvent(const QString& payloadJson);
+    void chooseChatAttachments();
+    void clearPendingChatAttachments();
+    void updatePendingChatAttachments();
     void setChatBusy(bool busy);
     void renderChatStreamPreview();
     void openNativeChat(const QString& character);
@@ -104,6 +108,9 @@ private:
     qfw::CaptionLabel* chatStatusLabel_ = nullptr;
     qfw::PushButton* chatLoadOlderButton_ = nullptr;
     qfw::PushButton* chatRefreshButton_ = nullptr;
+    qfw::PushButton* chatAttachButton_ = nullptr;
+    qfw::PushButton* chatClearAttachmentsButton_ = nullptr;
+    qfw::CaptionLabel* chatAttachmentLabel_ = nullptr;
     QTextBrowser* chatTranscript_ = nullptr;
     qfw::PlainTextEdit* chatInput_ = nullptr;
     qfw::PrimaryPushButton* chatSendButton_ = nullptr;
@@ -114,6 +121,7 @@ private:
     QString activeChatCharacter_;
     QString activeChatCharacterDisplay_;
     QString activeChatConversationId_;
+    QJsonArray pendingChatAttachments_;
     qint64 activeChatRequestId_ = 0;
     int chatMessageLimit_ = 200;
     bool updatingChatControls_ = false;

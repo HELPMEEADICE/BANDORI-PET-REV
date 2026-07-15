@@ -17,6 +17,7 @@ pub mod ffi {
         #[qproperty(QString, chat_active_conversation_id)]
         #[qproperty(QString, chat_turn_json)]
         #[qproperty(QString, chat_request_json)]
+        #[qproperty(QString, chat_imported_attachments_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -62,6 +63,23 @@ pub mod ffi {
             user_key: &QString,
             requested_conversation_id: &QString,
             content: &QString,
+            attachments_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "importChatAttachments"]
+        fn import_chat_attachments(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            source_paths_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "discardChatAttachments"]
+        fn discard_chat_attachments(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            attachments_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -113,6 +131,9 @@ pub mod ffi {
 }
 
 use bandori_core::chat_actions::parse_chat_response;
+use bandori_core::chat_attachments::{
+    discard_imported_chat_attachments, import_chat_attachments as import_attachment_files,
+};
 use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::config::ConfigDocument;
@@ -139,7 +160,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
-const MAX_CHAT_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
+const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
 
 pub struct BackendRust {
     status: QString,
@@ -151,6 +173,7 @@ pub struct BackendRust {
     chat_active_conversation_id: QString,
     chat_turn_json: QString,
     chat_request_json: QString,
+    chat_imported_attachments_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -186,6 +209,7 @@ impl Default for BackendRust {
             chat_active_conversation_id: QString::default(),
             chat_turn_json: QString::from("{}"),
             chat_request_json: QString::from("{}"),
+            chat_imported_attachments_json: QString::from("{\"attachments\":[],\"errors\":[]}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -388,6 +412,87 @@ impl ffi::Backend {
         }
     }
 
+    pub fn import_chat_attachments(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        source_paths_json: &QString,
+    ) -> bool {
+        let source = source_paths_json.to_string();
+        if source.len() > MAX_ATTACHMENT_JSON_BYTES {
+            self.as_mut()
+                .set_status(QString::from("Attachment selection is too large"));
+            return false;
+        }
+        let paths = match serde_json::from_str::<Vec<String>>(&source) {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Attachment selection error: {error}"
+                )));
+                return false;
+            }
+        };
+        match import_attachment_files(Path::new(&database_path.to_string()), &paths) {
+            Ok(result) => {
+                let success = !result.attachments.is_empty();
+                let count = result.attachments.len();
+                let errors = result.errors.len();
+                let payload = serde_json::to_string(&result)
+                    .expect("attachment import result serialization cannot fail");
+                self.as_mut()
+                    .set_chat_imported_attachments_json(QString::from(&payload));
+                self.as_mut().set_status(QString::from(&format!(
+                    "Imported {count} attachment(s); {errors} rejected"
+                )));
+                success
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_chat_imported_attachments_json(QString::from(
+                        "{\"attachments\":[],\"errors\":[]}",
+                    ));
+                self.as_mut()
+                    .set_status(QString::from(&format!("Attachment import error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn discard_chat_attachments(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        attachments_json: &QString,
+    ) -> bool {
+        let source = attachments_json.to_string();
+        if source.len() > MAX_ATTACHMENT_JSON_BYTES {
+            self.as_mut()
+                .set_status(QString::from("Attachment list is too large"));
+            return false;
+        }
+        let attachments = match serde_json::from_str::<Value>(&source) {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Attachment list error: {error}")));
+                return false;
+            }
+        };
+        match discard_imported_chat_attachments(Path::new(&database_path.to_string()), &attachments)
+        {
+            Ok(removed) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Discarded {removed} pending attachment(s)"
+                )));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Attachment cleanup error: {error}")));
+                false
+            }
+        }
+    }
+
     pub fn prepare_chat_turn(
         mut self: Pin<&mut Self>,
         database_path: &QString,
@@ -395,6 +500,7 @@ impl ffi::Backend {
         user_key: &QString,
         requested_conversation_id: &QString,
         content: &QString,
+        attachments_json: &QString,
     ) -> bool {
         if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
             self.as_mut()
@@ -406,6 +512,25 @@ impl ffi::Backend {
             .trim()
             .parse::<i64>()
             .ok();
+        let attachments_source = attachments_json.to_string();
+        if attachments_source.len() > MAX_ATTACHMENT_JSON_BYTES {
+            self.as_mut()
+                .set_status(QString::from("Chat attachment list is too large"));
+            return false;
+        }
+        let attachments = match serde_json::from_str::<Value>(&attachments_source) {
+            Ok(Value::Array(items)) => Value::Array(items),
+            Ok(_) => {
+                self.as_mut()
+                    .set_status(QString::from("Chat attachments must be a JSON array"));
+                return false;
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat attachment error: {error}")));
+                return false;
+            }
+        };
         let database = match Database::open(Path::new(&database_path.to_string())) {
             Ok(database) => database,
             Err(error) => {
@@ -419,7 +544,7 @@ impl ffi::Backend {
             &user_key.to_string(),
             requested_conversation_id,
             &content.to_string(),
-            None,
+            Some(&attachments),
         ) {
             Ok(turn) => {
                 let payload = serde_json::to_string(&turn)

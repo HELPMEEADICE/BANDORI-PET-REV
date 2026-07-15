@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64.workspace = true
 bandori-llm-protocol.workspace = true
 dunce.workspace = true
 fs2.workspace = true
