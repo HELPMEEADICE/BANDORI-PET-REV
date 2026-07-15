@@ -199,14 +199,20 @@ pub fn execute_native_tool_call(call: &NativeToolCall) -> NativeToolResult {
 pub fn chat_tool_followup_messages(
     calls: &[NativeToolCall],
     results: &[NativeToolResult],
+    assistant_content: &str,
 ) -> Vec<Value> {
     if calls.is_empty() {
         return Vec::new();
     }
     let mut messages = Vec::with_capacity(results.len() + 1);
+    let assistant_content = assistant_content.trim();
     messages.push(json!({
         "role": "assistant",
-        "content": Value::Null,
+        "content": if assistant_content.is_empty() {
+            Value::Null
+        } else {
+            Value::String(assistant_content.to_owned())
+        },
         "tool_calls": calls
             .iter()
             .map(NativeToolCall::chat_completions_value)
@@ -220,6 +226,29 @@ pub fn chat_tool_followup_messages(
         })
     }));
     messages
+}
+
+pub fn native_tool_trace(outcome: &Value) -> Option<Value> {
+    let mut trace = serde_json::Map::new();
+    if let Some(usage) = outcome.get("usage").and_then(Value::as_object) {
+        trace.insert("llm_usage".to_owned(), Value::Object(usage.clone()));
+    }
+    if let Some(calls) = outcome.get("tool_calls").and_then(Value::as_array) {
+        let calls = calls
+            .iter()
+            .filter_map(|call| {
+                Some(json!({
+                    "name": call.get("name")?.as_str()?,
+                    "arguments": call.get("arguments")?.as_str()?,
+                    "succeeded": call.get("succeeded").and_then(Value::as_bool).unwrap_or(false),
+                }))
+            })
+            .collect::<Vec<_>>();
+        if !calls.is_empty() {
+            trace.insert("tool_calls".to_owned(), Value::Array(calls));
+        }
+    }
+    (!trace.is_empty()).then_some(Value::Object(trace))
 }
 
 fn is_false(value: &bool) -> bool {
@@ -382,8 +411,9 @@ mod tests {
                 message: "回戳！".to_owned()
             })
         );
-        let messages = chat_tool_followup_messages(&[call], &[result]);
+        let messages = chat_tool_followup_messages(&[call], &[result], "先戳一下");
         assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "先戳一下");
         assert_eq!(
             messages[0]["tool_calls"][0]["function"]["name"],
             POKE_USER_TOOL_NAME
@@ -416,5 +446,25 @@ mod tests {
         assert!(calls[0].arguments_truncated);
         assert_eq!(calls[0].arguments.len(), MAX_TOOL_ARGUMENT_BYTES);
         assert!(!execute_native_tool_call(&calls[0]).succeeded);
+    }
+
+    #[test]
+    fn persisted_trace_keeps_usage_and_sanitized_tool_metadata() {
+        let trace = native_tool_trace(&json!({
+            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            "tool_calls": [{
+                "call_id": "call_1",
+                "name": "poke_user",
+                "arguments": "{}",
+                "content": "internal result",
+                "succeeded": true,
+                "effect": {"kind": "poke_user", "message": "hi"},
+            }],
+        }))
+        .unwrap();
+        assert_eq!(trace["llm_usage"]["total_tokens"], 5);
+        assert_eq!(trace["tool_calls"][0]["name"], "poke_user");
+        assert!(trace["tool_calls"][0].get("content").is_none());
+        assert!(trace["tool_calls"][0].get("effect").is_none());
     }
 }

@@ -1818,6 +1818,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
         const QString character = activeChatCharacter_;
         const QString characterDisplay = activeChatCharacterDisplay_;
         const QString conversationId = activeChatConversationId_;
+        dispatchChatToolEffects(payload, character);
         QString terminalStatus;
         bool saved = false;
         if (state == QStringLiteral("finished")) {
@@ -1877,6 +1878,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
 
     const QString character = activeChatCharacter_;
     const QString conversationId = activeChatConversationId_;
+    dispatchChatToolEffects(payload, character);
     QString terminalStatus;
     if (state == QStringLiteral("finished")) {
         const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
@@ -1925,6 +1927,48 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
     refreshChatState(conversationId);
     chatStatusLabel_->setText(terminalStatus);
     chatInput_->setFocus();
+}
+
+int NativeMainWindow::dispatchChatToolEffects(
+    const QJsonObject& payload,
+    const QString& character) {
+    const QString target = character.trimmed();
+    if (target.isEmpty()) {
+        return 0;
+    }
+    int dispatched = 0;
+    for (const QJsonValue& value : payload.value(QStringLiteral("tool_calls")).toArray()) {
+        if (dispatched >= 16) {
+            break;
+        }
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject result = value.toObject();
+        if (!result.value(QStringLiteral("succeeded")).toBool()
+            || result.value(QStringLiteral("name")).toString() != QStringLiteral("poke_user")) {
+            continue;
+        }
+        const QJsonObject effect = result.value(QStringLiteral("effect")).toObject();
+        if (effect.value(QStringLiteral("kind")).toString() != QStringLiteral("poke_user")) {
+            continue;
+        }
+        const QString message = effect.value(QStringLiteral("message"))
+                                    .toString()
+                                    .trimmed()
+                                    .left(280);
+        const QJsonObject poke {
+            {QStringLiteral("character"), target},
+            {QStringLiteral("message"), message},
+            {QStringLiteral("source"), QStringLiteral("llm_tool")},
+            {QStringLiteral("direction"), QStringLiteral("to_user")},
+        };
+        if (supervisor_.broadcastControlLine(
+                QStringLiteral("POKE_USER\t") + compactJson(poke))) {
+            ++dispatched;
+        }
+    }
+    return dispatched;
 }
 
 void NativeMainWindow::handleChatMemoryEvent(const QString& payloadJson) {

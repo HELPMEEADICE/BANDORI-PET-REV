@@ -73,6 +73,7 @@ private:
     void cancelNativeChat();
     void handleChatStreamEvent(const QString& payloadJson);
     void handleChatMemoryEvent(const QString& payloadJson);
+    int dispatchChatToolEffects(const QJsonObject& payload, const QString& character);
     void chooseChatAttachments();
     void clearPendingChatAttachments();
     void updatePendingChatAttachments();

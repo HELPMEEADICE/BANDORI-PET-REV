@@ -347,6 +347,37 @@ pub fn build_chat_completions_body(
     Value::Object(body)
 }
 
+fn responses_tool_definition(tool: &Value) -> Value {
+    let Some(function) = tool.get("function").filter(|value| value.is_object()) else {
+        return tool.clone();
+    };
+    let mut definition = Map::from_iter([
+        ("type".to_owned(), Value::String("function".to_owned())),
+        (
+            "name".to_owned(),
+            function.get("name").cloned().unwrap_or(Value::Null),
+        ),
+        (
+            "description".to_owned(),
+            function
+                .get("description")
+                .cloned()
+                .unwrap_or_else(|| Value::String(String::new())),
+        ),
+        (
+            "parameters".to_owned(),
+            function
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
+        ),
+    ]);
+    if let Some(strict) = function.get("strict") {
+        definition.insert("strict".to_owned(), strict.clone());
+    }
+    Value::Object(definition)
+}
+
 pub fn build_responses_body(
     model: &str,
     messages: &[Value],
@@ -371,7 +402,10 @@ pub fn build_responses_body(
         );
     }
     if !tools.is_empty() {
-        body.insert("tools".to_owned(), Value::Array(tools.to_vec()));
+        body.insert(
+            "tools".to_owned(),
+            Value::Array(tools.iter().map(responses_tool_definition).collect()),
+        );
         body.insert("tool_choice".to_owned(), Value::String("auto".to_owned()));
     }
     if let Some(enabled) = enable_thinking {
@@ -781,6 +815,7 @@ mod tests {
         assert_eq!(chat["reasoning_effort"], "medium");
         assert_eq!(chat["stream_options"]["include_usage"], true);
         assert_eq!(chat["tool_choice"], "auto");
+        assert_eq!(chat["tools"][0]["function"]["name"], "search");
 
         let google = build_chat_completions_body(
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -802,6 +837,9 @@ mod tests {
         assert_eq!(responses["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(responses["input"][0]["content"][1]["type"], "input_image");
         assert_eq!(responses["input"][1]["type"], "function_call_output");
+        assert_eq!(responses["tools"][0]["type"], "function");
+        assert_eq!(responses["tools"][0]["name"], "search");
+        assert!(responses["tools"][0].get("function").is_none());
     }
 
     #[test]

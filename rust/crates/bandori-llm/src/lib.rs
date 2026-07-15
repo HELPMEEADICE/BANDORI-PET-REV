@@ -124,6 +124,8 @@ pub enum LlmTransportError {
     InvalidAuthorizationHeader,
     #[error("invalid LLM request: {0}")]
     InvalidRequest(String),
+    #[error("LLM tool loop failed: {0}")]
+    ToolLoop(&'static str),
 }
 
 #[derive(Clone, Debug)]

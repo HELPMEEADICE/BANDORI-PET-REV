@@ -409,6 +409,36 @@ def test_native_qt_chat_page_exposes_group_selection_and_sequential_speaker_stre
     assert "backend_.finishGroupChatTurn()" in window
 
 
+def test_native_chat_tools_are_bounded_looped_and_dispatched_through_existing_ipc():
+    tools = source("rust/crates/bandori-core/src/chat_tools.rs")
+    protocol = source("rust/crates/bandori-llm-protocol/src/lib.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    exporter = source("tools/export_rust_contracts.py")
+
+    assert "CHAT_COMPLETIONS_POKE_USER_TOOL" in exporter
+    assert '"chat_tools"' in exporter
+    assert "pub struct NativeToolCallAccumulator" in tools
+    assert "replace_arguments" in tools
+    assert "MAX_TOOL_ARGUMENT_BYTES" in tools
+    assert "pub fn execute_native_tool_call" in tools
+    assert "Unsupported native tool" in tools
+    assert "responses_tool_definition" in protocol
+    assert "const MAX_NATIVE_TOOL_ROUNDS: usize = 3" in backend
+    assert "async fn stream_with_native_tools" in backend
+    assert "chat_tool_followup_messages" in backend
+    assert "request.previous_response_id = outcome.response_id" in backend
+    assert "native_tool_trace(&outcome)" in backend
+    assert 'trace.insert("tool_calls"' in tools
+    assert "int dispatchChatToolEffects" in header
+    assert "int NativeMainWindow::dispatchChatToolEffects" in window
+    assert 'QStringLiteral("poke_user")' in window
+    assert 'QStringLiteral("POKE_USER\\t")' in window
+    assert 'QStringLiteral("llm_tool")' in window
+    assert 'QStringLiteral("to_user")' in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

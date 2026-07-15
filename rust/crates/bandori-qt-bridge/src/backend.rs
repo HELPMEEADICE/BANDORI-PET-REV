@@ -247,6 +247,10 @@ use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::chat_management::{
     delete_owned_group_conversation, delete_owned_private_conversation,
 };
+use bandori_core::chat_tools::{
+    NativeToolCallAccumulator, NativeToolResult, chat_tool_followup_messages,
+    execute_native_tool_call, native_tool_trace,
+};
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
@@ -266,7 +270,7 @@ use bandori_core::relationship_analysis::{
 };
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
-    LlmTransportRequest,
+    LlmTransportRequest, TokenUsage,
 };
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
@@ -279,6 +283,22 @@ use tokio_util::sync::CancellationToken;
 const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
 const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
+const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
+
+#[derive(Debug)]
+struct NativeToolLoopOutcome {
+    mode: LlmApiMode,
+    response_id: String,
+    usage: Option<TokenUsage>,
+    tool_calls: Vec<NativeToolResult>,
+}
+
+#[derive(Debug)]
+struct NativeToolLoopFailure {
+    error: LlmTransportError,
+    usage: Option<TokenUsage>,
+    tool_calls: Vec<NativeToolResult>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ActiveChatKind {
@@ -2158,8 +2178,7 @@ fn parse_llm_request(source: &str) -> Result<LlmTransportRequest, String> {
 
 fn assistant_tool_trace(outcome_json: &str) -> Option<Value> {
     let outcome = serde_json::from_str::<Value>(outcome_json).ok()?;
-    let usage = outcome.get("usage")?.as_object()?;
-    Some(json!({"llm_usage": usage}))
+    native_tool_trace(&outcome)
 }
 
 fn run_llm_stream(
@@ -2195,9 +2214,14 @@ fn run_llm_stream(
         }
     };
     let event_thread = qt_thread.clone();
-    let result = runtime.block_on(transport.stream(&request, &cancellation, move |event| {
-        queue_stream_event(&event_thread, request_id, event);
-    }));
+    let result = runtime.block_on(stream_with_native_tools(
+        &transport,
+        request,
+        &cancellation,
+        move |event| {
+            queue_stream_event(&event_thread, request_id, event);
+        },
+    ));
     let payload = match result {
         Ok(outcome) => json!({
             "request_id": request_id,
@@ -2205,15 +2229,115 @@ fn run_llm_stream(
             "mode": outcome.mode,
             "response_id": outcome.response_id,
             "usage": outcome.usage,
+            "tool_calls": outcome.tool_calls,
         }),
-        Err(LlmTransportError::Cancelled) => {
-            json!({"request_id": request_id, "state": "cancelled"})
+        Err(failure) if matches!(&failure.error, LlmTransportError::Cancelled) => {
+            json!({
+                "request_id": request_id,
+                "state": "cancelled",
+                "usage": failure.usage,
+                "tool_calls": failure.tool_calls,
+            })
         }
-        Err(error) => {
-            json!({"request_id": request_id, "state": "error", "message": error.to_string()})
+        Err(failure) => {
+            json!({
+                "request_id": request_id,
+                "state": "error",
+                "message": failure.error.to_string(),
+                "usage": failure.usage,
+                "tool_calls": failure.tool_calls,
+            })
         }
     };
     queue_terminal_payload(&qt_thread, request_id, payload);
+}
+
+async fn stream_with_native_tools<F>(
+    transport: &LlmTransport,
+    mut request: LlmTransportRequest,
+    cancellation: &CancellationToken,
+    mut on_event: F,
+) -> Result<NativeToolLoopOutcome, NativeToolLoopFailure>
+where
+    F: FnMut(LlmStreamEvent),
+{
+    let mut usage = None;
+    let mut tool_results = Vec::new();
+    for round in 0..MAX_NATIVE_TOOL_ROUNDS {
+        let mut tool_calls = NativeToolCallAccumulator::default();
+        let mut assistant_content = String::new();
+        let outcome = match transport
+            .stream(&request, cancellation, |event| {
+                tool_calls.absorb(&event);
+                if let LlmStreamEvent::TextDelta { text } = &event {
+                    assistant_content.push_str(text);
+                }
+                on_event(event);
+            })
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return Err(NativeToolLoopFailure {
+                    error,
+                    usage,
+                    tool_calls: tool_results,
+                });
+            }
+        };
+        merge_token_usage(&mut usage, outcome.usage);
+        let calls = tool_calls.finish();
+        if calls.is_empty() {
+            return Ok(NativeToolLoopOutcome {
+                mode: outcome.mode,
+                response_id: outcome.response_id,
+                usage,
+                tool_calls: tool_results,
+            });
+        }
+        let round_results = calls
+            .iter()
+            .map(execute_native_tool_call)
+            .collect::<Vec<_>>();
+        tool_results.extend(round_results.iter().cloned());
+        if round + 1 >= MAX_NATIVE_TOOL_ROUNDS {
+            return Err(NativeToolLoopFailure {
+                error: LlmTransportError::ToolLoop(
+                    "the model exceeded the native tool-call round limit",
+                ),
+                usage,
+                tool_calls: tool_results,
+            });
+        }
+        let followup = chat_tool_followup_messages(&calls, &round_results, &assistant_content);
+        match outcome.mode {
+            LlmApiMode::ChatCompletions => request.messages.extend(followup),
+            LlmApiMode::Responses => {
+                if outcome.response_id.trim().is_empty() {
+                    return Err(NativeToolLoopFailure {
+                        error: LlmTransportError::ToolLoop(
+                            "a Responses API tool call did not include a response id",
+                        ),
+                        usage,
+                        tool_calls: tool_results,
+                    });
+                }
+                request.messages = followup.into_iter().skip(1).collect();
+                request.previous_response_id = outcome.response_id;
+            }
+        }
+    }
+    unreachable!("the bounded native tool loop always returns")
+}
+
+fn merge_token_usage(total: &mut Option<TokenUsage>, update: Option<TokenUsage>) {
+    let Some(update) = update else {
+        return;
+    };
+    let total = total.get_or_insert_with(TokenUsage::default);
+    total.input_tokens = total.input_tokens.saturating_add(update.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(update.output_tokens);
+    total.total_tokens = total.total_tokens.saturating_add(update.total_tokens);
 }
 
 fn queue_stream_event(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, event: LlmStreamEvent) {
