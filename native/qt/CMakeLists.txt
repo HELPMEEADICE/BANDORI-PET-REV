@@ -12,6 +12,8 @@ qt_add_executable(bandori-pet-renderer-rust
     pet_main.cpp
     live2d_gl_widget.cpp
     live2d_gl_widget.h
+    native_radial_menu.cpp
+    native_radial_menu.h
     bandori_live2d_ffi.h
     pet_ipc_client.cpp
     pet_ipc_client.h

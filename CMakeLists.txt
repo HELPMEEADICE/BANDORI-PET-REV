@@ -11,6 +11,7 @@ set(CMAKE_AUTORCC ON)
 # also makes Debug hybrid builds link correctly on Windows.
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    add_compile_options(/utf-8)
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg OpenGLWidgets)

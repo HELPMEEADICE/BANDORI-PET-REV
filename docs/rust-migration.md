@@ -91,7 +91,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   or explicit motion/expression feedback in Rust. Drag locking no longer
   suppresses clicks; double-clicks publish reliable `POKE_USER` events and both
   local and remote pokes receive native model/window feedback. The widget also
-  exposes exact-hit right-click coordinates for the upcoming native radial menu.
+  exposes exact-hit right-click coordinates to a shaped native Qt radial menu.
+  Its chat action bridges to the staged Python chat process, costume opens the
+  settings flow, motion stays inside the Rust Live2D host, and the center lock
+  persists through `PET_STATE`; pixel mode remains disabled until its renderer
+  is ported. Menu open/closed lifecycle remains reliable IPC so peer z-order
+  behavior can stay compatible during the dual-track migration.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

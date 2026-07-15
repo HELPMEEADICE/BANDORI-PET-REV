@@ -91,6 +91,10 @@ void Live2dGlWidget::setDragLocked(bool locked) {
     dragLocked_ = locked;
 }
 
+bool Live2dGlWidget::dragLocked() const {
+    return dragLocked_;
+}
+
 void Live2dGlWidget::setHeadTrackingEnabled(bool enabled) {
     headTrackingEnabled_ = enabled;
     gazeWasApplied_ = false;

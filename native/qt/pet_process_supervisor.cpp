@@ -144,6 +144,8 @@ void PetProcessSupervisor::launchNow() {
         spec_.modelPath,
         QStringLiteral("--character"),
         spec_.character,
+        QStringLiteral("--language"),
+        spec_.language,
         QStringLiteral("--format"),
         spec_.format,
         QStringLiteral("--width"),

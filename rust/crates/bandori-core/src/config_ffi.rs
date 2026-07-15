@@ -92,7 +92,7 @@ mod tests {
         .unwrap();
         let path = CString::new(path.to_string_lossy().as_bytes()).unwrap();
         let payload = CString::new(
-            r#"{"character":"ran","model_path":"ran/model.json","x":10,"y":20,"width":400,"height":500}"#,
+            r#"{"character":"ran","model_path":"ran/model.json","x":10,"y":20,"width":400,"height":500,"drag_locked":true}"#,
         )
         .unwrap();
         // SAFETY: both C strings remain live for the entire call.
@@ -100,6 +100,7 @@ mod tests {
         let saved = ConfigDocument::load(Path::new(path.to_str().unwrap())).unwrap();
         assert_eq!(saved.get("fps"), Some(&serde_json::json!(60)));
         assert_eq!(saved.get("window_x"), Some(&serde_json::json!(10)));
+        assert_eq!(saved.get("drag_locked"), Some(&serde_json::json!(true)));
         assert_eq!(saved.get("models").unwrap()[0]["window_y"], 20);
     }
 }

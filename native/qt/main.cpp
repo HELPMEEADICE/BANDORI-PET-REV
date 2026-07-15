@@ -33,6 +33,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("pet-character"),
         QStringLiteral("Character identifier used for IPC registration"),
         QStringLiteral("id"));
+    QCommandLineOption petLanguage(
+        QStringLiteral("pet-language"),
+        QStringLiteral("Language used by native pet controls"),
+        QStringLiteral("locale"));
     QCommandLineOption petFps(
         QStringLiteral("pet-fps"),
         QStringLiteral("Pet render frame rate"),
@@ -102,6 +106,7 @@ int main(int argc, char* argv[]) {
         {petModel,
          petFormat,
          petCharacter,
+         petLanguage,
          petX,
          petY,
          petFps,
@@ -160,6 +165,7 @@ int main(int argc, char* argv[]) {
     petSpec.userModelsRoot = parser.value(userModels);
     petSpec.modelPath = parser.value(petModel);
     petSpec.character = parser.value(petCharacter);
+    petSpec.language = parser.value(petLanguage);
     petSpec.format = parser.value(petFormat);
     petSpec.x = parser.value(petX).toInt();
     petSpec.y = parser.value(petY).toInt();

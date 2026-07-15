@@ -38,6 +38,7 @@ public:
 
     void setFramesPerSecond(int fps);
     void setDragLocked(bool locked);
+    bool dragLocked() const;
     void setHeadTrackingEnabled(bool enabled);
     void setGazeTargetGlobal(const QPoint& globalPosition);
     void clearGazeTarget();

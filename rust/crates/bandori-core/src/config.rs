@@ -35,6 +35,8 @@ pub struct PetWindowState {
     pub width: i64,
     pub height: i64,
     #[serde(default)]
+    pub drag_locked: Option<bool>,
+    #[serde(default)]
     pub placement: Option<Map<String, Value>>,
 }
 
@@ -128,6 +130,10 @@ impl ConfigDocument {
             return false;
         }
         let model_path = state.model_path.trim();
+        if let Some(locked) = state.drag_locked {
+            self.values
+                .insert("drag_locked".into(), Value::Bool(locked));
+        }
         let mut model_count = 0;
         let mut model_updated = false;
         if let Some(models) = self.values.get_mut("models").and_then(Value::as_array_mut) {
@@ -347,6 +353,7 @@ mod tests {
             y: -40,
             width: 400,
             height: 500,
+            drag_locked: Some(true),
             placement: Some(
                 serde_json::json!({"screen_name":"right","relative_x":0.25})
                     .as_object()
@@ -361,6 +368,7 @@ mod tests {
         assert_eq!(models[1]["window_y"], -40);
         assert_eq!(models[1]["window_placement"]["screen_name"], "right");
         assert_eq!(multiple.get("window_x"), Some(&Value::from(-1)));
+        assert_eq!(multiple.get("drag_locked"), Some(&Value::Bool(true)));
 
         let mut single = ConfigDocument::default();
         single.set(

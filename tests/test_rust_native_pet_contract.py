@@ -71,6 +71,10 @@ def test_native_pet_state_is_persisted_through_rust_config_boundary():
     assert "ConfigDocument::load" in config_ffi
     assert "apply_pet_window_state" in config_ffi
     assert "config.save(path)" in config_ffi
+    assert 'QStringLiteral("drag_locked"), widget.dragLocked()' in pet
+    assert "pub drag_locked: Option<bool>" in source(
+        "rust/crates/bandori-core/src/config.rs"
+    )
 
 
 def test_native_pet_click_double_click_and_poke_feedback_cross_rust_boundary():
@@ -95,6 +99,27 @@ def test_native_pet_click_double_click_and_poke_feedback_cross_rust_boundary():
     assert "shakeWindow(widget, 72)" in pet
     assert '"--click-motion-actions", json.dumps(' in main
     assert '"--poke-expression", str(cfg.get("poke_expression"' in main
+
+
+def test_native_radial_menu_routes_actions_and_uses_shaped_popup():
+    menu_header = source("native/qt/native_radial_menu.h")
+    menu = source("native/qt/native_radial_menu.cpp")
+    pet = source("native/qt/pet_main.cpp")
+    main = source("main.py")
+
+    assert "class NativeRadialMenu final" in menu_header
+    assert "Qt::Popup | Qt::FramelessWindowHint" in menu
+    assert "setMask(region)" in menu
+    assert "QVariantAnimation" in menu
+    assert "ignoreReleaseUntilButtonsUp_" in menu
+    assert "void NativeRadialMenu::setLanguage" in menu
+    assert "&bandori::Live2dGlWidget::rightClicked" in pet
+    assert 'QStringLiteral("RADIAL_MENU_OPEN\\t")' in pet
+    assert 'QStringLiteral("OPEN_CHAT_NATIVE\\t")' in pet
+    assert 'QStringLiteral("OPEN_SETTINGS\\tcostumes\\t")' in pet
+    assert 'QStringLiteral("__random__")' in pet
+    assert 'line.startswith("OPEN_CHAT_NATIVE\\t")' in main
+    assert "launch_chat_process(native_request=request)" in main
 
 
 def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():

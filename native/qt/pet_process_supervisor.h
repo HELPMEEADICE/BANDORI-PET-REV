@@ -17,6 +17,7 @@ struct PetLaunchSpec {
     QString userModelsRoot;
     QString modelPath;
     QString character;
+    QString language;
     QString format = QStringLiteral("moc3");
     int width = 400;
     int height = 650;

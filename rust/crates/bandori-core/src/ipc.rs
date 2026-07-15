@@ -411,6 +411,7 @@ mod tests {
         assert!(is_reliable_line("SETTINGS\t{}"));
         assert!(is_reliable_line("CHAT_EVENT\t{}"));
         assert!(is_reliable_line("PET_STATE\t{}"));
+        assert!(is_reliable_line("OPEN_CHAT_NATIVE\t{}"));
         assert!(!is_reliable_line("PEER_POS\t{}"));
     }
 

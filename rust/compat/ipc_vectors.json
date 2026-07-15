@@ -54,6 +54,11 @@
       "reliable": true
     },
     {
+      "line": "OPEN_CHAT_NATIVE\t{}",
+      "control": true,
+      "reliable": true
+    },
+    {
       "line": "PEER_POS\t{}",
       "control": false,
       "reliable": false

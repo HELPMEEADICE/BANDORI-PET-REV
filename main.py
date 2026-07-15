@@ -1057,6 +1057,15 @@ def main():
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line.startswith("OPEN_SETTINGS"):
             handle_open_settings_request(line)
+        elif line.startswith("OPEN_CHAT_NATIVE\t"):
+            if not is_registered_pet_peer(source_peer_id):
+                return
+            try:
+                request = json.loads(line.split("\t", 1)[1])
+            except (json.JSONDecodeError, IndexError):
+                return
+            if isinstance(request, dict):
+                launch_chat_process(native_request=request)
         elif line.startswith("MODEL\t") or line.startswith("SETTINGS\t") or line == "LAUNCH":
             handle_settings_line(line, source_peer_id=source_peer_id)
 
@@ -1205,6 +1214,7 @@ def main():
             ("live2d_random_actions_enabled", "live2d_random_actions_enabled", True),
             ("live2d_head_tracking_enabled", "live2d_head_tracking_enabled", True),
             ("live2d_mutual_gaze_enabled", "live2d_mutual_gaze_enabled", False),
+            ("drag_locked", "drag_locked", False),
             ("move_all_roles_together", "move_all_roles_together", False),
             ("poke_motion", "poke_motion", ""),
             ("poke_expression", "poke_expression", ""),
@@ -1439,6 +1449,7 @@ def main():
                     "--user-models", str(app_data_dir() / "models"),
                     "--model", model["path"],
                     "--character", model["character"],
+                    "--language", str(cfg.get("language", "") or ""),
                     "--format", model_format or "moc3",
                     "--width", str(cfg.get("window_width", 400)),
                     "--height", str(cfg.get("window_height", 500)),
@@ -1531,7 +1542,8 @@ def main():
             chat_process_ref.pop("process", None)
         process.deleteLater()
 
-    def launch_chat_process():
+    def launch_chat_process(native_request=None):
+        native_request = native_request if isinstance(native_request, dict) else None
         existing = chat_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             broadcast_ipc_line("FOCUS_CHAT")
@@ -1540,6 +1552,9 @@ def main():
         cfg.load()
         current_char = cfg.get("character", char)
         current_costume = cfg.get("costume", costume)
+        requested_char = str((native_request or {}).get("character", "") or "").strip()
+        if requested_char and requested_char in mgr.characters:
+            current_char = requested_char
         if not (current_char and current_char in mgr.characters):
             models = configured_models()
             if models:
@@ -1549,7 +1564,11 @@ def main():
             launch_settings_process(show_launch=False)
             return
 
-        if pet_window_ref.get("processes") and has_registered_pet_clients():
+        if (
+            native_request is None
+            and pet_window_ref.get("processes")
+            and has_registered_pet_clients()
+        ):
             broadcast_ipc_line(f"OPEN_CHAT\t{current_char}")
             return
 
@@ -1564,21 +1583,30 @@ def main():
             group_characters.insert(0, current_char)
 
         screen = app.primaryScreen()
-        if screen:
+        if native_request is not None:
+            pet_x = clamp_int(native_request.get("x", 100), -2147483648, 2147483647, 100)
+            pet_y = clamp_int(native_request.get("y", 100), -2147483648, 2147483647, 100)
+            pet_w = clamp_int(native_request.get("width", 1), 1, 16384, 1)
+            pet_h = clamp_int(native_request.get("height", 1), 1, 16384, 1)
+        elif screen:
             available = screen.availableGeometry()
             pet_x = available.center().x()
             pet_y = available.center().y()
+            pet_w = 1
+            pet_h = 1
         else:
             pet_x = 100
             pet_y = 100
+            pet_w = 1
+            pet_h = 1
 
         process = QProcess(app)
         program, arguments = process_program_and_args(BASE_DIR, "chat_process.py", [
             "--character", current_char,
             "--pet-x", str(pet_x),
             "--pet-y", str(pet_y),
-            "--pet-w", "1",
-            "--pet-h", "1",
+            "--pet-w", str(pet_w),
+            "--pet-h", str(pet_h),
             "--group-characters", json.dumps(group_characters, ensure_ascii=False),
         ])
         process.setProgram(program)

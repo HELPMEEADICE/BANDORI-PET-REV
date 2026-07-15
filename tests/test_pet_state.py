@@ -31,6 +31,7 @@ def state_line(character="ran", model_path="ran/model.json"):
         "y": -40,
         "width": 400,
         "height": 500,
+        "drag_locked": True,
         "placement": {"screen_name": "right", "relative_x": 0.25},
     })
 
@@ -51,6 +52,7 @@ def test_pet_state_is_reliable_and_updates_only_matching_multi_pet_entry():
     assert config.values["models"][1]["window_y"] == -40
     assert config.values["models"][1]["window_placement"]["screen_name"] == "right"
     assert config.values["window_x"] == -1
+    assert config.values["drag_locked"] is True
     assert config.save_count == 1
 
 

@@ -30,6 +30,8 @@ def persist_pet_window_state(config, line: str) -> bool:
         "window_placement": placement,
     }
     config.load()
+    if isinstance(state.get("drag_locked"), bool):
+        config.set("drag_locked", state["drag_locked"])
     models = config.get("models", [])
     model_count = len(models) if isinstance(models, list) else 0
     updated_models = list(models) if isinstance(models, list) else []

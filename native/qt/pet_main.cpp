@@ -1,4 +1,5 @@
 #include "live2d_gl_widget.h"
+#include "native_radial_menu.h"
 #include "pet_ipc_client.h"
 
 #include <QApplication>
@@ -197,6 +198,7 @@ QJsonObject petWindowState(
         {QStringLiteral("y"), geometry.y()},
         {QStringLiteral("width"), geometry.width()},
         {QStringLiteral("height"), geometry.height()},
+        {QStringLiteral("drag_locked"), widget.dragLocked()},
         {QStringLiteral("placement"), placement},
     };
 }
@@ -243,6 +245,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("character"),
         QStringLiteral("Character identifier used for IPC registration"),
         QStringLiteral("id"));
+    QCommandLineOption language(
+        QStringLiteral("language"),
+        QStringLiteral("Language used by native pet controls"),
+        QStringLiteral("locale"));
     QCommandLineOption format(
         QStringLiteral("format"),
         QStringLiteral("Model format: moc or moc3"),
@@ -320,6 +326,7 @@ int main(int argc, char* argv[]) {
          userModels,
          model,
          character,
+         language,
          format,
          width,
          height,
@@ -384,6 +391,10 @@ int main(int argc, char* argv[]) {
             available.left() + (available.width() - widget.width()) / 2,
             available.top() + (available.height() - widget.height()) / 2);
     }
+    bandori::NativeRadialMenu radialMenu;
+    radialMenu.setLocked(widget.dragLocked());
+    radialMenu.setLanguage(parser.value(language));
+    radialMenu.setPixelAvailable(false);
 
     QTimer parentWatch;
     const qint64 supervisorPid = parser.value(parentPid).toLongLong();
@@ -491,6 +502,70 @@ int main(int argc, char* argv[]) {
     peerPositionTimer.start();
     QObject::connect(
         &widget,
+        &bandori::Live2dGlWidget::rightClicked,
+        &radialMenu,
+        [&radialMenu](int globalX, int globalY) {
+            radialMenu.showAt(QPoint(globalX, globalY));
+        });
+    QObject::connect(
+        &radialMenu,
+        &bandori::NativeRadialMenu::opened,
+        ipcClient,
+        [ipcClient, characterId]() {
+            ipcClient->publishLine(
+                QStringLiteral("RADIAL_MENU_OPEN\t")
+                    + compactJson({{QStringLiteral("character"), characterId}}),
+                true);
+        });
+    QObject::connect(
+        &radialMenu,
+        &bandori::NativeRadialMenu::closed,
+        ipcClient,
+        [ipcClient, characterId]() {
+            ipcClient->publishLine(
+                QStringLiteral("RADIAL_MENU_CLOSED\t")
+                    + compactJson({{QStringLiteral("character"), characterId}}),
+                true);
+        });
+    QObject::connect(
+        &radialMenu,
+        &bandori::NativeRadialMenu::lockToggled,
+        &widget,
+        [ipcClient, &widget, characterId, modelPath](bool locked) {
+            widget.setDragLocked(locked);
+            publishPetWindowState(ipcClient, widget, characterId, modelPath);
+        });
+    QObject::connect(
+        &radialMenu,
+        &bandori::NativeRadialMenu::actionTriggered,
+        &widget,
+        [ipcClient, &widget, characterId](const QString& action) {
+            if (action == QStringLiteral("chat")) {
+                const QRect geometry = widget.geometry();
+                ipcClient->publishLine(
+                    QStringLiteral("OPEN_CHAT_NATIVE\t")
+                        + compactJson({
+                            {QStringLiteral("character"), characterId},
+                            {QStringLiteral("x"), geometry.x()},
+                            {QStringLiteral("y"), geometry.y()},
+                            {QStringLiteral("width"), geometry.width()},
+                            {QStringLiteral("height"), geometry.height()},
+                        }),
+                    true);
+            } else if (action == QStringLiteral("costume")) {
+                ipcClient->publishLine(
+                    QStringLiteral("OPEN_SETTINGS\tcostumes\t") + characterId,
+                    true);
+            } else if (action == QStringLiteral("motion")) {
+                widget.triggerInteraction(
+                    QStringLiteral("head"),
+                    QStringLiteral("__random__"),
+                    {},
+                    characterId);
+            }
+        });
+    QObject::connect(
+        &widget,
         &bandori::Live2dGlWidget::clicked,
         &widget,
         [&widget, &configuredClickActions, characterId](double x, double y) {
@@ -594,6 +669,7 @@ int main(int argc, char* argv[]) {
          &configuredPokeMotion,
          &configuredPokeExpression,
          &triggerPokeFeedback,
+         &radialMenu,
          ipcClient,
          modelPath](const QString& line) {
             const bool peerDragFinished = line.startsWith(QStringLiteral("PEER_DRAG_END\t"));
@@ -744,7 +820,10 @@ int main(int argc, char* argv[]) {
                     settings.value(QStringLiteral("live2d_hit_alpha_threshold")).toInt(8));
             }
             if (settings.contains(QStringLiteral("drag_locked"))) {
-                widget.setDragLocked(settings.value(QStringLiteral("drag_locked")).toBool(false));
+                const bool locked =
+                    settings.value(QStringLiteral("drag_locked")).toBool(false);
+                widget.setDragLocked(locked);
+                radialMenu.setLocked(locked);
             }
             if (settings.contains(QStringLiteral("move_all_roles_together"))) {
                 moveAllRoles =
@@ -770,6 +849,9 @@ int main(int argc, char* argv[]) {
                 configuredPokeExpression =
                     settings.value(QStringLiteral("poke_expression")).toString().trimmed();
             }
+            if (settings.contains(QStringLiteral("language"))) {
+                radialMenu.setLanguage(settings.value(QStringLiteral("language")).toString());
+            }
             if (settings.value(QStringLiteral("models")).isArray()) {
                 const QJsonArray models = settings.value(QStringLiteral("models")).toArray();
                 QJsonObject characterMatch;
@@ -794,6 +876,11 @@ int main(int argc, char* argv[]) {
             widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
             updateMutualGaze();
         });
+    QObject::connect(
+        &app,
+        &QCoreApplication::aboutToQuit,
+        &radialMenu,
+        &QWidget::hide);
     QObject::connect(
         &app,
         &QCoreApplication::aboutToQuit,
