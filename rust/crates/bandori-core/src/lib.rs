@@ -11,6 +11,7 @@ pub mod chat_dashboard;
 pub mod chat_prompt;
 pub mod config;
 pub mod config_ffi;
+pub mod cross_chat_history;
 pub mod dashboard;
 pub mod database;
 pub mod ipc;

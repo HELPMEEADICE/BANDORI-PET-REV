@@ -245,6 +245,14 @@ fn prompt_contract() -> &'static PromptContract {
     })
 }
 
+pub fn character_display_name(character: &str) -> String {
+    prompt_contract()
+        .character_display_names
+        .get(character.trim())
+        .cloned()
+        .unwrap_or_else(|| character.trim().to_owned())
+}
+
 fn active_character_persona(config: &Map<String, Value>, character: &str) -> String {
     let active_id = config
         .get("character_persona_active")

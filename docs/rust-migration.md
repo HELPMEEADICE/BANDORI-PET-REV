@@ -174,8 +174,8 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   request builder verifies conversation ownership, applies the compatible
   0-or-2..100 history limit, appends relationship and Qt-formatted current-time
   context only to the latest user message, and exposes the resulting request
-  JSON through CXX-Qt without exposing the API key. Cross-chat excerpts,
-  attachment rendering, event-calendar context, group prompts and local tools
+  JSON through CXX-Qt without exposing the API key. Event-calendar context,
+  group prompts and local tools
   remain staged beyond the current composer rather than being silently
   approximated. Completed responses are cleaned with Python-generated action-tag
   fixtures before persistence; parsed actions cross the reliable native IPC lane
@@ -202,6 +202,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   and clear/send controls without reading file content itself. Request composition
   inlines bounded UTF-8 text-file previews and only emits raw image data URLs for
   the latest user message, so historical images are not repeatedly expanded.
+  Cross-chat context is also native and pinned to a Python-generated fixture:
+  Rust reads at most three recent private conversations and 24 relevant group
+  chats for the active user partition, compacts attachment counts, preserves
+  speaker labels, globally orders excerpts by timestamp/id and keeps the latest
+  18 entries. Unrelated group members and other user profiles never cross into
+  the prompt.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

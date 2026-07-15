@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -202,6 +204,7 @@ def rendered_contracts() -> dict[Path, str]:
             parse_memory_extraction_response,
             parse_memory_supersede_response,
         ),
+        "cross_chat_history": _cross_chat_history_contract(),
     }
 
     key_cases = [
@@ -426,6 +429,82 @@ def _memory_extraction_contract(
         "message_cases": message_inputs,
         "response_cases": response_cases,
     }
+
+
+def _cross_chat_history_contract() -> dict:
+    with contextlib.redirect_stdout(io.StringIO()):
+        from chat_window.chat_window import ChatWindow
+    from database_manager import DatabaseManager
+
+    class FixtureModelManager:
+        characters = ["ran", "moca", "kasumi", "arisa"]
+        names = {
+            "ran": "美竹兰",
+            "moca": "青叶摩卡",
+            "kasumi": "户山香澄",
+            "arisa": "市谷有咲",
+        }
+
+        def get_display_name(self, character: str) -> str:
+            return self.names.get(character, character)
+
+    class Harness:
+        _normalize_group_characters = ChatWindow._normalize_group_characters
+        _characters_for_group_key = ChatWindow._characters_for_group_key
+        _compact_history_text = staticmethod(ChatWindow._compact_history_text)
+        _split_group_history_message = ChatWindow._split_group_history_message
+        _append_unified_history_item = ChatWindow._append_unified_history_item
+        _history_time_label = staticmethod(ChatWindow._history_time_label)
+        _history_user_label = ChatWindow._history_user_label
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        database = DatabaseManager(str(Path(temp_dir) / "data.db"))
+        try:
+            private = database.create_conversation("ran", user_key="alice")
+            private_user = database.add_message(private, "user", "  私聊里  的消息  ")
+            private_assistant = database.add_message(private, "assistant", "知道了")
+            bob = database.create_conversation("ran", user_key="bob")
+            database.add_message(bob, "user", "不应出现的用户")
+            group_user = database.add_group_message(
+                "__group__:moca|ran", "g1", "user", "群聊问题", user_key="alice"
+            )
+            group_assistant = database.add_group_message(
+                "__group__:moca|ran",
+                "g1",
+                "assistant",
+                "【青叶摩卡】\n群聊回答",
+                user_key="alice",
+            )
+            database.add_group_message(
+                "__group__:arisa|kasumi",
+                "g2",
+                "user",
+                "不相关群聊",
+                user_key="alice",
+            )
+            for table, message_id, created_at in (
+                ("messages", private_user, "2026-07-14 08:01:02"),
+                ("messages", private_assistant, "2026-07-14 08:02:03"),
+                ("group_messages", group_user, "2026-07-15 09:03:04"),
+                ("group_messages", group_assistant, "2026-07-15 09:04:05"),
+            ):
+                database._conn.execute(
+                    f"UPDATE {table} SET created_at=? WHERE id=?",
+                    (created_at, message_id),
+                )
+            database._conn.commit()
+            harness = Harness()
+            harness._db = database
+            harness._model_manager = FixtureModelManager()
+            harness._is_group_chat = False
+            harness._chat_user_key = "alice"
+            harness._user_name = "Alice"
+            expected = ChatWindow._unified_history_context(
+                harness, "ran", limit=18
+            )
+        finally:
+            database.close()
+    return {"expected": expected}
 
 
 def _relationship_prompt_cases(build_relationship_context) -> list[dict]:

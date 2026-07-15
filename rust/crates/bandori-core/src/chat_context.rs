@@ -2,6 +2,7 @@ use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
 };
 use crate::config::ConfigDocument;
+use crate::cross_chat_history::build_cross_chat_history;
 use crate::database::{Database, DatabaseError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,6 +73,18 @@ pub fn build_native_chat_request(
     };
     let mut dynamic_context =
         build_relationship_context(database, character, user_key, relationship_display_name)?;
+    let cross_chat_enabled = config
+        .get("llm_cross_chat_history_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if cross_chat_enabled {
+        let cross_chat =
+            build_cross_chat_history(database, character, user_key, user_display_name, 18)?;
+        if !cross_chat.is_empty() {
+            dynamic_context.push_str("\n\n【跨聊天记录】\n");
+            dynamic_context.push_str(&cross_chat);
+        }
+    }
     let current_time_instruction = current_time_instruction.trim();
     if !current_time_instruction.is_empty() {
         dynamic_context.push_str("\n\n【后置提示词】\n");

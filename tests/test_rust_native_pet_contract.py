@@ -304,6 +304,22 @@ def test_native_chat_attachments_are_copied_sanitized_and_inlined_by_rust():
     assert "backend_.prepareChatTurn" in window
 
 
+def test_native_cross_chat_context_is_filtered_and_python_contract_backed():
+    history = source("rust/crates/bandori-core/src/cross_chat_history.rs")
+    context = source("rust/crates/bandori-core/src/chat_context.rs")
+    exporter = source("tools/export_rust_contracts.py")
+
+    assert "pub fn build_cross_chat_history" in history
+    assert "generated_python_cross_chat_history_matches_rust" in history
+    assert ".get_conversations(Some(member), Some(user_key))" in history
+    assert ".group_chats(Some(user_key))" in history
+    assert "characters_for_group_key" in history
+    assert "compact_history_text" in history
+    assert "build_cross_chat_history" in context
+    assert '"llm_cross_chat_history_enabled"' in context
+    assert "_cross_chat_history_contract" in exporter
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")
