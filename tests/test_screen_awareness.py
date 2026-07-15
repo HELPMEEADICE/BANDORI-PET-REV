@@ -10,6 +10,8 @@ from screen_awareness import (
     SCREEN_AWARENESS_MODEL_MODE_AUX,
     SCREEN_AWARENESS_MODEL_MODE_MAIN,
     ScreenAwarenessVisionWorker,
+    clamp_screen_awareness_interval,
+    clamp_screen_awareness_screenshot_width,
     normalize_screen_awareness_model_mode,
     screen_awareness_aux_config,
     screen_awareness_desktop_state,
@@ -17,6 +19,10 @@ from screen_awareness import (
 
 
 class ScreenAwarenessTest(unittest.TestCase):
+    def test_numeric_settings_tolerate_infinite_values(self):
+        self.assertEqual(30, clamp_screen_awareness_interval(float("inf")))
+        self.assertEqual(1920, clamp_screen_awareness_screenshot_width(float("inf")))
+
     def test_model_mode_normalization_defaults_to_main(self):
         self.assertEqual(SCREEN_AWARENESS_MODEL_MODE_MAIN, normalize_screen_awareness_model_mode(None))
         self.assertEqual(SCREEN_AWARENESS_MODEL_MODE_MAIN, normalize_screen_awareness_model_mode("unknown"))
