@@ -59,3 +59,25 @@ def test_aux_translation_request_uses_compatible_user_agent():
 
     assert result == "translation"
     assert requests[0][0].get_header("User-agent") == OPENAI_COMPAT_USER_AGENT
+
+
+def test_aux_translation_removes_reasoning_before_tts():
+    response = io.BytesIO(json.dumps({
+        "choices": [{
+            "message": {
+                "content": "<thinking>先分析语气</thinking>Hello!",
+                "reasoning_content": "hidden reasoning",
+            },
+        }],
+    }).encode("utf-8"))
+    config = {
+        "llm_aux_api_url": "https://example.com/v1",
+        "llm_aux_api_key": "secret",
+        "llm_aux_model_id": "translation-model",
+        "llm_aux_enable_thinking": True,
+    }
+
+    with patch("tts_manager.urllib.request.urlopen", return_value=response):
+        result = _translate_to_selected_language(config, "你好", "English")
+
+    assert result == "Hello!"
