@@ -1,0 +1,18 @@
+[package]
+name = "bandori-live2d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bandori-core = { path = "../bandori-core" }
+dunce.workspace = true
+mlua.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tar.workspace = true
+zstd.workspace = true

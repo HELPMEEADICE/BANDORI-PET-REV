@@ -13,7 +13,7 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg OpenGLWidgets)
 
 find_package(CxxQt 0.9 QUIET)
 if(NOT CxxQt_FOUND)

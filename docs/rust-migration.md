@@ -11,10 +11,11 @@ This branch migrates BandoriPet with three fixed constraints:
 
 `bandori-core` is Qt-independent and owns configuration, model metadata, database
 repositories, IPC message semantics, LLM/MCP orchestration, reminders and service
-lifecycle. `bandori-qt-bridge` exposes narrow Rust QObjects through CXX-Qt. Native
-Qt code owns the event loop, widgets, platform window flags, MOC/RCC resources and
-Qt-Fluent-Widgets composition. Each pet remains an isolated OS process with its
-own LuaJIT state and OpenGL context.
+lifecycle. `bandori-live2d` is also Qt-independent and owns one isolated LuaJIT
+state plus renderer per pet. `bandori-qt-bridge` exposes narrow Rust QObjects
+through CXX-Qt. Native Qt code owns the event loop, widgets, platform window flags,
+MOC/RCC resources and Qt-Fluent-Widgets composition. Each pet remains an isolated
+OS process with its own LuaJIT state and OpenGL context.
 
 LuaJIT is embedded from Rust with `mlua`'s LuaJIT backend. Existing Cubism 2 and
 Cubism 3 Lua modules remain the semantic baseline. The Rust renderer supplies the
@@ -63,8 +64,15 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   sanitization are available in `bandori-core`. History search/filtering, group
   lists, daily/hourly analytics, character-album aggregation and atomic SQLite
   backup/restore are also ported.
-- Pending: LuaJIT Live2D process replacement, application services, full UI
-  replacement and packaging.
+- In progress: the Rust LuaJIT host, secure directory/`.zst` resource loader,
+  MOC/MOC3 runtime isolation, Qt GL-procedure callback, logical/physical resize
+  split and side-effect-free MOC3 redraw are implemented. The native
+  `bandori-pet-renderer-rust` executable provides the isolated QOpenGLWidget pet
+  process boundary. Headless runtime/contract tests pass; native GL comparison
+  still awaits a workstation or CI runner with Qt 6 and a display-capable GL
+  context.
+- Pending: production pet IPC/supervision, SSAA framebuffer parity, application
+  services, full UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain
@@ -73,10 +81,14 @@ independent of that local limitation.
 ## Build entry points
 
 - Core checks: `cargo test -p bandori-core`
+- Live2D host checks: `cargo test -p bandori-live2d`
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by
   `cmake --build build-rust --config Release`
 
-The native build requires Qt 6.5+ with Core, Gui, Widgets and Svg, a C++17 compiler,
-Rust 1.85+, CMake 3.24+, and CXX-Qt 0.9. CMake can discover an installed CXX-Qt
-package or fetch its pinned CMake integration at configure time.
+The native build requires Qt 6.5+ with Core, Gui, Widgets, OpenGLWidgets and Svg,
+a C++17 compiler, Rust 1.85+, CMake 3.24+, and CXX-Qt 0.9. CMake can discover an
+installed CXX-Qt package or fetch its pinned CMake integration at configure time.
+GNU-target Windows builds of vendored LuaJIT also require a `make` command (the
+MSYS2 `mingw32-make` binary can be exposed under that name); MSVC builds use the
+LuaJIT MSVC path instead.

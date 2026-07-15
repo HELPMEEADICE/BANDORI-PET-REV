@@ -11,6 +11,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 bandori-core = { path = "../bandori-core" }
+bandori-live2d = { path = "../bandori-live2d" }
 cxx = "1.0"
 cxx-qt = "0.9"
 cxx-qt-lib = { version = "0.9", features = ["qt_gui"] }
