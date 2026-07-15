@@ -53,6 +53,7 @@ private:
     QWidget* createModelsPage();
     QWidget* createChatPage();
     QWidget* createMemoryPage();
+    QWidget* createUserProfilesPage();
     QWidget* createLlmSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
@@ -87,6 +88,15 @@ private:
     void saveNativeMemory();
     void deleteSelectedNativeMemories();
     void startNewNativeMemory();
+    void loadNativeUserProfiles();
+    void syncNativeUserProfileControls();
+    void loadSelectedNativeUserProfile();
+    bool mutateNativeUserProfile(const QJsonObject& command);
+    void activateSelectedNativeUserProfile();
+    void createNativeUserProfile();
+    void saveSelectedNativeUserProfile();
+    void deleteSelectedNativeUserProfile();
+    void chooseNativeUserAvatar();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -243,6 +253,18 @@ private:
     qfw::PrimaryPushButton* memorySaveButton_ = nullptr;
     qfw::PushButton* memoryDeleteButton_ = nullptr;
     qfw::CaptionLabel* memoryStatusLabel_ = nullptr;
+    QJsonObject userProfilesState_;
+    bool updatingUserProfileControls_ = false;
+    qfw::ComboBox* userProfileComboBox_ = nullptr;
+    qfw::LineEdit* userProfileNameEdit_ = nullptr;
+    qfw::LineEdit* userProfileColorEdit_ = nullptr;
+    qfw::LineEdit* userProfileAvatarPathEdit_ = nullptr;
+    qfw::PushButton* userProfileChooseAvatarButton_ = nullptr;
+    qfw::PushButton* userProfileActivateButton_ = nullptr;
+    qfw::PushButton* userProfileNewButton_ = nullptr;
+    qfw::PrimaryPushButton* userProfileSaveButton_ = nullptr;
+    qfw::PushButton* userProfileDeleteButton_ = nullptr;
+    qfw::CaptionLabel* userProfileStatusLabel_ = nullptr;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

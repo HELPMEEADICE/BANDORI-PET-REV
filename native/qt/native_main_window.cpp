@@ -397,18 +397,21 @@ void NativeMainWindow::setupUi() {
     QWidget* models = createModelsPage();
     chatPage_ = createChatPage();
     QWidget* memory = createMemoryPage();
+    QWidget* userProfiles = createUserProfilesPage();
     QWidget* llmSettings = createLlmSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
     memory->setObjectName(QStringLiteral("memoryPage"));
+    userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
+    addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(
         settings,
@@ -851,6 +854,122 @@ QWidget* NativeMainWindow::createMemoryPage() {
         deleteSelectedNativeMemories();
     });
     memoryDeleteButton_->setEnabled(false);
+    return page;
+}
+
+QWidget* NativeMainWindow::createUserProfilesPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("User profiles"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Each profile owns a separate private chat, group chat, relationship, and memory partition."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* profiles = new qfw::GroupHeaderCardWidget(tr("Profile identity"), content);
+    userProfileComboBox_ = new qfw::ComboBox(profiles);
+    userProfileComboBox_->setMinimumWidth(280);
+    userProfileNameEdit_ = new qfw::LineEdit(profiles);
+    userProfileNameEdit_->setPlaceholderText(tr("Display name"));
+    userProfileColorEdit_ = new qfw::LineEdit(profiles);
+    userProfileColorEdit_->setPlaceholderText(QStringLiteral("#e4004f"));
+    userProfileColorEdit_->setMaxLength(7);
+    userProfileColorEdit_->setFixedWidth(120);
+
+    auto* avatarEditor = new QWidget(profiles);
+    auto* avatarLayout = new QHBoxLayout(avatarEditor);
+    avatarLayout->setContentsMargins(0, 0, 0, 0);
+    avatarLayout->setSpacing(8);
+    userProfileAvatarPathEdit_ = new qfw::LineEdit(avatarEditor);
+    userProfileAvatarPathEdit_->setPlaceholderText(tr("Optional avatar image path"));
+    userProfileChooseAvatarButton_ = new qfw::PushButton(tr("Choose image"), avatarEditor);
+    avatarLayout->addWidget(userProfileAvatarPathEdit_, 1);
+    avatarLayout->addWidget(userProfileChooseAvatarButton_);
+
+    profiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Saved profile"),
+        tr("Selecting previews a profile; activation is explicit"),
+        userProfileComboBox_);
+    profiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Person),
+        tr("Display name"),
+        tr("Used as the user's name in compatible prompts and chat UI"),
+        userProfileNameEdit_);
+    profiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Palette),
+        tr("Avatar color"),
+        tr("Six-digit #RRGGBB color"),
+        userProfileColorEdit_);
+    profiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Photo),
+        tr("Avatar image"),
+        tr("Optional local image retained for chat-surface compatibility"),
+        avatarEditor);
+
+    auto* actions = new qfw::GroupHeaderCardWidget(tr("Profile actions"), content);
+    auto* actionEditor = new QWidget(actions);
+    auto* actionLayout = new QHBoxLayout(actionEditor);
+    actionLayout->setContentsMargins(0, 0, 0, 0);
+    actionLayout->setSpacing(8);
+    userProfileStatusLabel_ = new qfw::CaptionLabel(tr("Loading profiles"), actionEditor);
+    userProfileActivateButton_ = new qfw::PushButton(tr("Set current"), actionEditor);
+    userProfileNewButton_ = new qfw::PushButton(tr("Create new"), actionEditor);
+    userProfileSaveButton_ = new qfw::PrimaryPushButton(tr("Save selected"), actionEditor);
+    userProfileDeleteButton_ = new qfw::PushButton(tr("Delete"), actionEditor);
+    actionLayout->addWidget(userProfileStatusLabel_, 1);
+    actionLayout->addWidget(userProfileActivateButton_);
+    actionLayout->addWidget(userProfileNewButton_);
+    actionLayout->addWidget(userProfileSaveButton_);
+    actionLayout->addWidget(userProfileDeleteButton_);
+    actions->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Manage profiles"),
+        tr("Changing the current profile refreshes chat and memory ownership immediately"),
+        actionEditor);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(profiles);
+    layout->addWidget(actions);
+    layout->addStretch(1);
+    content->setMinimumWidth(600);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(
+        userProfileComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (!updatingUserProfileControls_) {
+                loadSelectedNativeUserProfile();
+            }
+        });
+    connect(
+        userProfileChooseAvatarButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { chooseNativeUserAvatar(); });
+    connect(
+        userProfileActivateButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { activateSelectedNativeUserProfile(); });
+    connect(userProfileNewButton_, &QPushButton::clicked, this, [this]() {
+        createNativeUserProfile();
+    });
+    connect(userProfileSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveSelectedNativeUserProfile();
+    });
+    connect(userProfileDeleteButton_, &QPushButton::clicked, this, [this]() {
+        deleteSelectedNativeUserProfile();
+    });
     return page;
 }
 
@@ -1453,6 +1572,7 @@ void NativeMainWindow::applyBackendState() {
         }
     }
     populateModelList();
+    loadNativeUserProfiles();
     populateChatCharacters();
     populateMemoryCharacters();
     populateReminderCharacters();
@@ -2149,6 +2269,181 @@ void NativeMainWindow::startNewNativeMemory() {
     memoryContentEdit_->clear();
     memoryDeleteButton_->setEnabled(false);
     memoryContentEdit_->setFocus();
+}
+
+void NativeMainWindow::loadNativeUserProfiles() {
+    if (userProfileComboBox_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadUserProfiles(configPath_)) {
+        userProfileStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    userProfilesState_ = parseObject(backend_.getUserProfilesJson());
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    syncNativeUserProfileControls();
+}
+
+void NativeMainWindow::syncNativeUserProfileControls() {
+    if (userProfileComboBox_ == nullptr) {
+        return;
+    }
+    const QString previous = userProfileComboBox_->currentData().toString();
+    const QString active =
+        userProfilesState_.value(QStringLiteral("active_key")).toString();
+    updatingUserProfileControls_ = true;
+    userProfileComboBox_->clear();
+    for (const QJsonValue& value : userProfilesState_.value(QStringLiteral("profiles")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject profile = value.toObject();
+        const QString key = profile.value(QStringLiteral("key")).toString();
+        QString name = profile.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) {
+            name = tr("Current user");
+        }
+        const QString label = key == active
+            ? tr("%1 · current").arg(name)
+            : (key == name || key == QStringLiteral("__default__")
+                   ? name
+                   : QStringLiteral("%1 · %2").arg(name, key));
+        userProfileComboBox_->addItem(label, QVariant(), key);
+    }
+    QString selected = previous;
+    if (selected.isEmpty() || userProfileComboBox_->findData(selected) < 0) {
+        selected = active;
+    }
+    const int index = userProfileComboBox_->findData(selected);
+    userProfileComboBox_->setCurrentIndex(index < 0 ? 0 : index);
+    updatingUserProfileControls_ = false;
+    loadSelectedNativeUserProfile();
+}
+
+void NativeMainWindow::loadSelectedNativeUserProfile() {
+    if (userProfileComboBox_ == nullptr || updatingUserProfileControls_) {
+        return;
+    }
+    const QString key = userProfileComboBox_->currentData().toString();
+    QJsonObject selected;
+    for (const QJsonValue& value : userProfilesState_.value(QStringLiteral("profiles")).toArray()) {
+        if (value.isObject()
+            && value.toObject().value(QStringLiteral("key")).toString() == key) {
+            selected = value.toObject();
+            break;
+        }
+    }
+    userProfileNameEdit_->setText(selected.value(QStringLiteral("name")).toString());
+    userProfileColorEdit_->setText(
+        selected.value(QStringLiteral("avatar_color")).toString(QStringLiteral("#e4004f")));
+    userProfileAvatarPathEdit_->setText(
+        selected.value(QStringLiteral("avatar_path")).toString());
+    const QString active =
+        userProfilesState_.value(QStringLiteral("active_key")).toString();
+    const bool exists = !selected.isEmpty();
+    userProfileActivateButton_->setEnabled(exists && key != active);
+    userProfileSaveButton_->setEnabled(exists);
+    userProfileDeleteButton_->setEnabled(exists);
+    userProfileStatusLabel_->setText(
+        key == active
+            ? tr("This is the current user partition")
+            : tr("Previewing %1; click Set current to switch partitions").arg(key));
+}
+
+bool NativeMainWindow::mutateNativeUserProfile(const QJsonObject& command) {
+    if (!backend_.mutateUserProfile(configPath_, compactJson(command))) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        userProfileStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    userProfilesState_ = parseObject(backend_.getUserProfilesJson());
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    syncNativeUserProfileControls();
+    refreshNativeMemoryState();
+    if (activeChatRequestId_ == 0 && !groupSequenceActive_) {
+        refreshChatState({}, true);
+    }
+    return true;
+}
+
+void NativeMainWindow::activateSelectedNativeUserProfile() {
+    const QString key = userProfileComboBox_->currentData().toString();
+    if (key.isEmpty()) {
+        return;
+    }
+    if (mutateNativeUserProfile({
+            {QStringLiteral("op"), QStringLiteral("activate_profile")},
+            {QStringLiteral("key"), key},
+        })) {
+        userProfileStatusLabel_->setText(tr("Switched to user profile %1").arg(key));
+    }
+}
+
+void NativeMainWindow::createNativeUserProfile() {
+    QString name = userProfileNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        name = tr("New user");
+    }
+    if (mutateNativeUserProfile({
+            {QStringLiteral("op"), QStringLiteral("create_profile")},
+            {QStringLiteral("name"), name},
+            {QStringLiteral("avatar_color"), userProfileColorEdit_->text().trimmed()},
+            {QStringLiteral("avatar_path"), userProfileAvatarPathEdit_->text().trimmed()},
+        })) {
+        userProfileStatusLabel_->setText(tr("Created and activated user profile %1").arg(name));
+    }
+}
+
+void NativeMainWindow::saveSelectedNativeUserProfile() {
+    const QString key = userProfileComboBox_->currentData().toString();
+    if (key.isEmpty()) {
+        return;
+    }
+    if (mutateNativeUserProfile({
+            {QStringLiteral("op"), QStringLiteral("update_profile")},
+            {QStringLiteral("key"), key},
+            {QStringLiteral("name"), userProfileNameEdit_->text().trimmed()},
+            {QStringLiteral("avatar_color"), userProfileColorEdit_->text().trimmed()},
+            {QStringLiteral("avatar_path"), userProfileAvatarPathEdit_->text().trimmed()},
+        })) {
+        userProfileStatusLabel_->setText(tr("Saved user profile %1").arg(key));
+    }
+}
+
+void NativeMainWindow::deleteSelectedNativeUserProfile() {
+    const QString key = userProfileComboBox_->currentData().toString();
+    if (key.isEmpty()) {
+        return;
+    }
+    if (QMessageBox::warning(
+            this,
+            tr("Delete user profile"),
+            tr("Delete profile %1? Existing chat and memory rows remain in its database partition.")
+                .arg(key),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+    if (mutateNativeUserProfile({
+            {QStringLiteral("op"), QStringLiteral("delete_profile")},
+            {QStringLiteral("key"), key},
+        })) {
+        userProfileStatusLabel_->setText(tr("Deleted user profile %1").arg(key));
+    }
+}
+
+void NativeMainWindow::chooseNativeUserAvatar() {
+    const QString selected = QFileDialog::getOpenFileName(
+        this,
+        tr("Choose user avatar"),
+        userProfileAvatarPathEdit_->text(),
+        tr("Images (*.png *.jpg *.jpeg *.webp *.bmp);;All files (*)"));
+    if (!selected.isEmpty()) {
+        userProfileAvatarPathEdit_->setText(QDir::cleanPath(selected));
+    }
 }
 
 void NativeMainWindow::syncSettingsControls() {

@@ -605,6 +605,44 @@ def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     assert "QAbstractItemView::ExtendedSelection" in window
 
 
+def test_native_user_profiles_normalize_sync_runtime_and_refresh_owned_views():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    profiles = source("rust/crates/bandori-core/src/user_profiles.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod user_profiles;" in core
+    assert "pub struct NativeUserProfile" in profiles
+    assert "pub struct NativeUserProfilesState" in profiles
+    assert "enum NativeUserProfileMutation" in profiles
+    assert "pub fn load_native_user_profiles" in profiles
+    assert "pub fn mutate_native_user_profiles" in profiles
+    assert "DEFAULT_USER_PROFILE_KEY" in profiles
+    assert "make_profile_key" in profiles
+    assert "persist_state" in profiles
+    assert "recover_after_last_delete" in profiles
+    assert "user_profiles_json" in backend
+    assert "MAX_USER_PROFILE_COMMAND_BYTES" in backend
+    assert "fn load_user_profiles(" in backend
+    assert "fn mutate_user_profile(" in backend
+    assert "set_runtime_config_json" in backend
+    assert '"getUserProfilesJson"' in bridge_test
+    assert '"loadUserProfiles"' in bridge_test
+    assert '"mutateUserProfile"' in bridge_test
+    assert "QWidget* createUserProfilesPage()" in header
+    assert "qfw::ComboBox* userProfileComboBox_" in header
+    assert "backend_.loadUserProfiles" in window
+    assert "backend_.mutateUserProfile" in window
+    assert 'QStringLiteral("create_profile")' in window
+    assert 'QStringLiteral("update_profile")' in window
+    assert 'QStringLiteral("activate_profile")' in window
+    assert 'QStringLiteral("delete_profile")' in window
+    assert "refreshNativeMemoryState();" in window
+    assert "refreshChatState({}, true);" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

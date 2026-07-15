@@ -22,6 +22,7 @@ pub mod ffi {
         #[qproperty(QString, reminder_state_json)]
         #[qproperty(QString, llm_settings_json)]
         #[qproperty(QString, memory_snapshot_json)]
+        #[qproperty(QString, user_profiles_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -108,6 +109,18 @@ pub mod ffi {
             database_path: &QString,
             character: &QString,
             user_key: &QString,
+            command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadUserProfiles"]
+        fn load_user_profiles(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "mutateUserProfile"]
+        fn mutate_user_profile(
+            self: Pin<&mut Self>,
+            config_path: &QString,
             command_json: &QString,
         ) -> bool;
 
@@ -345,6 +358,7 @@ use bandori_core::relationship_analysis::{
 use bandori_core::reminder::{
     LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
 };
+use bandori_core::user_profiles::{load_native_user_profiles, mutate_native_user_profiles};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest, TokenUsage,
@@ -363,6 +377,7 @@ const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
 const MAX_REMINDER_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_LLM_SETTINGS_BYTES: usize = 256 * 1024;
 const MAX_MEMORY_COMMAND_BYTES: usize = 128 * 1024;
+const MAX_USER_PROFILE_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -423,6 +438,7 @@ pub struct BackendRust {
     reminder_state_json: QString,
     llm_settings_json: QString,
     memory_snapshot_json: QString,
+    user_profiles_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -469,6 +485,7 @@ impl Default for BackendRust {
             ),
             llm_settings_json: QString::from("{}"),
             memory_snapshot_json: QString::from("{}"),
+            user_profiles_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -830,6 +847,75 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Memory change error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_user_profiles(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_user_profiles(Path::new(&config_path.to_string())) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native user profile serialization cannot fail");
+                self.as_mut()
+                    .set_user_profiles_json(QString::from(&payload));
+                if let Ok(mut config) = ConfigDocument::load(Path::new(&config_path.to_string())) {
+                    config.set("active_user_profile", json!(state.active_key));
+                    let runtime = NativeRuntimeSnapshot::from_config(&config);
+                    let runtime_json = serde_json::to_string(&runtime)
+                        .expect("native runtime snapshot serialization cannot fail");
+                    self.as_mut()
+                        .set_runtime_config_json(QString::from(&runtime_json));
+                }
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("User profile load error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn mutate_user_profile(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        command_json: &QString,
+    ) -> bool {
+        let config_path = config_path.to_string();
+        match mutate_native_user_profiles(
+            Path::new(&config_path),
+            &command_json.to_string(),
+            MAX_USER_PROFILE_COMMAND_BYTES,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native user profile serialization cannot fail");
+                self.as_mut()
+                    .set_user_profiles_json(QString::from(&payload));
+                match ConfigDocument::load(Path::new(&config_path)) {
+                    Ok(config) => {
+                        let runtime = NativeRuntimeSnapshot::from_config(&config);
+                        let runtime_json = serde_json::to_string(&runtime)
+                            .expect("native runtime snapshot serialization cannot fail");
+                        self.as_mut()
+                            .set_runtime_config_json(QString::from(&runtime_json));
+                    }
+                    Err(error) => {
+                        self.as_mut().set_status(QString::from(&format!(
+                            "User profile saved but runtime reload failed: {error}"
+                        )));
+                        return false;
+                    }
+                }
+                self.as_mut()
+                    .set_status(QString::from("Native user profile saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "User profile change error: {error}"
+                )));
                 false
             }
         }
