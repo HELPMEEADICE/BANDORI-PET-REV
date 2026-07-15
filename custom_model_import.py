@@ -352,7 +352,11 @@ def import_from_zip(zip_path: str, display_name: str,
     archive = Path(zip_path)
     if not archive.is_file():
         raise CustomModelImportError("source_missing")
-    if not zipfile.is_zipfile(archive):
+    try:
+        is_zip = zipfile.is_zipfile(archive)
+    except OSError as exc:
+        raise CustomModelImportError("bad_zip", detail=str(exc)) from exc
+    if not is_zip:
         raise CustomModelImportError("bad_zip")
 
     with tempfile.TemporaryDirectory(prefix="bandori_custom_model_") as tmp:
