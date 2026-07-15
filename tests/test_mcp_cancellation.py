@@ -14,6 +14,15 @@ class McpCancellationTests(unittest.TestCase):
     def tearDown(self):
         mcp_bridge.close_mcp_clients()
 
+    def test_server_timeout_is_normalized_for_malformed_and_extreme_values(self):
+        self.assertEqual(
+            30,
+            mcp_bridge._server_timeout_seconds({"timeout_seconds": float("inf")}),
+        )
+        self.assertEqual(1, mcp_bridge._server_timeout_seconds({"timeout_seconds": -5}))
+        self.assertEqual(3600, mcp_bridge._server_timeout_seconds({"timeout_seconds": 9999}))
+        self.assertEqual(45, mcp_bridge._server_timeout_seconds({"timeout_seconds": "45"}))
+
     def test_stdio_request_stops_when_cancelled(self):
         client = object.__new__(mcp_bridge.StdioMcpClient)
         client._server = {"timeout_seconds": 30}
