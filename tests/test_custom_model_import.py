@@ -51,6 +51,42 @@ def _write_model3(root: Path) -> None:
 
 
 class CustomModelImportTest(unittest.TestCase):
+    def test_delete_removes_marked_character_inside_models_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models = Path(temp_dir) / "models"
+            character = models / "Custom Character"
+            character.mkdir(parents=True)
+            (character / custom_model_import.CUSTOM_MARKER_FILENAME).write_text(
+                "{}",
+                encoding="utf-8",
+            )
+
+            with patch.object(custom_model_import, "MODELS_DIR", models):
+                custom_model_import.delete_custom_character("Custom Character")
+
+            self.assertFalse(character.exists())
+
+    def test_delete_rejects_character_outside_models_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            models = root / "models"
+            outside = root / "outside"
+            models.mkdir()
+            outside.mkdir()
+            (outside / custom_model_import.CUSTOM_MARKER_FILENAME).write_text(
+                "{}",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(custom_model_import, "MODELS_DIR", models),
+                self.assertRaises(CustomModelImportError) as raised,
+            ):
+                custom_model_import.delete_custom_character("../outside")
+
+            self.assertEqual("not_custom", raised.exception.code)
+            self.assertTrue(outside.is_dir())
+
     def test_import_accepts_normal_relative_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -67,14 +67,27 @@ def sanitize_costume_id(costume_id: str, fallback: str = "default") -> str:
     return cleaned or fallback
 
 
+def _custom_character_dir(character: str) -> Path | None:
+    raw = str(character or "")
+    if not raw or Path(raw).name != raw or PureWindowsPath(raw).name != raw:
+        return None
+    try:
+        models_root = MODELS_DIR.resolve()
+        target = (MODELS_DIR / raw).resolve()
+    except (OSError, RuntimeError):
+        return None
+    return target if target.parent == models_root else None
+
+
 def is_custom_character(character: str) -> bool:
-    return (MODELS_DIR / character / CUSTOM_MARKER_FILENAME).is_file()
+    target = _custom_character_dir(character)
+    return bool(target and (target / CUSTOM_MARKER_FILENAME).is_file())
 
 
 def delete_custom_character(character: str) -> None:
     """Delete an imported custom character. Refuses to touch built-ins."""
-    target = MODELS_DIR / character
-    if not is_custom_character(character):
+    target = _custom_character_dir(character)
+    if target is None or not (target / CUSTOM_MARKER_FILENAME).is_file():
         raise CustomModelImportError("not_custom")
     shutil.rmtree(target)
 
