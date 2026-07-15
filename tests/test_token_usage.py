@@ -44,6 +44,17 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(responses["input_tokens"], 80)
         self.assertEqual(responses["output_tokens"], 20)
 
+    def test_normalize_usage_tolerates_infinite_provider_counts(self):
+        usage = normalize_token_usage({
+            "input_tokens": float("inf"),
+            "output_tokens": float("-inf"),
+            "total_tokens": float("inf"),
+        })
+
+        self.assertEqual(0, usage["input_tokens"])
+        self.assertEqual(0, usage["output_tokens"])
+        self.assertEqual(0, usage["total_tokens"])
+
     def test_merges_exact_and_estimated_usage(self):
         merged = merge_token_usage(
             {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},

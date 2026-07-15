@@ -52,7 +52,7 @@ def history_message_query_limit(value, default: int) -> int | None:
 def _non_negative_int(value) -> int:
     try:
         return max(0, int(value or 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
