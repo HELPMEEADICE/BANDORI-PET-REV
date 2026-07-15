@@ -80,12 +80,14 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   for alpha input passthrough, retains the existing threshold and short hit grace,
   and supports locked/local dragging. Optional group dragging sends cumulative
   `PEER_DRAG` updates and a reliable final state, including message-loss recovery
-  and completed-session deduplication.
+  and completed-session deduplication. `PEER_POS` broadcasts and nearest-peer
+  selection now drive mutual gaze through the same global-to-logical 600 px
+  clamped target used for cursor head tracking.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: mutual gaze/peer position and higher-level pet interactions, native
-  visual/driver parity, application services, full UI replacement and packaging.
+- Pending: higher-level pet interactions, native visual/driver parity,
+  application services, full UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain

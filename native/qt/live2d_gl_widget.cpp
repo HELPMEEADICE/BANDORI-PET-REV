@@ -91,6 +91,24 @@ void Live2dGlWidget::setDragLocked(bool locked) {
     dragLocked_ = locked;
 }
 
+void Live2dGlWidget::setHeadTrackingEnabled(bool enabled) {
+    headTrackingEnabled_ = enabled;
+    gazeWasApplied_ = false;
+    update();
+}
+
+void Live2dGlWidget::setGazeTargetGlobal(const QPoint& globalPosition) {
+    gazeTargetGlobal_ = globalPosition;
+    gazeWasApplied_ = false;
+    update();
+}
+
+void Live2dGlWidget::clearGazeTarget() {
+    gazeTargetGlobal_.reset();
+    gazeWasApplied_ = false;
+    update();
+}
+
 void Live2dGlWidget::setLipSyncMaxOpen(double value) {
     lipSyncMaxOpen_ = std::clamp(value, 0.0, 1.0);
     lipSyncTarget_ = std::clamp(lipSyncTarget_, 0.0, lipSyncMaxOpen_);
@@ -230,6 +248,7 @@ void Live2dGlWidget::paintGL() {
         ? std::clamp((now - lastFrameMsec_) / 1000.0, 0.0, 0.1)
         : 0.0;
     lastFrameMsec_ = now;
+    applyGazeTracking();
     const bool lipSyncFresh = now - lipSyncLastMsec_ <= 180;
     const double lipTarget = lipSyncFresh ? lipSyncTarget_ : 0.0;
     const double lipFormTarget = lipSyncFresh ? lipSyncFormTarget_ : 0.0;
@@ -307,12 +326,6 @@ void Live2dGlWidget::mouseMoveEvent(QMouseEvent* event) {
         emit windowDragMoved(actual.x(), actual.y());
         event->accept();
         return;
-    }
-    if (host_ != nullptr) {
-        const QPointF position = event->position();
-        if (!bandori_live2d_drag(host_, position.x(), position.y())) {
-            reportLastError("update gaze");
-        }
     }
     QOpenGLWidget::mouseMoveEvent(event);
 }
@@ -413,6 +426,40 @@ void Live2dGlWidget::clearTarget(const QSize& size) {
     extra->glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     gl->glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
     gl->glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+void Live2dGlWidget::applyGazeTracking() {
+    if (host_ == nullptr || draggingWindow_) {
+        return;
+    }
+    QPoint target;
+    if (gazeTargetGlobal_.has_value()) {
+        target = *gazeTargetGlobal_;
+    } else if (headTrackingEnabled_) {
+        target = QCursor::pos();
+    } else {
+        return;
+    }
+    const QPoint windowOrigin = mapToGlobal(QPoint(0, 0));
+    if (gazeWasApplied_ && target == lastAppliedGazeGlobal_
+        && windowOrigin == lastAppliedGazeWindowOrigin_) {
+        return;
+    }
+    const QPointF center(width() * 0.5, height() * 0.5);
+    const QPointF targetLocal = QPointF(target - windowOrigin);
+    QPointF direction = targetLocal - center;
+    const double distance = std::hypot(direction.x(), direction.y());
+    if (distance > 600.0) {
+        direction *= 600.0 / distance;
+    }
+    const QPointF local = center + direction;
+    if (!bandori_live2d_drag(host_, local.x(), local.y())) {
+        reportLastError("update gaze");
+        return;
+    }
+    lastAppliedGazeGlobal_ = target;
+    lastAppliedGazeWindowOrigin_ = windowOrigin;
+    gazeWasApplied_ = true;
 }
 
 void Live2dGlWidget::requestAlphaSample() {

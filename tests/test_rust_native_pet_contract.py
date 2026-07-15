@@ -39,6 +39,17 @@ def test_native_drag_ipc_uses_cumulative_updates_and_reliable_final_state():
     assert "true);" in pet
 
 
+def test_native_mutual_gaze_broadcasts_positions_and_clamps_global_target():
+    pet = source("native/qt/pet_main.cpp")
+    widget = source("native/qt/live2d_gl_widget.cpp")
+
+    assert 'QStringLiteral("PEER_POS\\t")' in pet
+    assert "peerPositionTimer.setInterval(200)" in pet
+    assert "nearestDistance" in pet
+    assert "distance > 600.0" in widget
+    assert "bandori_live2d_drag(host_, local.x(), local.y())" in widget
+
+
 def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():
     main = source("main.py")
 

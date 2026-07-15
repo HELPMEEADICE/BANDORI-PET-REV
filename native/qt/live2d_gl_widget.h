@@ -10,6 +10,7 @@
 #include <QTimer>
 
 #include <memory>
+#include <optional>
 
 class QMouseEvent;
 class QOpenGLFramebufferObject;
@@ -37,6 +38,9 @@ public:
 
     void setFramesPerSecond(int fps);
     void setDragLocked(bool locked);
+    void setHeadTrackingEnabled(bool enabled);
+    void setGazeTargetGlobal(const QPoint& globalPosition);
+    void clearGazeTarget();
     void setHitAlphaThreshold(int threshold);
     void setLipSyncMaxOpen(double value);
     void setLipSyncPose(double level, double form = 0.0);
@@ -61,6 +65,7 @@ private:
     bool syncRendererTarget(const QSize& size);
     bool blitSsaaToDefault(const QSize& targetSize);
     void clearTarget(const QSize& size);
+    void applyGazeTracking();
     void requestAlphaSample();
     void readPendingAlphaSample(const QSize& targetSize);
     bool isOpaqueAtGlobal(const QPoint& globalPosition);
@@ -95,6 +100,11 @@ private:
     qint64 lastOpaqueMsec_ = -1'000;
     bool draggingWindow_ = false;
     bool dragLocked_ = false;
+    bool headTrackingEnabled_ = true;
+    std::optional<QPoint> gazeTargetGlobal_;
+    QPoint lastAppliedGazeGlobal_;
+    QPoint lastAppliedGazeWindowOrigin_;
+    bool gazeWasApplied_ = false;
     bool dragMoved_ = false;
     QPoint dragPressGlobal_;
     QPoint dragWindowOrigin_;

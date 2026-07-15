@@ -1444,6 +1444,8 @@ def main():
                     "--hit-alpha-threshold", str(cfg.get("live2d_hit_alpha_threshold", 8)),
                     "--drag-locked", str(bool(cfg.get("drag_locked", False))).lower(),
                     "--move-all-roles-together", str(bool(cfg.get("move_all_roles_together", False))).lower(),
+                    "--head-tracking-enabled", str(bool(cfg.get("live2d_head_tracking_enabled", True))).lower(),
+                    "--mutual-gaze-enabled", str(bool(cfg.get("live2d_mutual_gaze_enabled", False))).lower(),
                     "--parent-pid", str(os.getpid()),
                     "--ipc-session", os.environ.get("BANDORI_PET_IPC_SERVER_NAME", ""),
                 ]

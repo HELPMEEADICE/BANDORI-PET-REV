@@ -59,6 +59,12 @@ int main(int argc, char* argv[]) {
     QCommandLineOption petMoveAllRolesTogether(
         QStringLiteral("pet-move-all-roles-together"),
         QStringLiteral("Mirror drag sessions across pet processes"));
+    QCommandLineOption petDisableHeadTracking(
+        QStringLiteral("pet-disable-head-tracking"),
+        QStringLiteral("Disable global cursor tracking for the pet"));
+    QCommandLineOption petMutualGaze(
+        QStringLiteral("pet-mutual-gaze"),
+        QStringLiteral("Look toward the nearest active pet process"));
     QCommandLineOption projectRoot(
         QStringLiteral("project-root"),
         QStringLiteral("BandoriPet installation root"),
@@ -79,6 +85,8 @@ int main(int argc, char* argv[]) {
          petHitAlphaThreshold,
          petDragLocked,
          petMoveAllRolesTogether,
+         petDisableHeadTracking,
+         petMutualGaze,
          projectRoot,
          userModels});
     parser.process(app);
@@ -131,6 +139,8 @@ int main(int argc, char* argv[]) {
     petSpec.hitAlphaThreshold = parser.value(petHitAlphaThreshold).toInt();
     petSpec.dragLocked = parser.isSet(petDragLocked);
     petSpec.moveAllRolesTogether = parser.isSet(petMoveAllRolesTogether);
+    petSpec.headTrackingEnabled = !parser.isSet(petDisableHeadTracking);
+    petSpec.mutualGazeEnabled = parser.isSet(petMutualGaze);
     QObject::connect(
         &supervisor,
         &bandori::PetProcessSupervisor::statusChanged,

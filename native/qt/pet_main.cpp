@@ -17,6 +17,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <limits>
 
 #ifdef Q_OS_WIN
 #define NOMINMAX
@@ -143,6 +144,16 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Mirror drag sessions across all active pet processes"),
         QStringLiteral("bool"),
         QStringLiteral("false"));
+    QCommandLineOption headTrackingEnabled(
+        QStringLiteral("head-tracking-enabled"),
+        QStringLiteral("Track the global mouse cursor when mutual gaze is disabled"),
+        QStringLiteral("bool"),
+        QStringLiteral("true"));
+    QCommandLineOption mutualGazeEnabled(
+        QStringLiteral("mutual-gaze-enabled"),
+        QStringLiteral("Look toward the nearest active pet process"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
     QCommandLineOption parentPid(
         QStringLiteral("parent-pid"),
         QStringLiteral("Quit when this supervisor process exits"),
@@ -166,6 +177,8 @@ int main(int argc, char* argv[]) {
          hitAlphaThreshold,
          dragLocked,
          moveAllRolesTogether,
+         headTrackingEnabled,
+         mutualGazeEnabled,
          parentPid,
          ipcSession});
     parser.process(app);
@@ -184,6 +197,9 @@ int main(int argc, char* argv[]) {
     widget.setFramesPerSecond(parser.value(fps).toInt());
     widget.setHitAlphaThreshold(parser.value(hitAlphaThreshold).toInt());
     widget.setDragLocked(optionBool(parser.value(dragLocked)));
+    bool headTracking = optionBool(parser.value(headTrackingEnabled), true);
+    bool mutualGaze = optionBool(parser.value(mutualGazeEnabled));
+    widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
     widget.setLipSyncMaxOpen(parser.value(lipSyncMaxOpen).toDouble());
     widget.setWindowOpacity(std::clamp(parser.value(opacity).toDouble(), 0.05, 1.0));
     widget.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
@@ -216,6 +232,59 @@ int main(int argc, char* argv[]) {
     QHash<QString, PeerDragState> peerDragStates;
     QSet<QString> completedPeerDragIds;
     QStringList completedPeerDragOrder;
+    QHash<QString, QPoint> peerPositions;
+    QPoint lastPublishedCenter;
+    bool lastPublishedCenterValid = false;
+    auto updateMutualGaze = [&widget, &mutualGaze, &peerPositions]() {
+        if (!mutualGaze || peerPositions.isEmpty()) {
+            widget.clearGazeTarget();
+            return;
+        }
+        const QPoint ownCenter = widget.geometry().center();
+        QPoint nearest;
+        qint64 nearestDistance = std::numeric_limits<qint64>::max();
+        for (auto iterator = peerPositions.cbegin(); iterator != peerPositions.cend(); ++iterator) {
+            const qint64 dx = static_cast<qint64>(iterator.value().x()) - ownCenter.x();
+            const qint64 dy = static_cast<qint64>(iterator.value().y()) - ownCenter.y();
+            const qint64 distance = dx * dx + dy * dy;
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = iterator.value();
+            }
+        }
+        widget.setGazeTargetGlobal(nearest);
+    };
+    QTimer peerPositionTimer;
+    peerPositionTimer.setInterval(200);
+    QObject::connect(
+        &peerPositionTimer,
+        &QTimer::timeout,
+        ipcClient,
+        [ipcClient,
+         &widget,
+         &mutualGaze,
+         &lastPublishedCenter,
+         &lastPublishedCenterValid,
+         characterId]() {
+            if (!mutualGaze) {
+                return;
+            }
+            const QPoint center = widget.geometry().center();
+            if (lastPublishedCenterValid && center == lastPublishedCenter) {
+                return;
+            }
+            if (ipcClient->publishLine(
+                    QStringLiteral("PEER_POS\t")
+                    + compactJson({
+                        {QStringLiteral("character"), characterId},
+                        {QStringLiteral("x"), center.x()},
+                        {QStringLiteral("y"), center.y()},
+                    }))) {
+                lastPublishedCenter = center;
+                lastPublishedCenterValid = true;
+            }
+        });
+    peerPositionTimer.start();
     QObject::connect(
         &widget,
         &bandori::Live2dGlWidget::windowDragStarted,
@@ -271,7 +340,12 @@ int main(int argc, char* argv[]) {
          &moveAllRoles,
          &peerDragStates,
          &completedPeerDragIds,
-         &completedPeerDragOrder](const QString& line) {
+         &completedPeerDragOrder,
+         &headTracking,
+         &mutualGaze,
+         &peerPositions,
+         &lastPublishedCenterValid,
+         &updateMutualGaze](const QString& line) {
             const bool peerDragFinished = line.startsWith(QStringLiteral("PEER_DRAG_END\t"));
             if (peerDragFinished || line.startsWith(QStringLiteral("PEER_DRAG\t"))) {
                 if (!moveAllRoles) {
@@ -319,6 +393,21 @@ int main(int argc, char* argv[]) {
                     ipcJsonPayload(line).value(QStringLiteral("character")).toString();
                 if (!peerCharacter.isEmpty()) {
                     peerDragStates.remove(peerCharacter);
+                    peerPositions.remove(peerCharacter);
+                    updateMutualGaze();
+                }
+                return;
+            }
+            if (line.startsWith(QStringLiteral("PEER_POS\t"))) {
+                const QJsonObject payload = ipcJsonPayload(line);
+                const QString peerCharacter = payload.value(QStringLiteral("character")).toString();
+                if (!peerCharacter.isEmpty() && peerCharacter != characterId) {
+                    peerPositions.insert(
+                        peerCharacter,
+                        QPoint(
+                            payload.value(QStringLiteral("x")).toInt(),
+                            payload.value(QStringLiteral("y")).toInt()));
+                    updateMutualGaze();
                 }
                 return;
             }
@@ -379,6 +468,17 @@ int main(int argc, char* argv[]) {
                     peerDragStates.clear();
                 }
             }
+            if (settings.contains(QStringLiteral("live2d_head_tracking_enabled"))) {
+                headTracking =
+                    settings.value(QStringLiteral("live2d_head_tracking_enabled")).toBool(true);
+            }
+            if (settings.contains(QStringLiteral("live2d_mutual_gaze_enabled"))) {
+                mutualGaze =
+                    settings.value(QStringLiteral("live2d_mutual_gaze_enabled")).toBool(false);
+                lastPublishedCenterValid = false;
+            }
+            widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
+            updateMutualGaze();
         });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, ipcClient, &bandori::PetIpcClient::stop);
     ipcClient->start();

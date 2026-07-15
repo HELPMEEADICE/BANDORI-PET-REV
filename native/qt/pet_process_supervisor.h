@@ -26,6 +26,8 @@ struct PetLaunchSpec {
     int hitAlphaThreshold = 8;
     bool dragLocked = false;
     bool moveAllRolesTogether = false;
+    bool headTrackingEnabled = true;
+    bool mutualGazeEnabled = false;
 };
 
 class PetProcessSupervisor final : public QObject {
