@@ -14,8 +14,10 @@
 #include <QMenu>
 #include <QScrollArea>
 #include <QSystemTrayIcon>
+#include <QTextBrowser>
 #include <QVariant>
 #include <QVBoxLayout>
+#include <QSignalBlocker>
 
 #include <algorithm>
 #include <utility>
@@ -115,8 +117,9 @@ NativeMainWindow::NativeMainWindow(
                     switchTo(models);
                 }
             } else if (line.startsWith(QStringLiteral("OPEN_CHAT_NATIVE\t"))) {
-                rendererStatusLabel_->setText(
-                    tr("Native chat UI is not ported yet; renderer remains active"));
+                const qsizetype separator = line.indexOf(u'\t');
+                const QJsonObject request = parseObject(line.mid(separator + 1));
+                openNativeChat(request.value(QStringLiteral("character")).toString());
             }
         });
 }
@@ -215,12 +218,15 @@ void NativeMainWindow::setupUi() {
 
     QWidget* dashboard = createDashboardPage();
     QWidget* models = createModelsPage();
+    chatPage_ = createChatPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
+    chatPage_->setObjectName(QStringLiteral("chatPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
+    addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -312,6 +318,63 @@ QWidget* NativeMainWindow::createModelsPage() {
         [this](QListWidgetItem*, QListWidgetItem*) { updateModelDetails(); });
     connect(launchSelectedButton_, &QPushButton::clicked, this, [this]() { startSelectedPet(); });
     connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadBackendState(); });
+    return page;
+}
+
+QWidget* NativeMainWindow::createChatPage() {
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(40, 42, 40, 40);
+    layout->setSpacing(12);
+
+    auto* title = new qfw::TitleLabel(tr("Native chat history"), page);
+    auto* explanation = new qfw::CaptionLabel(
+        tr("Read-only Rust view of the existing data.db. LLM composition remains on the staged Python chat path."),
+        page);
+    explanation->setWordWrap(true);
+    chatCharacterComboBox_ = new qfw::ComboBox(page);
+    chatCharacterComboBox_->setMinimumWidth(160);
+    chatConversationComboBox_ = new qfw::ComboBox(page);
+    chatConversationComboBox_->setMinimumWidth(280);
+    auto* refreshButton = new qfw::PushButton(tr("Refresh"), page);
+    auto* controls = new QHBoxLayout();
+    controls->addWidget(new qfw::BodyLabel(tr("Character"), page));
+    controls->addWidget(chatCharacterComboBox_);
+    controls->addSpacing(8);
+    controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
+    controls->addWidget(chatConversationComboBox_, 1);
+    controls->addWidget(refreshButton);
+
+    chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
+    chatTranscript_ = new QTextBrowser(page);
+    chatTranscript_->setOpenExternalLinks(false);
+    chatTranscript_->setReadOnly(true);
+
+    layout->addWidget(title);
+    layout->addWidget(explanation);
+    layout->addLayout(controls);
+    layout->addWidget(chatStatusLabel_);
+    layout->addWidget(chatTranscript_, 1);
+
+    connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshChatState(); });
+    connect(
+        chatCharacterComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (!updatingChatControls_) {
+                refreshChatState();
+            }
+        });
+    connect(
+        chatConversationComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (!updatingChatControls_) {
+                refreshChatState(chatConversationComboBox_->currentData().toString());
+            }
+        });
     return page;
 }
 
@@ -492,6 +555,7 @@ void NativeMainWindow::applyBackendState() {
         }
     }
     populateModelList();
+    populateChatCharacters();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
         configured > 1
@@ -662,6 +726,121 @@ void NativeMainWindow::updateModelDetails() {
     modelDetailsLabel_->setText(
         QStringLiteral("%1\n%2 · %3\n%4")
             .arg(modelTitle(*model), model->character, model->costume, model->path));
+}
+
+void NativeMainWindow::populateChatCharacters() {
+    if (chatCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString previous = chatCharacterComboBox_->currentData().toString();
+    updatingChatControls_ = true;
+    chatCharacterComboBox_->clear();
+    QStringList added;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        chatCharacterComboBox_->addItem(
+            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
+            QVariant(),
+            model.character);
+    }
+    int index = chatCharacterComboBox_->findData(previous);
+    if (index < 0) {
+        const QString selected = runtime_.value(QStringLiteral("selected_character")).toString();
+        index = chatCharacterComboBox_->findData(selected);
+    }
+    if (index < 0 && chatCharacterComboBox_->count() > 0) {
+        index = 0;
+    }
+    chatCharacterComboBox_->setCurrentIndex(index);
+    updatingChatControls_ = false;
+}
+
+void NativeMainWindow::refreshChatState(const QString& requestedConversationId) {
+    if (chatCharacterComboBox_ == nullptr || chatTranscript_ == nullptr) {
+        return;
+    }
+    const QString character = chatCharacterComboBox_->currentData().toString();
+    if (character.isEmpty()) {
+        chatConversationComboBox_->clear();
+        chatTranscript_->clear();
+        chatStatusLabel_->setText(tr("No character is available"));
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString userKey =
+        runtime_.value(QStringLiteral("active_user_key")).toString(QStringLiteral("default"));
+    if (!backend_.loadChatState(databasePath, character, userKey, requestedConversationId)) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        chatTranscript_->clear();
+        return;
+    }
+
+    const QJsonArray conversations = parseArray(backend_.getChatConversationsJson());
+    const QString activeId = backend_.getChatActiveConversationId();
+    updatingChatControls_ = true;
+    chatConversationComboBox_->clear();
+    int activeIndex = -1;
+    for (const QJsonValue& value : conversations) {
+        const QJsonObject conversation = value.toObject();
+        const QString id = QString::number(conversation.value(QStringLiteral("id")).toInteger());
+        QString label = conversation.value(QStringLiteral("title")).toString().trimmed();
+        if (label.isEmpty()) {
+            label = conversation.value(QStringLiteral("last_message_content")).toString().trimmed();
+        }
+        if (label.isEmpty()) {
+            label = tr("Conversation %1").arg(id);
+        }
+        const QString lastMessageAt =
+            conversation.value(QStringLiteral("last_message_at")).toString();
+        if (!lastMessageAt.isEmpty()) {
+            label += QStringLiteral("  ·  ") + lastMessageAt;
+        }
+        chatConversationComboBox_->addItem(label, QVariant(), id);
+        if (id == activeId) {
+            activeIndex = chatConversationComboBox_->count() - 1;
+        }
+    }
+    chatConversationComboBox_->setCurrentIndex(activeIndex);
+    updatingChatControls_ = false;
+
+    const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
+    QStringList transcript;
+    transcript.reserve(messages.size() * 3);
+    for (const QJsonValue& value : messages) {
+        const QJsonObject message = value.toObject();
+        const QString role = message.value(QStringLiteral("role")).toString();
+        const QString createdAt = message.value(QStringLiteral("created_at")).toString();
+        transcript.append(
+            createdAt.isEmpty()
+                ? QStringLiteral("[%1]").arg(role)
+                : QStringLiteral("[%1 · %2]").arg(role, createdAt));
+        transcript.append(message.value(QStringLiteral("content")).toString());
+        transcript.append(QString());
+    }
+    chatTranscript_->setPlainText(transcript.join(u'\n'));
+    chatStatusLabel_->setText(
+        conversations.isEmpty()
+            ? tr("No saved conversation for %1 and user %2").arg(character, userKey)
+            : tr("%1 conversations · %2 messages shown · read-only")
+                  .arg(conversations.size())
+                  .arg(messages.size()));
+}
+
+void NativeMainWindow::openNativeChat(const QString& character) {
+    showControlCenter();
+    populateChatCharacters();
+    if (!character.trimmed().isEmpty()) {
+        const QSignalBlocker blocker(chatCharacterComboBox_);
+        const int index = chatCharacterComboBox_->findData(character.trimmed());
+        if (index >= 0) {
+            chatCharacterComboBox_->setCurrentIndex(index);
+        }
+    }
+    switchTo(chatPage_);
+    refreshChatState();
 }
 
 std::optional<ModelCatalogItem> NativeMainWindow::selectedModel() const {

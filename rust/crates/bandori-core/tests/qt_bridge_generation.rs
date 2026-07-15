@@ -31,8 +31,12 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "getConfigSummary",
         "getModelCatalogJson",
         "getRuntimeConfigJson",
+        "getChatConversationsJson",
+        "getChatMessagesJson",
+        "getChatActiveConversationId",
         "reloadState",
         "saveNativeSettings",
+        "loadChatState",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

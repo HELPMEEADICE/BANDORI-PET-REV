@@ -26,6 +26,7 @@ pub struct NativeRuntimeSnapshot {
     pub selected_character: String,
     pub selected_costume: String,
     pub language: String,
+    pub active_user_key: String,
     pub dark_theme: String,
     pub vsync: bool,
     pub live2d_quality: String,
@@ -236,6 +237,7 @@ impl NativeRuntimeSnapshot {
             selected_character: string_value(values, "character", ""),
             selected_costume: string_value(values, "costume", ""),
             language: string_value(values, "language", ""),
+            active_user_key: string_value(values, "active_user_profile", "default"),
             dark_theme: string_value(values, "dark_theme", "follow_system"),
             vsync: bool_value(values, "vsync", true),
             live2d_quality: normalized_live2d_quality(values),
@@ -391,6 +393,7 @@ mod tests {
                 "live2d_idle_actions_enabled": false,
                 "live2d_random_actions_enabled": false,
                 "drag_locked": true,
+                "active_user_profile": "alice",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
                     "tomorin\tlive_01": {
@@ -414,6 +417,7 @@ mod tests {
         let snapshot = NativeRuntimeSnapshot::from_config(&config);
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.fps, 240);
+        assert_eq!(snapshot.active_user_key, "alice");
         assert!(!snapshot.vsync);
         assert_eq!(snapshot.live2d_quality, "performance");
         assert_eq!(snapshot.live2d_scale, 250);

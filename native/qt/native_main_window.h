@@ -14,6 +14,7 @@
 class QAction;
 class QCloseEvent;
 class QSystemTrayIcon;
+class QTextBrowser;
 
 namespace bandori {
 
@@ -47,6 +48,7 @@ private:
     void quitFromTray();
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
+    QWidget* createChatPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
     void syncSettingsControls();
@@ -55,6 +57,9 @@ private:
     void applyBackendState();
     void populateModelList();
     void updateModelDetails();
+    void populateChatCharacters();
+    void refreshChatState(const QString& requestedConversationId = {});
+    void openNativeChat(const QString& character);
     void startSelectedPet();
     std::optional<ModelCatalogItem> selectedModel() const;
     std::optional<ModelCatalogItem> configuredModel() const;
@@ -85,6 +90,12 @@ private:
     qfw::CaptionLabel* modelCountLabel_ = nullptr;
     qfw::BodyLabel* modelDetailsLabel_ = nullptr;
     qfw::PrimaryPushButton* launchSelectedButton_ = nullptr;
+    QWidget* chatPage_ = nullptr;
+    qfw::ComboBox* chatCharacterComboBox_ = nullptr;
+    qfw::ComboBox* chatConversationComboBox_ = nullptr;
+    qfw::CaptionLabel* chatStatusLabel_ = nullptr;
+    QTextBrowser* chatTranscript_ = nullptr;
+    bool updatingChatControls_ = false;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

@@ -206,6 +206,27 @@ def test_native_main_window_consumes_safe_rust_dashboard_state():
     assert "supervisor_.startAll(activeSpecs_)" in window
 
 
+def test_native_chat_history_reads_existing_database_through_rust():
+    core = source("rust/crates/bandori-core/src/chat_dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "load_native_chat_snapshot" in core
+    assert "Database::open" in core
+    assert "get_conversations" in core
+    assert "get_messages(conversation_id, Some(200), None)" in core
+    assert "loadChatState" in backend
+    assert "chat_conversations_json" in backend
+    assert "chat_messages_json" in backend
+    assert "QWidget* NativeMainWindow::createChatPage()" in window
+    assert "backend_.loadChatState" in window
+    assert "backend_.getChatConversationsJson" in window
+    assert "backend_.getChatMessagesJson" in window
+    assert "void NativeMainWindow::openNativeChat" in window
+    assert 'line.startsWith(QStringLiteral("OPEN_CHAT_NATIVE\\t"))' in window
+    assert "Native chat UI is not ported yet" not in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

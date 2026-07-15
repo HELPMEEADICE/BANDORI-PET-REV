@@ -134,6 +134,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   closing the control center hides it without killing pets, while the tray can
   restore the window, start/stop the configured fleet, or perform a bounded
   graceful exit.
+  The first native chat surface is now wired to the compatible Rust database
+  repository. It reads the existing `data.db`, filters private conversations by
+  character and active user profile, selects the requested or newest thread and
+  renders the latest 200 messages. Pet radial-menu chat requests switch directly
+  to that character. The surface is deliberately read-only until the LLM/tool
+  orchestration path is ported, so dual-track operation cannot append orphaned
+  user messages without an assistant response.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

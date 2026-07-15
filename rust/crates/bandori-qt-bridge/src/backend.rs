@@ -12,6 +12,9 @@ pub mod ffi {
         #[qproperty(QString, config_summary)]
         #[qproperty(QString, model_catalog_json)]
         #[qproperty(QString, runtime_config_json)]
+        #[qproperty(QString, chat_conversations_json)]
+        #[qproperty(QString, chat_messages_json)]
+        #[qproperty(QString, chat_active_conversation_id)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
 
@@ -35,9 +38,20 @@ pub mod ffi {
             config_path: &QString,
             settings_json: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadChatState"]
+        fn load_chat_state(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            character: &QString,
+            user_key: &QString,
+            requested_conversation_id: &QString,
+        ) -> bool;
     }
 }
 
+use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
@@ -51,6 +65,9 @@ pub struct BackendRust {
     config_summary: QString,
     model_catalog_json: QString,
     runtime_config_json: QString,
+    chat_conversations_json: QString,
+    chat_messages_json: QString,
+    chat_active_conversation_id: QString,
 }
 
 impl Default for BackendRust {
@@ -60,6 +77,9 @@ impl Default for BackendRust {
             config_summary: QString::from("Configuration has not been loaded"),
             model_catalog_json: QString::from("[]"),
             runtime_config_json: QString::from("{}"),
+            chat_conversations_json: QString::from("[]"),
+            chat_messages_json: QString::from("[]"),
+            chat_active_conversation_id: QString::default(),
         }
     }
 }
@@ -169,6 +189,57 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Settings save error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_chat_state(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        character: &QString,
+        user_key: &QString,
+        requested_conversation_id: &QString,
+    ) -> bool {
+        let database_path = database_path.to_string();
+        let character = character.to_string();
+        let user_key = user_key.to_string();
+        let requested_conversation_id = requested_conversation_id
+            .to_string()
+            .trim()
+            .parse::<i64>()
+            .ok();
+        match load_native_chat_snapshot(
+            Path::new(&database_path),
+            &character,
+            &user_key,
+            requested_conversation_id,
+        ) {
+            Ok(snapshot) => {
+                let conversations_json = serde_json::to_string(&snapshot.conversations)
+                    .expect("chat conversation serialization cannot fail");
+                let messages_json = serde_json::to_string(&snapshot.messages)
+                    .expect("chat message serialization cannot fail");
+                let active_id = snapshot
+                    .active_conversation_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                self.as_mut()
+                    .set_chat_conversations_json(QString::from(&conversations_json));
+                self.as_mut()
+                    .set_chat_messages_json(QString::from(&messages_json));
+                self.as_mut()
+                    .set_chat_active_conversation_id(QString::from(&active_id));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                self.as_mut()
+                    .set_chat_conversations_json(QString::from("[]"));
+                self.as_mut().set_chat_messages_json(QString::from("[]"));
+                self.as_mut()
+                    .set_chat_active_conversation_id(QString::default());
                 false
             }
         }

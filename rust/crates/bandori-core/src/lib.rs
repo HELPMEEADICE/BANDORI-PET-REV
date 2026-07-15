@@ -4,6 +4,7 @@
 //! frontends can therefore be checked against the same configuration and IPC
 //! contracts while the application is migrated process by process.
 
+pub mod chat_dashboard;
 pub mod config;
 pub mod config_ffi;
 pub mod dashboard;
