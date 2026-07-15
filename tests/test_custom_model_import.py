@@ -1,8 +1,10 @@
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import custom_model_import
 from custom_model_import import CustomModelImportError, import_from_folder
@@ -51,6 +53,68 @@ def _write_model3(root: Path) -> None:
 
 
 class CustomModelImportTest(unittest.TestCase):
+    def test_zip_import_accepts_model_within_resource_limits(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            models = root / "models"
+            archive_path = root / "model.zip"
+            source.mkdir()
+            _write_model(source)
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                for item in source.rglob("*"):
+                    if item.is_file():
+                        archive.write(item, item.relative_to(source))
+
+            with patch.object(custom_model_import, "MODELS_DIR", models):
+                character, costumes = custom_model_import.import_from_zip(
+                    str(archive_path),
+                    "Zip Character",
+                    "default",
+                )
+
+            self.assertEqual("Zip Character", character)
+            self.assertEqual(["default"], costumes)
+            self.assertTrue((models / character / "default" / "model.json").is_file())
+
+    def test_zip_extract_rejects_excessive_uncompressed_size(self):
+        archive = Mock()
+        archive.infolist.return_value = [SimpleNamespace(
+            filename="model.bin",
+            file_size=custom_model_import._MAX_ZIP_UNCOMPRESSED_BYTES + 1,
+            is_dir=lambda: False,
+        )]
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            self.assertRaises(CustomModelImportError) as raised,
+        ):
+            custom_model_import._safe_extract_zip(archive, Path(temp_dir))
+
+        self.assertEqual("bad_zip", raised.exception.code)
+        archive.extractall.assert_not_called()
+
+    def test_zip_extract_rejects_excessive_member_count(self):
+        members = [
+            SimpleNamespace(
+                filename=f"file-{index}.bin",
+                file_size=0,
+                is_dir=lambda: False,
+            )
+            for index in range(custom_model_import._MAX_ZIP_MEMBERS + 1)
+        ]
+        archive = Mock()
+        archive.infolist.return_value = members
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            self.assertRaises(CustomModelImportError) as raised,
+        ):
+            custom_model_import._safe_extract_zip(archive, Path(temp_dir))
+
+        self.assertEqual("bad_zip", raised.exception.code)
+        archive.extractall.assert_not_called()
+
     def test_import_rejects_display_name_containing_only_control_characters(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
