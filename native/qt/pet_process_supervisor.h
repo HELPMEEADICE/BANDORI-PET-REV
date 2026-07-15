@@ -25,11 +25,15 @@ struct PetLaunchSpec {
     int y = -1;
     int fps = 120;
     double opacity = 1.0;
+    bool vsync = true;
+    QString live2dQuality = QStringLiteral("balanced");
     double lipSyncMaxOpen = 0.55;
     int hitAlphaThreshold = 8;
     QString clickMotionActions = QStringLiteral("{}");
     QString pokeMotion;
     QString pokeExpression;
+    QString defaultMotion;
+    QString defaultExpression;
     bool dragLocked = false;
     bool moveAllRolesTogether = false;
     bool headTrackingEnabled = true;

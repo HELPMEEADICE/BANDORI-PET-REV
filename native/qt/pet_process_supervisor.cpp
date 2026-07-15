@@ -40,6 +40,10 @@ PetLaunchSpec normalizedSpec(PetLaunchSpec spec) {
     spec.height = std::max(spec.height, 1);
     spec.fps = std::clamp(spec.fps, 10, 240);
     spec.opacity = std::clamp(spec.opacity, 0.05, 1.0);
+    spec.live2dQuality =
+        spec.live2dQuality.trimmed().compare(QStringLiteral("performance"), Qt::CaseInsensitive) == 0
+        ? QStringLiteral("performance")
+        : QStringLiteral("balanced");
     spec.lipSyncMaxOpen = std::clamp(spec.lipSyncMaxOpen, 0.0, 1.0);
     spec.hitAlphaThreshold = std::clamp(spec.hitAlphaThreshold, 0, 255);
     return spec;
@@ -285,6 +289,10 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         QString::number(spec.fps),
         QStringLiteral("--opacity"),
         QString::number(spec.opacity, 'f', 3),
+        QStringLiteral("--vsync"),
+        spec.vsync ? QStringLiteral("true") : QStringLiteral("false"),
+        QStringLiteral("--quality"),
+        spec.live2dQuality,
         QStringLiteral("--lip-sync-max-open"),
         QString::number(spec.lipSyncMaxOpen, 'f', 3),
         QStringLiteral("--hit-alpha-threshold"),
@@ -295,6 +303,10 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         spec.pokeMotion,
         QStringLiteral("--poke-expression"),
         spec.pokeExpression,
+        QStringLiteral("--default-motion"),
+        spec.defaultMotion,
+        QStringLiteral("--default-expression"),
+        spec.defaultExpression,
         QStringLiteral("--drag-locked"),
         spec.dragLocked ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--move-all-roles-together"),

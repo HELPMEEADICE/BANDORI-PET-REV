@@ -16,6 +16,8 @@ pub struct ConfiguredPetSnapshot {
     pub window_width: i64,
     pub window_height: i64,
     pub drag_locked: bool,
+    pub default_motion: String,
+    pub default_expression: String,
     pub click_motion_actions: Map<String, Value>,
 }
 
@@ -25,6 +27,8 @@ pub struct NativeRuntimeSnapshot {
     pub selected_costume: String,
     pub language: String,
     pub dark_theme: String,
+    pub vsync: bool,
+    pub live2d_quality: String,
     pub fps: i64,
     pub opacity: f64,
     pub lip_sync_max_open: f64,
@@ -52,6 +56,8 @@ pub struct NativeSettingsUpdate {
     pub fps: Option<i64>,
     pub opacity: Option<f64>,
     pub dark_theme: Option<String>,
+    pub vsync: Option<bool>,
+    pub live2d_quality: Option<String>,
     pub drag_locked: Option<bool>,
     pub move_all_roles_together: Option<bool>,
     pub live2d_head_tracking_enabled: Option<bool>,
@@ -66,6 +72,8 @@ pub enum NativeSettingsError {
     Json(#[from] serde_json::Error),
     #[error("unsupported theme mode: {0}")]
     UnsupportedTheme(String),
+    #[error("unsupported Live2D quality: {0}")]
+    UnsupportedLive2dQuality(String),
 }
 
 pub fn save_native_settings(
@@ -93,6 +101,16 @@ impl NativeSettingsUpdate {
                 return Err(NativeSettingsError::UnsupportedTheme(theme));
             }
             config.set("dark_theme", Value::String(theme));
+        }
+        if let Some(vsync) = self.vsync {
+            config.set("vsync", Value::Bool(vsync));
+        }
+        if let Some(quality) = self.live2d_quality {
+            let quality = quality.trim().to_ascii_lowercase();
+            if !matches!(quality.as_str(), "performance" | "balanced") {
+                return Err(NativeSettingsError::UnsupportedLive2dQuality(quality));
+            }
+            config.set("live2d_quality", Value::String(quality));
         }
         if let Some(locked) = self.drag_locked {
             config.set("drag_locked", Value::Bool(locked));
@@ -153,13 +171,29 @@ impl NativeRuntimeSnapshot {
             .filter_map(Value::as_object)
             .filter_map(|entry| {
                 let character = object_string(entry, "character", "");
+                let costume = object_string(entry, "costume", "");
                 let path = object_string(entry, "path", "");
                 if character.is_empty() || path.is_empty() {
                     return None;
                 }
+                let profile = model_action_profile(values, &character, &costume);
+                let default_motion = object_string(entry, "default_motion", "");
+                let default_expression = object_string(entry, "default_expression", "");
+                let click_motion_actions = entry
+                    .get("click_motion_actions")
+                    .and_then(Value::as_object)
+                    .filter(|actions| !actions.is_empty())
+                    .cloned()
+                    .or_else(|| {
+                        profile
+                            .and_then(|value| value.get("click_motion_actions"))
+                            .and_then(Value::as_object)
+                            .cloned()
+                    })
+                    .unwrap_or_default();
                 Some(ConfiguredPetSnapshot {
                     character,
-                    costume: object_string(entry, "costume", ""),
+                    costume,
                     path,
                     pet_mode: object_string(entry, "pet_mode", "live2d"),
                     window_x: object_int(entry, "window_x", global_x),
@@ -167,11 +201,13 @@ impl NativeRuntimeSnapshot {
                     window_width: object_int(entry, "window_width", global_width),
                     window_height: object_int(entry, "window_height", global_height),
                     drag_locked: object_bool(entry, "drag_locked", global_drag_locked),
-                    click_motion_actions: entry
-                        .get("click_motion_actions")
-                        .and_then(Value::as_object)
-                        .cloned()
-                        .unwrap_or_default(),
+                    default_motion: non_empty_or_profile(default_motion, profile, "default_motion"),
+                    default_expression: non_empty_or_profile(
+                        default_expression,
+                        profile,
+                        "default_expression",
+                    ),
+                    click_motion_actions,
                 })
             })
             .collect();
@@ -181,6 +217,8 @@ impl NativeRuntimeSnapshot {
             selected_costume: string_value(values, "costume", ""),
             language: string_value(values, "language", ""),
             dark_theme: string_value(values, "dark_theme", "follow_system"),
+            vsync: bool_value(values, "vsync", true),
+            live2d_quality: normalized_live2d_quality(values),
             fps: int_value(values, "fps", 120).clamp(1, 1000),
             opacity: float_value(values, "opacity", 1.0).clamp(0.05, 1.0),
             lip_sync_max_open: float_value(values, "live2d_lip_sync_max_open", 0.55)
@@ -261,6 +299,42 @@ fn object_bool(values: &Map<String, Value>, key: &str, fallback: bool) -> bool {
     bool_value(values, key, fallback)
 }
 
+fn normalized_live2d_quality(values: &Map<String, Value>) -> String {
+    match string_value(values, "live2d_quality", "balanced")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "performance" => "performance".to_owned(),
+        _ => "balanced".to_owned(),
+    }
+}
+
+fn model_action_profile<'a>(
+    values: &'a Map<String, Value>,
+    character: &str,
+    costume: &str,
+) -> Option<&'a Map<String, Value>> {
+    let key = format!("{character}\t{costume}");
+    values
+        .get("model_action_settings")
+        .and_then(Value::as_object)
+        .and_then(|profiles| profiles.get(&key))
+        .and_then(Value::as_object)
+}
+
+fn non_empty_or_profile(direct: String, profile: Option<&Map<String, Value>>, key: &str) -> String {
+    if !direct.trim().is_empty() {
+        return direct;
+    }
+    profile
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,8 +353,17 @@ mod tests {
             json!({
                 "fps": 240,
                 "opacity": 0.7,
+                "vsync": false,
+                "live2d_quality": "performance",
                 "drag_locked": true,
                 "llm_api_key": "must-not-leak",
+                "model_action_settings": {
+                    "tomorin\tlive_01": {
+                        "default_motion": "Idle",
+                        "default_expression": "smile",
+                        "click_motion_actions": {"upper_body_center": "tap_body"}
+                    }
+                },
                 "models": [{
                     "character": "tomorin",
                     "costume": "live_01",
@@ -296,8 +379,16 @@ mod tests {
         let snapshot = NativeRuntimeSnapshot::from_config(&config);
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.fps, 240);
+        assert!(!snapshot.vsync);
+        assert_eq!(snapshot.live2d_quality, "performance");
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
+        assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
+        assert_eq!(snapshot.configured_pets[0].default_expression, "smile");
+        assert_eq!(
+            snapshot.configured_pets[0].click_motion_actions["head"],
+            "tap_head"
+        );
         assert!(!serialized.contains("must-not-leak"));
         assert!(!serialized.contains("llm_api_key"));
     }
@@ -348,6 +439,8 @@ mod tests {
                 "fps": 999,
                 "opacity": 0.01,
                 "dark_theme": "on",
+                "vsync": false,
+                "live2d_quality": "performance",
                 "drag_locked": true,
                 "move_all_roles_together": true,
                 "live2d_head_tracking_enabled": false,
@@ -359,6 +452,8 @@ mod tests {
         assert_eq!(runtime.fps, 240);
         assert_eq!(runtime.opacity, 0.05);
         assert_eq!(runtime.dark_theme, "on");
+        assert!(!runtime.vsync);
+        assert_eq!(runtime.live2d_quality, "performance");
         assert!(runtime.drag_locked);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
@@ -376,6 +471,14 @@ mod tests {
         assert!(matches!(
             invalid.apply_to(&mut config),
             Err(NativeSettingsError::UnsupportedTheme(theme)) if theme == "sepia"
+        ));
+        let invalid_quality = NativeSettingsUpdate {
+            live2d_quality: Some("cinematic".into()),
+            ..NativeSettingsUpdate::default()
+        };
+        assert!(matches!(
+            invalid_quality.apply_to(&mut config),
+            Err(NativeSettingsError::UnsupportedLive2dQuality(quality)) if quality == "cinematic"
         ));
     }
 }

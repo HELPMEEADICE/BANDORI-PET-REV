@@ -70,7 +70,7 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   backup/restore are also ported.
 - In progress: the Rust LuaJIT host, secure directory/`.zst` resource loader,
   MOC/MOC3 runtime isolation, Qt GL-procedure callback, logical/physical resize
-  split, 2x MOC3 SSAA framebuffer/blit, and side-effect-free fallback redraw are
+  split, quality-controlled MOC3 SSAA framebuffer/blit, and side-effect-free fallback redraw are
   implemented. The native
   `bandori-pet-renderer-rust` executable provides the isolated QOpenGLWidget pet
   process boundary. The Qt supervisor now owns compatible `BDIPC01!` shared
@@ -111,7 +111,14 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   The settings page edits a Rust-whitelisted subset of renderer/UI options,
   persists them through the same locked atomic config path, updates the
   Qt-Fluent theme immediately, and reliably broadcasts live changes to every
-  active native pet. Unknown fields cannot cross this write boundary.
+  active native pet. VSync is now selected before `QApplication` creates any
+  OpenGL surface; performance/balanced quality controls both Rust texture loading
+  and Qt-side Cubism 3 SSAA. Changing either surface-level option restarts the
+  isolated fleet, while ordinary settings remain live IPC updates. Per-model
+  default motion/expression values (including `model_action_settings` fallbacks)
+  cross the Rust snapshot and launch boundary, then start from the GL-ready signal;
+  the configured default motion is explicitly looped by the Rust LuaJIT host.
+  Unknown fields cannot cross this write boundary.
   A cross-platform `QSystemTrayIcon` now owns the native main-process lifecycle:
   closing the control center hides it without killing pets, while the tray can
   restore the window, start/stop the configured fleet, or perform a bounded
@@ -119,7 +126,7 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: pixel pet, tray and remaining native visual/driver parity, application
+- Pending: pixel pet and remaining native visual/driver parity, application
   services, full settings/chat UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because

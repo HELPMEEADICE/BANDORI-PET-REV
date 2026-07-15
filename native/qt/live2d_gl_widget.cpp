@@ -25,7 +25,6 @@
 namespace bandori {
 
 namespace {
-constexpr int kMoc3BalancedSsaaScale = 2;
 constexpr int kAlphaHitIntervalMsec = 16;
 constexpr int kAlphaHitGraceMsec = 80;
 constexpr int kAlphaHitGraceDistance = 12;
@@ -85,6 +84,17 @@ void Live2dGlWidget::setFramesPerSecond(int fps) {
     if (isVisible()) {
         renderTimer_.start();
     }
+}
+
+void Live2dGlWidget::setRenderQuality(const QString& quality) {
+    if (host_ != nullptr) {
+        qWarning() << "Live2D render quality requires recreating the renderer";
+        return;
+    }
+    const bool performance =
+        quality.trimmed().compare(QStringLiteral("performance"), Qt::CaseInsensitive) == 0;
+    textureQuality_ = performance ? 0U : 1U;
+    ssaaScale_ = performance ? 1 : 2;
 }
 
 void Live2dGlWidget::setDragLocked(bool locked) {
@@ -147,6 +157,34 @@ bool Live2dGlWidget::triggerAction(const QString& action, const QString& charact
         update();
     }
     return triggered;
+}
+
+bool Live2dGlWidget::applyDefaultState(
+    const QString& configuredMotion,
+    const QString& configuredExpression,
+    const QString& character) {
+    if (host_ == nullptr) {
+        return false;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const QByteArray motionUtf8 = configuredMotion.toUtf8();
+    const QByteArray expressionUtf8 = configuredExpression.toUtf8();
+    const QByteArray characterUtf8 = character.toUtf8();
+    const std::int32_t result = bandori_live2d_apply_default_state(
+        host_, motionUtf8.constData(), expressionUtf8.constData(), characterUtf8.constData());
+    if (result < 0) {
+        reportLastError("apply default state");
+    }
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (result > 0) {
+        update();
+    }
+    return result > 0;
 }
 
 bool Live2dGlWidget::triggerInteraction(
@@ -219,7 +257,7 @@ void Live2dGlWidget::initializeGL() {
             modelPath.constData(),
             static_cast<std::uint32_t>(std::max(width(), 1)),
             static_cast<std::uint32_t>(std::max(height(), 1)),
-            1)) {
+            textureQuality_)) {
         reportLastError("load model");
         disposeRuntime();
         return;
@@ -238,6 +276,7 @@ void Live2dGlWidget::initializeGL() {
     lastFrameMsec_ = 0;
     renderTimer_.start();
     alphaHitTimer_.start();
+    emit runtimeReady();
 }
 
 void Live2dGlWidget::resizeGL(int width, int height) {
@@ -253,8 +292,8 @@ void Live2dGlWidget::resizeGL(int width, int height) {
     if (format_ == ModelFormat::Moc3) {
         const qreal ratio = std::max<qreal>(devicePixelRatioF(), 1.0);
         const QSize renderSize(
-            std::max(1, qRound(width * ratio)) * kMoc3BalancedSsaaScale,
-            std::max(1, qRound(height * ratio)) * kMoc3BalancedSsaaScale);
+            std::max(1, qRound(width * ratio)) * ssaaScale_,
+            std::max(1, qRound(height * ratio)) * ssaaScale_);
         rendererTargetSize_ = {};
         if (!syncRendererTarget(renderSize)) {
             reportLastError("resize physical renderer");
@@ -275,8 +314,8 @@ void Live2dGlWidget::paintGL() {
 
     bool usingSsaa = false;
     if (format_ == ModelFormat::Moc3) {
-        const QSize ssaaSize = targetSize * kMoc3BalancedSsaaScale;
-        usingSsaa = ensureSsaaFramebuffer(ssaaSize);
+        const QSize ssaaSize = targetSize * ssaaScale_;
+        usingSsaa = ssaaScale_ > 1 && ensureSsaaFramebuffer(ssaaSize);
         const QSize renderSize = usingSsaa ? ssaaSize : targetSize;
         if (!syncRendererTarget(renderSize)) {
             reportLastError("synchronize renderer target");

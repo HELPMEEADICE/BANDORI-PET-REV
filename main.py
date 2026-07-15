@@ -1457,6 +1457,8 @@ def main():
                     "--y", str(model.get("window_y", cfg.get("window_y", -1))),
                     "--fps", str(cfg.get("fps", 120)),
                     "--opacity", str(cfg.get("opacity", 1.0)),
+                    "--vsync", str(bool(cfg.get("vsync", True))).lower(),
+                    "--quality", str(cfg.get("live2d_quality", "balanced") or "balanced"),
                     "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),
                     "--hit-alpha-threshold", str(cfg.get("live2d_hit_alpha_threshold", 8)),
                     "--click-motion-actions", json.dumps(
@@ -1466,6 +1468,8 @@ def main():
                     ),
                     "--poke-motion", str(cfg.get("poke_motion", "") or ""),
                     "--poke-expression", str(cfg.get("poke_expression", "") or ""),
+                    "--default-motion", str(model.get("default_motion", "") or ""),
+                    "--default-expression", str(model.get("default_expression", "") or ""),
                     "--drag-locked", str(bool(cfg.get("drag_locked", False))).lower(),
                     "--move-all-roles-together", str(bool(cfg.get("move_all_roles_together", False))).lower(),
                     "--head-tracking-enabled", str(bool(cfg.get("live2d_head_tracking_enabled", True))).lower(),

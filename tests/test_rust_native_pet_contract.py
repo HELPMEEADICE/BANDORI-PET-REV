@@ -101,6 +101,45 @@ def test_native_pet_click_double_click_and_poke_feedback_cross_rust_boundary():
     assert '"--poke-expression", str(cfg.get("poke_expression"' in main
 
 
+def test_native_renderer_honors_surface_quality_and_configured_default_state():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    widget_header = source("native/qt/live2d_gl_widget.h")
+    widget = source("native/qt/live2d_gl_widget.cpp")
+    pet = source("native/qt/pet_main.cpp")
+    live2d_ffi = source("rust/crates/bandori-live2d/src/ffi.rs")
+    runtime = source("rust/crates/bandori-live2d/src/runtime.rs")
+    window = source("native/qt/native_main_window.cpp")
+    main = source("main.py")
+
+    assert "pub vsync: bool" in dashboard
+    assert "pub live2d_quality: String" in dashboard
+    assert "pub default_motion: String" in dashboard
+    assert "pub default_expression: String" in dashboard
+    assert "bool vsync = true" in supervisor_header
+    assert 'QString live2dQuality = QStringLiteral("balanced")' in supervisor_header
+    assert 'QStringLiteral("--vsync")' in supervisor
+    assert 'QStringLiteral("--quality")' in supervisor
+    assert 'QStringLiteral("--default-motion")' in supervisor
+    assert 'QStringLiteral("--default-expression")' in supervisor
+    assert "void runtimeReady()" in widget_header
+    assert "void setRenderQuality(const QString& quality)" in widget_header
+    assert "textureQuality_" in widget
+    assert "ssaaScale_" in widget
+    assert "bandori_live2d_apply_default_state" in widget
+    assert "earlyBooleanOption" in pet
+    assert pet.index("configureDefaultSurfaceFormat(initialVsync)") < pet.index("QApplication app")
+    assert "&bandori::Live2dGlWidget::runtimeReady" in pet
+    assert "apply_default_state" in live2d_ffi
+    assert "MotionPriority::Force, true" in runtime
+    assert "rendererRestartRequired" in window
+    assert "supervisor_.startAll(activeSpecs_)" in window
+    assert '"--vsync", str(bool(cfg.get("vsync"' in main
+    assert '"--quality", str(cfg.get("live2d_quality"' in main
+    assert '"--default-motion", str(model.get("default_motion"' in main
+
+
 def test_native_radial_menu_routes_actions_and_uses_shaped_popup():
     menu_header = source("native/qt/native_radial_menu.h")
     menu = source("native/qt/native_radial_menu.cpp")

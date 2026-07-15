@@ -333,6 +333,11 @@ QWidget* NativeMainWindow::createSettingsPage() {
     opacitySpinBox_->setSingleStep(0.05);
     opacitySpinBox_->setDecimals(2);
     opacitySpinBox_->setFixedWidth(112);
+    vsyncSwitch_ = new qfw::SwitchButton(live2d);
+    qualityComboBox_ = new qfw::ComboBox(live2d);
+    qualityComboBox_->addItem(tr("Performance"), QVariant(), QStringLiteral("performance"));
+    qualityComboBox_->addItem(tr("Balanced"), QVariant(), QStringLiteral("balanced"));
+    qualityComboBox_->setFixedWidth(148);
     dragLockedSwitch_ = new qfw::SwitchButton(live2d);
     moveTogetherSwitch_ = new qfw::SwitchButton(live2d);
     headTrackingSwitch_ = new qfw::SwitchButton(live2d);
@@ -353,6 +358,16 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Opacity"),
         tr("Window opacity shared by Live2D pets"),
         opacitySpinBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::SpeedHigh),
+        tr("Vertical synchronization"),
+        tr("Recreate renderer surfaces with the configured swap interval"),
+        vsyncSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Render quality"),
+        tr("Performance uses native resolution; balanced enables Cubism 3 SSAA"),
+        qualityComboBox_);
     live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
         tr("Drag lock"),
@@ -470,6 +485,11 @@ void NativeMainWindow::syncSettingsControls() {
     }
     fpsSpinBox_->setValue(runtime_.value(QStringLiteral("fps")).toInt(120));
     opacitySpinBox_->setValue(runtime_.value(QStringLiteral("opacity")).toDouble(1.0));
+    vsyncSwitch_->setChecked(runtime_.value(QStringLiteral("vsync")).toBool(true));
+    const QString quality =
+        runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
+    const int qualityIndex = qualityComboBox_->findData(quality);
+    qualityComboBox_->setCurrentIndex(qualityIndex < 0 ? 1 : qualityIndex);
     dragLockedSwitch_->setChecked(runtime_.value(QStringLiteral("drag_locked")).toBool());
     moveTogetherSwitch_->setChecked(
         runtime_.value(QStringLiteral("move_all_roles_together")).toBool());
@@ -485,9 +505,16 @@ void NativeMainWindow::syncSettingsControls() {
 }
 
 void NativeMainWindow::saveNativeSettings() {
+    const QString quality = qualityComboBox_->currentData().toString();
+    const bool rendererRestartRequired =
+        runtime_.value(QStringLiteral("vsync")).toBool(true) != vsyncSwitch_->isChecked()
+        || runtime_.value(QStringLiteral("live2d_quality"))
+               .toString(QStringLiteral("balanced")) != quality;
     const QJsonObject settings {
         {QStringLiteral("fps"), fpsSpinBox_->value()},
         {QStringLiteral("opacity"), opacitySpinBox_->value()},
+        {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
+        {QStringLiteral("live2d_quality"), quality},
         {QStringLiteral("dark_theme"), themeComboBox_->currentData().toString()},
         {QStringLiteral("drag_locked"), dragLockedSwitch_->isChecked()},
         {QStringLiteral("move_all_roles_together"), moveTogetherSwitch_->isChecked()},
@@ -503,17 +530,27 @@ void NativeMainWindow::saveNativeSettings() {
     for (PetLaunchSpec& spec : activeSpecs_) {
         spec.fps = fpsSpinBox_->value();
         spec.opacity = opacitySpinBox_->value();
+        spec.vsync = vsyncSwitch_->isChecked();
+        spec.live2dQuality = quality;
         spec.dragLocked = dragLockedSwitch_->isChecked();
         spec.moveAllRolesTogether = moveTogetherSwitch_->isChecked();
         spec.headTrackingEnabled = headTrackingSwitch_->isChecked();
         spec.mutualGazeEnabled = mutualGazeSwitch_->isChecked();
     }
-    const bool delivered = !supervisor_.isRunning()
-        || supervisor_.broadcastSettings(settingsJson);
+    const bool wasRunning = supervisor_.isRunning();
+    bool delivered = true;
+    if (wasRunning && rendererRestartRequired && !activeSpecs_.isEmpty()) {
+        supervisor_.startAll(activeSpecs_);
+    } else if (wasRunning) {
+        delivered = supervisor_.broadcastSettings(settingsJson);
+    }
     applyBackendState();
     rendererStatusLabel_->setText(
-        delivered ? tr("Native settings saved and applied")
-                  : tr("Settings saved; running pets did not acknowledge the IPC broadcast"));
+        wasRunning && rendererRestartRequired
+            ? tr("Native settings saved; pet renderers are restarting for VSync or quality")
+            : (delivered
+                   ? tr("Native settings saved and applied")
+                   : tr("Settings saved; running pets did not acknowledge the IPC broadcast")));
 }
 
 void NativeMainWindow::applyTheme(const QString& mode) {
@@ -702,6 +739,9 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     spec.y = pet.value(QStringLiteral("window_y")).toInt(-1);
     spec.fps = runtime_.value(QStringLiteral("fps")).toInt(120);
     spec.opacity = runtime_.value(QStringLiteral("opacity")).toDouble(1.0);
+    spec.vsync = runtime_.value(QStringLiteral("vsync")).toBool(true);
+    spec.live2dQuality =
+        runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
     spec.lipSyncMaxOpen =
         runtime_.value(QStringLiteral("lip_sync_max_open")).toDouble(0.55);
     spec.hitAlphaThreshold =
@@ -710,6 +750,8 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
         compactJson(pet.value(QStringLiteral("click_motion_actions")).toObject());
     spec.pokeMotion = runtime_.value(QStringLiteral("poke_motion")).toString();
     spec.pokeExpression = runtime_.value(QStringLiteral("poke_expression")).toString();
+    spec.defaultMotion = pet.value(QStringLiteral("default_motion")).toString();
+    spec.defaultExpression = pet.value(QStringLiteral("default_expression")).toString();
     spec.dragLocked = pet.contains(QStringLiteral("drag_locked"))
         ? pet.value(QStringLiteral("drag_locked")).toBool()
         : runtime_.value(QStringLiteral("drag_locked")).toBool();

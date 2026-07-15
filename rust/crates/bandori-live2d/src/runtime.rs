@@ -385,6 +385,35 @@ impl Live2dRuntime {
         Ok(triggered)
     }
 
+    pub fn apply_default_state(
+        &self,
+        configured_motion: &str,
+        configured_expression: &str,
+        character: &str,
+    ) -> Result<bool, Live2dError> {
+        let info = self.model_info()?;
+        let character = character.to_lowercase();
+        let mut applied = false;
+        let configured_motion = configured_motion.trim();
+        if !configured_motion.is_empty() && configured_motion != "__none__" {
+            if let Some(motion) = find_motion(&info.motion_names, &[configured_motion], &character)
+            {
+                self.start_motion(motion, 0, MotionPriority::Force, true)?;
+                applied = true;
+            }
+        }
+        let configured_expression = configured_expression.trim();
+        if !configured_expression.is_empty() {
+            if let Some(expression) =
+                find_expression(&info.expressions, configured_expression, &character)
+            {
+                self.set_expression(expression)?;
+                applied = true;
+            }
+        }
+        Ok(applied)
+    }
+
     pub fn trigger_interaction_feedback(
         &self,
         region: &str,
@@ -781,7 +810,12 @@ function M.new(width, height)
     function renderer:set_offset() return self end
     function renderer:set_scale() return self end
     function renderer:set_parameter() return self end
-    function renderer:start_motion(name) self.motion = true self.motion_name = name return self end
+    function renderer:start_motion(name, _index, _priority, looping)
+        self.motion = true
+        self.motion_name = name
+        self.motion_looping = looping
+        return self
+    end
     function renderer:clear_motions() self.motion = false return self end
     function renderer:is_motion_finished() return not self.motion end
     function renderer:set_expression(name) self.expression_name = name return self end
@@ -902,6 +936,17 @@ return M
                 .unwrap(),
             "smile"
         );
+    }
+
+    #[test]
+    fn configured_default_state_loops_motion_and_applies_expression() {
+        let (_temp, runtime) = runtime(Live2dFormat::Moc3);
+        assert!(runtime.apply_default_state("Idle", "smile", "aya").unwrap());
+        let renderer = runtime.renderer_table().unwrap();
+        assert_eq!(renderer.get::<String>("motion_name").unwrap(), "Idle");
+        assert!(renderer.get::<bool>("motion_looping").unwrap());
+        assert_eq!(renderer.get::<String>("expression_name").unwrap(), "smile");
+        assert!(!runtime.apply_default_state("missing", "", "aya").unwrap());
     }
 
     #[test]

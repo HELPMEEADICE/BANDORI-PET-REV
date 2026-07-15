@@ -37,6 +37,7 @@ public:
     ~Live2dGlWidget() override;
 
     void setFramesPerSecond(int fps);
+    void setRenderQuality(const QString& quality);
     void setDragLocked(bool locked);
     bool dragLocked() const;
     void setHeadTrackingEnabled(bool enabled);
@@ -46,6 +47,10 @@ public:
     void setLipSyncMaxOpen(double value);
     void setLipSyncPose(double level, double form = 0.0);
     bool triggerAction(const QString& action, const QString& character);
+    bool applyDefaultState(
+        const QString& configuredMotion,
+        const QString& configuredExpression,
+        const QString& character);
     bool triggerInteraction(
         const QString& region,
         const QString& configuredMotion,
@@ -53,6 +58,7 @@ public:
         const QString& character);
 
 signals:
+    void runtimeReady();
     void clicked(double x, double y);
     void doubleClicked(double x, double y);
     void rightClicked(int globalX, int globalY);
@@ -99,6 +105,8 @@ private:
     double lipSyncForm_ = 0.0;
     double lipSyncFormTarget_ = 0.0;
     double lipSyncMaxOpen_ = 0.55;
+    std::uint32_t textureQuality_ = 1;
+    int ssaaScale_ = 2;
     QTimer renderTimer_;
     QTimer alphaHitTimer_;
     int hitAlphaThreshold_ = 8;

@@ -248,6 +248,51 @@ pub unsafe extern "C" fn bandori_live2d_trigger_action(
 }
 
 #[unsafe(no_mangle)]
+/// Applies the configured startup motion as a loop and the configured expression.
+///
+/// Returns `1` when at least one configured value matched model metadata, `0`
+/// when neither value matched, and `-1` on an FFI or renderer error.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. All string pointers must contain
+/// valid NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_apply_default_state(
+    host: *mut BandoriLive2dHost,
+    configured_motion: *const c_char,
+    configured_expression: *const c_char,
+    character: *const c_char,
+) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let motion = unsafe { required_string(configured_motion, "configured_motion") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let expression =
+            unsafe { required_string(configured_expression, "configured_expression") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let character = unsafe { required_string(character, "character") }?;
+        host.runtime
+            .apply_default_state(&motion, &expression, &character)
+            .map_err(|error| error.to_string())
+    }));
+    match result {
+        Ok(Ok(applied)) => {
+            clear_error();
+            i32::from(applied)
+        }
+        Ok(Err(error)) => {
+            set_error(error);
+            -1
+        }
+        Err(_) => {
+            set_error("panic inside Live2D default-state FFI call");
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 /// Resolves configured click or poke feedback against model metadata.
 ///
 /// # Safety

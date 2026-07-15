@@ -66,6 +66,24 @@ bool optionBool(const QString& value, bool fallback = false) {
     return fallback;
 }
 
+bool earlyBooleanOption(
+    int argc,
+    char* argv[],
+    const QString& option,
+    bool fallback) {
+    const QString assignmentPrefix = option + QStringLiteral("=");
+    for (int index = 1; index < argc; ++index) {
+        const QString argument = QString::fromLocal8Bit(argv[index]);
+        if (argument.startsWith(assignmentPrefix)) {
+            return optionBool(argument.mid(assignmentPrefix.size()), fallback);
+        }
+        if (argument == option && index + 1 < argc) {
+            return optionBool(QString::fromLocal8Bit(argv[index + 1]), fallback);
+        }
+    }
+    return fallback;
+}
+
 QJsonObject ipcJsonPayload(const QString& line) {
     const qsizetype separator = line.indexOf(u'\t');
     if (separator < 0) {
@@ -218,7 +236,8 @@ bool publishPetWindowState(
 } // namespace
 
 int main(int argc, char* argv[]) {
-    bandori::Live2dGlWidget::configureDefaultSurfaceFormat(true);
+    const bool initialVsync = earlyBooleanOption(argc, argv, QStringLiteral("--vsync"), true);
+    bandori::Live2dGlWidget::configureDefaultSurfaceFormat(initialVsync);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("BandoriPetRenderer"));
     QApplication::setOrganizationName(QStringLiteral("BandoriPet"));
@@ -269,6 +288,16 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Window opacity"),
         QStringLiteral("opacity"),
         QStringLiteral("1.0"));
+    QCommandLineOption vsync(
+        QStringLiteral("vsync"),
+        QStringLiteral("Enable the OpenGL swap interval before QApplication starts"),
+        QStringLiteral("bool"),
+        initialVsync ? QStringLiteral("true") : QStringLiteral("false"));
+    QCommandLineOption quality(
+        QStringLiteral("quality"),
+        QStringLiteral("Live2D texture and Cubism 3 SSAA quality: performance or balanced"),
+        QStringLiteral("quality"),
+        QStringLiteral("balanced"));
     QCommandLineOption lipSyncMaxOpen(
         QStringLiteral("lip-sync-max-open"),
         QStringLiteral("Maximum mouth-open parameter used by lip sync"),
@@ -291,6 +320,14 @@ int main(int argc, char* argv[]) {
     QCommandLineOption pokeExpression(
         QStringLiteral("poke-expression"),
         QStringLiteral("Expression used for user poke feedback"),
+        QStringLiteral("expression"));
+    QCommandLineOption defaultMotion(
+        QStringLiteral("default-motion"),
+        QStringLiteral("Configured looping startup motion"),
+        QStringLiteral("motion"));
+    QCommandLineOption defaultExpression(
+        QStringLiteral("default-expression"),
+        QStringLiteral("Configured persistent startup expression"),
         QStringLiteral("expression"));
     QCommandLineOption dragLocked(
         QStringLiteral("drag-locked"),
@@ -334,11 +371,15 @@ int main(int argc, char* argv[]) {
          positionY,
          fps,
          opacity,
+         vsync,
+         quality,
          lipSyncMaxOpen,
          hitAlphaThreshold,
          clickMotionActions,
          pokeMotion,
          pokeExpression,
+         defaultMotion,
+         defaultExpression,
          dragLocked,
          moveAllRolesTogether,
          headTrackingEnabled,
@@ -359,6 +400,7 @@ int main(int argc, char* argv[]) {
         parser.value(userModels),
         modelPath,
         modelFormat);
+    widget.setRenderQuality(parser.value(quality));
     widget.setFramesPerSecond(parser.value(fps).toInt());
     widget.setHitAlphaThreshold(parser.value(hitAlphaThreshold).toInt());
     widget.setDragLocked(optionBool(parser.value(dragLocked)));
@@ -419,6 +461,21 @@ int main(int argc, char* argv[]) {
         : QJsonObject {};
     QString configuredPokeMotion = parser.value(pokeMotion).trimmed();
     QString configuredPokeExpression = parser.value(pokeExpression).trimmed();
+    const QString configuredDefaultMotion = parser.value(defaultMotion).trimmed();
+    const QString configuredDefaultExpression = parser.value(defaultExpression).trimmed();
+    QObject::connect(
+        &widget,
+        &bandori::Live2dGlWidget::runtimeReady,
+        &widget,
+        [&widget,
+         characterId,
+         configuredDefaultMotion,
+         configuredDefaultExpression]() {
+            widget.applyDefaultState(
+                configuredDefaultMotion,
+                configuredDefaultExpression,
+                characterId);
+        });
     QString ipcSessionName = parser.value(ipcSession).trimmed();
     if (ipcSessionName.isEmpty()) {
         ipcSessionName = qEnvironmentVariable("BANDORI_PET_IPC_SERVER_NAME").trimmed();
