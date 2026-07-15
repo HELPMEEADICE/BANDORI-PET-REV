@@ -167,6 +167,41 @@ class TokenUsageTests(unittest.TestCase):
             )
         )
 
+    def test_tokens_command_tolerates_malformed_stat_fields(self):
+        result = handle_command(
+            object(),
+            "@tokens",
+            token_usage_resolver=lambda: {
+                "input_tokens": "unknown",
+                "output_tokens": float("inf"),
+                "total_tokens": {},
+                "request_count": [],
+                "untracked_count": {"broken": True},
+                "estimated_request_count": object(),
+                "message_count": None,
+                "next_history_message_count": "bad",
+                "history_message_limit": "bad",
+                "next_input_tokens": "bad",
+                "next_history_tokens": "bad",
+                "next_context_tokens": "bad",
+            },
+            publish=False,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertIn("0", result["message"])
+
+    def test_tokens_command_tolerates_non_mapping_stats(self):
+        result = handle_command(
+            object(),
+            "@tokens",
+            token_usage_resolver=lambda: ["invalid"],
+            publish=False,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertIn("0", result["message"])
+
     def test_chat_stream_worker_reads_usage_chunk(self):
         worker = LLMStreamWorker("https://example.com/v1", "key", "model", [])
         worker._process_line(

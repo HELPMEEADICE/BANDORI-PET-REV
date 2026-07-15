@@ -327,6 +327,15 @@ def _resolve_name(character: str, name_resolver) -> str:
     return character or _tr("ChatCommand.default_character", default="桌宠")
 
 
+def _safe_stat_int(value, default=0):
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _handle_token_usage(token_usage_resolver) -> dict:
     if not callable(token_usage_resolver):
         return {
@@ -340,13 +349,15 @@ def _handle_token_usage(token_usage_resolver) -> dict:
     except Exception as exc:
         log_swallowed("chat_commands._handle_token_usage", exc)
         stats = {}
+    if not isinstance(stats, dict):
+        stats = {}
     estimated_note = (
         _tr("ChatCommand.tokens_contains_estimate", default="（包含估算值）")
         if stats.get("estimated")
         else ""
     )
-    untracked_count = int(stats.get("untracked_count", 0) or 0)
-    estimated_request_count = int(stats.get("estimated_request_count", 0) or 0)
+    untracked_count = _safe_stat_int(stats.get("untracked_count"))
+    estimated_request_count = _safe_stat_int(stats.get("estimated_request_count"))
     untracked_note = ""
     if estimated_request_count:
         untracked_note += "\n" + _tr(
@@ -360,11 +371,7 @@ def _handle_token_usage(token_usage_resolver) -> dict:
             default="未统计历史回复：{count}",
             count=f"{untracked_count:,}",
         )
-    history_message_limit = stats.get("history_message_limit")
-    try:
-        history_message_limit = int(history_message_limit)
-    except (TypeError, ValueError):
-        history_message_limit = None
+    history_message_limit = _safe_stat_int(stats.get("history_message_limit"), None)
     if history_message_limit == 0:
         history_message_limit_text = _tr(
             "SettingsWindow.llm_history_message_limit_unlimited",
@@ -391,22 +398,22 @@ def _handle_token_usage(token_usage_resolver) -> dict:
                 "请求数：{requests}{untracked_note}"
             ),
             estimated_note=estimated_note,
-            total=f"{int(stats.get('total_tokens', 0) or 0):,}",
-            input=f"{int(stats.get('input_tokens', 0) or 0):,}",
-            output=f"{int(stats.get('output_tokens', 0) or 0):,}",
-            message_count=f"{int(stats.get('message_count', 0) or 0):,}",
+            total=f"{_safe_stat_int(stats.get('total_tokens')):,}",
+            input=f"{_safe_stat_int(stats.get('input_tokens')):,}",
+            output=f"{_safe_stat_int(stats.get('output_tokens')):,}",
+            message_count=f"{_safe_stat_int(stats.get('message_count')):,}",
             next_history_message_count=(
-                f"{int(stats.get('next_history_message_count', 0) or 0):,}"
+                f"{_safe_stat_int(stats.get('next_history_message_count')):,}"
             ),
             history_message_limit=history_message_limit_text,
-            next_input=f"{int(stats.get('next_input_tokens', 0) or 0):,}",
+            next_input=f"{_safe_stat_int(stats.get('next_input_tokens')):,}",
             next_history_tokens=(
-                f"{int(stats.get('next_history_tokens', 0) or 0):,}"
+                f"{_safe_stat_int(stats.get('next_history_tokens')):,}"
             ),
             next_context_tokens=(
-                f"{int(stats.get('next_context_tokens', 0) or 0):,}"
+                f"{_safe_stat_int(stats.get('next_context_tokens')):,}"
             ),
-            requests=f"{int(stats.get('request_count', 0) or 0):,}",
+            requests=f"{_safe_stat_int(stats.get('request_count')):,}",
             untracked_note=untracked_note,
         )
     }
