@@ -47,6 +47,8 @@ dependencies = [
  "cxx-qt-gen",
  "dunce",
  "fs2",
+ "getrandom 0.4.3",
+ "httparse",
  "rusqlite",
  "serde",
  "serde_json",
@@ -54,6 +56,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "url",
  "zstd",
 ]
 

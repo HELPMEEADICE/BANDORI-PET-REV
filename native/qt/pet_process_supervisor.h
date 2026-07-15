@@ -42,6 +42,9 @@ struct PetLaunchSpec {
     bool moveAllRolesTogether = false;
     bool headTrackingEnabled = true;
     bool mutualGazeEnabled = false;
+    bool compactAiWindowEnabled = false;
+    bool aiEventOverlayEnabled = false;
+    bool chatIntegrationOverlayEnabled = true;
 };
 
 class PetProcessSupervisor final : public QObject {

@@ -55,6 +55,9 @@ pub struct NativeRuntimeSnapshot {
     pub chat_attachment_auto_cleanup_enabled: bool,
     pub chat_attachment_retention_days: i64,
     pub birthday_tray_notifications_enabled: bool,
+    pub compact_ai_window_enabled: bool,
+    pub ai_event_overlay_enabled: bool,
+    pub chat_integration_overlay_enabled: bool,
     pub configured_pets: Vec<ConfiguredPetSnapshot>,
 }
 
@@ -325,6 +328,13 @@ impl NativeRuntimeSnapshot {
             birthday_tray_notifications_enabled: bool_value(
                 values,
                 "birthday_tray_notifications_enabled",
+                true,
+            ),
+            compact_ai_window_enabled: bool_value(values, "compact_ai_window_enabled", false),
+            ai_event_overlay_enabled: bool_value(values, "ai_event_overlay_enabled", false),
+            chat_integration_overlay_enabled: bool_value(
+                values,
+                "chat_integration_overlay_enabled",
                 true,
             ),
             configured_pets,

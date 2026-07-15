@@ -10,6 +10,8 @@ base64.workspace = true
 bandori-llm-protocol.workspace = true
 dunce.workspace = true
 fs2.workspace = true
+getrandom.workspace = true
+httparse.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
@@ -18,6 +20,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tar.workspace = true
 zstd.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 cxx-qt-gen = "0.9"

@@ -23,6 +23,7 @@ pub mod history_dashboard;
 pub mod ipc;
 pub mod ipc_ffi;
 pub mod llm_settings;
+pub mod local_integration;
 pub mod memory_dashboard;
 pub mod memory_extraction;
 pub mod model;

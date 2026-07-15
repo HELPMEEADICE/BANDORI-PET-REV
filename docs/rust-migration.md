@@ -326,11 +326,23 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   native radial menu. The Rust config boundary persists `pet_mode` and separate
   pixel coordinates without overwriting the corresponding Live2D geometry; the
   compatibility Python supervisor passes the same mode and position contract.
+  Native local HTTP integrations now run in `bandori-core` instead of Python.
+  Fixed worker pools listen only on `127.0.0.1`, bound request headers/bodies and
+  apply five-second I/O timeouts, constant-time bearer/header/query-token checks,
+  and the compatible JSON/form/text/query endpoints. The chat webhook normalizes
+  OneBot messages, writes duplicate-safe unread state through the Rust database,
+  emits compact pet overlays, and clears persisted unread state only through
+  `/chat-read`; the AI status webhook forwards authenticated objects through the
+  same reliable native IPC lane. Qt-Fluent-Widgets exposes redacted settings,
+  atomically saves or generates tokens, restarts both services, and stops them
+  during application shutdown. The native pet now consumes `CHAT_EVENT` and
+  `AI_EVENT`, including targeted actions, compact bubbles and explicit clear
+  events, without routing through a Python process.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: remaining native visual/driver parity; remaining integration
-  services; packaged offline ASR sidecar,
+- Pending: remaining native visual/driver parity; the NapCat forward-WebSocket
+  adapter and other remaining integration services; packaged offline ASR sidecar,
   default-launcher cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because

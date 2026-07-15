@@ -26,6 +26,8 @@ pub mod ffi {
         #[qproperty(QString, tts_settings_json)]
         #[qproperty(QString, asr_settings_json)]
         #[qproperty(QString, screen_awareness_settings_json)]
+        #[qproperty(QString, integration_settings_json)]
+        #[qproperty(QString, integration_status_json)]
         #[qproperty(QString, special_events_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
@@ -202,6 +204,30 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "cancelScreenAwareness"]
         fn cancel_screen_awareness(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadIntegrationSettings"]
+        fn load_integration_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveIntegrationSettings"]
+        fn save_integration_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startIntegrationServices"]
+        fn start_integration_services(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            database_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "stopIntegrationServices"]
+        fn stop_integration_services(self: Pin<&mut Self>);
 
         #[qinvokable]
         #[cxx_name = "loadSpecialEvents"]
@@ -539,6 +565,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "screenAwarenessEvent"]
         fn screen_awareness_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "integrationEvent"]
+        fn integration_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -582,6 +612,9 @@ use bandori_core::group_chat::{
 use bandori_core::history_dashboard::{load_native_history_filters, search_native_history};
 use bandori_core::llm_settings::{
     load_native_llm_settings, mutate_native_llm_profiles, save_native_llm_settings,
+};
+use bandori_core::local_integration::{
+    NativeIntegrationServer, load_native_integration_settings, save_native_integration_settings,
 };
 use bandori_core::memory_dashboard::{load_native_memory_snapshot, mutate_native_memories};
 use bandori_core::memory_extraction::{
@@ -692,6 +725,8 @@ pub struct BackendRust {
     tts_settings_json: QString,
     asr_settings_json: QString,
     screen_awareness_settings_json: QString,
+    integration_settings_json: QString,
+    integration_status_json: QString,
     special_events_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
@@ -737,6 +772,7 @@ pub struct BackendRust {
     next_screen_awareness_request_id: i64,
     active_screen_awareness_request_id: i64,
     screen_awareness_cancellation: Option<CancellationToken>,
+    integration_server: Option<NativeIntegrationServer>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -761,6 +797,10 @@ impl Default for BackendRust {
             tts_settings_json: QString::from("{}"),
             asr_settings_json: QString::from("{}"),
             screen_awareness_settings_json: QString::from("{}"),
+            integration_settings_json: QString::from("{}"),
+            integration_status_json: QString::from(
+                "{\"running\":false,\"ai_status_running\":false,\"chat_running\":false}",
+            ),
             special_events_json: QString::from("[]"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
@@ -806,6 +846,7 @@ impl Default for BackendRust {
             next_screen_awareness_request_id: 1,
             active_screen_awareness_request_id: 0,
             screen_awareness_cancellation: None,
+            integration_server: None,
             memory_cancellations: HashMap::new(),
         }
     }
@@ -827,6 +868,9 @@ impl Drop for BackendRust {
         }
         if let Some(cancellation) = self.screen_awareness_cancellation.take() {
             cancellation.cancel();
+        }
+        if let Some(mut server) = self.integration_server.take() {
+            server.stop();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
             cancellation.cancel();
@@ -1544,6 +1588,118 @@ impl ffi::Backend {
             "Native screen-awareness cancellation requested",
         ));
         true
+    }
+
+    pub fn load_integration_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_integration_settings(Path::new(&config_path.to_string())) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native integration settings serialization cannot fail");
+                self.as_mut()
+                    .set_integration_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native integration settings loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Integration settings error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn save_integration_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_integration_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+        ) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native integration settings serialization cannot fail");
+                self.as_mut()
+                    .set_integration_settings_json(QString::from(&payload));
+                self.as_mut().set_status(QString::from(
+                    "Native integration settings saved atomically",
+                ));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Integration settings save error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn start_integration_services(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        database_path: &QString,
+    ) -> bool {
+        if let Some(mut server) = self.as_mut().rust_mut().get_mut().integration_server.take() {
+            server.stop();
+        }
+        let qt_thread = self.qt_thread();
+        match NativeIntegrationServer::start(
+            Path::new(&config_path.to_string()),
+            Path::new(&database_path.to_string()),
+            move |event| {
+                let payload = serde_json::to_string(&event)
+                    .expect("native integration event serialization cannot fail");
+                qt_thread
+                    .queue(move |backend| {
+                        backend.emit_integration_payload(payload);
+                    })
+                    .ok();
+            },
+        ) {
+            Ok((server, settings)) => {
+                let status = serde_json::to_string(server.status())
+                    .expect("native integration status serialization cannot fail");
+                let settings = serde_json::to_string(&settings)
+                    .expect("native integration settings serialization cannot fail");
+                let running = server.status().running;
+                let state = self.as_mut().rust_mut().get_mut();
+                state.integration_server = Some(server);
+                self.as_mut()
+                    .set_integration_status_json(QString::from(&status));
+                self.as_mut()
+                    .set_integration_settings_json(QString::from(&settings));
+                self.as_mut().set_status(QString::from(if running {
+                    "Native loopback integration services started"
+                } else {
+                    "Native loopback integration services are disabled"
+                }));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_integration_status_json(QString::from(
+                    "{\"running\":false,\"ai_status_running\":false,\"chat_running\":false}",
+                ));
+                self.as_mut().set_status(QString::from(&format!(
+                    "Integration service start error: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    pub fn stop_integration_services(mut self: Pin<&mut Self>) {
+        if let Some(mut server) = self.as_mut().rust_mut().get_mut().integration_server.take() {
+            server.stop();
+        }
+        self.as_mut().set_integration_status_json(QString::from(
+            "{\"running\":false,\"ai_status_running\":false,\"chat_running\":false}",
+        ));
+        self.as_mut()
+            .set_status(QString::from("Native integration services stopped"));
     }
 
     pub fn load_special_events(
@@ -3663,6 +3819,11 @@ impl ffi::Backend {
         self.as_mut().set_status(QString::from(status));
         self.as_mut()
             .screen_awareness_event(&QString::from(payload.as_str()));
+    }
+
+    fn emit_integration_payload(mut self: Pin<&mut Self>, payload: String) {
+        self.as_mut()
+            .integration_event(&QString::from(payload.as_str()));
     }
 }
 

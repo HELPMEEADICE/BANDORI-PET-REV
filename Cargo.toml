@@ -22,6 +22,8 @@ base64 = "0.22.1"
 bandori-llm-protocol = { path = "rust/crates/bandori-llm-protocol" }
 dunce = "1.0.5"
 fs2 = "0.4.3"
+getrandom = "0.4.3"
+httparse = "1.10.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 sha1 = "0.10.6"
@@ -35,6 +37,7 @@ tokio = { version = "1.47.1", features = ["macros", "net", "rt-multi-thread", "s
 tokio-util = { version = "0.7.16", features = ["rt"] }
 tar = "0.4.44"
 zstd = "0.13.3"
+url = "2.5.8"
 
 [profile.release]
 lto = "thin"

@@ -377,6 +377,13 @@ NativeMainWindow::NativeMainWindow(
         [this](const QString& payloadJson) {
             handleNativeScreenAwarenessEvent(payloadJson);
         });
+    connect(
+        &backend_,
+        &Backend::integrationEvent,
+        this,
+        [this](const QString& payloadJson) {
+            handleNativeIntegrationEvent(payloadJson);
+        });
     screenAwarenessTimer_.setSingleShot(true);
     connect(&screenAwarenessTimer_, &QTimer::timeout, this, [this]() {
         triggerNativeScreenAwareness(false);
@@ -489,6 +496,7 @@ void NativeMainWindow::quitFromTray() {
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
+    stopNativeIntegrationServices();
     specialEventTimer_.stop();
     clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
@@ -519,6 +527,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
+    stopNativeIntegrationServices();
     specialEventTimer_.stop();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
@@ -544,6 +553,7 @@ void NativeMainWindow::setupUi() {
     QWidget* ttsSettings = createTtsSettingsPage();
     QWidget* asrSettings = createAsrSettingsPage();
     QWidget* screenAwareness = createScreenAwarenessPage();
+    QWidget* integrations = createIntegrationPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
@@ -558,6 +568,7 @@ void NativeMainWindow::setupUi() {
     ttsSettings->setObjectName(QStringLiteral("ttsSettingsPage"));
     asrSettings->setObjectName(QStringLiteral("asrSettingsPage"));
     screenAwareness->setObjectName(QStringLiteral("screenAwarenessPage"));
+    integrations->setObjectName(QStringLiteral("integrationsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
@@ -575,6 +586,10 @@ void NativeMainWindow::setupUi() {
         screenAwareness,
         qfw::FluentIconEnum::View,
         tr("Screen awareness"));
+    addSubInterface(
+        integrations,
+        qfw::FluentIconEnum::Code,
+        tr("Local integrations"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -2577,6 +2592,144 @@ QWidget* NativeMainWindow::createScreenAwarenessPage() {
     return page;
 }
 
+QWidget* NativeMainWindow::createIntegrationPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native local integrations"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Expose bounded webhook endpoints on 127.0.0.1 only. Rust authenticates, parses and stores each request before Qt forwards display events to isolated pets."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* chat = new qfw::GroupHeaderCardWidget(tr("External chat webhook"), content);
+    chatIntegrationEnabledSwitch_ = new qfw::SwitchButton(chat);
+    chatIntegrationPortSpinBox_ = new qfw::SpinBox(chat);
+    chatIntegrationPortSpinBox_->setRange(1024, 65535);
+    chatIntegrationPortSpinBox_->setFixedWidth(132);
+    chatIntegrationOverlaySwitch_ = new qfw::SwitchButton(chat);
+    chatIntegrationContextSwitch_ = new qfw::SwitchButton(chat);
+    chatIntegrationTokenEdit_ = new qfw::LineEdit(chat);
+    chatIntegrationTokenEdit_->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    chatIntegrationTokenEdit_->setClearButtonEnabled(true);
+    chatIntegrationTokenEdit_->setMinimumWidth(260);
+    chatIntegrationClearTokenCheckBox_ = new qfw::CheckBox(tr("Clear saved token"), chat);
+    auto* chatToken = new QWidget(chat);
+    auto* chatTokenLayout = new QHBoxLayout(chatToken);
+    chatTokenLayout->setContentsMargins(0, 0, 0, 0);
+    chatTokenLayout->setSpacing(8);
+    chatTokenLayout->addWidget(chatIntegrationTokenEdit_, 1);
+    chatTokenLayout->addWidget(chatIntegrationClearTokenCheckBox_);
+    chat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Enable chat webhook"),
+        tr("Accept GET or POST on /chat-events and explicit read receipts on /chat-read"),
+        chatIntegrationEnabledSwitch_);
+    chat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("Chat port"),
+        tr("Loopback endpoint: http://127.0.0.1:<port>/chat-events"),
+        chatIntegrationPortSpinBox_);
+    chat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Show unread overlay"),
+        tr("Duplicate external message IDs are stored once and never trigger another overlay"),
+        chatIntegrationOverlaySwitch_);
+    chat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Include unread chat context"),
+        tr("Preserve the shared prompt-context setting for external conversations"),
+        chatIntegrationContextSwitch_);
+    chat->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
+        tr("Chat bearer token"),
+        tr("Blank keeps the saved token; enabling without one generates a cryptographically random token"),
+        chatToken);
+
+    auto* aiStatus = new qfw::GroupHeaderCardWidget(tr("AI status webhook"), content);
+    aiStatusEnabledSwitch_ = new qfw::SwitchButton(aiStatus);
+    compactAiWindowSwitch_ = new qfw::SwitchButton(aiStatus);
+    aiEventOverlaySwitch_ = new qfw::SwitchButton(aiStatus);
+    aiStatusPortSpinBox_ = new qfw::SpinBox(aiStatus);
+    aiStatusPortSpinBox_->setRange(1024, 65535);
+    aiStatusPortSpinBox_->setFixedWidth(132);
+    aiStatusTokenEdit_ = new qfw::LineEdit(aiStatus);
+    aiStatusTokenEdit_->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    aiStatusTokenEdit_->setClearButtonEnabled(true);
+    aiStatusTokenEdit_->setMinimumWidth(260);
+    aiStatusClearTokenCheckBox_ = new qfw::CheckBox(tr("Clear saved token"), aiStatus);
+    auto* aiToken = new QWidget(aiStatus);
+    auto* aiTokenLayout = new QHBoxLayout(aiToken);
+    aiTokenLayout->setContentsMargins(0, 0, 0, 0);
+    aiTokenLayout->setSpacing(8);
+    aiTokenLayout->addWidget(aiStatusTokenEdit_, 1);
+    aiTokenLayout->addWidget(aiStatusClearTokenCheckBox_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Enable AI status webhook"),
+        tr("Accept authenticated JSON objects on /ai-events for native pet status display"),
+        aiStatusEnabledSwitch_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Chat),
+        tr("Compact native event bubbles"),
+        tr("Allow chat, reminder and AI event text to appear beside native pets"),
+        compactAiWindowSwitch_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Show AI status events"),
+        tr("Apply AI_EVENT actions and compact text only when this switch is enabled"),
+        aiEventOverlaySwitch_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("AI status port"),
+        tr("Loopback endpoint: http://127.0.0.1:<port>/ai-events"),
+        aiStatusPortSpinBox_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
+        tr("AI status bearer token"),
+        tr("The saved secret is never copied into a Qt property or exported package"),
+        aiToken);
+
+    auto* actions = new QWidget(content);
+    auto* actionsLayout = new QHBoxLayout(actions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+    integrationStopButton_ = new qfw::PushButton(tr("Stop services"), actions);
+    integrationSaveButton_ =
+        new qfw::PrimaryPushButton(tr("Save and restart services"), actions);
+    actionsLayout->addWidget(integrationStopButton_);
+    actionsLayout->addStretch(1);
+    actionsLayout->addWidget(integrationSaveButton_);
+    integrationStatusLabel_ = new qfw::CaptionLabel(
+        tr("Local integration settings have not been loaded."), content);
+    integrationStatusLabel_->setWordWrap(true);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(chat);
+    layout->addWidget(aiStatus);
+    layout->addWidget(actions);
+    layout->addWidget(integrationStatusLabel_);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(integrationSaveButton_, &QPushButton::clicked, this, [this]() {
+        if (saveNativeIntegrationSettings()) {
+            restartNativeIntegrationServices();
+        }
+    });
+    connect(integrationStopButton_, &QPushButton::clicked, this, [this]() {
+        stopNativeIntegrationServices();
+    });
+    return page;
+}
+
 QWidget* NativeMainWindow::createSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
@@ -2958,6 +3111,8 @@ void NativeMainWindow::applyBackendState() {
     loadNativeTtsSettings();
     loadNativeAsrSettings();
     loadNativeScreenAwarenessSettings();
+    loadNativeIntegrationSettings();
+    restartNativeIntegrationServices();
     refreshNativeMemoryState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
@@ -4576,6 +4731,213 @@ void NativeMainWindow::stopNativeScreenAwareness() {
     }
     if (screenAwarenessCancelButton_ != nullptr) {
         screenAwarenessCancelButton_->setEnabled(activeScreenAwarenessRequestId_ != 0);
+    }
+}
+
+void NativeMainWindow::loadNativeIntegrationSettings() {
+    if (integrationStatusLabel_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadIntegrationSettings(configPath_)) {
+        integrationStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
+    syncNativeIntegrationControls();
+}
+
+void NativeMainWindow::syncNativeIntegrationControls() {
+    if (chatIntegrationEnabledSwitch_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker chatEnabledBlocker(chatIntegrationEnabledSwitch_);
+    const QSignalBlocker chatPortBlocker(chatIntegrationPortSpinBox_);
+    const QSignalBlocker chatOverlayBlocker(chatIntegrationOverlaySwitch_);
+    const QSignalBlocker chatContextBlocker(chatIntegrationContextSwitch_);
+    const QSignalBlocker aiEnabledBlocker(aiStatusEnabledSwitch_);
+    const QSignalBlocker compactBlocker(compactAiWindowSwitch_);
+    const QSignalBlocker aiOverlayBlocker(aiEventOverlaySwitch_);
+    const QSignalBlocker aiPortBlocker(aiStatusPortSpinBox_);
+    chatIntegrationEnabledSwitch_->setChecked(
+        integrationSettings_.value(QStringLiteral("chat_enabled")).toBool(false));
+    chatIntegrationPortSpinBox_->setValue(
+        integrationSettings_.value(QStringLiteral("chat_port")).toInt(38'473));
+    chatIntegrationOverlaySwitch_->setChecked(
+        integrationSettings_
+            .value(QStringLiteral("chat_overlay_enabled"))
+            .toBool(true));
+    chatIntegrationContextSwitch_->setChecked(
+        integrationSettings_
+            .value(QStringLiteral("chat_include_context"))
+            .toBool(true));
+    aiStatusEnabledSwitch_->setChecked(
+        integrationSettings_
+            .value(QStringLiteral("ai_status_enabled"))
+            .toBool(false));
+    compactAiWindowSwitch_->setChecked(
+        integrationSettings_
+            .value(QStringLiteral("compact_ai_window_enabled"))
+            .toBool(false));
+    aiEventOverlaySwitch_->setChecked(
+        integrationSettings_
+            .value(QStringLiteral("ai_event_overlay_enabled"))
+            .toBool(false));
+    aiStatusPortSpinBox_->setValue(
+        integrationSettings_.value(QStringLiteral("ai_status_port")).toInt(38'472));
+    chatIntegrationTokenEdit_->clear();
+    aiStatusTokenEdit_->clear();
+    chatIntegrationClearTokenCheckBox_->setChecked(false);
+    aiStatusClearTokenCheckBox_->setChecked(false);
+    chatIntegrationTokenEdit_->setPlaceholderText(
+        integrationSettings_
+                .value(QStringLiteral("chat_token_configured"))
+                .toBool(false)
+            ? tr("Saved token configured — blank keeps it")
+            : tr("No saved token — enabling generates one"));
+    aiStatusTokenEdit_->setPlaceholderText(
+        integrationSettings_
+                .value(QStringLiteral("ai_status_token_configured"))
+                .toBool(false)
+            ? tr("Saved token configured — blank keeps it")
+            : tr("No saved token — enabling generates one"));
+}
+
+bool NativeMainWindow::saveNativeIntegrationSettings() {
+    if (chatIntegrationEnabledSwitch_ == nullptr) {
+        return false;
+    }
+    QJsonObject settings {
+        {QStringLiteral("chat_enabled"), chatIntegrationEnabledSwitch_->isChecked()},
+        {QStringLiteral("chat_port"), chatIntegrationPortSpinBox_->value()},
+        {QStringLiteral("chat_overlay_enabled"),
+         chatIntegrationOverlaySwitch_->isChecked()},
+        {QStringLiteral("chat_include_context"),
+         chatIntegrationContextSwitch_->isChecked()},
+        {QStringLiteral("clear_chat_token"),
+         chatIntegrationClearTokenCheckBox_->isChecked()},
+        {QStringLiteral("compact_ai_window_enabled"),
+         compactAiWindowSwitch_->isChecked()},
+        {QStringLiteral("ai_event_overlay_enabled"),
+         aiEventOverlaySwitch_->isChecked()},
+        {QStringLiteral("ai_status_enabled"), aiStatusEnabledSwitch_->isChecked()},
+        {QStringLiteral("ai_status_port"), aiStatusPortSpinBox_->value()},
+        {QStringLiteral("clear_ai_status_token"),
+         aiStatusClearTokenCheckBox_->isChecked()},
+    };
+    const QString chatToken = chatIntegrationTokenEdit_->text().trimmed();
+    if (!chatToken.isEmpty()) {
+        settings.insert(QStringLiteral("chat_token"), chatToken);
+    }
+    const QString aiToken = aiStatusTokenEdit_->text().trimmed();
+    if (!aiToken.isEmpty()) {
+        settings.insert(QStringLiteral("ai_status_token"), aiToken);
+    }
+    if (!backend_.saveIntegrationSettings(configPath_, compactJson(settings))) {
+        integrationStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
+    runtime_.insert(
+        QStringLiteral("compact_ai_window_enabled"),
+        integrationSettings_.value(QStringLiteral("compact_ai_window_enabled")));
+    runtime_.insert(
+        QStringLiteral("ai_event_overlay_enabled"),
+        integrationSettings_.value(QStringLiteral("ai_event_overlay_enabled")));
+    runtime_.insert(
+        QStringLiteral("chat_integration_overlay_enabled"),
+        integrationSettings_.value(QStringLiteral("chat_overlay_enabled")));
+    if (supervisor_.isRunning()) {
+        supervisor_.broadcastSettings(compactJson({
+            {QStringLiteral("compact_ai_window_enabled"),
+             integrationSettings_
+                 .value(QStringLiteral("compact_ai_window_enabled"))},
+            {QStringLiteral("ai_event_overlay_enabled"),
+             integrationSettings_
+                 .value(QStringLiteral("ai_event_overlay_enabled"))},
+            {QStringLiteral("chat_integration_overlay_enabled"),
+             integrationSettings_
+                 .value(QStringLiteral("chat_overlay_enabled"))},
+        }));
+    }
+    syncNativeIntegrationControls();
+    serviceStatusLabel_->setText(backend_.getStatus());
+    integrationStatusLabel_->setText(tr("Native integration settings saved"));
+    return true;
+}
+
+bool NativeMainWindow::restartNativeIntegrationServices() {
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.startIntegrationServices(configPath_, databasePath)) {
+        integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
+        integrationStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    integrationSettings_ = parseObject(backend_.getIntegrationSettingsJson());
+    integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
+    syncNativeIntegrationControls();
+    const bool chatRunning =
+        integrationStatus_.value(QStringLiteral("chat_running")).toBool(false);
+    const bool aiRunning =
+        integrationStatus_.value(QStringLiteral("ai_status_running")).toBool(false);
+    QStringList endpoints;
+    if (chatRunning) {
+        endpoints.append(
+            QStringLiteral("chat http://127.0.0.1:%1/chat-events")
+                .arg(integrationStatus_.value(QStringLiteral("chat_port")).toInt()));
+    }
+    if (aiRunning) {
+        endpoints.append(
+            QStringLiteral("AI http://127.0.0.1:%1/ai-events")
+                .arg(integrationStatus_.value(QStringLiteral("ai_status_port")).toInt()));
+    }
+    integrationStatusLabel_->setText(
+        endpoints.isEmpty()
+            ? tr("Both native loopback integration services are disabled.")
+            : tr("Listening on %1. Requests are limited to 1 MiB with a five-second timeout.")
+                  .arg(endpoints.join(QStringLiteral(" · "))));
+    integrationStopButton_->setEnabled(chatRunning || aiRunning);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    return true;
+}
+
+void NativeMainWindow::stopNativeIntegrationServices() {
+    backend_.stopIntegrationServices();
+    integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
+    if (integrationStatusLabel_ != nullptr) {
+        integrationStatusLabel_->setText(tr("Native loopback integration services stopped."));
+    }
+    if (integrationStopButton_ != nullptr) {
+        integrationStopButton_->setEnabled(false);
+    }
+}
+
+void NativeMainWindow::handleNativeIntegrationEvent(const QString& payloadJson) {
+    const QJsonObject event = parseObject(payloadJson);
+    const QString kind = event.value(QStringLiteral("kind")).toString();
+    const QJsonObject payload = event.value(QStringLiteral("payload")).toObject();
+    if (payload.isEmpty()) {
+        return;
+    }
+    if (kind == QStringLiteral("chat_overlay")) {
+        supervisor_.broadcastControlLine(
+            QStringLiteral("CHAT_EVENT\t") + compactJson(payload));
+        if (integrationStatusLabel_ != nullptr) {
+            integrationStatusLabel_->setText(
+                payload.value(QStringLiteral("state")).toString()
+                        == QStringLiteral("clear")
+                    ? tr("External chat unread state was explicitly cleared.")
+                    : tr("External chat message stored and forwarded to native pets."));
+        }
+    } else if (kind == QStringLiteral("ai_event")) {
+        supervisor_.broadcastControlLine(
+            QStringLiteral("AI_EVENT\t") + compactJson(payload));
+        if (integrationStatusLabel_ != nullptr) {
+            integrationStatusLabel_->setText(
+                tr("AI status event authenticated and forwarded to native pets."));
+        }
     }
 }
 
@@ -7605,6 +7967,14 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
         runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true);
     spec.mutualGazeEnabled =
         runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool(false);
+    spec.compactAiWindowEnabled =
+        runtime_.value(QStringLiteral("compact_ai_window_enabled")).toBool(false);
+    spec.aiEventOverlayEnabled =
+        runtime_.value(QStringLiteral("ai_event_overlay_enabled")).toBool(false);
+    spec.chatIntegrationOverlayEnabled =
+        runtime_
+            .value(QStringLiteral("chat_integration_overlay_enabled"))
+            .toBool(true);
     return spec;
 }
 

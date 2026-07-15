@@ -1072,3 +1072,46 @@ def test_native_control_center_owns_cross_platform_tray_lifecycle():
     assert "&PetProcessSupervisor::stop" in window
     assert "event->ignore()" in window
     assert "QCoreApplication::quit()" in window
+
+
+def test_native_loopback_integrations_are_bounded_redacted_and_pet_visible():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    integration = source("rust/crates/bandori-core/src/local_integration.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    pet_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    pet = source("native/qt/pet_main.cpp")
+
+    assert "pub mod local_integration;" in core
+    assert "Ipv4Addr::LOCALHOST" in integration
+    assert "MAX_BODY_BYTES: usize = 1024 * 1024" in integration
+    assert "WORKERS_PER_SERVICE: usize = 4" in integration
+    assert "PENDING_CONNECTIONS: usize = 32" in integration
+    assert "constant_time_eq" in integration
+    assert "normalize_onebot_event" in integration
+    assert "add_external_chat_message" in integration
+    assert "mark_external_chat_read" in integration
+    assert "loopback_server_authenticates_stores_deduplicates_and_marks_read" in integration
+    assert "ai_status_token_configured" in integration
+    assert "chat_token_configured" in integration
+    assert "integration_settings_json" in backend
+    assert "integration_status_json" in backend
+    assert "NativeIntegrationServer" in backend
+    assert "fn start_integration_services(" in backend
+    assert "fn stop_integration_services(" in backend
+    assert "integration_event" in backend
+    assert '"getIntegrationSettingsJson"' in bridge_test
+    assert '"startIntegrationServices"' in bridge_test
+    assert '"integrationEvent"' in bridge_test
+    assert "QWidget* createIntegrationPage()" in header
+    assert "backend_.startIntegrationServices" in window
+    assert 'QStringLiteral("CHAT_EVENT\\t")' in window
+    assert 'QStringLiteral("AI_EVENT\\t")' in window
+    assert "compactAiWindowEnabled" in pet_header
+    assert 'QStringLiteral("--compact-ai-window-enabled")' in supervisor
+    assert 'QStringLiteral("CHAT_EVENT\\t")' in pet
+    assert 'QStringLiteral("AI_EVENT\\t")' in pet
+    assert 'state == QStringLiteral("clear")' in pet

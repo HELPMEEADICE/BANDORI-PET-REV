@@ -1,7 +1,7 @@
 use crate::chat_attachments::group_chat_message_content;
 use crate::chat_context::{
     NativeChatMessage, NativeChatRequest, append_dynamic_context_to_last_user,
-    history_message_limit,
+    append_external_chat_context, history_message_limit,
 };
 use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
@@ -352,6 +352,7 @@ pub fn build_native_group_chat_request(
         dynamic_context.push_str(&spoken_names.join("、"));
         dynamic_context.push_str("之后发言，请自然承接前面角色的内容。");
     }
+    append_external_chat_context(database, config, &mut dynamic_context)?;
     let current_time_instruction = current_time_instruction.trim();
     if !current_time_instruction.is_empty() {
         dynamic_context.push_str("\n\n【后置提示词】\n");

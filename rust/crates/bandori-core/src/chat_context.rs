@@ -95,6 +95,7 @@ pub fn build_native_chat_request(
             dynamic_context.push_str(&cross_chat);
         }
     }
+    append_external_chat_context(database, config, &mut dynamic_context)?;
     let current_time_instruction = current_time_instruction.trim();
     if !current_time_instruction.is_empty() {
         dynamic_context.push_str("\n\n【后置提示词】\n");
@@ -126,6 +127,29 @@ pub fn build_native_chat_request(
         messages,
         tools: native_chat_tools(),
     })
+}
+
+pub(crate) fn append_external_chat_context(
+    database: &Database,
+    config: &ConfigDocument,
+    dynamic_context: &mut String,
+) -> Result<(), DatabaseError> {
+    let enabled = config
+        .get("chat_integration_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && config
+            .get("chat_integration_include_context")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+    if enabled {
+        let external = database.external_chat_context_text(4, 6)?;
+        if !external.is_empty() {
+            dynamic_context.push_str("\n\n");
+            dynamic_context.push_str(&external);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn history_message_limit(value: Option<&Value>) -> Option<i64> {
@@ -411,5 +435,34 @@ mod tests {
                 .unwrap()
                 .starts_with("data:image/png;base64,")
         );
+    }
+
+    #[test]
+    fn external_chat_context_is_included_only_when_both_switches_allow_it() {
+        let project = tempfile::tempdir().unwrap();
+        let database = Database::open(project.path().join("data.db")).unwrap();
+        database
+            .add_external_chat_message(&json!({
+                "platform": "qq",
+                "thread_id": "band",
+                "thread_name": "Afterglow",
+                "sender_name": "Moca",
+                "text": "薯条要凉了"
+            }))
+            .unwrap();
+        let mut config = ConfigDocument::default();
+        let mut context = String::from("relationship");
+        append_external_chat_context(&database, &config, &mut context).unwrap();
+        assert_eq!(context, "relationship");
+
+        config.set("chat_integration_enabled", Value::Bool(true));
+        append_external_chat_context(&database, &config, &mut context).unwrap();
+        assert!(context.contains("【外部聊天软件上下文】"));
+        assert!(context.contains("薯条要凉了"));
+
+        config.set("chat_integration_include_context", Value::Bool(false));
+        let mut disabled = String::new();
+        append_external_chat_context(&database, &config, &mut disabled).unwrap();
+        assert!(disabled.is_empty());
     }
 }

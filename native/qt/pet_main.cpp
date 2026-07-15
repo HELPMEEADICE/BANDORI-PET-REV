@@ -397,6 +397,21 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Look toward the nearest active pet process"),
         QStringLiteral("bool"),
         QStringLiteral("false"));
+    QCommandLineOption compactAiWindowEnabled(
+        QStringLiteral("compact-ai-window-enabled"),
+        QStringLiteral("Show compact native event bubbles"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
+    QCommandLineOption aiEventOverlayEnabled(
+        QStringLiteral("ai-event-overlay-enabled"),
+        QStringLiteral("Accept AI status overlay events"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
+    QCommandLineOption chatIntegrationOverlayEnabled(
+        QStringLiteral("chat-integration-overlay-enabled"),
+        QStringLiteral("Accept external chat overlay events"),
+        QStringLiteral("bool"),
+        QStringLiteral("true"));
     QCommandLineOption parentPid(
         QStringLiteral("parent-pid"),
         QStringLiteral("Quit when this supervisor process exits"),
@@ -436,6 +451,9 @@ int main(int argc, char* argv[]) {
          moveAllRolesTogether,
          headTrackingEnabled,
          mutualGazeEnabled,
+         compactAiWindowEnabled,
+         aiEventOverlayEnabled,
+         chatIntegrationOverlayEnabled,
          parentPid,
          ipcSession});
     parser.process(app);
@@ -464,6 +482,10 @@ int main(int argc, char* argv[]) {
     widget.setDragLocked(optionBool(parser.value(dragLocked)));
     bool headTracking = optionBool(parser.value(headTrackingEnabled), true);
     bool mutualGaze = optionBool(parser.value(mutualGazeEnabled));
+    bool compactAiWindow = optionBool(parser.value(compactAiWindowEnabled));
+    bool aiEventOverlay = optionBool(parser.value(aiEventOverlayEnabled));
+    bool chatIntegrationOverlay =
+        optionBool(parser.value(chatIntegrationOverlayEnabled), true);
     widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
     widget.setLipSyncMaxOpen(parser.value(lipSyncMaxOpen).toDouble());
     widget.setWindowOpacity(std::clamp(parser.value(opacity).toDouble(), 0.05, 1.0));
@@ -825,6 +847,9 @@ int main(int argc, char* argv[]) {
          &triggerPokeFeedback,
          &reminderBubble,
          &reminderBubbleGeneration,
+         &compactAiWindow,
+         &aiEventOverlay,
+         &chatIntegrationOverlay,
          &radialMenu,
          ipcClient,
          modelPath](const QString& line) {
@@ -906,6 +931,87 @@ int main(int argc, char* argv[]) {
                 }
                 return;
             }
+            const bool aiEvent = line.startsWith(QStringLiteral("AI_EVENT\t"));
+            const bool chatEvent = line.startsWith(QStringLiteral("CHAT_EVENT\t"));
+            if (aiEvent || chatEvent) {
+                if ((aiEvent && !aiEventOverlay)
+                    || (chatEvent && !chatIntegrationOverlay)) {
+                    return;
+                }
+                const QJsonObject event = ipcJsonPayload(line);
+                const QString target = event
+                                           .value(QStringLiteral("character"))
+                                           .toString(
+                                               event
+                                                   .value(QStringLiteral("target_character"))
+                                                   .toString())
+                                           .trimmed();
+                if (!target.isEmpty() && target != characterId) {
+                    return;
+                }
+                const QString state =
+                    event.value(QStringLiteral("state")).toString().trimmed().toLower();
+                QString action =
+                    event.value(QStringLiteral("action")).toString().trimmed();
+                if (action.isEmpty() && aiEvent) {
+                    if (state == QStringLiteral("thinking")
+                        || state == QStringLiteral("tool")) {
+                        action = QStringLiteral("thinking");
+                    } else if (state == QStringLiteral("error")) {
+                        action = QStringLiteral("surprised");
+                    } else if (state == QStringLiteral("done")) {
+                        action = QStringLiteral("smile");
+                    }
+                }
+                if (!action.isEmpty()) {
+                    widget.triggerAction(action, characterId);
+                }
+                if (state == QStringLiteral("clear")) {
+                    ++reminderBubbleGeneration;
+                    reminderBubble.hide();
+                    return;
+                }
+                if (!compactAiWindow || !widget.isVisible()) {
+                    return;
+                }
+                const QString title =
+                    event.value(QStringLiteral("title")).toString().trimmed();
+                QString text = event.value(QStringLiteral("text")).toString().trimmed();
+                if (text.isEmpty()) {
+                    text = event.value(QStringLiteral("content")).toString().trimmed();
+                }
+                if (text.isEmpty()) {
+                    text = event.value(QStringLiteral("message")).toString().trimmed();
+                }
+                if (text.isEmpty() && title.isEmpty()) {
+                    return;
+                }
+                if (!title.isEmpty()) {
+                    text = text.isEmpty() ? title : title + u'\n' + text;
+                }
+                reminderBubble.setMaximumWidth(std::max(180, widget.width() - 32));
+                reminderBubble.setText(text);
+                reminderBubble.adjustSize();
+                reminderBubble.move(
+                    std::max(8, (widget.width() - reminderBubble.width()) / 2),
+                    16);
+                reminderBubble.raise();
+                reminderBubble.show();
+                const int generation = ++reminderBubbleGeneration;
+                const int ttl = std::clamp(
+                    event.value(QStringLiteral("ttl_ms")).toInt(9'000),
+                    1,
+                    60'000);
+                QTimer::singleShot(
+                    ttl,
+                    &widget,
+                    [&reminderBubble, &reminderBubbleGeneration, generation]() {
+                        if (reminderBubbleGeneration == generation) {
+                            reminderBubble.hide();
+                        }
+                    });
+                return;
+            }
             if (line.startsWith(QStringLiteral("REMINDER_EVENT\t"))) {
                 const QJsonObject event = ipcJsonPayload(line);
                 const QString target =
@@ -920,6 +1026,9 @@ int main(int argc, char* argv[]) {
                 }
                 const QString text = event.value(QStringLiteral("text")).toString().trimmed();
                 if (text.isEmpty()) {
+                    return;
+                }
+                if (!compactAiWindow || !widget.isVisible()) {
                     return;
                 }
                 reminderBubble.setMaximumWidth(std::max(180, widget.width() - 32));
@@ -1052,6 +1161,32 @@ int main(int argc, char* argv[]) {
                 mutualGaze =
                     settings.value(QStringLiteral("live2d_mutual_gaze_enabled")).toBool(false);
                 lastPublishedCenterValid = false;
+            }
+            if (settings.contains(QStringLiteral("compact_ai_window_enabled"))) {
+                compactAiWindow =
+                    settings.value(QStringLiteral("compact_ai_window_enabled")).toBool(false);
+                if (!compactAiWindow) {
+                    ++reminderBubbleGeneration;
+                    reminderBubble.hide();
+                }
+            }
+            if (settings.contains(QStringLiteral("ai_event_overlay_enabled"))) {
+                aiEventOverlay =
+                    settings.value(QStringLiteral("ai_event_overlay_enabled")).toBool(false);
+                if (!aiEventOverlay) {
+                    ++reminderBubbleGeneration;
+                    reminderBubble.hide();
+                }
+            }
+            if (settings.contains(QStringLiteral("chat_integration_overlay_enabled"))) {
+                chatIntegrationOverlay = settings
+                                             .value(QStringLiteral(
+                                                 "chat_integration_overlay_enabled"))
+                                             .toBool(true);
+                if (!chatIntegrationOverlay) {
+                    ++reminderBubbleGeneration;
+                    reminderBubble.hide();
+                }
             }
             if (settings.contains(QStringLiteral("poke_motion"))) {
                 configuredPokeMotion =
