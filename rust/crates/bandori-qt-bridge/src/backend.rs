@@ -15,6 +15,7 @@ pub mod ffi {
         #[qproperty(QString, chat_conversations_json)]
         #[qproperty(QString, chat_messages_json)]
         #[qproperty(QString, chat_active_conversation_id)]
+        #[qproperty(QString, chat_turn_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -52,6 +53,28 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "prepareChatTurn"]
+        fn prepare_chat_turn(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            character: &QString,
+            user_key: &QString,
+            requested_conversation_id: &QString,
+            content: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveChatAssistant"]
+        fn save_chat_assistant(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            request_id: i64,
+            content: &QString,
+            reasoning: &QString,
+            outcome_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "startChatStream"]
         fn start_chat_stream(
             self: Pin<&mut Self>,
@@ -76,6 +99,7 @@ use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
+use bandori_core::database::Database;
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest,
@@ -97,8 +121,13 @@ pub struct BackendRust {
     chat_conversations_json: QString,
     chat_messages_json: QString,
     chat_active_conversation_id: QString,
+    chat_turn_json: QString,
     chat_has_older_messages: bool,
+    prepared_chat_conversation_id: i64,
     active_chat_request_id: i64,
+    active_chat_request_conversation_id: i64,
+    completed_chat_request_id: i64,
+    completed_chat_conversation_id: i64,
     next_chat_request_id: i64,
     active_chat_cancellation: Option<CancellationToken>,
 }
@@ -113,8 +142,13 @@ impl Default for BackendRust {
             chat_conversations_json: QString::from("[]"),
             chat_messages_json: QString::from("[]"),
             chat_active_conversation_id: QString::default(),
+            chat_turn_json: QString::from("{}"),
             chat_has_older_messages: false,
+            prepared_chat_conversation_id: 0,
             active_chat_request_id: 0,
+            active_chat_request_conversation_id: 0,
+            completed_chat_request_id: 0,
+            completed_chat_conversation_id: 0,
             next_chat_request_id: 1,
             active_chat_cancellation: None,
         }
@@ -295,6 +329,135 @@ impl ffi::Backend {
         }
     }
 
+    pub fn prepare_chat_turn(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        character: &QString,
+        user_key: &QString,
+        requested_conversation_id: &QString,
+        content: &QString,
+    ) -> bool {
+        if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native LLM request is already running"));
+            return false;
+        }
+        let requested_conversation_id = requested_conversation_id
+            .to_string()
+            .trim()
+            .parse::<i64>()
+            .ok();
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match database.begin_private_chat_turn(
+            &character.to_string(),
+            &user_key.to_string(),
+            requested_conversation_id,
+            &content.to_string(),
+            None,
+        ) {
+            Ok(turn) => {
+                let payload = serde_json::to_string(&turn)
+                    .expect("private chat turn serialization cannot fail");
+                let state = self.as_mut().rust_mut().get_mut();
+                state.prepared_chat_conversation_id = turn.conversation_id;
+                state.completed_chat_request_id = 0;
+                state.completed_chat_conversation_id = 0;
+                self.as_mut().set_chat_active_conversation_id(QString::from(
+                    &turn.conversation_id.to_string(),
+                ));
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native chat turn saved"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat turn error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn save_chat_assistant(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        request_id: i64,
+        content: &QString,
+        reasoning: &QString,
+        outcome_json: &QString,
+    ) -> bool {
+        let (completed_request_id, conversation_id) = {
+            let state = self.as_ref().get_ref().rust();
+            (
+                state.completed_chat_request_id,
+                state.completed_chat_conversation_id,
+            )
+        };
+        if request_id <= 0 || completed_request_id != request_id {
+            self.as_mut().set_status(QString::from(
+                "Native chat completion is stale or unavailable",
+            ));
+            return false;
+        }
+        if conversation_id <= 0 {
+            self.as_mut()
+                .set_status(QString::from("Native chat completion has no conversation"));
+            return false;
+        }
+        let content = content.to_string();
+        let reasoning = reasoning.to_string();
+        if content.trim().is_empty() && reasoning.trim().is_empty() {
+            self.as_mut()
+                .set_status(QString::from("Native assistant response is empty"));
+            return false;
+        }
+        let trace = assistant_tool_trace(&outcome_json.to_string());
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                return false;
+            }
+        };
+        match database.add_message(
+            conversation_id,
+            "assistant",
+            &content,
+            &reasoning,
+            None,
+            trace.as_ref(),
+        ) {
+            Ok(message_id) => {
+                let payload = json!({
+                    "conversation_id": conversation_id,
+                    "assistant_message_id": message_id,
+                    "request_id": request_id,
+                })
+                .to_string();
+                let state = self.as_mut().rust_mut().get_mut();
+                state.completed_chat_request_id = 0;
+                state.completed_chat_conversation_id = 0;
+                self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native assistant response saved"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Assistant save error: {error}")));
+                false
+            }
+        }
+    }
+
     pub fn start_chat_stream(
         mut self: Pin<&mut Self>,
         config_path: &QString,
@@ -317,6 +480,7 @@ impl ffi::Backend {
         };
 
         let request_id;
+        let request_conversation_id;
         let cancellation = CancellationToken::new();
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -325,7 +489,12 @@ impl ffi::Backend {
             }
             request_id = state.next_chat_request_id.max(1);
             state.next_chat_request_id = request_id.checked_add(1).unwrap_or(1);
+            request_conversation_id = state.prepared_chat_conversation_id;
+            state.prepared_chat_conversation_id = 0;
             state.active_chat_request_id = request_id;
+            state.active_chat_request_conversation_id = request_conversation_id;
+            state.completed_chat_request_id = 0;
+            state.completed_chat_conversation_id = 0;
             state.active_chat_cancellation = Some(cancellation.clone());
         }
         self.as_mut()
@@ -338,7 +507,9 @@ impl ffi::Backend {
             })
         {
             let state = self.as_mut().rust_mut().get_mut();
+            state.prepared_chat_conversation_id = request_conversation_id;
             state.active_chat_request_id = 0;
+            state.active_chat_request_conversation_id = 0;
             state.active_chat_cancellation = None;
             self.as_mut().set_status(QString::from(&format!(
                 "Could not start native LLM worker: {error}"
@@ -374,8 +545,25 @@ impl ffi::Backend {
             return;
         }
         if terminal {
+            let finished = serde_json::from_str::<Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .is_some_and(|state| state == "finished");
             let state = self.as_mut().rust_mut().get_mut();
+            if finished && state.active_chat_request_conversation_id > 0 {
+                state.completed_chat_request_id = request_id;
+                state.completed_chat_conversation_id = state.active_chat_request_conversation_id;
+            } else {
+                state.completed_chat_request_id = 0;
+                state.completed_chat_conversation_id = 0;
+            }
             state.active_chat_request_id = 0;
+            state.active_chat_request_conversation_id = 0;
             state.active_chat_cancellation = None;
         }
         self.as_mut()
@@ -415,6 +603,12 @@ fn config_string(config: &ConfigDocument, key: &str) -> String {
 fn parse_llm_request(source: &str) -> Result<LlmTransportRequest, String> {
     LlmTransportRequest::from_json(source, MAX_CHAT_REQUEST_BYTES)
         .map_err(|error| format!("Invalid native LLM request: {error}"))
+}
+
+fn assistant_tool_trace(outcome_json: &str) -> Option<Value> {
+    let outcome = serde_json::from_str::<Value>(outcome_json).ok()?;
+    let usage = outcome.get("usage")?.as_object()?;
+    Some(json!({"llm_usage": usage}))
 }
 
 fn run_llm_stream(

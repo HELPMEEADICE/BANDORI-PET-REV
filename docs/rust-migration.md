@@ -160,8 +160,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   named Rust worker thread, queues structured events back onto the Qt event
   loop, filters superseded request IDs and cancels work when the backend is
   destroyed. API credentials stay inside Rust and never enter QObject
-  properties or event JSON. Native composer/persistence wiring and local-tool
-  execution remain staged.
+  properties or event JSON. Native composer and local-tool execution remain
+  staged. The database layer now also starts private chat
+  turns transactionally, validates that a selected conversation belongs to the
+  active character/user pair, and binds a successful streamed request back to
+  that conversation before the Qt bridge may save its assistant response and
+  token-usage trace.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

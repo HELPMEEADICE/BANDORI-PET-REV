@@ -222,6 +222,12 @@ pub struct Message {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PrivateChatTurn {
+    pub conversation_id: i64,
+    pub user_message_id: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GroupMessage {
     pub id: i64,
     pub group_key: String,
@@ -613,6 +619,73 @@ impl Database {
                 params![character, user_key, title],
             )?;
             Ok(connection.last_insert_rowid())
+        })
+    }
+
+    pub fn begin_private_chat_turn(
+        &self,
+        character: &str,
+        user_key: &str,
+        requested_conversation_id: Option<i64>,
+        content: &str,
+        attachments: Option<&Value>,
+    ) -> Result<PrivateChatTurn, DatabaseError> {
+        let character = character.trim();
+        let content = content.trim();
+        if character.is_empty() {
+            return Err(DatabaseError::InvalidOperation(
+                "chat character cannot be empty".to_owned(),
+            ));
+        }
+        if content.is_empty() {
+            return Err(DatabaseError::InvalidOperation(
+                "chat message cannot be empty".to_owned(),
+            ));
+        }
+        let user_key = normalize_user_key(user_key);
+        let attachments = sanitize_attachments(attachments, &self.attachment_dir);
+        let attachments_json = json_text(Some(&attachments))?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            let conversation_id = match requested_conversation_id.filter(|value| *value > 0) {
+                Some(conversation_id) => transaction
+                    .query_row(
+                        concat!(
+                            "SELECT id FROM conversations ",
+                            "WHERE id=? AND character=? AND user_key=?"
+                        ),
+                        params![conversation_id, character, user_key],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?
+                    .ok_or_else(|| {
+                        DatabaseError::InvalidOperation(
+                            "conversation does not belong to the selected character and user"
+                                .to_owned(),
+                        )
+                    })?,
+                None => {
+                    transaction.execute(
+                        "INSERT INTO conversations (character, user_key, title) VALUES (?, ?, '')",
+                        params![character, user_key],
+                    )?;
+                    transaction.last_insert_rowid()
+                }
+            };
+            transaction.execute(
+                concat!(
+                    "INSERT INTO messages ",
+                    "(conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json) ",
+                    "VALUES (?, 'user', ?, '', ?, '')"
+                ),
+                params![conversation_id, content, attachments_json],
+            )?;
+            let user_message_id = transaction.last_insert_rowid();
+            transaction.commit()?;
+            Ok(PrivateChatTurn {
+                conversation_id,
+                user_message_id,
+            })
         })
     }
 
@@ -4649,6 +4722,49 @@ mod tests {
                 .get_messages(conversation, None, None)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn private_chat_turn_is_atomic_and_enforces_conversation_ownership() {
+        let temp = tempdir().unwrap();
+        let database = Database::open(temp.path().join("data.db")).unwrap();
+        let first = database
+            .begin_private_chat_turn(" Ran ", "alice", None, " hello ", None)
+            .unwrap();
+        let messages = database
+            .get_messages(first.conversation_id, None, None)
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, first.user_message_id);
+        assert_eq!(messages[0].content, "hello");
+
+        let second = database
+            .begin_private_chat_turn("Ran", "alice", Some(first.conversation_id), "again", None)
+            .unwrap();
+        assert_eq!(second.conversation_id, first.conversation_id);
+        assert!(second.user_message_id > first.user_message_id);
+
+        let error = database
+            .begin_private_chat_turn("Ran", "bob", Some(first.conversation_id), "private", None)
+            .unwrap_err();
+        assert!(matches!(error, DatabaseError::InvalidOperation(_)));
+        assert_eq!(
+            database
+                .get_messages(first.conversation_id, None, None)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            database
+                .begin_private_chat_turn("", "alice", None, "hello", None)
+                .is_err()
+        );
+        assert!(
+            database
+                .begin_private_chat_turn("Ran", "alice", None, "  ", None)
+                .is_err()
         );
     }
 
