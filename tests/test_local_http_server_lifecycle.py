@@ -2,12 +2,38 @@ import json
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+from local_port_security import ensure_local_port_token
 
 
 def test_local_http_request_threads_do_not_block_server_close():
     from local_http_server import LocalThreadingHTTPServer
 
     assert LocalThreadingHTTPServer.daemon_threads is True
+
+
+def test_missing_local_port_token_is_generated_and_persisted():
+    config = Mock()
+    config.get.return_value = ""
+
+    with patch("local_port_security.secrets.token_urlsafe", return_value="generated-token"):
+        token = ensure_local_port_token(config, "chat_integration_token")
+
+    assert token == "generated-token"
+    config.set.assert_called_once_with("chat_integration_token", "generated-token")
+    config.save.assert_called_once_with()
+
+
+def test_existing_local_port_token_is_reused():
+    config = Mock()
+    config.get.return_value = " existing-token "
+
+    token = ensure_local_port_token(config, "ai_status_token")
+
+    assert token == "existing-token"
+    config.set.assert_not_called()
+    config.save.assert_not_called()
 
 
 def test_local_http_request_body_reads_have_a_timeout():
