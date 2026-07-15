@@ -113,7 +113,7 @@ def _bool_value(value, default: bool = False) -> bool:
 def _int_value(value, default: int, minimum: int, maximum: int) -> int:
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         number = default
     return max(minimum, min(maximum, number))
 
