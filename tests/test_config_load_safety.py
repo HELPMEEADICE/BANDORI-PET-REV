@@ -8,6 +8,24 @@ from config_manager import DEFAULTS, ConfigManager
 
 
 class ConfigLoadSafetyTests(unittest.TestCase):
+    def test_load_tolerates_overflowing_llm_profile_numbers(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(
+                '{"llm_api_profiles":[{"name":"custom",'
+                '"llm_auto_continue_max_turns":1e309}]}',
+                encoding="utf-8",
+            )
+
+            config = ConfigManager(path)
+
+            profile = next(
+                item
+                for item in config.get("llm_api_profiles")
+                if item["name"] == "custom"
+            )
+            self.assertEqual(5, profile["llm_auto_continue_max_turns"])
+
     def test_transient_read_error_does_not_move_valid_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.json"

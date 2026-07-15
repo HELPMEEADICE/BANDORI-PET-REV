@@ -484,7 +484,7 @@ def normalize_model_action_profile(profile) -> dict:
 def _int_value(value, default: int) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
