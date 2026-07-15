@@ -156,7 +156,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   bounded SSE/error buffers, secret-redacted diagnostics, status decoding and a
   cancellation token that interrupts connect or an open stream. Local loopback
   tests exercise chunk-split UTF-8 streaming and prompt cancellation without
-  contacting a real provider. Qt wiring and local-tool execution remain staged.
+  contacting a real provider. The CXX-Qt backend now starts those streams on a
+  named Rust worker thread, queues structured events back onto the Qt event
+  loop, filters superseded request IDs and cancels work when the backend is
+  destroyed. API credentials stay inside Rust and never enter QObject
+  properties or event JSON. Native composer/persistence wiring and local-tool
+  execution remain staged.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

@@ -1,7 +1,7 @@
+pub use bandori_llm_protocol::{LlmApiMode, LlmStreamEvent, TokenUsage};
 use bandori_llm_protocol::{
-    LlmApiMode, LlmProtocolError, LlmSseDecoder, LlmStreamEvent, TokenUsage,
-    build_chat_completions_body, build_responses_body, chat_completions_api_url, responses_api_url,
-    supports_openai_responses_api,
+    LlmProtocolError, LlmSseDecoder, build_chat_completions_body, build_responses_body,
+    chat_completions_api_url, responses_api_url, supports_openai_responses_api,
 };
 use futures_util::StreamExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
@@ -55,6 +55,50 @@ pub struct LlmTransportRequest {
     pub previous_response_id: String,
 }
 
+impl LlmTransportRequest {
+    pub fn from_json(source: &str, max_bytes: usize) -> Result<Self, LlmTransportError> {
+        if source.len() > max_bytes {
+            return Err(LlmTransportError::InvalidRequest(format!(
+                "request exceeds the {max_bytes} byte limit"
+            )));
+        }
+        let value: Value = serde_json::from_str(source)
+            .map_err(|error| LlmTransportError::InvalidRequest(format!("invalid JSON: {error}")))?;
+        let object = value.as_object().ok_or_else(|| {
+            LlmTransportError::InvalidRequest("root must be an object".to_owned())
+        })?;
+        let messages = object
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| {
+                LlmTransportError::InvalidRequest("messages must be an array".to_owned())
+            })?;
+        if messages.is_empty() {
+            return Err(LlmTransportError::InvalidRequest(
+                "messages cannot be empty".to_owned(),
+            ));
+        }
+        let tools = match object.get("tools") {
+            Some(value) => value.as_array().cloned().ok_or_else(|| {
+                LlmTransportError::InvalidRequest("tools must be an array".to_owned())
+            })?,
+            None => Vec::new(),
+        };
+        let previous_response_id = object
+            .get("previous_response_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        Ok(Self {
+            messages,
+            tools,
+            previous_response_id,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LlmStreamOutcome {
     pub mode: LlmApiMode,
@@ -78,6 +122,8 @@ pub enum LlmTransportError {
     SseLineTooLong,
     #[error("invalid authorization header")]
     InvalidAuthorizationHeader,
+    #[error("invalid LLM request: {0}")]
+    InvalidRequest(String),
 }
 
 #[derive(Clone, Debug)]
@@ -555,5 +601,25 @@ mod tests {
             "bad key"
         );
         assert_eq!(error_message(b""), "request failed");
+    }
+
+    #[test]
+    fn request_json_validation_enforces_shape_and_size_without_logging_content() {
+        let request = LlmTransportRequest::from_json(
+            r#"{"messages":[{"role":"user","content":"hello"}],"tools":[],"previous_response_id":" response-1 "}"#,
+            1024,
+        )
+        .unwrap();
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.previous_response_id, "response-1");
+        assert!(matches!(
+            LlmTransportRequest::from_json(r#"{"messages":[]}"#, 1024),
+            Err(LlmTransportError::InvalidRequest(message)) if message == "messages cannot be empty"
+        ));
+        let secret = "must-not-appear";
+        let error = LlmTransportRequest::from_json(secret, 4)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(secret));
     }
 }

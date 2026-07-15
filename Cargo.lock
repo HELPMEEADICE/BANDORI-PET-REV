@@ -87,11 +87,14 @@ version = "0.1.0"
 dependencies = [
  "bandori-core",
  "bandori-live2d",
+ "bandori-llm",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
  "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

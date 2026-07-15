@@ -38,6 +38,9 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "reloadState",
         "saveNativeSettings",
         "loadChatState",
+        "startChatStream",
+        "cancelChatStream",
+        "chatStreamEvent",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

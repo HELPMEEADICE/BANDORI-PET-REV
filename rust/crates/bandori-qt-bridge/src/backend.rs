@@ -50,7 +50,25 @@ pub mod ffi {
             requested_conversation_id: &QString,
             message_limit: i32,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startChatStream"]
+        fn start_chat_stream(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            request_json: &QString,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelChatStream"]
+        fn cancel_chat_stream(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qsignal]
+        #[cxx_name = "chatStreamEvent"]
+        fn chat_stream_event(self: Pin<&mut Self>, payload_json: &QString);
     }
+
+    impl cxx_qt::Threading for Backend {}
 }
 
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
@@ -58,9 +76,18 @@ use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
+use bandori_llm::{
+    LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
+    LlmTransportRequest,
+};
 use core::pin::Pin;
+use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
+use serde_json::{Value, json};
 use std::path::Path;
+use tokio_util::sync::CancellationToken;
+
+const MAX_CHAT_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct BackendRust {
     status: QString,
@@ -71,6 +98,9 @@ pub struct BackendRust {
     chat_messages_json: QString,
     chat_active_conversation_id: QString,
     chat_has_older_messages: bool,
+    active_chat_request_id: i64,
+    next_chat_request_id: i64,
+    active_chat_cancellation: Option<CancellationToken>,
 }
 
 impl Default for BackendRust {
@@ -84,6 +114,17 @@ impl Default for BackendRust {
             chat_messages_json: QString::from("[]"),
             chat_active_conversation_id: QString::default(),
             chat_has_older_messages: false,
+            active_chat_request_id: 0,
+            next_chat_request_id: 1,
+            active_chat_cancellation: None,
+        }
+    }
+}
+
+impl Drop for BackendRust {
+    fn drop(&mut self) {
+        if let Some(cancellation) = self.active_chat_cancellation.take() {
+            cancellation.cancel();
         }
     }
 }
@@ -253,6 +294,199 @@ impl ffi::Backend {
             }
         }
     }
+
+    pub fn start_chat_stream(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        request_json: &QString,
+    ) -> i64 {
+        let config = match load_llm_transport_config(Path::new(&config_path.to_string())) {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let request_json = request_json.to_string();
+        let request = match parse_llm_request(&request_json) {
+            Ok(request) => request,
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+
+        let request_id;
+        let cancellation = CancellationToken::new();
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            if let Some(previous) = state.active_chat_cancellation.take() {
+                previous.cancel();
+            }
+            request_id = state.next_chat_request_id.max(1);
+            state.next_chat_request_id = request_id.checked_add(1).unwrap_or(1);
+            state.active_chat_request_id = request_id;
+            state.active_chat_cancellation = Some(cancellation.clone());
+        }
+        self.as_mut()
+            .set_status(QString::from("Native LLM request started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-llm-{request_id}"))
+            .spawn(move || {
+                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+            })
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_chat_request_id = 0;
+            state.active_chat_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native LLM worker: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_chat_stream(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        if state.active_chat_request_id == 0
+            || (request_id > 0 && request_id != state.active_chat_request_id)
+        {
+            return false;
+        }
+        let Some(cancellation) = state.active_chat_cancellation.as_ref() else {
+            return false;
+        };
+        cancellation.cancel();
+        self.as_mut()
+            .set_status(QString::from("Native LLM cancellation requested"));
+        true
+    }
+
+    fn emit_chat_stream_payload(
+        mut self: Pin<&mut Self>,
+        request_id: i64,
+        payload: String,
+        terminal: bool,
+    ) {
+        if self.as_ref().get_ref().rust().active_chat_request_id != request_id {
+            return;
+        }
+        if terminal {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_chat_request_id = 0;
+            state.active_chat_cancellation = None;
+        }
+        self.as_mut()
+            .chat_stream_event(&QString::from(payload.as_str()));
+    }
+}
+
+fn load_llm_transport_config(path: &Path) -> Result<LlmTransportConfig, String> {
+    let config =
+        ConfigDocument::load(path).map_err(|error| format!("LLM config error: {error}"))?;
+    let api_url = config_string(&config, "llm_api_url");
+    let model = config_string(&config, "llm_model_id");
+    if api_url.is_empty() {
+        return Err("LLM API URL is not configured".to_owned());
+    }
+    if model.is_empty() {
+        return Err("LLM model is not configured".to_owned());
+    }
+    Ok(LlmTransportConfig {
+        api_url,
+        api_key: config_string(&config, "llm_api_key"),
+        model,
+        mode: LlmApiMode::from_config(&config_string(&config, "llm_api_mode")),
+        enable_thinking: config.get("llm_enable_thinking").and_then(Value::as_bool),
+    })
+}
+
+fn config_string(config: &ConfigDocument, key: &str) -> String {
+    config
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+fn parse_llm_request(source: &str) -> Result<LlmTransportRequest, String> {
+    LlmTransportRequest::from_json(source, MAX_CHAT_REQUEST_BYTES)
+        .map_err(|error| format!("Invalid native LLM request: {error}"))
+}
+
+fn run_llm_stream(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    config: LlmTransportConfig,
+    request: LlmTransportRequest,
+    cancellation: CancellationToken,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_terminal_payload(
+                &qt_thread,
+                request_id,
+                json!({"request_id": request_id, "state": "error", "message": format!("Async runtime error: {error}")}),
+            );
+            return;
+        }
+    };
+    let transport = match LlmTransport::new(config) {
+        Ok(transport) => transport,
+        Err(error) => {
+            queue_terminal_payload(
+                &qt_thread,
+                request_id,
+                json!({"request_id": request_id, "state": "error", "message": error.to_string()}),
+            );
+            return;
+        }
+    };
+    let event_thread = qt_thread.clone();
+    let result = runtime.block_on(transport.stream(&request, &cancellation, move |event| {
+        queue_stream_event(&event_thread, request_id, event);
+    }));
+    let payload = match result {
+        Ok(outcome) => json!({
+            "request_id": request_id,
+            "state": "finished",
+            "mode": outcome.mode,
+            "response_id": outcome.response_id,
+            "usage": outcome.usage,
+        }),
+        Err(LlmTransportError::Cancelled) => {
+            json!({"request_id": request_id, "state": "cancelled"})
+        }
+        Err(error) => {
+            json!({"request_id": request_id, "state": "error", "message": error.to_string()})
+        }
+    };
+    queue_terminal_payload(&qt_thread, request_id, payload);
+}
+
+fn queue_stream_event(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, event: LlmStreamEvent) {
+    let payload = json!({"request_id": request_id, "state": "event", "event": event}).to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_chat_stream_payload(request_id, payload, false);
+        })
+        .ok();
+}
+
+fn queue_terminal_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, payload: Value) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_chat_stream_payload(request_id, payload, true);
+        })
+        .ok();
 }
 
 fn config_summary(loaded: bool, keys: usize, pets: usize, fps: i64) -> String {
