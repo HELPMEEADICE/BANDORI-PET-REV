@@ -18,8 +18,11 @@ HISTORY_MESSAGE_LIMIT_SLIDER_MAX = 101
 def normalize_history_message_limit(value, default: int) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = int(default)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            parsed = int(default)
+        except (TypeError, ValueError, OverflowError):
+            parsed = 2
     if parsed == HISTORY_MESSAGE_LIMIT_UNLIMITED:
         return HISTORY_MESSAGE_LIMIT_UNLIMITED
     return max(2, min(100, parsed))
@@ -37,7 +40,7 @@ def history_message_limit_to_slider(value, default: int) -> int:
 def history_message_limit_from_slider(value) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         parsed = 2
     if parsed >= HISTORY_MESSAGE_LIMIT_SLIDER_MAX:
         return HISTORY_MESSAGE_LIMIT_UNLIMITED

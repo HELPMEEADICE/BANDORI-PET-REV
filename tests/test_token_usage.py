@@ -27,6 +27,11 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(history_message_limit_from_slider(101), 0)
         self.assertIsNone(history_message_query_limit(0, 40))
 
+    def test_history_message_limit_tolerates_infinite_values(self):
+        self.assertEqual(normalize_history_message_limit(float("inf"), 40), 40)
+        self.assertEqual(normalize_history_message_limit(None, float("inf")), 2)
+        self.assertEqual(history_message_limit_from_slider(float("inf")), 2)
+
     def test_normalizes_both_api_usage_shapes(self):
         chat = normalize_token_usage({
             "prompt_tokens": 120,
