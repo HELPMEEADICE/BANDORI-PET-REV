@@ -16,6 +16,7 @@ pub mod ffi {
         #[qproperty(QString, chat_messages_json)]
         #[qproperty(QString, chat_active_conversation_id)]
         #[qproperty(QString, chat_turn_json)]
+        #[qproperty(QString, chat_request_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -64,6 +65,17 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "buildChatRequest"]
+        fn build_chat_request(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            config_path: &QString,
+            project_root: &QString,
+            character_display_name: &QString,
+            current_time_instruction: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "saveChatAssistant"]
         fn save_chat_assistant(
             self: Pin<&mut Self>,
@@ -94,6 +106,7 @@ pub mod ffi {
     impl cxx_qt::Threading for Backend {}
 }
 
+use bandori_core::chat_context::build_native_chat_request;
 use bandori_core::chat_dashboard::load_native_chat_snapshot;
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
@@ -122,8 +135,11 @@ pub struct BackendRust {
     chat_messages_json: QString,
     chat_active_conversation_id: QString,
     chat_turn_json: QString,
+    chat_request_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
+    prepared_chat_character: String,
+    prepared_chat_user_key: String,
     active_chat_request_id: i64,
     active_chat_request_conversation_id: i64,
     completed_chat_request_id: i64,
@@ -143,8 +159,11 @@ impl Default for BackendRust {
             chat_messages_json: QString::from("[]"),
             chat_active_conversation_id: QString::default(),
             chat_turn_json: QString::from("{}"),
+            chat_request_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
+            prepared_chat_character: String::new(),
+            prepared_chat_user_key: String::new(),
             active_chat_request_id: 0,
             active_chat_request_conversation_id: 0,
             completed_chat_request_id: 0,
@@ -367,12 +386,15 @@ impl ffi::Backend {
                     .expect("private chat turn serialization cannot fail");
                 let state = self.as_mut().rust_mut().get_mut();
                 state.prepared_chat_conversation_id = turn.conversation_id;
+                state.prepared_chat_character = character.to_string();
+                state.prepared_chat_user_key = user_key.to_string();
                 state.completed_chat_request_id = 0;
                 state.completed_chat_conversation_id = 0;
                 self.as_mut().set_chat_active_conversation_id(QString::from(
                     &turn.conversation_id.to_string(),
                 ));
                 self.as_mut().set_chat_turn_json(QString::from(&payload));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
                 self.as_mut()
                     .set_status(QString::from("Native chat turn saved"));
                 true
@@ -380,6 +402,74 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Chat turn error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn build_chat_request(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        config_path: &QString,
+        project_root: &QString,
+        character_display_name: &QString,
+        current_time_instruction: &QString,
+    ) -> bool {
+        let (conversation_id, character, user_key) = {
+            let state = self.as_ref().get_ref().rust();
+            (
+                state.prepared_chat_conversation_id,
+                state.prepared_chat_character.clone(),
+                state.prepared_chat_user_key.clone(),
+            )
+        };
+        if conversation_id <= 0 || character.trim().is_empty() {
+            self.as_mut().set_status(QString::from(
+                "Prepare a native chat turn before building its request",
+            ));
+            self.as_mut().set_chat_request_json(QString::from("{}"));
+            return false;
+        }
+        let database = match Database::open(Path::new(&database_path.to_string())) {
+            Ok(database) => database,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat database error: {error}")));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
+                return false;
+            }
+        };
+        let config = match ConfigDocument::load(Path::new(&config_path.to_string())) {
+            Ok(config) => config,
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat config error: {error}")));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
+                return false;
+            }
+        };
+        match build_native_chat_request(
+            &database,
+            &config,
+            Path::new(&project_root.to_string()),
+            &character,
+            &character_display_name.to_string(),
+            &user_key,
+            conversation_id,
+            &current_time_instruction.to_string(),
+        ) {
+            Ok(request) => {
+                let payload = serde_json::to_string(&request)
+                    .expect("native chat request serialization cannot fail");
+                self.as_mut().set_chat_request_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native chat request ready"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Chat request error: {error}")));
+                self.as_mut().set_chat_request_json(QString::from("{}"));
                 false
             }
         }

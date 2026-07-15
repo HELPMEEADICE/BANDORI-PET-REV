@@ -165,7 +165,17 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
-  token-usage trace.
+  token-usage trace. Character/system prompt composition is now native as well:
+  Python exports the built-in personas, action rules and exact prompt fixtures;
+  Rust safely loads direct per-character Markdown files through `outfit.json`,
+  applies custom persona/system/POV, outfit and MOC3 rules, and reproduces the
+  relationship/mood/memory wording from Python-generated fixtures. A native
+  request builder verifies conversation ownership, applies the compatible
+  0-or-2..100 history limit, appends relationship and Qt-formatted current-time
+  context only to the latest user message, and exposes the resulting request
+  JSON through CXX-Qt without exposing the API key. Cross-chat excerpts,
+  attachment rendering, event-calendar context, group prompts and local tools
+  remain staged with the composer rather than being silently approximated.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

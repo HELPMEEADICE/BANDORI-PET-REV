@@ -24,6 +24,15 @@ def rendered_contracts() -> dict[Path, str]:
         responses_api_url,
         supports_openai_responses_api,
     )
+    from llm_manager import (
+        CHARACTER_PROMPTS,
+        COMMON_RULES,
+        _CORE_TAGS,
+        _MOC3_ACTION_TAGS,
+        _build_key_to_name_mapping,
+        build_system_prompt,
+    )
+    from relationship_memory import build_relationship_context
     from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
@@ -57,6 +66,97 @@ def rendered_contracts() -> dict[Path, str]:
             }
             for value in llm_endpoint_inputs
         ]
+    }
+
+    prompt_cases = [
+        {
+            "name": "known_default",
+            "character": "ran",
+            "config": {},
+        },
+        {
+            "name": "custom_system_and_user_pov",
+            "character": "ran",
+            "config": {
+                "llm_custom_system_prompt_enabled": True,
+                "llm_custom_system_prompt": "Always answer with concise warmth.",
+                "user_name": "Alice",
+                "pov_mode": "custom",
+                "pov_custom_prompt": "The user is visiting the live house.",
+            },
+        },
+        {
+            "name": "moc3_and_outfit",
+            "character": "ran",
+            "config": {
+                "character": "ran",
+                "costume": "stage",
+                "models": [
+                    {
+                        "character": "ran",
+                        "costume": "stage",
+                        "path": "models/ran/stage.model3.json",
+                        "format": "moc3",
+                    }
+                ],
+                "llm_live2d_outfit_recognition_enabled": True,
+                "outfit_descriptions": {
+                    "ran\\tstage": {
+                        "character": "ran",
+                        "costume": "stage",
+                        "costume_name": "Stage outfit",
+                        "description": "A black jacket with red accents.",
+                    }
+                },
+            },
+        },
+        {
+            "name": "unknown_active_persona",
+            "character": "guest",
+            "config": {
+                "character_persona_presets": {
+                    "guest": [
+                        {
+                            "id": "persona-1",
+                            "title": "Guest persona",
+                            "prompt": "You are an original guest guitarist.",
+                        }
+                    ]
+                },
+                "character_persona_active": {"guest": "persona-1"},
+            },
+        },
+        {
+            "name": "known_role_pov",
+            "character": "ran",
+            "config": {
+                "pov_mode": "role",
+                "pov_role_character": "moca",
+            },
+        },
+    ]
+    from unittest.mock import patch
+
+    with (
+        patch("llm_manager._build_event_context", return_value=""),
+        patch("llm_manager._get_character_md_prompt", return_value=""),
+    ):
+        for case in prompt_cases:
+            case["expected"] = build_system_prompt(
+                case["character"], case["config"]
+            )
+    with patch("relationship_memory._tr", side_effect=_contract_translation):
+        relationship_cases = _relationship_prompt_cases(
+            build_relationship_context
+        )
+    chat_prompt_vectors = {
+        "core_tags": _CORE_TAGS,
+        "moc3_action_tags": _MOC3_ACTION_TAGS,
+        "common_rules": COMMON_RULES,
+        "character_prompts": CHARACTER_PROMPTS,
+        "character_display_names": _build_key_to_name_mapping(),
+        "cases": prompt_cases,
+        "relationship_cases": relationship_cases,
     }
 
     key_cases = [
@@ -179,6 +279,10 @@ def rendered_contracts() -> dict[Path, str]:
             llm_protocol_vectors, ensure_ascii=False, indent=2
         )
         + "\n",
+        OUTPUT_DIR / "chat_prompt_vectors.json": json.dumps(
+            chat_prompt_vectors, ensure_ascii=False, indent=2
+        )
+        + "\n",
         OUTPUT_DIR / "database_schema.json": json.dumps(
             database_contract, ensure_ascii=False, indent=2
         )
@@ -188,6 +292,79 @@ def rendered_contracts() -> dict[Path, str]:
         )
         + "\n",
     }
+
+
+def _contract_translation(_key: str, default: str = "", **kwargs) -> str:
+    return str(default).format(**kwargs)
+
+
+def _relationship_prompt_cases(build_relationship_context) -> list[dict]:
+    class FixtureDatabase:
+        def __init__(self, state: dict, memories: dict[tuple[str, str], list[dict]]):
+            self._state = state
+            self._memories = memories
+
+        def get_relationship_state(self, character: str, user_key: str) -> dict:
+            return dict(self._state)
+
+        def get_character_memories(
+            self, character: str, user_key: str, limit: int = 8
+        ) -> list[dict]:
+            return [
+                dict(memory)
+                for memory in self._memories.get((character, user_key), [])[:limit]
+            ]
+
+    cases = [
+        {
+            "name": "default_relationship",
+            "character": "ran",
+            "user_key": "__default__",
+            "display_name": "",
+            "state": {
+                "affection": 50,
+                "trust": 50,
+                "familiarity": 0,
+                "mood": "calm",
+                "mood_intensity": 20,
+            },
+            "memories": [],
+            "global_memories": [],
+        },
+        {
+            "name": "role_user_with_memories",
+            "character": "ran",
+            "user_key": "__role__:moca",
+            "display_name": "",
+            "state": {
+                "affection": 87,
+                "trust": 72,
+                "familiarity": 61,
+                "mood": "shy",
+                "mood_intensity": 76,
+            },
+            "memories": [
+                {"kind": "relationship", "content": "约好一起去看演出"},
+                {"kind": "custom", "content": "共同口头禅是哦豁"},
+            ],
+            "global_memories": [
+                {"kind": "preference", "content": "喜欢草莓蛋糕"},
+            ],
+        },
+    ]
+    for case in cases:
+        memories = {
+            (case["character"], case["user_key"]): case["memories"],
+            ("__global__", case["user_key"]): case["global_memories"],
+        }
+        database = FixtureDatabase(case["state"], memories)
+        case["expected"] = build_relationship_context(
+            database,
+            case["character"],
+            case["user_key"],
+            case["display_name"],
+        )
+    return cases
 
 
 def _database_contract() -> dict:
