@@ -92,7 +92,7 @@ def _contrast_text(color: QColor) -> str:
 def _opacity_alpha(value) -> int:
     try:
         pct = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         pct = 44
     return max(15, min(100, pct)) * 255 // 100
 
@@ -100,7 +100,7 @@ def _opacity_alpha(value) -> int:
 def _font_size_from_config(value) -> int:
     try:
         size = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         size = 12
     return max(9, min(22, size))
 
