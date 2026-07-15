@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -17,6 +18,7 @@ def rendered_contracts() -> dict[Path, str]:
         sys.path.insert(0, str(ROOT))
     from config_manager import DEFAULTS
     from ipc_bus import is_control_ipc_line, is_reliable_ipc_line
+    from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
         _MAGIC,
@@ -93,6 +95,41 @@ def rendered_contracts() -> dict[Path, str]:
         },
     }
 
+    model_cases = [
+        {
+            "name": "moc2",
+            "manifest": "model.json",
+            "data": {
+                "model": "base.moc",
+                "motions": {"idle": [], "tap": []},
+                "expressions": [{"name": "smile"}, {"name": "angry"}],
+            },
+        },
+        {
+            "name": "moc3",
+            "manifest": "test.model3.json",
+            "data": {
+                "Version": 3,
+                "FileReferences": {
+                    "Moc": "test.moc3",
+                    "Motions": {"smile": [], "angry": []},
+                    "Expressions": [{"Name": "smile"}, {"Name": "angry"}],
+                },
+            },
+        },
+    ]
+    with tempfile.TemporaryDirectory() as temp_dir:
+        manager = ModelManager(scan_models=False)
+        for case in model_cases:
+            path = Path(temp_dir) / case["manifest"]
+            path.write_text(json.dumps(case["data"]), encoding="utf-8")
+            manager._model_paths[("fixture", case["name"])] = str(path)
+            case["expected_format"] = manager.get_model_format("fixture", case["name"])
+            case["expected_motions"] = manager.get_motion_names("fixture", case["name"])
+            case["expected_expressions"] = manager.get_expression_names(
+                "fixture", case["name"]
+            )
+
     return {
         OUTPUT_DIR / "config_defaults.json": json.dumps(
             DEFAULTS, ensure_ascii=False, indent=2
@@ -100,6 +137,10 @@ def rendered_contracts() -> dict[Path, str]:
         + "\n",
         OUTPUT_DIR / "ipc_vectors.json": json.dumps(
             ipc_vectors, ensure_ascii=False, indent=2
+        )
+        + "\n",
+        OUTPUT_DIR / "model_vectors.json": json.dumps(
+            {"cases": model_cases}, ensure_ascii=False, indent=2
         )
         + "\n",
     }

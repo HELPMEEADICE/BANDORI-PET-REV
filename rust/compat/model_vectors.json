@@ -1,0 +1,63 @@
+{
+  "cases": [
+    {
+      "name": "moc2",
+      "manifest": "model.json",
+      "data": {
+        "model": "base.moc",
+        "motions": {
+          "idle": [],
+          "tap": []
+        },
+        "expressions": [
+          {
+            "name": "smile"
+          },
+          {
+            "name": "angry"
+          }
+        ]
+      },
+      "expected_format": "moc",
+      "expected_motions": [
+        "idle",
+        "tap"
+      ],
+      "expected_expressions": [
+        "angry",
+        "smile"
+      ]
+    },
+    {
+      "name": "moc3",
+      "manifest": "test.model3.json",
+      "data": {
+        "Version": 3,
+        "FileReferences": {
+          "Moc": "test.moc3",
+          "Motions": {
+            "smile": [],
+            "angry": []
+          },
+          "Expressions": [
+            {
+              "Name": "smile"
+            },
+            {
+              "Name": "angry"
+            }
+          ]
+        }
+      },
+      "expected_format": "moc3",
+      "expected_motions": [
+        "angry",
+        "smile"
+      ],
+      "expected_expressions": [
+        "angry",
+        "smile"
+      ]
+    }
+  ]
+}
