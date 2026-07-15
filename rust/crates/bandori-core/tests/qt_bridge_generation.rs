@@ -1,0 +1,38 @@
+use cxx_qt_gen::{
+    CppFragment, CxxQtItem, GeneratedCppBlocks, GeneratedOpt, GeneratedRustBlocks, Parser,
+    parse_qt_file, self_inlining::qualify_self_types, write_cpp,
+};
+use std::path::PathBuf;
+
+#[test]
+fn backend_bridge_generates_without_a_qt_sdk() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let bridge = manifest_dir.join("../bandori-qt-bridge/src/backend.rs");
+    let file = parse_qt_file(bridge).expect("CXX-Qt bridge should be valid Rust syntax");
+    let module = file
+        .items
+        .into_iter()
+        .find_map(|item| match item {
+            CxxQtItem::CxxQt(module) => Some(*module),
+            _ => None,
+        })
+        .expect("backend.rs should contain a CXX-Qt module");
+    let mut parser = Parser::from(module).expect("CXX-Qt bridge should pass semantic parsing");
+    qualify_self_types(&mut parser).expect("Self types should resolve to Backend");
+    GeneratedRustBlocks::from(&parser).expect("Rust bridge generation should succeed");
+    let cpp = GeneratedCppBlocks::from(&parser, &GeneratedOpt::default())
+        .expect("C++ bridge generation should succeed");
+    let CppFragment::Pair { header, .. } = write_cpp(&cpp, "backend") else {
+        panic!("CXX-Qt backend should generate a header/source pair");
+    };
+
+    for symbol in [
+        "getStatus",
+        "getConfigSummary",
+        "getModelCatalogJson",
+        "getRuntimeConfigJson",
+        "reloadState",
+    ] {
+        assert!(header.contains(symbol), "generated header missed {symbol}");
+    }
+}

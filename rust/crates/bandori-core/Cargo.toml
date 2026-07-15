@@ -16,3 +16,6 @@ tempfile.workspace = true
 thiserror.workspace = true
 tar.workspace = true
 zstd.workspace = true
+
+[dev-dependencies]
+cxx-qt-gen = "0.9"

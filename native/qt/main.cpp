@@ -1,16 +1,12 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
-#include <QDebug>
 #include <QDir>
 #include <QStandardPaths>
-#include <QVBoxLayout>
-#include <QWidget>
 
-#include <bandori_qt_bridge/src/backend.cxxqt.h>
 #include <qtfluentwidgets.h>
 
-#include "pet_process_supervisor.h"
+#include "native_main_window.h"
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -127,39 +123,8 @@ int main(int argc, char* argv[]) {
     Q_INIT_RESOURCE(resource);
     qfw::setTheme(qfw::Theme::Auto);
 
-    bandori::Backend backend;
     const QString configPath =
         QDir(parser.value(projectRoot)).filePath(QStringLiteral("config.json"));
-    backend.loadConfig(configPath);
-
-    qfw::FluentWidget window;
-    window.setWindowTitle(QStringLiteral("BandoriPet Rust migration"));
-    window.resize(720, 420);
-
-    auto* page = new QWidget(&window);
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 52, 40, 40);
-    layout->setSpacing(16);
-
-    auto* title = new qfw::TitleLabel(QStringLiteral("BandoriPet Rust + Qt"), page);
-    auto* summary = new qfw::BodyLabel(backend.status(), page);
-    auto* rendererStatus = new qfw::CaptionLabel(QStringLiteral("Pet renderer is not started"), page);
-    auto* reload = new qfw::PrimaryPushButton(QStringLiteral("Reload configuration"), page);
-    auto* restartRenderer = new qfw::PushButton(QStringLiteral("Restart pet renderer"), page);
-
-    layout->addWidget(title);
-    layout->addWidget(summary);
-    layout->addWidget(rendererStatus);
-    layout->addWidget(reload, 0, Qt::AlignLeft);
-    layout->addWidget(restartRenderer, 0, Qt::AlignLeft);
-    layout->addStretch(1);
-
-    QObject::connect(reload, &QPushButton::clicked, page, [&backend, summary, configPath]() {
-        backend.loadConfig(configPath);
-        summary->setText(backend.status());
-    });
-
-    bandori::PetProcessSupervisor supervisor;
     bandori::PetLaunchSpec petSpec;
     petSpec.projectRoot = parser.value(projectRoot);
     petSpec.userModelsRoot = parser.value(userModels);
@@ -180,30 +145,15 @@ int main(int argc, char* argv[]) {
     petSpec.moveAllRolesTogether = parser.isSet(petMoveAllRolesTogether);
     petSpec.headTrackingEnabled = !parser.isSet(petDisableHeadTracking);
     petSpec.mutualGazeEnabled = parser.isSet(petMutualGaze);
-    QObject::connect(
-        &supervisor,
-        &bandori::PetProcessSupervisor::statusChanged,
-        rendererStatus,
-        &QLabel::setText);
-    QObject::connect(
-        &supervisor,
-        &bandori::PetProcessSupervisor::rendererLog,
-        page,
-        [](const QString& message) { qWarning().noquote() << message; });
-    QObject::connect(
-        restartRenderer,
-        &QPushButton::clicked,
-        page,
-        [&supervisor, petSpec]() { supervisor.start(petSpec); });
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, &supervisor, &bandori::PetProcessSupervisor::stop);
-
-    const bool launchPet = !petSpec.modelPath.isEmpty();
-    restartRenderer->setVisible(launchPet);
-    if (launchPet) {
-        supervisor.start(petSpec);
-    }
-
-    window.setContentWidget(page);
+    bandori::NativeMainWindow window(
+        parser.value(projectRoot),
+        parser.value(userModels),
+        configPath);
     window.show();
+    if (!petSpec.modelPath.isEmpty()) {
+        window.startPet(petSpec);
+    } else {
+        window.startConfiguredPet();
+    }
     return app.exec();
 }

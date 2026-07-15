@@ -130,3 +130,19 @@ def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():
     assert '"--hit-alpha-threshold"' in main
     assert '"--move-all-roles-together"' in main
     assert "using Python renderer" in main
+
+
+def test_native_main_window_consumes_safe_rust_dashboard_state():
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "DashboardSnapshot::load" in backend
+    assert "NativeRuntimeSnapshot" in backend
+    assert "llm_api_key" not in dashboard.split("#[cfg(test)]", 1)[0]
+    assert "backend_.reloadState" in window
+    assert "backend_.getModelCatalogJson" in window
+    assert "backend_.getRuntimeConfigJson" in window
+    assert "qfw::SettingCardGroup" in window
+    assert "startConfiguredPet" in window
+    assert "supervisor_.start(activeSpec_)" in window

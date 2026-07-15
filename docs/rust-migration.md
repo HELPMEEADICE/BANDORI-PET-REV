@@ -54,7 +54,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
 
 ## Current branch status
 
-- Complete: Cargo/CMake/CXX-Qt foundation and the native Qt-Fluent smoke shell.
+- Complete: Cargo/CMake/CXX-Qt foundation. The native Qt-Fluent application now
+  has navigable overview, model-catalog and state pages backed by a narrow CXX-Qt
+  service instead of the original smoke label. Rust merges bundled and writable
+  model roots, exposes only whitelisted renderer settings (never LLM credentials),
+  and supplies configured/default model launch specs to the isolated supervisor.
 - Complete: configuration, shared-memory IPC and model discovery compatibility
   cores, with Python-generated fixtures consumed by Rust tests.
 - Complete: `data.db` repositories. The schema, legacy column migrations,
@@ -97,15 +101,20 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   persists through `PET_STATE`; pixel mode remains disabled until its renderer
   is ported. Menu open/closed lifecycle remains reliable IPC so peer z-order
   behavior can stay compatible during the dual-track migration.
+  The native main application can rescan real MOC/MOC3 catalogs, select a costume,
+  start/restart/stop the renderer and restore the first configured Live2D pet.
+  CXX-Qt generation is tested without a Qt SDK, including the generated C++
+  property and invokable names.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: higher-level pet interactions, native visual/driver parity,
-  application services, full UI replacement and packaging.
+- Pending: multi-pet supervision on one shared IPC session, pixel pet, tray and
+  remaining native visual/driver parity, application services, full settings/chat
+  UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
-no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain
-independent of that local limitation.
+no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
+and Python compatibility checks remain independent of that local limitation.
 
 ## Build entry points
 

@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod config_ffi;
+pub mod dashboard;
 pub mod database;
 pub mod ipc;
 pub mod ipc_ffi;

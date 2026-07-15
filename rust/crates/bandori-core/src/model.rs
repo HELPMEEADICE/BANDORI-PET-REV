@@ -37,6 +37,17 @@ pub struct Costume {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ModelCatalogEntry {
+    pub character: String,
+    pub character_display: String,
+    pub costume: String,
+    pub costume_display: String,
+    pub path: String,
+    pub format: ModelFormat,
+    pub is_default: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Band {
     pub id: String,
     pub display: String,
@@ -182,6 +193,26 @@ impl ModelManager {
             .get(character)
             .map(|info| info.costumes.values().collect())
             .unwrap_or_default()
+    }
+
+    pub fn catalog(&self) -> Vec<ModelCatalogEntry> {
+        let mut catalog = Vec::new();
+        for character in self.characters() {
+            let default_costume = self.default_costume(character);
+            let character_display = self.display_name(character);
+            for costume in self.costumes(character) {
+                catalog.push(ModelCatalogEntry {
+                    character: character.clone(),
+                    character_display: character_display.clone(),
+                    costume: costume.id.clone(),
+                    costume_display: self.costume_display_name(character, &costume.id),
+                    path: costume.path.clone(),
+                    format: costume.format,
+                    is_default: costume.id == default_costume,
+                });
+            }
+        }
+        catalog
     }
 
     pub fn display_name(&self, character: &str) -> String {

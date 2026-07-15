@@ -1,5 +1,7 @@
 qt_add_executable(bandori-pet-rust
     main.cpp
+    native_main_window.cpp
+    native_main_window.h
     pet_process_supervisor.cpp
     pet_process_supervisor.h
     shared_memory_line_queue.cpp
