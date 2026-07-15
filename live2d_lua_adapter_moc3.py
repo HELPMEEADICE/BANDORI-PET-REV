@@ -112,9 +112,42 @@ def _patch_lua_moc3_pet_embed_delta(module_name: str, chunk: bytes) -> bytes:
     return chunk.replace(old_scale, new_scale, 1)
 
 
+def _patch_lua_moc3_physics_zero_delta(module_name: str, chunk: bytes) -> bytes:
+    if module_name != "live2d.cubism3.physics":
+        return chunk
+    chunk = chunk.replace(b"\r\n", b"\n")
+    old_guard = (
+        b"    delta = tonumber(delta) or 0\n"
+        b"    if delta <= 0 then return false end\n"
+    )
+    new_guard = (
+        b"    delta = tonumber(delta) or 0\n"
+        b"    self.last_substep_count = 0\n"
+        b"    if delta <= 0 then\n"
+        b"        local physics_delta = self.data.fps > 0 and 1.0 / self.data.fps or 1.0\n"
+        b"        self:_interpolate(runtime, self.remaining_time / physics_delta)\n"
+        b"        return false\n"
+        b"    end\n"
+    )
+    if old_guard not in chunk:
+        return chunk
+    chunk = chunk.replace(old_guard, new_guard, 1)
+    substep_marker = b"    while self.remaining_time >= physics_delta do\n"
+    return chunk.replace(
+        substep_marker,
+        substep_marker + b"        self.last_substep_count = self.last_substep_count + 1\n",
+        1,
+    )
+
+
+def _patch_lua_moc3_module(module_name: str, chunk: bytes) -> bytes:
+    chunk = _patch_lua_moc3_pet_embed_delta(module_name, chunk)
+    return _patch_lua_moc3_physics_zero_delta(module_name, chunk)
+
+
 class LuaLive2DModuleMOC3(LuaLive2DRuntimeBase):
     def _get_extra_module_patch(self):
-        return _patch_lua_moc3_pet_embed_delta
+        return _patch_lua_moc3_module
 
     def _ensure_runtime(self):
         if self._initialized:
