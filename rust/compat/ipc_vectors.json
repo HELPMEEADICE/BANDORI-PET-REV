@@ -1,0 +1,82 @@
+{
+  "keys": [
+    {
+      "parts": [
+        "bandori-main-123",
+        "main-in"
+      ],
+      "expected": "BandoriPet-bandori-main-123-main-in-e366281215707911"
+    },
+    {
+      "parts": [
+        "会话 1",
+        "main-out"
+      ],
+      "expected": "BandoriPet-会话-1-main-out-9dfea578f8fba9e3"
+    },
+    {
+      "parts": [
+        "",
+        "radial:cmd"
+      ],
+      "expected": "BandoriPet--radial-cmd-aba38738b4511295"
+    }
+  ],
+  "envelope": {
+    "fields": {
+      "sender_id": "pet-1",
+      "line": "SETTINGS\t{\"语言\":\"中文\"}\r\n",
+      "exclude_peer_id": "pet-2",
+      "message_id": "m-1",
+      "reliable": true
+    },
+    "expected": "{\"sender\":\"pet-1\",\"exclude\":\"pet-2\",\"line\":\"SETTINGS\\t{\\\"语言\\\":\\\"中文\\\"}\",\"message_id\":\"m-1\",\"reliable\":true}"
+  },
+  "classification": [
+    {
+      "line": "SHUTDOWN",
+      "control": true,
+      "reliable": true
+    },
+    {
+      "line": "SETTINGS\t{}",
+      "control": true,
+      "reliable": true
+    },
+    {
+      "line": "CHAT_EVENT\t{}",
+      "control": false,
+      "reliable": true
+    },
+    {
+      "line": "PEER_POS\t{}",
+      "control": false,
+      "reliable": false
+    },
+    {
+      "line": "HEARTBEAT\tpet-1",
+      "control": false,
+      "reliable": false
+    }
+  ],
+  "coalesce": {
+    "input": [
+      "PEER_POS\t{\"character\":\"Ran\",\"x\":1}",
+      "CHAT_EVENT\t{}",
+      "PEER_POS\t{\"character\":\"Ran\",\"x\":2}"
+    ],
+    "expected": [
+      "CHAT_EVENT\t{}",
+      "PEER_POS\t{\"character\":\"Ran\",\"x\":2}"
+    ]
+  },
+  "queue_layout": {
+    "slot_count": 2,
+    "slot_size": 32,
+    "messages": [
+      "alpha",
+      "中文"
+    ],
+    "expected_hex": "42444950433031210100000002000000200000000200000000000000000000000000000005000000616c706861000000000000000000000000000000000000000000000000000000010000000000000006000000e4b8ade696870000000000000000000000000000000000000000000000000000"
+  }
+}

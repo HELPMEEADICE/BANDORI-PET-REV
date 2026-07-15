@@ -4,6 +4,9 @@ __pycache__/
 models/
 BUILD/
 build/
+build-rust/
+target/
+.cargo/
 BandoriPet.egg-info/
 chat_attachments/
 third_party/
