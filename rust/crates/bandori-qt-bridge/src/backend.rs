@@ -114,6 +114,7 @@ use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
 use bandori_core::database::Database;
+use bandori_core::relationship_analysis::apply_interaction_analysis;
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest,
@@ -139,12 +140,22 @@ pub struct BackendRust {
     chat_request_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
+    prepared_chat_user_message_id: i64,
     prepared_chat_character: String,
     prepared_chat_user_key: String,
+    prepared_chat_user_content: String,
     active_chat_request_id: i64,
     active_chat_request_conversation_id: i64,
+    active_chat_user_message_id: i64,
+    active_chat_character: String,
+    active_chat_user_key: String,
+    active_chat_user_content: String,
     completed_chat_request_id: i64,
     completed_chat_conversation_id: i64,
+    completed_chat_user_message_id: i64,
+    completed_chat_character: String,
+    completed_chat_user_key: String,
+    completed_chat_user_content: String,
     next_chat_request_id: i64,
     active_chat_cancellation: Option<CancellationToken>,
 }
@@ -163,12 +174,22 @@ impl Default for BackendRust {
             chat_request_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
+            prepared_chat_user_message_id: 0,
             prepared_chat_character: String::new(),
             prepared_chat_user_key: String::new(),
+            prepared_chat_user_content: String::new(),
             active_chat_request_id: 0,
             active_chat_request_conversation_id: 0,
+            active_chat_user_message_id: 0,
+            active_chat_character: String::new(),
+            active_chat_user_key: String::new(),
+            active_chat_user_content: String::new(),
             completed_chat_request_id: 0,
             completed_chat_conversation_id: 0,
+            completed_chat_user_message_id: 0,
+            completed_chat_character: String::new(),
+            completed_chat_user_key: String::new(),
+            completed_chat_user_content: String::new(),
             next_chat_request_id: 1,
             active_chat_cancellation: None,
         }
@@ -387,10 +408,16 @@ impl ffi::Backend {
                     .expect("private chat turn serialization cannot fail");
                 let state = self.as_mut().rust_mut().get_mut();
                 state.prepared_chat_conversation_id = turn.conversation_id;
+                state.prepared_chat_user_message_id = turn.user_message_id;
                 state.prepared_chat_character = character.to_string();
                 state.prepared_chat_user_key = user_key.to_string();
+                state.prepared_chat_user_content = content.to_string().trim().to_owned();
                 state.completed_chat_request_id = 0;
                 state.completed_chat_conversation_id = 0;
+                state.completed_chat_user_message_id = 0;
+                state.completed_chat_character.clear();
+                state.completed_chat_user_key.clear();
+                state.completed_chat_user_content.clear();
                 self.as_mut().set_chat_active_conversation_id(QString::from(
                     &turn.conversation_id.to_string(),
                 ));
@@ -484,11 +511,22 @@ impl ffi::Backend {
         reasoning: &QString,
         outcome_json: &QString,
     ) -> bool {
-        let (completed_request_id, conversation_id) = {
+        let (
+            completed_request_id,
+            conversation_id,
+            user_message_id,
+            character,
+            user_key,
+            user_content,
+        ) = {
             let state = self.as_ref().get_ref().rust();
             (
                 state.completed_chat_request_id,
                 state.completed_chat_conversation_id,
+                state.completed_chat_user_message_id,
+                state.completed_chat_character.clone(),
+                state.completed_chat_user_key.clone(),
+                state.completed_chat_user_content.clone(),
             )
         };
         if request_id <= 0 || completed_request_id != request_id {
@@ -529,22 +567,51 @@ impl ffi::Backend {
             trace.as_ref(),
         ) {
             Ok(message_id) => {
+                let relationship_result = if character.is_empty() || user_content.is_empty() {
+                    None
+                } else {
+                    Some(apply_interaction_analysis(
+                        &database,
+                        &character,
+                        &user_key,
+                        &user_content,
+                        &response.actions,
+                        "chat",
+                    ))
+                };
+                let (relationship_state, relationship_error) = match relationship_result {
+                    Some(Ok(state)) => (Some(state), None),
+                    Some(Err(error)) => (None, Some(error.to_string())),
+                    None => (None, None),
+                };
+                let relationship_updated = relationship_state.is_some();
                 let payload = json!({
                     "conversation_id": conversation_id,
+                    "user_message_id": user_message_id,
                     "assistant_message_id": message_id,
                     "request_id": request_id,
                     "content": response.content,
                     "reasoning": response.reasoning,
                     "actions": response.actions,
+                    "relationship_state": relationship_state,
+                    "relationship_error": relationship_error,
                 })
                 .to_string();
                 let state = self.as_mut().rust_mut().get_mut();
                 state.completed_chat_request_id = 0;
                 state.completed_chat_conversation_id = 0;
+                state.completed_chat_user_message_id = 0;
+                state.completed_chat_character.clear();
+                state.completed_chat_user_key.clear();
+                state.completed_chat_user_content.clear();
                 self.as_mut().set_chat_turn_json(QString::from(&payload));
                 self.as_mut().set_chat_request_json(QString::from("{}"));
                 self.as_mut()
-                    .set_status(QString::from("Native assistant response saved"));
+                    .set_status(QString::from(if relationship_updated {
+                        "Native assistant response and relationship state saved"
+                    } else {
+                        "Native assistant response saved; relationship update was unavailable"
+                    }));
                 true
             }
             Err(error) => {
@@ -575,6 +642,12 @@ impl ffi::Backend {
                 return 0;
             }
         };
+        if self.as_ref().get_ref().rust().prepared_chat_conversation_id <= 0 {
+            self.as_mut().set_status(QString::from(
+                "Prepare and build a native chat turn before starting its stream",
+            ));
+            return 0;
+        }
 
         let request_id;
         let request_conversation_id;
@@ -590,8 +663,17 @@ impl ffi::Backend {
             state.prepared_chat_conversation_id = 0;
             state.active_chat_request_id = request_id;
             state.active_chat_request_conversation_id = request_conversation_id;
+            state.active_chat_user_message_id = state.prepared_chat_user_message_id;
+            state.prepared_chat_user_message_id = 0;
+            state.active_chat_character = std::mem::take(&mut state.prepared_chat_character);
+            state.active_chat_user_key = std::mem::take(&mut state.prepared_chat_user_key);
+            state.active_chat_user_content = std::mem::take(&mut state.prepared_chat_user_content);
             state.completed_chat_request_id = 0;
             state.completed_chat_conversation_id = 0;
+            state.completed_chat_user_message_id = 0;
+            state.completed_chat_character.clear();
+            state.completed_chat_user_key.clear();
+            state.completed_chat_user_content.clear();
             state.active_chat_cancellation = Some(cancellation.clone());
         }
         self.as_mut()
@@ -605,6 +687,11 @@ impl ffi::Backend {
         {
             let state = self.as_mut().rust_mut().get_mut();
             state.prepared_chat_conversation_id = request_conversation_id;
+            state.prepared_chat_user_message_id = state.active_chat_user_message_id;
+            state.active_chat_user_message_id = 0;
+            state.prepared_chat_character = std::mem::take(&mut state.active_chat_character);
+            state.prepared_chat_user_key = std::mem::take(&mut state.active_chat_user_key);
+            state.prepared_chat_user_content = std::mem::take(&mut state.active_chat_user_content);
             state.active_chat_request_id = 0;
             state.active_chat_request_conversation_id = 0;
             state.active_chat_cancellation = None;
@@ -655,12 +742,25 @@ impl ffi::Backend {
             if finished && state.active_chat_request_conversation_id > 0 {
                 state.completed_chat_request_id = request_id;
                 state.completed_chat_conversation_id = state.active_chat_request_conversation_id;
+                state.completed_chat_user_message_id = state.active_chat_user_message_id;
+                state.completed_chat_character = std::mem::take(&mut state.active_chat_character);
+                state.completed_chat_user_key = std::mem::take(&mut state.active_chat_user_key);
+                state.completed_chat_user_content =
+                    std::mem::take(&mut state.active_chat_user_content);
             } else {
                 state.completed_chat_request_id = 0;
                 state.completed_chat_conversation_id = 0;
+                state.completed_chat_user_message_id = 0;
+                state.completed_chat_character.clear();
+                state.completed_chat_user_key.clear();
+                state.completed_chat_user_content.clear();
             }
             state.active_chat_request_id = 0;
             state.active_chat_request_conversation_id = 0;
+            state.active_chat_user_message_id = 0;
+            state.active_chat_character.clear();
+            state.active_chat_user_key.clear();
+            state.active_chat_user_content.clear();
             state.active_chat_cancellation = None;
         }
         self.as_mut()

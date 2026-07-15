@@ -255,5 +255,76 @@
       "actions": [],
       "stripped": "nested [bad tail"
     }
+  ],
+  "interaction_cases": [
+    {
+      "user_text": "谢谢你，最喜欢你了",
+      "actions": [],
+      "expected": {
+        "affection_delta": 6,
+        "trust_delta": 4,
+        "familiarity_delta": 1,
+        "mood": "shy",
+        "mood_intensity": 70,
+        "reason": "用户表达了亲近感；用户表达感谢",
+        "memories": []
+      }
+    },
+    {
+      "user_text": "今天好累，压力很大",
+      "actions": [],
+      "expected": {
+        "affection_delta": 0,
+        "trust_delta": 1,
+        "familiarity_delta": 1,
+        "mood": "concerned",
+        "mood_intensity": 65,
+        "reason": "用户表达了压力或低落",
+        "memories": []
+      }
+    },
+    {
+      "user_text": "讨厌你，对不起",
+      "actions": [],
+      "expected": {
+        "affection_delta": -4,
+        "trust_delta": -1,
+        "familiarity_delta": 1,
+        "mood": "soft",
+        "mood_intensity": 70,
+        "reason": "用户语气伤人；用户表达歉意",
+        "memories": []
+      }
+    },
+    {
+      "user_text": "",
+      "actions": [
+        "angry"
+      ],
+      "expected": {
+        "affection_delta": 0,
+        "trust_delta": 0,
+        "familiarity_delta": 0,
+        "mood": "annoyed",
+        "mood_intensity": 24,
+        "reason": "普通互动",
+        "memories": []
+      }
+    },
+    {
+      "user_text": "普通的一天",
+      "actions": [
+        "smile"
+      ],
+      "expected": {
+        "affection_delta": 0,
+        "trust_delta": 0,
+        "familiarity_delta": 1,
+        "mood": "happy",
+        "mood_intensity": 24,
+        "reason": "普通互动",
+        "memories": []
+      }
+    }
   ]
 }

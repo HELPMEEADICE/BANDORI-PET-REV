@@ -180,7 +180,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   approximated. Completed responses are cleaned with Python-generated action-tag
   fixtures before persistence; parsed actions cross the reliable native IPC lane
   to the matching Live2D process. Empty active-profile keys also normalize to
-  Python's `__default__` user partition.
+  Python's `__default__` user partition. Request state retains the exact
+  character, user partition and latest user turn entirely inside Rust until the
+  terminal response is saved; the Python-compatible fallback interaction
+  analyzer then applies affection, trust, familiarity, mood and intensity deltas
+  to the same relationship row. Model-assisted long-term memory extraction is
+  the remaining post-response stage.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

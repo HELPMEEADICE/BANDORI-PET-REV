@@ -233,6 +233,7 @@ def test_native_chat_history_reads_existing_database_through_rust():
 
 def test_native_chat_composer_streams_persists_and_dispatches_actions_through_rust():
     actions = source("rust/crates/bandori-core/src/chat_actions.rs")
+    relationship = source("rust/crates/bandori-core/src/relationship_analysis.rs")
     backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
     supervisor_header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")
@@ -241,7 +242,11 @@ def test_native_chat_composer_streams_persists_and_dispatches_actions_through_ru
 
     assert "pub fn parse_chat_response" in actions
     assert "generated_python_action_vectors_match_rust" in actions
+    assert "generated_python_interaction_vectors_match_rust" in relationship
+    assert "pub fn apply_interaction_analysis" in relationship
     assert "parse_chat_response" in backend
+    assert "completed_chat_user_content" in backend
+    assert "apply_interaction_analysis" in backend
     assert '"actions": response.actions' in backend
     assert "qfw::PlainTextEdit* chatInput_" in window_header
     assert "void NativeMainWindow::sendNativeChat()" in window

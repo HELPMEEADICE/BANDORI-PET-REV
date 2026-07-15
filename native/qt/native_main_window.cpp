@@ -1078,9 +1078,10 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
                     ++actionsSent;
                 }
             }
+            const QString savedStatus = backend_.getStatus();
             terminalStatus = actionsSent > 0
-                ? tr("Native response saved · %1 Live2D action(s) sent").arg(actionsSent)
-                : tr("Native response saved");
+                ? tr("%1 · %2 Live2D action(s) sent").arg(savedStatus).arg(actionsSent)
+                : savedStatus;
         } else {
             terminalStatus = backend_.getStatus();
         }

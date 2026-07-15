@@ -35,6 +35,7 @@ def rendered_contracts() -> dict[Path, str]:
         strip_action_tags,
     )
     from relationship_memory import build_relationship_context
+    from relationship_memory import analyze_interaction
     from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
@@ -171,6 +172,20 @@ def rendered_contracts() -> dict[Path, str]:
                 "[Smile][smile]mixed case",
                 "partial [mtn_",
                 "nested [bad[smile] tail",
+            )
+        ],
+        "interaction_cases": [
+            {
+                "user_text": user_text,
+                "actions": actions,
+                "expected": analyze_interaction(user_text, actions=actions),
+            }
+            for user_text, actions in (
+                ("谢谢你，最喜欢你了", []),
+                ("今天好累，压力很大", []),
+                ("讨厌你，对不起", []),
+                ("", ["angry"]),
+                ("普通的一天", ["smile"]),
             )
         ],
     }
