@@ -56,14 +56,15 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
 - Complete: Cargo/CMake/CXX-Qt foundation and the native Qt-Fluent smoke shell.
 - Complete: configuration, shared-memory IPC and model discovery compatibility
   cores, with Python-generated fixtures consumed by Rust tests.
-- In progress: `data.db` repositories. The schema, legacy column migrations,
+- Complete: `data.db` repositories. The schema, legacy column migrations,
   cross-process lock, WAL mode, private/group message pagination, token accounting,
   relationship state/events, long-term memories, usage sessions, external-chat
   retention/unread state, group labels, cascade deletion and attachment-path
   sanitization are available in `bandori-core`. History search/filtering, group
-  lists, daily/hourly analytics and atomic SQLite backup/restore are also ported.
-- Pending: character-album aggregation helpers, LuaJIT Live2D process replacement,
-  application services, full UI replacement and packaging.
+  lists, daily/hourly analytics, character-album aggregation and atomic SQLite
+  backup/restore are also ported.
+- Pending: LuaJIT Live2D process replacement, application services, full UI
+  replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain

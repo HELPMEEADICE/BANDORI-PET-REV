@@ -486,6 +486,64 @@ pub struct RelationshipImportSummary {
     pub character_memories: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CharacterMessageCount {
+    pub character: String,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AlbumMessage {
+    pub id: i64,
+    pub source: String,
+    pub conversation_id: Value,
+    pub group_key: String,
+    pub role: String,
+    pub content: String,
+    pub reasoning_content: String,
+    pub attachments_json: String,
+    pub tool_trace_json: String,
+    pub created_at: String,
+    pub speaker: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ConversationChainItem {
+    pub source: String,
+    pub conversation_id: Value,
+    pub group_key: String,
+    pub user_key: String,
+    pub title: String,
+    pub created_at: String,
+    pub first_message_at: String,
+    pub last_message_at: String,
+    pub message_count: i64,
+    pub first_user: String,
+    pub preview: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AlbumSnippet {
+    pub role: String,
+    pub content: String,
+    pub source: String,
+    pub speaker: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CharacterAlbumDay {
+    pub day: String,
+    pub message_count: i64,
+    pub user_count: i64,
+    pub assistant_count: i64,
+    pub memory_count: i64,
+    pub favorite_count: i64,
+    pub first_at: String,
+    pub last_at: String,
+    pub snippets: Vec<String>,
+    pub snippet_items: Vec<AlbumSnippet>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct ColumnContract {
     name: String,
@@ -2022,6 +2080,202 @@ impl Database {
         })
     }
 
+    pub fn messages_per_character_range(
+        &self,
+        days: i64,
+        user_key: &str,
+        display_aliases: &BTreeMap<String, Vec<String>>,
+    ) -> Result<Vec<CharacterMessageCount>, DatabaseError> {
+        let user_key = normalize_user_key(user_key);
+        self.with_connection(|connection| {
+            let mut private_sql = concat!(
+                "SELECT c.character, COUNT(m.id) FROM conversations c ",
+                "JOIN messages m ON m.conversation_id=c.id WHERE c.user_key=? ",
+                "AND c.character!='' AND c.character!='__group__' "
+            )
+            .to_owned();
+            let mut private_values = vec![SqlValue::Text(user_key.clone())];
+            if days > 0 {
+                private_sql.push_str("AND m.created_at>=datetime('now','localtime',?) ");
+                private_values.push(SqlValue::Text(format!("-{days} days")));
+            }
+            private_sql.push_str("GROUP BY c.character ORDER BY COUNT(m.id) DESC");
+            let mut counts = {
+                let mut statement = connection.prepare(&private_sql)?;
+                statement
+                    .query_map(params_from_iter(private_values), |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                    })?
+                    .collect::<Result<BTreeMap<_, _>, _>>()?
+            };
+
+            let mut group_sql = concat!(
+                "SELECT group_key, role, content FROM group_messages ",
+                "WHERE user_key=? AND group_key LIKE '__group__:%'"
+            )
+            .to_owned();
+            let mut group_values = vec![SqlValue::Text(user_key)];
+            if days > 0 {
+                group_sql.push_str(" AND created_at>=datetime('now','localtime',?)");
+                group_values.push(SqlValue::Text(format!("-{days} days")));
+            }
+            let mut statement = connection.prepare(&group_sql)?;
+            let rows = statement
+                .query_map(params_from_iter(group_values), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (group_key, role, content) in rows {
+                for character in
+                    group_message_count_characters(&group_key, &role, &content, display_aliases)
+                {
+                    *counts.entry(character).or_insert(0) += 1;
+                }
+            }
+            let mut result = counts
+                .into_iter()
+                .map(|(character, count)| CharacterMessageCount { character, count })
+                .collect::<Vec<_>>();
+            result.sort_by(|left, right| {
+                right
+                    .count
+                    .cmp(&left.count)
+                    .then_with(|| left.character.cmp(&right.character))
+            });
+            Ok(result)
+        })
+    }
+
+    pub fn character_recent_messages(
+        &self,
+        character: &str,
+        user_key: &str,
+        limit: i64,
+        character_aliases: &[String],
+    ) -> Result<Vec<AlbumMessage>, DatabaseError> {
+        let user_key = normalize_user_key(user_key);
+        self.with_connection(|connection| {
+            character_recent_messages(connection, character, &user_key, limit, character_aliases)
+        })
+    }
+
+    pub fn character_conversation_chain(
+        &self,
+        character: &str,
+        user_key: &str,
+        limit: i64,
+        character_aliases: &[String],
+    ) -> Result<Vec<ConversationChainItem>, DatabaseError> {
+        let user_key = normalize_user_key(user_key);
+        self.with_connection(|connection| {
+            character_conversation_chain(connection, character, &user_key, limit, character_aliases)
+        })
+    }
+
+    pub fn character_album_days(
+        &self,
+        character: &str,
+        user_key: &str,
+        limit: i64,
+        character_aliases: &[String],
+    ) -> Result<Vec<CharacterAlbumDay>, DatabaseError> {
+        let user_key = normalize_user_key(user_key);
+        self.with_connection(|connection| {
+            let messages = character_recent_messages(
+                connection,
+                character,
+                &user_key,
+                600,
+                character_aliases,
+            )?;
+            let mut by_day: BTreeMap<String, CharacterAlbumDay> = BTreeMap::new();
+            for message in messages {
+                let day = message.created_at.chars().take(10).collect::<String>();
+                if day.chars().count() != 10 {
+                    continue;
+                }
+                let entry = by_day
+                    .entry(day.clone())
+                    .or_insert_with(|| CharacterAlbumDay {
+                        day,
+                        message_count: 0,
+                        user_count: 0,
+                        assistant_count: 0,
+                        memory_count: 0,
+                        favorite_count: 0,
+                        first_at: message.created_at.clone(),
+                        last_at: message.created_at.clone(),
+                        snippets: Vec::new(),
+                        snippet_items: Vec::new(),
+                    });
+                entry.message_count += 1;
+                match message.role.as_str() {
+                    "user" => entry.user_count += 1,
+                    "assistant" => entry.assistant_count += 1,
+                    _ => {}
+                }
+                if message.created_at < entry.first_at {
+                    entry.first_at = message.created_at.clone();
+                }
+                if message.created_at > entry.last_at {
+                    entry.last_at = message.created_at.clone();
+                }
+                let content = collapse_whitespace(&message.content);
+                if !content.is_empty() && entry.snippets.len() < 3 {
+                    entry.snippets.push(truncate_chars(&content, 120));
+                }
+                if !content.is_empty() && entry.snippet_items.len() < 3 {
+                    entry.snippet_items.push(AlbumSnippet {
+                        role: message.role,
+                        content: truncate_chars(&content, 160),
+                        source: message.source,
+                        speaker: message.speaker,
+                    });
+                }
+            }
+
+            let memories =
+                character_memories_from_connection(connection, character, &user_key, "", 100)?;
+            for memory in memories {
+                let timestamp = if memory.created_at.is_empty() {
+                    memory.updated_at
+                } else {
+                    memory.created_at
+                };
+                let day = timestamp.chars().take(10).collect::<String>();
+                if day.chars().count() != 10 {
+                    continue;
+                }
+                let entry = by_day
+                    .entry(day.clone())
+                    .or_insert_with(|| CharacterAlbumDay {
+                        day,
+                        message_count: 0,
+                        user_count: 0,
+                        assistant_count: 0,
+                        memory_count: 0,
+                        favorite_count: 0,
+                        first_at: timestamp.clone(),
+                        last_at: timestamp.clone(),
+                        snippets: Vec::new(),
+                        snippet_items: Vec::new(),
+                    });
+                entry.memory_count += 1;
+                if memory.kind == "favorite" {
+                    entry.favorite_count += 1;
+                }
+            }
+            let mut days = by_day.into_values().collect::<Vec<_>>();
+            days.sort_by(|left, right| right.day.cmp(&left.day));
+            days.truncate(limit.clamp(1, 120) as usize);
+            Ok(days)
+        })
+    }
+
     pub fn database_summary(&self) -> Result<ChatDatabaseSummary, DatabaseError> {
         self.with_connection(|connection| chat_database_summary(connection))
     }
@@ -2836,6 +3090,351 @@ fn same_path(left: &Path, right: &Path) -> Result<bool, DatabaseError> {
     }
 }
 
+fn group_message_speaker(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or_default().trim();
+    first_line
+        .strip_prefix('【')
+        .and_then(|value| value.split_once('】').map(|(speaker, _)| speaker.trim()))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn character_alias_set(character: &str, aliases: &[String]) -> BTreeSet<String> {
+    let mut result = BTreeSet::new();
+    if !character.trim().is_empty() {
+        result.insert(character.trim().to_owned());
+    }
+    result.extend(
+        aliases
+            .iter()
+            .map(|alias| alias.trim())
+            .filter(|alias| !alias.is_empty())
+            .map(str::to_owned),
+    );
+    result
+}
+
+fn group_message_matches_character(role: &str, content: &str, aliases: &BTreeSet<String>) -> bool {
+    if role != "assistant" {
+        return true;
+    }
+    let speaker = group_message_speaker(content);
+    speaker.is_empty() || aliases.contains(&speaker)
+}
+
+fn group_message_count_characters(
+    group_key: &str,
+    role: &str,
+    content: &str,
+    display_aliases: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
+    let members = group_key_characters(group_key);
+    if members.is_empty() || role != "assistant" {
+        return members;
+    }
+    let speaker = group_message_speaker(content);
+    if speaker.is_empty() {
+        return members;
+    }
+    let matched = members
+        .iter()
+        .filter(|character| {
+            let aliases = display_aliases
+                .get(*character)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            character_alias_set(character, aliases).contains(&speaker)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if matched.is_empty() { members } else { matched }
+}
+
+fn character_recent_messages(
+    connection: &Connection,
+    character: &str,
+    user_key: &str,
+    limit: i64,
+    character_aliases: &[String],
+) -> Result<Vec<AlbumMessage>, DatabaseError> {
+    let limit = limit.clamp(1, 200);
+    let aliases = character_alias_set(character, character_aliases);
+    let mut messages = {
+        let mut statement = connection.prepare(concat!(
+            "SELECT m.id, m.conversation_id, m.role, m.content, m.reasoning_content, ",
+            "m.attachments_json, m.tool_trace_json, m.created_at FROM conversations c ",
+            "JOIN messages m ON m.conversation_id=c.id WHERE c.character=? AND c.user_key=? ",
+            "ORDER BY m.id DESC LIMIT ?"
+        ))?;
+        statement
+            .query_map(params![character, user_key, limit], |row| {
+                Ok(AlbumMessage {
+                    id: row.get(0)?,
+                    source: "private".into(),
+                    conversation_id: Value::Number(row.get::<_, i64>(1)?.into()),
+                    group_key: String::new(),
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    reasoning_content: row.get(4)?,
+                    attachments_json: row.get(5)?,
+                    tool_trace_json: row.get(6)?,
+                    created_at: row.get(7)?,
+                    speaker: String::new(),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let group_limit = (limit * 8).clamp(120, 1000);
+    let group_rows = {
+        let mut statement = connection.prepare(concat!(
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, ",
+            "attachments_json, tool_trace_json, created_at FROM group_messages ",
+            "WHERE user_key=? AND group_key LIKE '__group__:%' ORDER BY id DESC LIMIT ?"
+        ))?;
+        statement
+            .query_map(params![user_key, group_limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for row in group_rows {
+        if !group_key_characters(&row.1)
+            .iter()
+            .any(|member| member == character)
+            || !group_message_matches_character(&row.3, &row.4, &aliases)
+        {
+            continue;
+        }
+        let speaker = if row.3 == "assistant" {
+            group_message_speaker(&row.4)
+        } else {
+            String::new()
+        };
+        messages.push(AlbumMessage {
+            id: row.0,
+            source: "group".into(),
+            conversation_id: Value::String(if row.2.is_empty() {
+                "default".into()
+            } else {
+                row.2
+            }),
+            group_key: row.1,
+            role: row.3,
+            content: row.4,
+            reasoning_content: row.5,
+            attachments_json: row.6,
+            tool_trace_json: row.7,
+            created_at: row.8,
+            speaker,
+        });
+    }
+    messages.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    messages.truncate(limit as usize);
+    messages.reverse();
+    Ok(messages)
+}
+
+fn group_conversation_album_preview(
+    connection: &Connection,
+    group_key: &str,
+    conversation_id: &str,
+    user_key: &str,
+    aliases: &BTreeSet<String>,
+) -> Result<(String, i64), DatabaseError> {
+    let rows = {
+        let mut statement = connection.prepare(concat!(
+            "SELECT role, content FROM group_messages WHERE group_key=? ",
+            "AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) ",
+            "AND user_key=? ORDER BY id DESC"
+        ))?;
+        statement
+            .query_map(
+                params![group_key, conversation_id, conversation_id, user_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut preview = String::new();
+    let mut count = 0;
+    for (role, content) in rows {
+        if !group_message_matches_character(&role, &content, aliases) {
+            continue;
+        }
+        count += 1;
+        if preview.is_empty() {
+            preview = content;
+        }
+    }
+    Ok((preview, count))
+}
+
+fn character_conversation_chain(
+    connection: &Connection,
+    character: &str,
+    user_key: &str,
+    limit: i64,
+    character_aliases: &[String],
+) -> Result<Vec<ConversationChainItem>, DatabaseError> {
+    let limit = limit.clamp(1, 100);
+    let aliases = character_alias_set(character, character_aliases);
+    let mut result = {
+        let mut statement = connection.prepare(concat!(
+            "SELECT c.id, c.user_key, c.title, c.created_at, MIN(m.created_at), MAX(m.created_at), ",
+            "COUNT(m.id), (SELECT content FROM messages WHERE conversation_id=c.id AND role='user' ",
+            "AND content!='' ORDER BY id ASC LIMIT 1), (SELECT content FROM messages ",
+            "WHERE conversation_id=c.id AND content!='' ORDER BY id DESC LIMIT 1) ",
+            "FROM conversations c JOIN messages m ON m.conversation_id=c.id ",
+            "WHERE c.character=? AND c.user_key=? GROUP BY c.id, c.user_key, c.title, c.created_at ",
+            "ORDER BY MAX(m.id) DESC LIMIT ?"
+        ))?;
+        statement
+            .query_map(params![character, user_key, limit], |row| {
+                Ok(ConversationChainItem {
+                    source: "private".into(),
+                    conversation_id: Value::Number(row.get::<_, i64>(0)?.into()),
+                    group_key: String::new(),
+                    user_key: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    created_at: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    first_message_at: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    last_message_at: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    message_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    first_user: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                    preview: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let group_limit = (limit * 6).clamp(60, 300);
+    let group_rows = {
+        let mut statement = connection.prepare(concat!(
+            "SELECT group_key, conversation_id, MIN(created_at), MAX(created_at), COUNT(id), ",
+            "(SELECT content FROM group_messages gm2 WHERE gm2.group_key=gm.group_key ",
+            "AND gm2.conversation_id=gm.conversation_id AND gm2.user_key=gm.user_key ",
+            "AND gm2.role='user' AND gm2.content!='' ORDER BY gm2.id ASC LIMIT 1), ",
+            "(SELECT content FROM group_messages gm2 WHERE gm2.group_key=gm.group_key ",
+            "AND gm2.conversation_id=gm.conversation_id AND gm2.user_key=gm.user_key ",
+            "AND gm2.content!='' ORDER BY gm2.id DESC LIMIT 1) FROM group_messages gm ",
+            "WHERE gm.user_key=? AND gm.group_key LIKE '__group__:%' ",
+            "GROUP BY group_key, conversation_id, user_key ORDER BY MAX(id) DESC LIMIT ?"
+        ))?;
+        statement
+            .query_map(params![user_key, group_limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for row in group_rows {
+        if !group_key_characters(&row.0)
+            .iter()
+            .any(|member| member == character)
+        {
+            continue;
+        }
+        let conversation_id = if row.1.is_empty() { "default" } else { &row.1 };
+        let (preview, message_count) = group_conversation_album_preview(
+            connection,
+            &row.0,
+            conversation_id,
+            user_key,
+            &aliases,
+        )?;
+        result.push(ConversationChainItem {
+            source: "group".into(),
+            conversation_id: Value::String(conversation_id.to_owned()),
+            group_key: row.0,
+            user_key: user_key.to_owned(),
+            title: String::new(),
+            created_at: row.2.clone(),
+            first_message_at: row.2,
+            last_message_at: row.3,
+            message_count: if message_count == 0 {
+                row.4
+            } else {
+                message_count
+            },
+            first_user: row.5,
+            preview: if preview.is_empty() { row.6 } else { preview },
+        });
+    }
+    result.sort_by(|left, right| right.last_message_at.cmp(&left.last_message_at));
+    result.truncate(limit as usize);
+    Ok(result)
+}
+
+fn character_memories_from_connection(
+    connection: &Connection,
+    character: &str,
+    user_key: &str,
+    kind: &str,
+    limit: i64,
+) -> Result<Vec<CharacterMemory>, DatabaseError> {
+    let (sql, values) = if kind.is_empty() {
+        (
+            concat!(
+                "SELECT id, character, user_key, kind, content, importance, source_message_id, ",
+                "source_group_message_id, created_at, updated_at FROM character_memories ",
+                "WHERE character=? AND user_key=? ",
+                "ORDER BY importance DESC, updated_at DESC, id DESC LIMIT ?"
+            ),
+            vec![
+                SqlValue::Text(character.to_owned()),
+                SqlValue::Text(user_key.to_owned()),
+                SqlValue::Integer(limit.clamp(1, 100)),
+            ],
+        )
+    } else {
+        (
+            concat!(
+                "SELECT id, character, user_key, kind, content, importance, source_message_id, ",
+                "source_group_message_id, created_at, updated_at FROM character_memories ",
+                "WHERE character=? AND user_key=? AND kind=? ",
+                "ORDER BY updated_at DESC, id DESC LIMIT ?"
+            ),
+            vec![
+                SqlValue::Text(character.to_owned()),
+                SqlValue::Text(user_key.to_owned()),
+                SqlValue::Text(kind.to_owned()),
+                SqlValue::Integer(limit.clamp(1, 200)),
+            ],
+        )
+    };
+    let mut statement = connection.prepare(sql)?;
+    statement
+        .query_map(params_from_iter(values), row_to_character_memory)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DatabaseError::from)
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn relationship_state_from_connection(
     connection: &Connection,
     character: &str,
@@ -3609,6 +4208,43 @@ mod tests {
         })
     }
 
+    fn normalize_album_message(message: AlbumMessage) -> Value {
+        json!({
+            "id": message.id,
+            "source": message.source,
+            "conversation_id": message.conversation_id,
+            "group_key": message.group_key,
+            "role": message.role,
+            "content": message.content,
+            "speaker": message.speaker,
+        })
+    }
+
+    fn normalize_chain_item(item: ConversationChainItem) -> Value {
+        json!({
+            "source": item.source,
+            "conversation_id": item.conversation_id,
+            "group_key": item.group_key,
+            "user_key": item.user_key,
+            "title": item.title,
+            "message_count": item.message_count,
+            "first_user": item.first_user,
+            "preview": item.preview,
+        })
+    }
+
+    fn normalize_album_day(day: CharacterAlbumDay) -> Value {
+        json!({
+            "message_count": day.message_count,
+            "user_count": day.user_count,
+            "assistant_count": day.assistant_count,
+            "snippets": day.snippets,
+            "snippet_items": day.snippet_items,
+            "memory_count": day.memory_count,
+            "favorite_count": day.favorite_count,
+        })
+    }
+
     #[test]
     fn schema_matches_the_python_contract() {
         let temp = tempdir().unwrap();
@@ -3797,6 +4433,76 @@ mod tests {
         assert_eq!(
             json!(database.chat_summary().unwrap()),
             expected["queries"]["chat_summary"]
+        );
+
+        let album_conversation = database
+            .create_conversation("Ran", "album", "alice")
+            .unwrap();
+        database
+            .add_message(album_conversation, "user", "album private", "", None, None)
+            .unwrap();
+        database
+            .add_message(
+                album_conversation,
+                "assistant",
+                "album reply",
+                "",
+                None,
+                None,
+            )
+            .unwrap();
+        database
+            .add_group_message(
+                "__group__:Ran|Moca",
+                "group-1",
+                "assistant",
+                "【Moca】\nother reply",
+                "",
+                None,
+                None,
+                "alice",
+            )
+            .unwrap();
+        database
+            .add_character_memory(
+                "Ran",
+                "alice",
+                "favorite",
+                "favorite memory",
+                75,
+                None,
+                None,
+            )
+            .unwrap();
+        let aliases = vec!["美竹蘭".to_owned()];
+        let album_recent = database
+            .character_recent_messages("Ran", "alice", 24, &aliases)
+            .unwrap()
+            .into_iter()
+            .map(normalize_album_message)
+            .collect::<Vec<_>>();
+        assert_eq!(json!(album_recent), expected["album"]["recent"]);
+        let album_chain = database
+            .character_conversation_chain("Ran", "alice", 20, &aliases)
+            .unwrap()
+            .into_iter()
+            .map(normalize_chain_item)
+            .collect::<Vec<_>>();
+        assert_eq!(json!(album_chain), expected["album"]["chain"]);
+        let album_days = database
+            .character_album_days("Ran", "alice", 30, &aliases)
+            .unwrap()
+            .into_iter()
+            .map(normalize_album_day)
+            .collect::<Vec<_>>();
+        assert_eq!(json!(album_days), expected["album"]["days"]);
+        assert_eq!(
+            json!(
+                database
+                    .messages_per_character_range(0, "alice", &BTreeMap::new())
+                    .unwrap()
+            ),
+            expected["album"]["character_counts"]
         );
 
         let external_event = json!({

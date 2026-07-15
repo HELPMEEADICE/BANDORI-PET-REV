@@ -179,6 +179,112 @@
       "total_group_messages": 2
     }
   },
+  "album": {
+    "recent": [
+      {
+        "id": 1,
+        "source": "group",
+        "conversation_id": "group-1",
+        "group_key": "__group__:Ran|Moca",
+        "role": "user",
+        "content": "group hello",
+        "speaker": ""
+      },
+      {
+        "id": 2,
+        "source": "group",
+        "conversation_id": "group-1",
+        "group_key": "__group__:Ran|Moca",
+        "role": "assistant",
+        "content": "【Ran】\ngroup reply",
+        "speaker": "Ran"
+      },
+      {
+        "id": 4,
+        "source": "private",
+        "conversation_id": 2,
+        "group_key": "",
+        "role": "user",
+        "content": "album private",
+        "speaker": ""
+      },
+      {
+        "id": 5,
+        "source": "private",
+        "conversation_id": 2,
+        "group_key": "",
+        "role": "assistant",
+        "content": "album reply",
+        "speaker": ""
+      }
+    ],
+    "chain": [
+      {
+        "source": "private",
+        "conversation_id": 2,
+        "group_key": "",
+        "user_key": "alice",
+        "title": "album",
+        "message_count": 2,
+        "first_user": "album private",
+        "preview": "album reply"
+      },
+      {
+        "source": "group",
+        "conversation_id": "group-1",
+        "group_key": "__group__:Ran|Moca",
+        "user_key": "alice",
+        "title": "",
+        "message_count": 2,
+        "first_user": "group hello",
+        "preview": "【Ran】\ngroup reply"
+      }
+    ],
+    "days": [
+      {
+        "message_count": 4,
+        "user_count": 2,
+        "assistant_count": 2,
+        "snippets": [
+          "group hello",
+          "【Ran】 group reply",
+          "album private"
+        ],
+        "snippet_items": [
+          {
+            "role": "user",
+            "content": "group hello",
+            "source": "group",
+            "speaker": ""
+          },
+          {
+            "role": "assistant",
+            "content": "【Ran】 group reply",
+            "source": "group",
+            "speaker": "Ran"
+          },
+          {
+            "role": "user",
+            "content": "album private",
+            "source": "private",
+            "speaker": ""
+          }
+        ],
+        "memory_count": 1,
+        "favorite_count": 1
+      }
+    ],
+    "character_counts": [
+      {
+        "character": "Ran",
+        "count": 4
+      },
+      {
+        "character": "Moca",
+        "count": 2
+      }
+    ]
+  },
   "external": {
     "first": {
       "duplicate": false,

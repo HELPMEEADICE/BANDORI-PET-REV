@@ -319,6 +319,58 @@ def _database_behavior_contract() -> dict:
             first_user_content = manager.get_first_user_message_content(conversation)
             chat_summary = manager.get_chat_summary()
 
+            album_conversation = manager.create_conversation("Ran", "album", "alice")
+            manager.add_message(album_conversation, "user", "album private")
+            manager.add_message(album_conversation, "assistant", "album reply")
+            manager.add_group_message(
+                "__group__:Ran|Moca",
+                "group-1",
+                "assistant",
+                "【Moca】\nother reply",
+                user_key="alice",
+            )
+            manager.add_character_memory(
+                "Ran", "alice", "favorite", "favorite memory", 75
+            )
+            album_recent = []
+            for item in manager.get_character_recent_messages(
+                "Ran", "alice", 24, ["美竹蘭"]
+            ):
+                album_recent.append(
+                    {
+                        "id": item["id"],
+                        "source": item["source"],
+                        "conversation_id": item["conversation_id"],
+                        "group_key": item.get("group_key", ""),
+                        "role": item["role"],
+                        "content": item["content"],
+                        "speaker": item.get("speaker", ""),
+                    }
+                )
+            album_chain = []
+            for item in manager.get_character_conversation_chain(
+                "Ran", "alice", 20, ["美竹蘭"]
+            ):
+                album_chain.append(
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"created_at", "first_message_at", "last_message_at"}
+                    }
+                )
+            album_days = []
+            for item in manager.get_character_album_days(
+                "Ran", "alice", 30, ["美竹蘭"]
+            ):
+                album_days.append(
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"day", "first_at", "last_at"}
+                    }
+                )
+            character_counts = manager.get_messages_per_character_range(0, "alice")
+
             external_event = {
                 "platform": "napcat",
                 "thread_id": "group-1",
@@ -405,6 +457,12 @@ def _database_behavior_contract() -> dict:
             "group_chats": group_chats,
             "first_user_content": first_user_content,
             "chat_summary": chat_summary,
+        },
+        "album": {
+            "recent": album_recent,
+            "chain": album_chain,
+            "days": album_days,
+            "character_counts": character_counts,
         },
         "external": {
             "first": normalize_external_result(external_first),
