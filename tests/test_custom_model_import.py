@@ -53,6 +53,37 @@ def _write_model3(root: Path) -> None:
 
 
 class CustomModelImportTest(unittest.TestCase):
+    def test_zip_import_wraps_extraction_runtime_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "model.zip"
+            archive_path.write_bytes(b"zip")
+
+            for error in (
+                RuntimeError("Bad password for file"),
+                NotImplementedError("unsupported compression method"),
+            ):
+                with (
+                    self.subTest(error=type(error).__name__),
+                    patch.object(
+                        custom_model_import.zipfile,
+                        "is_zipfile",
+                        return_value=True,
+                    ),
+                    patch.object(custom_model_import.zipfile, "ZipFile"),
+                    patch.object(
+                        custom_model_import,
+                        "_safe_extract_zip",
+                        side_effect=error,
+                    ),
+                    self.assertRaises(CustomModelImportError) as raised,
+                ):
+                    custom_model_import.import_from_zip(
+                        str(archive_path),
+                        "Zip Character",
+                    )
+
+                self.assertEqual("bad_zip", raised.exception.code)
+
     def test_zip_import_accepts_model_within_resource_limits(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

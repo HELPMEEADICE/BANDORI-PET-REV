@@ -360,7 +360,13 @@ def import_from_zip(zip_path: str, display_name: str,
         try:
             with zipfile.ZipFile(archive) as zf:
                 _safe_extract_zip(zf, tmp_root)
-        except (zipfile.BadZipFile, OSError) as exc:
+        except (
+            zipfile.BadZipFile,
+            zipfile.LargeZipFile,
+            OSError,
+            RuntimeError,
+            NotImplementedError,
+        ) as exc:
             raise CustomModelImportError("bad_zip", detail=str(exc)) from exc
         return _import_from_dir(tmp_root, display_name, costume_id, archive.name)
 
