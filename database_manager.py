@@ -76,7 +76,7 @@ def _db_text(value, default: str = "") -> str:
 def _db_int(value) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
