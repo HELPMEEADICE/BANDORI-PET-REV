@@ -219,6 +219,7 @@ def test_reliable_classifier_covers_control_and_user_visible_events():
         "RADIAL_MENU_CLOSED\t{}",
         "SETTINGS\t{}",
         "MODEL\tkasumi",
+        "PET_STATE\t{}",
         "CHAT_EVENT\t{}",
         "REMINDER_EVENT\t{}",
         "POKE_USER\tkasumi",

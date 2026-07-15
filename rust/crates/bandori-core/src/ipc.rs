@@ -264,6 +264,7 @@ pub fn is_reliable_line(line: &str) -> bool {
             "RADIAL_MENU_OPEN\t",
             "RADIAL_MENU_CLOSED\t",
             "MODEL\t",
+            "PET_STATE\t",
             "LAUNCH",
             "EXIT",
             "OPEN_SETTINGS",
@@ -409,6 +410,7 @@ mod tests {
     fn reliable_classifier_matches_control_contract() {
         assert!(is_reliable_line("SETTINGS\t{}"));
         assert!(is_reliable_line("CHAT_EVENT\t{}"));
+        assert!(is_reliable_line("PET_STATE\t{}"));
         assert!(!is_reliable_line("PEER_POS\t{}"));
     }
 

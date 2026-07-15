@@ -49,6 +49,11 @@
       "reliable": true
     },
     {
+      "line": "PET_STATE\t{}",
+      "control": false,
+      "reliable": true
+    },
+    {
       "line": "PEER_POS\t{}",
       "control": false,
       "reliable": false

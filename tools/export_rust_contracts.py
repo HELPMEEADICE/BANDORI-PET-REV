@@ -48,6 +48,7 @@ def rendered_contracts() -> dict[Path, str]:
         "SHUTDOWN",
         "SETTINGS\t{}",
         "CHAT_EVENT\t{}",
+        "PET_STATE\t{}",
         "PEER_POS\t{}",
         "HEARTBEAT\tpet-1",
     ]

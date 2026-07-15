@@ -4,6 +4,7 @@ qt_add_executable(bandori-pet-rust
     pet_process_supervisor.h
     shared_memory_line_queue.cpp
     shared_memory_line_queue.h
+    bandori_config_ffi.h
     bandori_ipc_ffi.h
 )
 

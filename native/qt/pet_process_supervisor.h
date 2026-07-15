@@ -20,6 +20,8 @@ struct PetLaunchSpec {
     QString format = QStringLiteral("moc3");
     int width = 400;
     int height = 650;
+    int x = -1;
+    int y = -1;
     int fps = 120;
     double opacity = 1.0;
     double lipSyncMaxOpen = 0.55;

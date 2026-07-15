@@ -50,6 +50,29 @@ def test_native_mutual_gaze_broadcasts_positions_and_clamps_global_target():
     assert "bandori_live2d_drag(host_, local.x(), local.y())" in widget
 
 
+def test_native_pet_restores_visible_position_and_accepts_motion_preview():
+    pet = source("native/qt/pet_main.cpp")
+    main = source("main.py")
+
+    assert 'QStringLiteral("PREVIEW_MOTION\\t")' in pet
+    assert "availableGeometry().intersects(requestedGeometry)" in pet
+    assert "QGuiApplication::primaryScreen()" in pet
+    assert '"--x", str(model.get("window_x"' in main
+    assert '"--y", str(model.get("window_y"' in main
+
+
+def test_native_pet_state_is_persisted_through_rust_config_boundary():
+    pet = source("native/qt/pet_main.cpp")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    config_ffi = source("rust/crates/bandori-core/src/config_ffi.rs")
+
+    assert 'QStringLiteral("PET_STATE\\t")' in pet
+    assert "bandori_config_save_pet_state" in supervisor
+    assert "ConfigDocument::load" in config_ffi
+    assert "apply_pet_window_state" in config_ffi
+    assert "config.save(path)" in config_ffi
+
+
 def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():
     main = source("main.py")
 

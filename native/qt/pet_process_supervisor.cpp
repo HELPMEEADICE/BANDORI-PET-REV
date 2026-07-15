@@ -1,7 +1,9 @@
 #include "pet_process_supervisor.h"
 
+#include "bandori_config_ffi.h"
 #include "shared_memory_line_queue.h"
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -148,6 +150,10 @@ void PetProcessSupervisor::launchNow() {
         QString::number(spec_.width),
         QStringLiteral("--height"),
         QString::number(spec_.height),
+        QStringLiteral("--x"),
+        QString::number(spec_.x),
+        QStringLiteral("--y"),
+        QString::number(spec_.y),
         QStringLiteral("--fps"),
         QString::number(spec_.fps),
         QStringLiteral("--opacity"),
@@ -278,6 +284,15 @@ void PetProcessSupervisor::pollIpcMessages() {
             emit statusChanged(QStringLiteral("Pet renderer registered on Rust IPC"));
         } else if (line.startsWith(QStringLiteral("UNREGISTER\tPET\t"))) {
             emit statusChanged(QStringLiteral("Pet renderer unregistered"));
+        } else if (line.startsWith(QStringLiteral("PET_STATE\t"))) {
+            const QByteArray configPath =
+                QDir(spec_.projectRoot).filePath(QStringLiteral("config.json")).toUtf8();
+            const QByteArray payload = line.mid(10).toUtf8();
+            if (!bandori_config_save_pet_state(configPath.constData(), payload.constData())) {
+                emit rendererLog(
+                    QStringLiteral("Failed to persist pet state: %1")
+                        .arg(QString::fromUtf8(bandori_config_last_error())));
+            }
         }
     }
 }

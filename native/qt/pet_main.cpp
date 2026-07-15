@@ -7,9 +7,12 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPoint>
+#include <QRect>
+#include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStringList>
@@ -78,6 +81,59 @@ struct PeerDragState {
     QPoint origin;
 };
 
+QJsonArray rectangleJson(const QRect& rectangle) {
+    return {rectangle.left(), rectangle.top(), rectangle.width(), rectangle.height()};
+}
+
+QJsonObject petWindowState(
+    const QWidget& widget,
+    const QString& character,
+    const QString& modelPath) {
+    const QRect geometry = widget.geometry();
+    QJsonObject placement;
+    if (const QScreen* screen = widget.screen()) {
+        const QRect available = screen->availableGeometry();
+        const int spanX = std::max(1, available.width() - geometry.width());
+        const int spanY = std::max(1, available.height() - geometry.height());
+        placement = {
+            {QStringLiteral("screen_name"), screen->name()},
+            {QStringLiteral("screen_serial"), screen->serialNumber()},
+            {QStringLiteral("screen_manufacturer"), screen->manufacturer()},
+            {QStringLiteral("screen_model"), screen->model()},
+            {QStringLiteral("screen_geometry"), rectangleJson(screen->geometry())},
+            {QStringLiteral("screen_available_geometry"), rectangleJson(available)},
+            {QStringLiteral("relative_x"),
+             static_cast<double>(geometry.left() - available.left()) / spanX},
+            {QStringLiteral("relative_y"),
+             static_cast<double>(geometry.top() - available.top()) / spanY},
+            {QStringLiteral("right_offset"), available.right() - geometry.right()},
+            {QStringLiteral("bottom_offset"), available.bottom() - geometry.bottom()},
+            {QStringLiteral("device_pixel_ratio"), screen->devicePixelRatio()},
+        };
+    }
+    return {
+        {QStringLiteral("character"), character},
+        {QStringLiteral("model_path"), modelPath},
+        {QStringLiteral("x"), geometry.x()},
+        {QStringLiteral("y"), geometry.y()},
+        {QStringLiteral("width"), geometry.width()},
+        {QStringLiteral("height"), geometry.height()},
+        {QStringLiteral("placement"), placement},
+    };
+}
+
+bool publishPetWindowState(
+    bandori::PetIpcClient* client,
+    const QWidget& widget,
+    const QString& character,
+    const QString& modelPath) {
+    return client != nullptr
+        && client->publishLine(
+            QStringLiteral("PET_STATE\t")
+                + compactJson(petWindowState(widget, character, modelPath)),
+            true);
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -117,6 +173,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("width"), QStringLiteral("Pet width"), QStringLiteral("pixels"), QStringLiteral("400"));
     QCommandLineOption height(
         QStringLiteral("height"), QStringLiteral("Pet height"), QStringLiteral("pixels"), QStringLiteral("650"));
+    QCommandLineOption positionX(
+        QStringLiteral("x"), QStringLiteral("Initial global X position"), QStringLiteral("x"), QStringLiteral("-1"));
+    QCommandLineOption positionY(
+        QStringLiteral("y"), QStringLiteral("Initial global Y position"), QStringLiteral("y"), QStringLiteral("-1"));
     QCommandLineOption fps(
         QStringLiteral("fps"), QStringLiteral("Render frame rate"), QStringLiteral("fps"), QStringLiteral("120"));
     QCommandLineOption opacity(
@@ -171,6 +231,8 @@ int main(int argc, char* argv[]) {
          format,
          width,
          height,
+         positionX,
+         positionY,
          fps,
          opacity,
          lipSyncMaxOpen,
@@ -189,10 +251,11 @@ int main(int argc, char* argv[]) {
     const auto modelFormat = parser.value(format).compare(QStringLiteral("moc"), Qt::CaseInsensitive) == 0
         ? bandori::Live2dGlWidget::ModelFormat::Moc
         : bandori::Live2dGlWidget::ModelFormat::Moc3;
+    const QString modelPath = parser.value(model);
     bandori::Live2dGlWidget widget(
         parser.value(projectRoot),
         parser.value(userModels),
-        parser.value(model),
+        modelPath,
         modelFormat);
     widget.setFramesPerSecond(parser.value(fps).toInt());
     widget.setHitAlphaThreshold(parser.value(hitAlphaThreshold).toInt());
@@ -205,6 +268,27 @@ int main(int argc, char* argv[]) {
     widget.setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     widget.setAttribute(Qt::WA_TranslucentBackground, true);
     widget.resize(std::max(parser.value(width).toInt(), 1), std::max(parser.value(height).toInt(), 1));
+    const int initialX = parser.value(positionX).toInt();
+    const int initialY = parser.value(positionY).toInt();
+    const QRect requestedGeometry(initialX, initialY, widget.width(), widget.height());
+    bool restoredPosition = initialX != -1 || initialY != -1;
+    if (restoredPosition) {
+        const QList<QScreen*> screens = QGuiApplication::screens();
+        restoredPosition = std::any_of(
+            screens.cbegin(),
+            screens.cend(),
+            [&requestedGeometry](const QScreen* screen) {
+                return screen != nullptr && screen->availableGeometry().intersects(requestedGeometry);
+            });
+    }
+    if (restoredPosition) {
+        widget.move(initialX, initialY);
+    } else if (QScreen* screen = QGuiApplication::primaryScreen()) {
+        const QRect available = screen->availableGeometry();
+        widget.move(
+            available.left() + (available.width() - widget.width()) / 2,
+            available.top() + (available.height() - widget.height()) / 2);
+    }
 
     QTimer parentWatch;
     const qint64 supervisorPid = parser.value(parentPid).toLongLong();
@@ -220,7 +304,7 @@ int main(int argc, char* argv[]) {
 
     QString characterId = parser.value(character).trimmed();
     if (characterId.isEmpty()) {
-        characterId = QFileInfo(parser.value(model)).completeBaseName();
+        characterId = QFileInfo(modelPath).completeBaseName();
     }
     QString ipcSessionName = parser.value(ipcSession).trimmed();
     if (ipcSessionName.isEmpty()) {
@@ -298,7 +382,12 @@ int main(int argc, char* argv[]) {
         &widget,
         &bandori::Live2dGlWidget::windowDragMoved,
         ipcClient,
-        [ipcClient, &moveAllRoles, &activeDragId, characterId](int totalDx, int totalDy) {
+        [ipcClient,
+         &widget,
+         &moveAllRoles,
+         &activeDragId,
+         characterId,
+         modelPath](int totalDx, int totalDy) {
             if (!moveAllRoles || activeDragId.isEmpty()) {
                 return;
             }
@@ -327,6 +416,7 @@ int main(int argc, char* argv[]) {
                         }),
                     true);
             }
+            publishPetWindowState(ipcClient, widget, characterId, modelPath);
             activeDragId.clear();
         });
     QObject::connect(
@@ -345,7 +435,9 @@ int main(int argc, char* argv[]) {
          &mutualGaze,
          &peerPositions,
          &lastPublishedCenterValid,
-         &updateMutualGaze](const QString& line) {
+         &updateMutualGaze,
+         ipcClient,
+         modelPath](const QString& line) {
             const bool peerDragFinished = line.startsWith(QStringLiteral("PEER_DRAG_END\t"));
             if (peerDragFinished || line.startsWith(QStringLiteral("PEER_DRAG\t"))) {
                 if (!moveAllRoles) {
@@ -385,6 +477,7 @@ int main(int argc, char* argv[]) {
                     while (completedPeerDragOrder.size() > 128) {
                         completedPeerDragIds.remove(completedPeerDragOrder.takeFirst());
                     }
+                    publishPetWindowState(ipcClient, widget, characterId, modelPath);
                 }
                 return;
             }
@@ -408,6 +501,18 @@ int main(int argc, char* argv[]) {
                             payload.value(QStringLiteral("x")).toInt(),
                             payload.value(QStringLiteral("y")).toInt()));
                     updateMutualGaze();
+                }
+                return;
+            }
+            if (line.startsWith(QStringLiteral("PREVIEW_MOTION\t"))) {
+                const QStringList parts = line.split(u'\t');
+                if (parts.size() >= 4 && parts.at(1) == characterId) {
+                    if (!parts.at(2).isEmpty()) {
+                        widget.triggerAction(parts.at(2), characterId);
+                    }
+                    if (!parts.at(3).isEmpty()) {
+                        widget.triggerAction(parts.at(3), characterId);
+                    }
                 }
                 return;
             }
@@ -479,6 +584,13 @@ int main(int argc, char* argv[]) {
             }
             widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
             updateMutualGaze();
+        });
+    QObject::connect(
+        &app,
+        &QCoreApplication::aboutToQuit,
+        ipcClient,
+        [ipcClient, &widget, characterId, modelPath]() {
+            publishPetWindowState(ipcClient, widget, characterId, modelPath);
         });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, ipcClient, &bandori::PetIpcClient::stop);
     ipcClient->start();

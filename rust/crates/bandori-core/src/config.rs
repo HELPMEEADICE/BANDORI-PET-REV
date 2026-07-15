@@ -1,4 +1,5 @@
 use fs2::FileExt;
+use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -22,6 +23,19 @@ pub enum ConfigError {
     RootNotObject,
     #[error("timed out waiting for configuration lock: {0}")]
     LockTimeout(PathBuf),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PetWindowState {
+    pub character: String,
+    #[serde(default)]
+    pub model_path: String,
+    pub x: i64,
+    pub y: i64,
+    pub width: i64,
+    pub height: i64,
+    #[serde(default)]
+    pub placement: Option<Map<String, Value>>,
 }
 
 /// A three-way-merge configuration document compatible with `ConfigManager`.
@@ -108,6 +122,50 @@ impl ConfigDocument {
         self.loaded_from_file
     }
 
+    pub fn apply_pet_window_state(&mut self, state: &PetWindowState) -> bool {
+        let character = state.character.trim();
+        if character.is_empty() || state.width <= 0 || state.height <= 0 {
+            return false;
+        }
+        let model_path = state.model_path.trim();
+        let mut model_count = 0;
+        let mut model_updated = false;
+        if let Some(models) = self.values.get_mut("models").and_then(Value::as_array_mut) {
+            model_count = models.len();
+            let exact_path = (!model_path.is_empty()).then(|| {
+                models.iter().position(|entry| {
+                    entry.get("character").and_then(Value::as_str) == Some(character)
+                        && entry.get("path").and_then(Value::as_str) == Some(model_path)
+                })
+            });
+            let index = exact_path.flatten().or_else(|| {
+                models.iter().position(|entry| {
+                    entry.get("character").and_then(Value::as_str) == Some(character)
+                })
+            });
+            if let Some(entry) = index.and_then(|index| models.get_mut(index)) {
+                if let Some(entry) = entry.as_object_mut() {
+                    apply_window_state_fields(entry, state);
+                    model_updated = true;
+                }
+            }
+        }
+        if model_count <= 1 {
+            self.values.insert("window_x".into(), Value::from(state.x));
+            self.values.insert("window_y".into(), Value::from(state.y));
+            self.values
+                .insert("window_width".into(), Value::from(state.width));
+            self.values
+                .insert("window_height".into(), Value::from(state.height));
+            if let Some(placement) = &state.placement {
+                self.values
+                    .insert("window_placement".into(), Value::Object(placement.clone()));
+            }
+            return true;
+        }
+        model_updated
+    }
+
     pub fn merged_for_save(&self, current_disk: Option<&Map<String, Value>>) -> Map<String, Value> {
         let defaults = defaults();
         let current_disk = current_disk.unwrap_or(&self.loaded_values);
@@ -175,6 +233,16 @@ impl ConfigDocument {
 
         let _ = FileExt::unlock(&lock);
         result
+    }
+}
+
+fn apply_window_state_fields(entry: &mut Map<String, Value>, state: &PetWindowState) {
+    entry.insert("window_x".into(), Value::from(state.x));
+    entry.insert("window_y".into(), Value::from(state.y));
+    entry.insert("window_width".into(), Value::from(state.width));
+    entry.insert("window_height".into(), Value::from(state.height));
+    if let Some(placement) = &state.placement {
+        entry.insert("window_placement".into(), Value::Object(placement.clone()));
     }
 }
 
@@ -260,6 +328,48 @@ mod tests {
         assert!(!config.loaded_from_file());
         assert_eq!(config.get("fps"), Some(&json!(120)));
         assert!(config.values().len() > 100);
+    }
+
+    #[test]
+    fn pet_window_state_updates_only_the_matching_model_and_legacy_single_pet_keys() {
+        let mut multiple = ConfigDocument::default();
+        multiple.set(
+            "models",
+            serde_json::json!([
+                {"character":"kasumi","path":"models/kasumi/model.json"},
+                {"character":"ran","path":"models/ran/model.json"}
+            ]),
+        );
+        let state = PetWindowState {
+            character: "ran".into(),
+            model_path: "models/ran/model.json".into(),
+            x: 120,
+            y: -40,
+            width: 400,
+            height: 500,
+            placement: Some(
+                serde_json::json!({"screen_name":"right","relative_x":0.25})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        };
+        assert!(multiple.apply_pet_window_state(&state));
+        let models = multiple.get("models").unwrap().as_array().unwrap();
+        assert!(models[0].get("window_x").is_none());
+        assert_eq!(models[1]["window_x"], 120);
+        assert_eq!(models[1]["window_y"], -40);
+        assert_eq!(models[1]["window_placement"]["screen_name"], "right");
+        assert_eq!(multiple.get("window_x"), Some(&Value::from(-1)));
+
+        let mut single = ConfigDocument::default();
+        single.set(
+            "models",
+            serde_json::json!([{"character":"ran","path":"models/ran/model.json"}]),
+        );
+        assert!(single.apply_pet_window_state(&state));
+        assert_eq!(single.get("window_x"), Some(&Value::from(120)));
+        assert_eq!(single.get("window_height"), Some(&Value::from(500)));
     }
 
     #[test]

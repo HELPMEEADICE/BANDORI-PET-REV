@@ -82,7 +82,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   `PEER_DRAG` updates and a reliable final state, including message-loss recovery
   and completed-session deduplication. `PEER_POS` broadcasts and nearest-peer
   selection now drive mutual gaze through the same global-to-logical 600 px
-  clamped target used for cursor head tracking.
+  clamped target used for cursor head tracking. The native child restores a
+  visible saved position, accepts `PREVIEW_MOTION`, and sends reliable
+  `PET_STATE` snapshots after completed drags and graceful shutdown. Both the
+  Python and native supervisors persist those snapshots through the compatible
+  Rust/Python atomic configuration paths without overwriting other pets.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

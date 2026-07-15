@@ -43,6 +43,7 @@ from app_theme import apply_app_theme
 from ai_status_server import AiStatusHttpServer
 from chat_integration_server import ChatIntegrationHttpServer
 from napcat_adapter import NapcatClient
+from pet_state import persist_pet_window_state
 from onebot_message import onebot_event_mentions_self
 from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
@@ -1015,6 +1016,9 @@ def main():
         elif line.startswith("PEER_DRAG_END\t"):
             if is_registered_pet_peer(source_peer_id):
                 broadcast_ipc_line(line)
+        elif line.startswith("PET_STATE\t"):
+            if is_registered_pet_peer(source_peer_id):
+                persist_pet_window_state(cfg, line)
         elif line.startswith("PREVIEW_MOTION\t"):
             broadcast_ipc_line(line)
         elif line.startswith("LAYER_ORDER\t"):
@@ -1438,6 +1442,8 @@ def main():
                     "--format", model_format or "moc3",
                     "--width", str(cfg.get("window_width", 400)),
                     "--height", str(cfg.get("window_height", 500)),
+                    "--x", str(model.get("window_x", cfg.get("window_x", -1))),
+                    "--y", str(model.get("window_y", cfg.get("window_y", -1))),
                     "--fps", str(cfg.get("fps", 120)),
                     "--opacity", str(cfg.get("opacity", 1.0)),
                     "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),

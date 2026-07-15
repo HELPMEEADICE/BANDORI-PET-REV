@@ -38,6 +38,16 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Pet render frame rate"),
         QStringLiteral("fps"),
         QStringLiteral("120"));
+    QCommandLineOption petX(
+        QStringLiteral("pet-x"),
+        QStringLiteral("Initial pet X position"),
+        QStringLiteral("x"),
+        QStringLiteral("-1"));
+    QCommandLineOption petY(
+        QStringLiteral("pet-y"),
+        QStringLiteral("Initial pet Y position"),
+        QStringLiteral("y"),
+        QStringLiteral("-1"));
     QCommandLineOption petOpacity(
         QStringLiteral("pet-opacity"),
         QStringLiteral("Pet window opacity"),
@@ -79,6 +89,8 @@ int main(int argc, char* argv[]) {
         {petModel,
          petFormat,
          petCharacter,
+         petX,
+         petY,
          petFps,
          petOpacity,
          petLipSyncMaxOpen,
@@ -133,6 +145,8 @@ int main(int argc, char* argv[]) {
     petSpec.modelPath = parser.value(petModel);
     petSpec.character = parser.value(petCharacter);
     petSpec.format = parser.value(petFormat);
+    petSpec.x = parser.value(petX).toInt();
+    petSpec.y = parser.value(petY).toInt();
     petSpec.fps = parser.value(petFps).toInt();
     petSpec.opacity = parser.value(petOpacity).toDouble();
     petSpec.lipSyncMaxOpen = parser.value(petLipSyncMaxOpen).toDouble();

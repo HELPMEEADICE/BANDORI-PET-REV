@@ -5,6 +5,7 @@
 //! contracts while the application is migrated process by process.
 
 pub mod config;
+pub mod config_ffi;
 pub mod database;
 pub mod ipc;
 pub mod ipc_ffi;
