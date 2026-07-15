@@ -41,6 +41,10 @@ constexpr int kFormatRole = Qt::UserRole + 3;
 constexpr int kReminderKindRole = Qt::UserRole + 10;
 constexpr int kReminderIdRole = Qt::UserRole + 11;
 constexpr int kReminderEnabledRole = Qt::UserRole + 12;
+constexpr int kMemoryIdRole = Qt::UserRole + 20;
+constexpr int kMemoryKindRole = Qt::UserRole + 21;
+constexpr int kMemoryContentRole = Qt::UserRole + 22;
+constexpr int kMemoryImportanceRole = Qt::UserRole + 23;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
 
@@ -392,16 +396,19 @@ void NativeMainWindow::setupUi() {
     QWidget* dashboard = createDashboardPage();
     QWidget* models = createModelsPage();
     chatPage_ = createChatPage();
+    QWidget* memory = createMemoryPage();
     QWidget* llmSettings = createLlmSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
+    memory->setObjectName(QStringLiteral("memoryPage"));
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
+    addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(
         settings,
@@ -685,6 +692,165 @@ QWidget* NativeMainWindow::createChatPage() {
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
+    return page;
+}
+
+QWidget* NativeMainWindow::createMemoryPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Relationship and long-term memory"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Every operation stays inside the selected character and active user profile."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* target = new qfw::GroupHeaderCardWidget(tr("Memory target"), content);
+    memoryCharacterComboBox_ = new qfw::ComboBox(target);
+    memoryCharacterComboBox_->setMinimumWidth(280);
+    target->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Character or global profile"),
+        tr("Global memories describe the user and apply to every character"),
+        memoryCharacterComboBox_);
+
+    auto* relationship = new qfw::GroupHeaderCardWidget(tr("Relationship state"), content);
+    memoryRelationshipCard_ = relationship;
+    memoryAffectionLabel_ = new qfw::BodyLabel(relationship);
+    memoryTrustLabel_ = new qfw::BodyLabel(relationship);
+    memoryFamiliarityLabel_ = new qfw::BodyLabel(relationship);
+    memoryMoodLabel_ = new qfw::BodyLabel(relationship);
+    relationship->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Heart),
+        tr("Affection"),
+        tr("Character relationship score from 0 to 100"),
+        memoryAffectionLabel_);
+    relationship->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Certificate),
+        tr("Trust"),
+        tr("Accumulated conversational trust"),
+        memoryTrustLabel_);
+    relationship->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::History),
+        tr("Familiarity"),
+        tr("How well the character knows this user profile"),
+        memoryFamiliarityLabel_);
+    relationship->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::EmojiTabSymbols),
+        tr("Mood"),
+        tr("Current relationship mood and intensity"),
+        memoryMoodLabel_);
+
+    auto* memories = new qfw::GroupHeaderCardWidget(tr("Long-term memories"), content);
+    memoryList_ = new qfw::ListWidget(memories);
+    memoryList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    memoryList_->setMinimumHeight(230);
+
+    auto* editor = new QWidget(memories);
+    auto* editorLayout = new QVBoxLayout(editor);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->setSpacing(8);
+    auto* metadataRow = new QHBoxLayout();
+    metadataRow->setContentsMargins(0, 0, 0, 0);
+    metadataRow->setSpacing(8);
+    memoryKindComboBox_ = new qfw::ComboBox(editor);
+    memoryKindComboBox_->addItem(tr("Manual"), QVariant(), QStringLiteral("manual"));
+    memoryKindComboBox_->addItem(tr("Favorite quote"), QVariant(), QStringLiteral("favorite"));
+    memoryKindComboBox_->addItem(tr("User profile"), QVariant(), QStringLiteral("profile"));
+    memoryKindComboBox_->addItem(tr("Preference"), QVariant(), QStringLiteral("preference"));
+    memoryKindComboBox_->addItem(
+        tr("Relationship fact"), QVariant(), QStringLiteral("relationship"));
+    memoryKindComboBox_->addItem(tr("Note"), QVariant(), QStringLiteral("note"));
+    memoryKindComboBox_->setFixedWidth(180);
+    memoryImportanceSpinBox_ = new qfw::SpinBox(editor);
+    memoryImportanceSpinBox_->setRange(1, 100);
+    memoryImportanceSpinBox_->setValue(70);
+    memoryImportanceSpinBox_->setPrefix(tr("Importance "));
+    memoryImportanceSpinBox_->setFixedWidth(150);
+    metadataRow->addWidget(memoryKindComboBox_);
+    metadataRow->addWidget(memoryImportanceSpinBox_);
+    metadataRow->addStretch(1);
+    memoryContentEdit_ = new qfw::PlainTextEdit(editor);
+    memoryContentEdit_->setPlaceholderText(tr("Durable fact, preference, boundary, or favorite quote"));
+    memoryContentEdit_->setMinimumHeight(90);
+    memoryContentEdit_->setMaximumHeight(150);
+    editorLayout->addLayout(metadataRow);
+    editorLayout->addWidget(memoryContentEdit_);
+
+    auto* actions = new QWidget(memories);
+    auto* actionsLayout = new QHBoxLayout(actions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+    memoryStatusLabel_ = new qfw::CaptionLabel(tr("Select a target to load memories"), actions);
+    memoryNewButton_ = new qfw::PushButton(tr("New"), actions);
+    memorySaveButton_ = new qfw::PrimaryPushButton(tr("Save"), actions);
+    memoryDeleteButton_ = new qfw::PushButton(tr("Delete selected"), actions);
+    actionsLayout->addWidget(memoryStatusLabel_, 1);
+    actionsLayout->addWidget(memoryNewButton_);
+    actionsLayout->addWidget(memorySaveButton_);
+    actionsLayout->addWidget(memoryDeleteButton_);
+
+    memories->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::LibraryFill),
+        tr("Saved memories"),
+        tr("Ordered by importance and update time; Ctrl/Shift selects multiple rows"),
+        memoryList_);
+    memories->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Memory editor"),
+        tr("Editing is scoped to the selected character and current user"),
+        editor);
+    memories->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Actions"),
+        tr("Deletion requires an explicit selection"),
+        actions);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(target);
+    layout->addWidget(relationship);
+    layout->addWidget(memories);
+    layout->addStretch(1);
+    content->setMinimumWidth(600);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(
+        memoryCharacterComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (!updatingMemoryControls_) {
+                refreshNativeMemoryState();
+            }
+        });
+    connect(
+        memoryList_,
+        &QListWidget::currentItemChanged,
+        this,
+        [this](QListWidgetItem*, QListWidgetItem*) { loadSelectedNativeMemory(); });
+    connect(
+        memoryList_,
+        &QListWidget::itemSelectionChanged,
+        this,
+        [this]() {
+            memoryDeleteButton_->setEnabled(!memoryList_->selectedItems().isEmpty());
+        });
+    connect(memoryNewButton_, &QPushButton::clicked, this, [this]() {
+        startNewNativeMemory();
+    });
+    connect(memorySaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeMemory();
+    });
+    connect(memoryDeleteButton_, &QPushButton::clicked, this, [this]() {
+        deleteSelectedNativeMemories();
+    });
+    memoryDeleteButton_->setEnabled(false);
     return page;
 }
 
@@ -1288,9 +1454,11 @@ void NativeMainWindow::applyBackendState() {
     }
     populateModelList();
     populateChatCharacters();
+    populateMemoryCharacters();
     populateReminderCharacters();
     loadNativeReminderState();
     loadNativeLlmSettings();
+    refreshNativeMemoryState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
         configured > 1
@@ -1770,6 +1938,217 @@ void NativeMainWindow::deleteSelectedNativeLlmProfile() {
         llmProfileNameEdit_->clear();
         llmSettingsStatusLabel_->setText(tr("Deleted LLM profile “%1”").arg(name));
     }
+}
+
+void NativeMainWindow::populateMemoryCharacters() {
+    if (memoryCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString previous = memoryCharacterComboBox_->currentData().toString();
+    const QString configured = runtime_.value(QStringLiteral("selected_character")).toString();
+    updatingMemoryControls_ = true;
+    memoryCharacterComboBox_->clear();
+    memoryCharacterComboBox_->addItem(
+        tr("User preferences · global"), QVariant(), QStringLiteral("__global__"));
+    QStringList added;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character.isEmpty() || added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        const QString display = model.characterDisplay.isEmpty()
+            ? model.character
+            : model.characterDisplay;
+        memoryCharacterComboBox_->addItem(display, QVariant(), model.character);
+    }
+    QString selected = previous;
+    if (selected.isEmpty() || memoryCharacterComboBox_->findData(selected) < 0) {
+        selected = configured;
+    }
+    const int selectedIndex = memoryCharacterComboBox_->findData(selected);
+    memoryCharacterComboBox_->setCurrentIndex(selectedIndex < 0 ? 0 : selectedIndex);
+    updatingMemoryControls_ = false;
+}
+
+void NativeMainWindow::refreshNativeMemoryState() {
+    if (memoryCharacterComboBox_ == nullptr || memoryCharacterComboBox_->count() == 0) {
+        return;
+    }
+    const QString character = memoryCharacterComboBox_->currentData().toString().trimmed();
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.loadMemoryState(databasePath, character, userKey)) {
+        memoryStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    memorySnapshot_ = parseObject(backend_.getMemorySnapshotJson());
+    renderNativeMemories();
+}
+
+void NativeMainWindow::renderNativeMemories() {
+    if (memoryList_ == nullptr) {
+        return;
+    }
+    const qint64 previousId = memoryList_->currentItem() == nullptr
+        ? 0
+        : memoryList_->currentItem()->data(kMemoryIdRole).toLongLong();
+    updatingMemoryControls_ = true;
+    memoryList_->clear();
+    const QJsonArray memories = memorySnapshot_.value(QStringLiteral("memories")).toArray();
+    for (const QJsonValue& value : memories) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject memory = value.toObject();
+        const qint64 id = memory.value(QStringLiteral("id")).toInteger();
+        QString preview = memory.value(QStringLiteral("content")).toString().trimmed();
+        preview.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+        if (preview.size() > 240) {
+            preview = preview.left(237) + QStringLiteral("...");
+        }
+        const QString text = tr("%1 · importance %2 · %3\n%4")
+                                 .arg(
+                                     memory.value(QStringLiteral("kind")).toString(),
+                                     QString::number(
+                                         memory.value(QStringLiteral("importance")).toInt()),
+                                     memory.value(QStringLiteral("updated_at")).toString(),
+                                     preview);
+        auto* item = new QListWidgetItem(text, memoryList_);
+        item->setData(kMemoryIdRole, id);
+        item->setData(kMemoryKindRole, memory.value(QStringLiteral("kind")).toString());
+        item->setData(kMemoryContentRole, memory.value(QStringLiteral("content")).toString());
+        item->setData(kMemoryImportanceRole, memory.value(QStringLiteral("importance")).toInt(50));
+        if (id == previousId) {
+            memoryList_->setCurrentItem(item);
+        }
+    }
+    updatingMemoryControls_ = false;
+
+    const QJsonValue relationshipValue = memorySnapshot_.value(QStringLiteral("relationship"));
+    const bool hasRelationship = relationshipValue.isObject();
+    memoryRelationshipCard_->setVisible(hasRelationship);
+    if (hasRelationship) {
+        const QJsonObject relationship = relationshipValue.toObject();
+        memoryAffectionLabel_->setText(
+            QStringLiteral("%1 / 100").arg(
+                relationship.value(QStringLiteral("affection")).toInt()));
+        memoryTrustLabel_->setText(
+            QStringLiteral("%1 / 100").arg(
+                relationship.value(QStringLiteral("trust")).toInt()));
+        memoryFamiliarityLabel_->setText(
+            QStringLiteral("%1 / 100").arg(
+                relationship.value(QStringLiteral("familiarity")).toInt()));
+        memoryMoodLabel_->setText(
+            QStringLiteral("%1 · %2 / 100")
+                .arg(
+                    relationship.value(QStringLiteral("mood")).toString(),
+                    QString::number(
+                        relationship.value(QStringLiteral("mood_intensity")).toInt())));
+    }
+    const QString userKey = memorySnapshot_.value(QStringLiteral("user_key")).toString();
+    memoryStatusLabel_->setText(
+        tr("%1 memory item(s) · user %2").arg(memories.size()).arg(userKey));
+    loadSelectedNativeMemory();
+}
+
+void NativeMainWindow::loadSelectedNativeMemory() {
+    if (memoryList_ == nullptr || updatingMemoryControls_) {
+        return;
+    }
+    QListWidgetItem* item = memoryList_->currentItem();
+    memoryDeleteButton_->setEnabled(!memoryList_->selectedItems().isEmpty());
+    if (item == nullptr) {
+        memoryKindComboBox_->setCurrentIndex(
+            std::max(0, memoryKindComboBox_->findData(QStringLiteral("profile"))));
+        memoryImportanceSpinBox_->setValue(70);
+        memoryContentEdit_->clear();
+        return;
+    }
+    const int kindIndex = memoryKindComboBox_->findData(item->data(kMemoryKindRole));
+    memoryKindComboBox_->setCurrentIndex(kindIndex < 0 ? 0 : kindIndex);
+    memoryImportanceSpinBox_->setValue(item->data(kMemoryImportanceRole).toInt());
+    memoryContentEdit_->setPlainText(item->data(kMemoryContentRole).toString());
+}
+
+bool NativeMainWindow::mutateNativeMemory(const QJsonObject& command) {
+    const QString character = memoryCharacterComboBox_->currentData().toString().trimmed();
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    if (!backend_.mutateMemory(databasePath, character, userKey, compactJson(command))) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        memoryStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    memorySnapshot_ = parseObject(backend_.getMemorySnapshotJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    renderNativeMemories();
+    return true;
+}
+
+void NativeMainWindow::saveNativeMemory() {
+    const QString content = memoryContentEdit_->toPlainText().trimmed();
+    if (content.isEmpty()) {
+        memoryStatusLabel_->setText(tr("Memory content cannot be empty"));
+        return;
+    }
+    const qint64 memoryId = memoryList_->currentItem() == nullptr
+        ? 0
+        : memoryList_->currentItem()->data(kMemoryIdRole).toLongLong();
+    if (mutateNativeMemory({
+            {QStringLiteral("op"), QStringLiteral("save_memory")},
+            {QStringLiteral("id"), memoryId},
+            {QStringLiteral("kind"), memoryKindComboBox_->currentData().toString()},
+            {QStringLiteral("content"), content},
+            {QStringLiteral("importance"), memoryImportanceSpinBox_->value()},
+        })) {
+        memoryStatusLabel_->setText(memoryId > 0 ? tr("Memory updated") : tr("Memory added"));
+    }
+}
+
+void NativeMainWindow::deleteSelectedNativeMemories() {
+    const QList<QListWidgetItem*> selected = memoryList_->selectedItems();
+    if (selected.isEmpty()) {
+        return;
+    }
+    if (QMessageBox::warning(
+            this,
+            tr("Delete long-term memories"),
+            tr("Delete %1 selected memory item(s)? This removes them from future chat context.")
+                .arg(selected.size()),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+    QJsonArray ids;
+    for (const QListWidgetItem* item : selected) {
+        ids.append(item->data(kMemoryIdRole).toLongLong());
+    }
+    if (mutateNativeMemory({
+            {QStringLiteral("op"), QStringLiteral("delete_memories")},
+            {QStringLiteral("ids"), ids},
+        })) {
+        startNewNativeMemory();
+        memoryStatusLabel_->setText(tr("Deleted %1 memory item(s)").arg(ids.size()));
+    }
+}
+
+void NativeMainWindow::startNewNativeMemory() {
+    updatingMemoryControls_ = true;
+    memoryList_->clearSelection();
+    memoryList_->setCurrentItem(nullptr);
+    updatingMemoryControls_ = false;
+    memoryKindComboBox_->setCurrentIndex(
+        std::max(0, memoryKindComboBox_->findData(QStringLiteral("profile"))));
+    memoryImportanceSpinBox_->setValue(70);
+    memoryContentEdit_->clear();
+    memoryDeleteButton_->setEnabled(false);
+    memoryContentEdit_->setFocus();
 }
 
 void NativeMainWindow::syncSettingsControls() {
@@ -3021,6 +3400,9 @@ void NativeMainWindow::handleChatMemoryEvent(const QString& payloadJson) {
             message = tr("Native memory analysis failed");
         }
         chatStatusLabel_->setText(message);
+    }
+    if (state == QStringLiteral("finished") || state == QStringLiteral("fallback")) {
+        refreshNativeMemoryState();
     }
 }
 

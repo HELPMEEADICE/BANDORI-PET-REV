@@ -571,6 +571,40 @@ def test_native_llm_settings_are_redacted_whitelisted_and_qt_editable():
     assert 'QStringLiteral("delete_profile")' in window
 
 
+def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod memory_dashboard;" in core
+    assert "pub struct NativeMemorySnapshot" in memory
+    assert "enum NativeMemoryMutation" in memory
+    assert '#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]' in memory
+    assert "pub fn load_native_memory_snapshot" in memory
+    assert "pub fn mutate_native_memories" in memory
+    assert "GLOBAL_MEMORY_CHARACTER" in memory
+    assert "requested.is_subset(&owned)" in memory
+    assert "memory_dashboard_is_partitioned_whitelisted_and_supports_global_memories" in memory
+    assert "memory_snapshot_json" in backend
+    assert "MAX_MEMORY_COMMAND_BYTES" in backend
+    assert "fn load_memory_state(" in backend
+    assert "fn mutate_memory(" in backend
+    assert '"getMemorySnapshotJson"' in bridge_test
+    assert '"loadMemoryState"' in bridge_test
+    assert '"mutateMemory"' in bridge_test
+    assert "QWidget* createMemoryPage()" in header
+    assert "qfw::ListWidget* memoryList_" in header
+    assert "backend_.loadMemoryState" in window
+    assert "backend_.mutateMemory" in window
+    assert 'QStringLiteral("__global__")' in window
+    assert 'QStringLiteral("save_memory")' in window
+    assert 'QStringLiteral("delete_memories")' in window
+    assert "QAbstractItemView::ExtendedSelection" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

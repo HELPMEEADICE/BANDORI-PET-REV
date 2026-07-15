@@ -52,6 +52,7 @@ private:
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
     QWidget* createChatPage();
+    QWidget* createMemoryPage();
     QWidget* createLlmSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
@@ -78,6 +79,14 @@ private:
     void applySelectedNativeLlmProfile();
     void saveCurrentNativeLlmProfile();
     void deleteSelectedNativeLlmProfile();
+    void populateMemoryCharacters();
+    void refreshNativeMemoryState();
+    void renderNativeMemories();
+    void loadSelectedNativeMemory();
+    bool mutateNativeMemory(const QJsonObject& command);
+    void saveNativeMemory();
+    void deleteSelectedNativeMemories();
+    void startNewNativeMemory();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -218,6 +227,22 @@ private:
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;
     qfw::CaptionLabel* llmSettingsStatusLabel_ = nullptr;
+    QJsonObject memorySnapshot_;
+    bool updatingMemoryControls_ = false;
+    qfw::ComboBox* memoryCharacterComboBox_ = nullptr;
+    QWidget* memoryRelationshipCard_ = nullptr;
+    qfw::BodyLabel* memoryAffectionLabel_ = nullptr;
+    qfw::BodyLabel* memoryTrustLabel_ = nullptr;
+    qfw::BodyLabel* memoryFamiliarityLabel_ = nullptr;
+    qfw::BodyLabel* memoryMoodLabel_ = nullptr;
+    qfw::ListWidget* memoryList_ = nullptr;
+    qfw::ComboBox* memoryKindComboBox_ = nullptr;
+    qfw::SpinBox* memoryImportanceSpinBox_ = nullptr;
+    qfw::PlainTextEdit* memoryContentEdit_ = nullptr;
+    qfw::PushButton* memoryNewButton_ = nullptr;
+    qfw::PrimaryPushButton* memorySaveButton_ = nullptr;
+    qfw::PushButton* memoryDeleteButton_ = nullptr;
+    qfw::CaptionLabel* memoryStatusLabel_ = nullptr;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

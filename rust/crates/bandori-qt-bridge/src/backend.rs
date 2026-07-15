@@ -21,6 +21,7 @@ pub mod ffi {
         #[qproperty(QString, reminder_events_json)]
         #[qproperty(QString, reminder_state_json)]
         #[qproperty(QString, llm_settings_json)]
+        #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -88,6 +89,25 @@ pub mod ffi {
         fn mutate_llm_profile(
             self: Pin<&mut Self>,
             config_path: &QString,
+            command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadMemoryState"]
+        fn load_memory_state(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            character: &QString,
+            user_key: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "mutateMemory"]
+        fn mutate_memory(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            character: &QString,
+            user_key: &QString,
             command_json: &QString,
         ) -> bool;
 
@@ -314,6 +334,7 @@ use bandori_core::group_chat::{
 use bandori_core::llm_settings::{
     load_native_llm_settings, mutate_native_llm_profiles, save_native_llm_settings,
 };
+use bandori_core::memory_dashboard::{load_native_memory_snapshot, mutate_native_memories};
 use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
     build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
@@ -341,6 +362,7 @@ const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
 const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
 const MAX_REMINDER_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_LLM_SETTINGS_BYTES: usize = 256 * 1024;
+const MAX_MEMORY_COMMAND_BYTES: usize = 128 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -400,6 +422,7 @@ pub struct BackendRust {
     reminder_events_json: QString,
     reminder_state_json: QString,
     llm_settings_json: QString,
+    memory_snapshot_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -445,6 +468,7 @@ impl Default for BackendRust {
                 "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[]}",
             ),
             llm_settings_json: QString::from("{}"),
+            memory_snapshot_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -748,6 +772,64 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("LLM profile change error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn load_memory_state(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        character: &QString,
+        user_key: &QString,
+    ) -> bool {
+        match load_native_memory_snapshot(
+            Path::new(&database_path.to_string()),
+            &character.to_string(),
+            &user_key.to_string(),
+            100,
+        ) {
+            Ok(snapshot) => {
+                let payload = serde_json::to_string(&snapshot)
+                    .expect("native memory snapshot serialization cannot fail");
+                self.as_mut()
+                    .set_memory_snapshot_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Memory load error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn mutate_memory(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        character: &QString,
+        user_key: &QString,
+        command_json: &QString,
+    ) -> bool {
+        match mutate_native_memories(
+            Path::new(&database_path.to_string()),
+            &character.to_string(),
+            &user_key.to_string(),
+            &command_json.to_string(),
+            MAX_MEMORY_COMMAND_BYTES,
+        ) {
+            Ok(snapshot) => {
+                let payload = serde_json::to_string(&snapshot)
+                    .expect("native memory snapshot serialization cannot fail");
+                self.as_mut()
+                    .set_memory_snapshot_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native memory state saved"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Memory change error: {error}")));
                 false
             }
         }
