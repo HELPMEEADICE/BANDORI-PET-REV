@@ -66,6 +66,13 @@ Live2dGlWidget::Live2dGlWidget(
     alphaHitTimer_.setTimerType(Qt::PreciseTimer);
     alphaHitTimer_.setInterval(kAlphaHitIntervalMsec);
     connect(&alphaHitTimer_, &QTimer::timeout, this, &Live2dGlWidget::requestAlphaSample);
+    defaultStateTimer_.setTimerType(Qt::CoarseTimer);
+    defaultStateTimer_.setInterval(500);
+    connect(
+        &defaultStateTimer_,
+        &QTimer::timeout,
+        this,
+        &Live2dGlWidget::restoreDefaultMotionIfFinished);
     setFramesPerSecond(120);
     alphaHitTimer_.start();
 }
@@ -155,6 +162,11 @@ bool Live2dGlWidget::triggerAction(const QString& action, const QString& charact
     }
     if (triggered) {
         update();
+        const std::uint64_t token = ++interactionExpressionToken_;
+        QTimer::singleShot(
+            5'000,
+            this,
+            [this, token]() { resetInteractionExpression(token); });
     }
     return triggered;
 }
@@ -162,7 +174,29 @@ bool Live2dGlWidget::triggerAction(const QString& action, const QString& charact
 bool Live2dGlWidget::applyDefaultState(
     const QString& configuredMotion,
     const QString& configuredExpression,
-    const QString& character) {
+    const QString& character,
+    bool idleActionsEnabled,
+    bool randomActionsEnabled) {
+    configuredDefaultMotion_ = configuredMotion.trimmed();
+    configuredDefaultExpression_ = configuredExpression.trimmed();
+    defaultStateCharacter_ = character.trimmed();
+    idleActionsEnabled_ = idleActionsEnabled;
+    randomActionsEnabled_ = randomActionsEnabled;
+    defaultStateChoice_ = 0;
+    if (host_ == nullptr) {
+        return false;
+    }
+    const bool motionApplied = applyDefaultStateNow(true, false);
+    const bool expressionApplied = applyDefaultStateNow(false, true);
+    if (idleActionsEnabled_ && motionApplied) {
+        defaultStateTimer_.start();
+    } else {
+        defaultStateTimer_.stop();
+    }
+    return motionApplied || expressionApplied;
+}
+
+bool Live2dGlWidget::applyDefaultStateNow(bool applyMotion, bool applyExpression) {
     if (host_ == nullptr) {
         return false;
     }
@@ -170,11 +204,21 @@ bool Live2dGlWidget::applyDefaultState(
     if (needsCurrent) {
         makeCurrent();
     }
-    const QByteArray motionUtf8 = configuredMotion.toUtf8();
-    const QByteArray expressionUtf8 = configuredExpression.toUtf8();
-    const QByteArray characterUtf8 = character.toUtf8();
+    const QByteArray motionUtf8 = configuredDefaultMotion_.toUtf8();
+    const QByteArray expressionUtf8 = configuredDefaultExpression_.toUtf8();
+    const QByteArray characterUtf8 = defaultStateCharacter_.toUtf8();
+    const std::uint64_t choice = applyMotion && randomActionsEnabled_
+        ? defaultStateChoice_++
+        : 0;
     const std::int32_t result = bandori_live2d_apply_default_state(
-        host_, motionUtf8.constData(), expressionUtf8.constData(), characterUtf8.constData());
+        host_,
+        motionUtf8.constData(),
+        expressionUtf8.constData(),
+        characterUtf8.constData(),
+        idleActionsEnabled_,
+        choice,
+        applyMotion,
+        applyExpression);
     if (result < 0) {
         reportLastError("apply default state");
     }
@@ -185,6 +229,28 @@ bool Live2dGlWidget::applyDefaultState(
         update();
     }
     return result > 0;
+}
+
+void Live2dGlWidget::restoreDefaultMotionIfFinished() {
+    if (host_ == nullptr || !idleActionsEnabled_) {
+        defaultStateTimer_.stop();
+        return;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const std::int32_t finished = bandori_live2d_is_motion_finished(host_);
+    if (finished < 0) {
+        reportLastError("query motion completion");
+        defaultStateTimer_.stop();
+    }
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (finished > 0 && !applyDefaultStateNow(true, false)) {
+        defaultStateTimer_.stop();
+    }
 }
 
 bool Live2dGlWidget::triggerInteraction(
@@ -217,8 +283,7 @@ bool Live2dGlWidget::triggerInteraction(
     }
     if (result > 0) {
         update();
-        if (!configuredExpression.trimmed().isEmpty()
-            && configuredMotion.trimmed() != QStringLiteral("__none__")) {
+        if (!configuredExpression.trimmed().isEmpty()) {
             const std::uint64_t token = ++interactionExpressionToken_;
             QTimer::singleShot(
                 5'000,
@@ -488,16 +553,7 @@ void Live2dGlWidget::resetInteractionExpression(std::uint64_t token) {
     if (token != interactionExpressionToken_ || host_ == nullptr) {
         return;
     }
-    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
-    if (needsCurrent) {
-        makeCurrent();
-    }
-    if (!bandori_live2d_reset_expression(host_)) {
-        reportLastError("reset interaction expression");
-    }
-    if (needsCurrent) {
-        doneCurrent();
-    }
+    applyDefaultStateNow(false, true);
     update();
 }
 
@@ -765,6 +821,7 @@ void Live2dGlWidget::setInputPassthrough(bool enabled) {
 void Live2dGlWidget::disposeRuntime() {
     renderTimer_.stop();
     alphaHitTimer_.stop();
+    defaultStateTimer_.stop();
     setInputPassthrough(false);
     if (host_ == nullptr) {
         return;

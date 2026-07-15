@@ -134,6 +134,14 @@ pub struct Live2dModelInfo {
     pub hit_area_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DefaultStateOptions {
+    pub idle_actions_enabled: bool,
+    pub choice: usize,
+    pub apply_motion: bool,
+    pub apply_expression: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum Live2dError {
     #[error("LuaJIT runtime failed: {0}")]
@@ -323,9 +331,16 @@ impl Live2dRuntime {
     }
 
     pub fn is_motion_finished(&self) -> Result<bool, Live2dError> {
-        Ok(self
-            .renderer_table()?
-            .call_method::<bool>("is_motion_finished", ())?)
+        let renderer = self.renderer_table()?;
+        if renderer
+            .get::<Option<Function>>("is_motion_finished")?
+            .is_some()
+        {
+            return Ok(renderer.call_method::<bool>("is_motion_finished", ())?);
+        }
+        let model: Table = renderer.call_method("get_model", ())?;
+        let motion_manager: Table = model.get("mainMotionManager")?;
+        Ok(motion_manager.call_method::<bool>("isFinished", ())?)
     }
 
     pub fn set_expression(&self, expression: &str) -> Result<(), Live2dError> {
@@ -390,22 +405,30 @@ impl Live2dRuntime {
         configured_motion: &str,
         configured_expression: &str,
         character: &str,
+        options: DefaultStateOptions,
     ) -> Result<bool, Live2dError> {
         let info = self.model_info()?;
         let character = character.to_lowercase();
         let mut applied = false;
         let configured_motion = configured_motion.trim();
-        if !configured_motion.is_empty() && configured_motion != "__none__" {
-            if let Some(motion) = find_motion(&info.motion_names, &[configured_motion], &character)
-            {
+        if options.apply_motion && configured_motion != "__none__" {
+            if !options.idle_actions_enabled {
+                self.clear_motions()?;
+                applied = true;
+            } else if let Some(motion) = select_default_motion(
+                &info.motion_names,
+                configured_motion,
+                &character,
+                options.choice,
+            ) {
                 self.start_motion(motion, 0, MotionPriority::Force, true)?;
                 applied = true;
             }
         }
-        let configured_expression = configured_expression.trim();
-        if !configured_expression.is_empty() {
+        if options.apply_expression {
+            self.reset_expression()?;
             if let Some(expression) =
-                find_expression(&info.expressions, configured_expression, &character)
+                select_default_expression(&info.expressions, configured_expression, &character)
             {
                 self.set_expression(expression)?;
                 applied = true;
@@ -730,6 +753,49 @@ fn find_motion<'a>(
     })
 }
 
+fn select_default_motion<'a>(
+    motion_names: &'a [String],
+    configured_motion: &str,
+    character: &str,
+    choice: usize,
+) -> Option<&'a str> {
+    if !configured_motion.is_empty() {
+        if let Some(motion) = find_motion(motion_names, &[configured_motion], character) {
+            return Some(motion);
+        }
+    }
+    let idle = motion_names
+        .iter()
+        .filter(|name| is_idle_motion_name(name))
+        .collect::<Vec<_>>();
+    (!idle.is_empty()).then(|| idle[choice % idle.len()].as_str())
+}
+
+fn is_idle_motion_name(name: &str) -> bool {
+    let normalized = name.to_lowercase();
+    normalized.starts_with("idle") || normalized.contains("_idle") || normalized.contains("-idle")
+}
+
+fn select_default_expression<'a>(
+    expressions: &'a [String],
+    configured_expression: &str,
+    character: &str,
+) -> Option<&'a str> {
+    let configured_expression = configured_expression.trim();
+    if !configured_expression.is_empty() {
+        if let Some(expression) = find_expression(expressions, configured_expression, character) {
+            return Some(expression);
+        }
+    }
+    expressions.iter().find_map(|expression| {
+        let normalized = expression.to_lowercase();
+        (normalized == "default"
+            || normalized.ends_with("_default")
+            || normalized.ends_with("-default"))
+        .then_some(expression.as_str())
+    })
+}
+
 fn select_interaction_motion<'a>(
     motion_names: &'a [String],
     region: &str,
@@ -798,6 +864,9 @@ local M = {}
 function M.init() return true end
 function M.new(width, height)
     local renderer = { width = width, height = height, updates = 0, renders = 0 }
+    renderer.mainMotionManager = { finished = false }
+    function renderer.mainMotionManager:isFinished() return self.finished end
+    function renderer:get_model() return self end
     function renderer:load_model(path, width2, height2, _opts)
         self.path, self.width, self.height = path, width2, height2
         return self
@@ -941,12 +1010,66 @@ return M
     #[test]
     fn configured_default_state_loops_motion_and_applies_expression() {
         let (_temp, runtime) = runtime(Live2dFormat::Moc3);
-        assert!(runtime.apply_default_state("Idle", "smile", "aya").unwrap());
+        assert!(
+            runtime
+                .apply_default_state(
+                    "Idle",
+                    "smile",
+                    "aya",
+                    DefaultStateOptions {
+                        idle_actions_enabled: true,
+                        choice: 0,
+                        apply_motion: true,
+                        apply_expression: true,
+                    },
+                )
+                .unwrap()
+        );
         let renderer = runtime.renderer_table().unwrap();
         assert_eq!(renderer.get::<String>("motion_name").unwrap(), "Idle");
         assert!(renderer.get::<bool>("motion_looping").unwrap());
         assert_eq!(renderer.get::<String>("expression_name").unwrap(), "smile");
-        assert!(!runtime.apply_default_state("missing", "", "aya").unwrap());
+        assert!(
+            runtime
+                .apply_default_state(
+                    "missing",
+                    "",
+                    "aya",
+                    DefaultStateOptions {
+                        idle_actions_enabled: true,
+                        choice: 0,
+                        apply_motion: true,
+                        apply_expression: false,
+                    },
+                )
+                .unwrap()
+        );
+        assert!(
+            runtime
+                .apply_default_state(
+                    "",
+                    "",
+                    "aya",
+                    DefaultStateOptions {
+                        idle_actions_enabled: false,
+                        choice: 0,
+                        apply_motion: true,
+                        apply_expression: false,
+                    },
+                )
+                .unwrap()
+        );
+        assert!(!renderer.get::<bool>("motion").unwrap());
+    }
+
+    #[test]
+    fn motion_finished_falls_back_to_cubism2_motion_manager() {
+        let (_temp, runtime) = runtime(Live2dFormat::Moc);
+        let renderer = runtime.renderer_table().unwrap();
+        renderer.set("is_motion_finished", Value::Nil).unwrap();
+        let manager: Table = renderer.get("mainMotionManager").unwrap();
+        manager.set("finished", true).unwrap();
+        assert!(runtime.is_motion_finished().unwrap());
     }
 
     #[test]

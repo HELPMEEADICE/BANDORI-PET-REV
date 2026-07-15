@@ -50,7 +50,9 @@ public:
     bool applyDefaultState(
         const QString& configuredMotion,
         const QString& configuredExpression,
-        const QString& character);
+        const QString& character,
+        bool idleActionsEnabled,
+        bool randomActionsEnabled);
     bool triggerInteraction(
         const QString& region,
         const QString& configuredMotion,
@@ -89,6 +91,8 @@ private:
     void setInputPassthrough(bool enabled);
     void finishWindowDrag();
     void resetInteractionExpression(std::uint64_t token);
+    bool applyDefaultStateNow(bool applyMotion, bool applyExpression);
+    void restoreDefaultMotionIfFinished();
     void disposeRuntime();
     void reportLastError(const char* operation);
 
@@ -109,6 +113,13 @@ private:
     int ssaaScale_ = 2;
     QTimer renderTimer_;
     QTimer alphaHitTimer_;
+    QTimer defaultStateTimer_;
+    QString configuredDefaultMotion_;
+    QString configuredDefaultExpression_;
+    QString defaultStateCharacter_;
+    bool idleActionsEnabled_ = true;
+    bool randomActionsEnabled_ = true;
+    std::uint64_t defaultStateChoice_ = 0;
     int hitAlphaThreshold_ = 8;
     bool alphaSamplePending_ = false;
     bool lastAlphaSampleValid_ = false;

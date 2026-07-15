@@ -1470,6 +1470,8 @@ def main():
                     "--poke-expression", str(cfg.get("poke_expression", "") or ""),
                     "--default-motion", str(model.get("default_motion", "") or ""),
                     "--default-expression", str(model.get("default_expression", "") or ""),
+                    "--idle-actions-enabled", str(bool(cfg.get("live2d_idle_actions_enabled", True))).lower(),
+                    "--random-actions-enabled", str(bool(cfg.get("live2d_random_actions_enabled", True))).lower(),
                     "--drag-locked", str(bool(cfg.get("drag_locked", False))).lower(),
                     "--move-all-roles-together", str(bool(cfg.get("move_all_roles_together", False))).lower(),
                     "--head-tracking-enabled", str(bool(cfg.get("live2d_head_tracking_enabled", True))).lower(),

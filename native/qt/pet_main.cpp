@@ -329,6 +329,16 @@ int main(int argc, char* argv[]) {
         QStringLiteral("default-expression"),
         QStringLiteral("Configured persistent startup expression"),
         QStringLiteral("expression"));
+    QCommandLineOption idleActionsEnabled(
+        QStringLiteral("idle-actions-enabled"),
+        QStringLiteral("Run a configured or discovered looping idle motion"),
+        QStringLiteral("bool"),
+        QStringLiteral("true"));
+    QCommandLineOption randomActionsEnabled(
+        QStringLiteral("random-actions-enabled"),
+        QStringLiteral("Rotate among discovered idle motions"),
+        QStringLiteral("bool"),
+        QStringLiteral("true"));
     QCommandLineOption dragLocked(
         QStringLiteral("drag-locked"),
         QStringLiteral("Whether direct pet-window dragging is locked"),
@@ -380,6 +390,8 @@ int main(int argc, char* argv[]) {
          pokeExpression,
          defaultMotion,
          defaultExpression,
+         idleActionsEnabled,
+         randomActionsEnabled,
          dragLocked,
          moveAllRolesTogether,
          headTrackingEnabled,
@@ -463,6 +475,8 @@ int main(int argc, char* argv[]) {
     QString configuredPokeExpression = parser.value(pokeExpression).trimmed();
     const QString configuredDefaultMotion = parser.value(defaultMotion).trimmed();
     const QString configuredDefaultExpression = parser.value(defaultExpression).trimmed();
+    bool idleActions = optionBool(parser.value(idleActionsEnabled), true);
+    bool randomActions = optionBool(parser.value(randomActionsEnabled), true);
     QObject::connect(
         &widget,
         &bandori::Live2dGlWidget::runtimeReady,
@@ -470,11 +484,15 @@ int main(int argc, char* argv[]) {
         [&widget,
          characterId,
          configuredDefaultMotion,
-         configuredDefaultExpression]() {
+         configuredDefaultExpression,
+         &idleActions,
+         &randomActions]() {
             widget.applyDefaultState(
                 configuredDefaultMotion,
                 configuredDefaultExpression,
-                characterId);
+                characterId,
+                idleActions,
+                randomActions);
         });
     QString ipcSessionName = parser.value(ipcSession).trimmed();
     if (ipcSessionName.isEmpty()) {
@@ -725,6 +743,10 @@ int main(int argc, char* argv[]) {
          &configuredClickActions,
          &configuredPokeMotion,
          &configuredPokeExpression,
+         configuredDefaultMotion,
+         configuredDefaultExpression,
+         &idleActions,
+         &randomActions,
          &triggerPokeFeedback,
          &radialMenu,
          ipcClient,
@@ -861,6 +883,7 @@ int main(int argc, char* argv[]) {
                 return;
             }
             const QJsonObject settings = document.object();
+            bool defaultStateChanged = false;
             if (settings.contains(QStringLiteral("fps"))) {
                 widget.setFramesPerSecond(settings.value(QStringLiteral("fps")).toInt(120));
             }
@@ -875,6 +898,16 @@ int main(int argc, char* argv[]) {
             if (settings.contains(QStringLiteral("live2d_hit_alpha_threshold"))) {
                 widget.setHitAlphaThreshold(
                     settings.value(QStringLiteral("live2d_hit_alpha_threshold")).toInt(8));
+            }
+            if (settings.contains(QStringLiteral("live2d_idle_actions_enabled"))) {
+                idleActions =
+                    settings.value(QStringLiteral("live2d_idle_actions_enabled")).toBool(true);
+                defaultStateChanged = true;
+            }
+            if (settings.contains(QStringLiteral("live2d_random_actions_enabled"))) {
+                randomActions =
+                    settings.value(QStringLiteral("live2d_random_actions_enabled")).toBool(true);
+                defaultStateChanged = true;
             }
             if (settings.contains(QStringLiteral("drag_locked"))) {
                 const bool locked =
@@ -905,6 +938,14 @@ int main(int argc, char* argv[]) {
             if (settings.contains(QStringLiteral("poke_expression"))) {
                 configuredPokeExpression =
                     settings.value(QStringLiteral("poke_expression")).toString().trimmed();
+            }
+            if (defaultStateChanged) {
+                widget.applyDefaultState(
+                    configuredDefaultMotion,
+                    configuredDefaultExpression,
+                    characterId,
+                    idleActions,
+                    randomActions);
             }
             if (settings.contains(QStringLiteral("language"))) {
                 radialMenu.setLanguage(settings.value(QStringLiteral("language")).toString());

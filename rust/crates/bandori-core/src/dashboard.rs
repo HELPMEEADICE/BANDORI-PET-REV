@@ -33,6 +33,8 @@ pub struct NativeRuntimeSnapshot {
     pub opacity: f64,
     pub lip_sync_max_open: f64,
     pub hit_alpha_threshold: i64,
+    pub idle_actions_enabled: bool,
+    pub random_actions_enabled: bool,
     pub head_tracking_enabled: bool,
     pub mutual_gaze_enabled: bool,
     pub move_all_roles_together: bool,
@@ -58,6 +60,8 @@ pub struct NativeSettingsUpdate {
     pub dark_theme: Option<String>,
     pub vsync: Option<bool>,
     pub live2d_quality: Option<String>,
+    pub live2d_idle_actions_enabled: Option<bool>,
+    pub live2d_random_actions_enabled: Option<bool>,
     pub drag_locked: Option<bool>,
     pub move_all_roles_together: Option<bool>,
     pub live2d_head_tracking_enabled: Option<bool>,
@@ -111,6 +115,12 @@ impl NativeSettingsUpdate {
                 return Err(NativeSettingsError::UnsupportedLive2dQuality(quality));
             }
             config.set("live2d_quality", Value::String(quality));
+        }
+        if let Some(enabled) = self.live2d_idle_actions_enabled {
+            config.set("live2d_idle_actions_enabled", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.live2d_random_actions_enabled {
+            config.set("live2d_random_actions_enabled", Value::Bool(enabled));
         }
         if let Some(locked) = self.drag_locked {
             config.set("drag_locked", Value::Bool(locked));
@@ -224,6 +234,8 @@ impl NativeRuntimeSnapshot {
             lip_sync_max_open: float_value(values, "live2d_lip_sync_max_open", 0.55)
                 .clamp(0.0, 1.0),
             hit_alpha_threshold: int_value(values, "live2d_hit_alpha_threshold", 8).clamp(0, 255),
+            idle_actions_enabled: bool_value(values, "live2d_idle_actions_enabled", true),
+            random_actions_enabled: bool_value(values, "live2d_random_actions_enabled", true),
             head_tracking_enabled: bool_value(values, "live2d_head_tracking_enabled", true),
             mutual_gaze_enabled: bool_value(values, "live2d_mutual_gaze_enabled", false),
             move_all_roles_together: bool_value(values, "move_all_roles_together", false),
@@ -355,6 +367,8 @@ mod tests {
                 "opacity": 0.7,
                 "vsync": false,
                 "live2d_quality": "performance",
+                "live2d_idle_actions_enabled": false,
+                "live2d_random_actions_enabled": false,
                 "drag_locked": true,
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
@@ -381,6 +395,8 @@ mod tests {
         assert_eq!(snapshot.fps, 240);
         assert!(!snapshot.vsync);
         assert_eq!(snapshot.live2d_quality, "performance");
+        assert!(!snapshot.idle_actions_enabled);
+        assert!(!snapshot.random_actions_enabled);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -441,6 +457,8 @@ mod tests {
                 "dark_theme": "on",
                 "vsync": false,
                 "live2d_quality": "performance",
+                "live2d_idle_actions_enabled": false,
+                "live2d_random_actions_enabled": false,
                 "drag_locked": true,
                 "move_all_roles_together": true,
                 "live2d_head_tracking_enabled": false,
@@ -454,6 +472,8 @@ mod tests {
         assert_eq!(runtime.dark_theme, "on");
         assert!(!runtime.vsync);
         assert_eq!(runtime.live2d_quality, "performance");
+        assert!(!runtime.idle_actions_enabled);
+        assert!(!runtime.random_actions_enabled);
         assert!(runtime.drag_locked);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);

@@ -34,6 +34,8 @@ struct PetLaunchSpec {
     QString pokeExpression;
     QString defaultMotion;
     QString defaultExpression;
+    bool idleActionsEnabled = true;
+    bool randomActionsEnabled = true;
     bool dragLocked = false;
     bool moveAllRolesTogether = false;
     bool headTrackingEnabled = true;

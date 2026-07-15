@@ -92,6 +92,8 @@ private:
     qfw::DoubleSpinBox* opacitySpinBox_ = nullptr;
     qfw::SwitchButton* vsyncSwitch_ = nullptr;
     qfw::ComboBox* qualityComboBox_ = nullptr;
+    qfw::SwitchButton* idleActionsSwitch_ = nullptr;
+    qfw::SwitchButton* randomActionsSwitch_ = nullptr;
     qfw::SwitchButton* dragLockedSwitch_ = nullptr;
     qfw::SwitchButton* moveTogetherSwitch_ = nullptr;
     qfw::SwitchButton* headTrackingSwitch_ = nullptr;

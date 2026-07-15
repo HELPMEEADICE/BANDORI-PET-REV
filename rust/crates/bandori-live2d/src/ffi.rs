@@ -1,6 +1,6 @@
 use crate::{
-    FrameInput, Live2dFormat, Live2dRuntime, ModelResourceLoader, ParameterValue, ResourceRoots,
-    TextureQuality,
+    DefaultStateOptions, FrameInput, Live2dFormat, Live2dRuntime, ModelResourceLoader,
+    ParameterValue, ResourceRoots, TextureQuality,
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -261,6 +261,10 @@ pub unsafe extern "C" fn bandori_live2d_apply_default_state(
     configured_motion: *const c_char,
     configured_expression: *const c_char,
     character: *const c_char,
+    idle_actions_enabled: bool,
+    choice: u64,
+    apply_motion: bool,
+    apply_expression: bool,
 ) -> i32 {
     let result = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: pointer ownership remains with the C++ caller.
@@ -273,7 +277,17 @@ pub unsafe extern "C" fn bandori_live2d_apply_default_state(
         // SAFETY: string validity is part of the C ABI contract.
         let character = unsafe { required_string(character, "character") }?;
         host.runtime
-            .apply_default_state(&motion, &expression, &character)
+            .apply_default_state(
+                &motion,
+                &expression,
+                &character,
+                DefaultStateOptions {
+                    idle_actions_enabled,
+                    choice: choice as usize,
+                    apply_motion,
+                    apply_expression,
+                },
+            )
             .map_err(|error| error.to_string())
     }));
     match result {
@@ -287,6 +301,37 @@ pub unsafe extern "C" fn bandori_live2d_apply_default_state(
         }
         Err(_) => {
             set_error("panic inside Live2D default-state FFI call");
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Reports whether the current motion has completed.
+///
+/// Returns `1` when finished, `0` while active, and `-1` on error.
+///
+/// # Safety
+/// `host` must be a live handle and its owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_is_motion_finished(host: *mut BandoriLive2dHost) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        unsafe { required_host(host) }?
+            .runtime
+            .is_motion_finished()
+            .map_err(|error| error.to_string())
+    }));
+    match result {
+        Ok(Ok(finished)) => {
+            clear_error();
+            i32::from(finished)
+        }
+        Ok(Err(error)) => {
+            set_error(error);
+            -1
+        }
+        Err(_) => {
+            set_error("panic inside Live2D motion-finished FFI call");
             -1
         }
     }
@@ -509,6 +554,11 @@ mod tests {
                     empty.as_ptr(),
                 )
             },
+            -1
+        );
+        // SAFETY: null is an explicitly supported error input for this test.
+        assert_eq!(
+            unsafe { bandori_live2d_is_motion_finished(ptr::null_mut()) },
             -1
         );
         // SAFETY: the thread-local pointer remains valid until the next FFI call.

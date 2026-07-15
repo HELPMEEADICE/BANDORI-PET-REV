@@ -338,6 +338,8 @@ QWidget* NativeMainWindow::createSettingsPage() {
     qualityComboBox_->addItem(tr("Performance"), QVariant(), QStringLiteral("performance"));
     qualityComboBox_->addItem(tr("Balanced"), QVariant(), QStringLiteral("balanced"));
     qualityComboBox_->setFixedWidth(148);
+    idleActionsSwitch_ = new qfw::SwitchButton(live2d);
+    randomActionsSwitch_ = new qfw::SwitchButton(live2d);
     dragLockedSwitch_ = new qfw::SwitchButton(live2d);
     moveTogetherSwitch_ = new qfw::SwitchButton(live2d);
     headTrackingSwitch_ = new qfw::SwitchButton(live2d);
@@ -368,6 +370,16 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Render quality"),
         tr("Performance uses native resolution; balanced enables Cubism 3 SSAA"),
         qualityComboBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Idle motion"),
+        tr("Loop the configured motion or automatically discover an Idle group"),
+        idleActionsSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Sync),
+        tr("Rotate idle variants"),
+        tr("Select another discovered Idle group when the current loop ends"),
+        randomActionsSwitch_);
     live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
         tr("Drag lock"),
@@ -490,6 +502,10 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
     const int qualityIndex = qualityComboBox_->findData(quality);
     qualityComboBox_->setCurrentIndex(qualityIndex < 0 ? 1 : qualityIndex);
+    idleActionsSwitch_->setChecked(
+        runtime_.value(QStringLiteral("idle_actions_enabled")).toBool(true));
+    randomActionsSwitch_->setChecked(
+        runtime_.value(QStringLiteral("random_actions_enabled")).toBool(true));
     dragLockedSwitch_->setChecked(runtime_.value(QStringLiteral("drag_locked")).toBool());
     moveTogetherSwitch_->setChecked(
         runtime_.value(QStringLiteral("move_all_roles_together")).toBool());
@@ -515,6 +531,8 @@ void NativeMainWindow::saveNativeSettings() {
         {QStringLiteral("opacity"), opacitySpinBox_->value()},
         {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
         {QStringLiteral("live2d_quality"), quality},
+        {QStringLiteral("live2d_idle_actions_enabled"), idleActionsSwitch_->isChecked()},
+        {QStringLiteral("live2d_random_actions_enabled"), randomActionsSwitch_->isChecked()},
         {QStringLiteral("dark_theme"), themeComboBox_->currentData().toString()},
         {QStringLiteral("drag_locked"), dragLockedSwitch_->isChecked()},
         {QStringLiteral("move_all_roles_together"), moveTogetherSwitch_->isChecked()},
@@ -532,6 +550,8 @@ void NativeMainWindow::saveNativeSettings() {
         spec.opacity = opacitySpinBox_->value();
         spec.vsync = vsyncSwitch_->isChecked();
         spec.live2dQuality = quality;
+        spec.idleActionsEnabled = idleActionsSwitch_->isChecked();
+        spec.randomActionsEnabled = randomActionsSwitch_->isChecked();
         spec.dragLocked = dragLockedSwitch_->isChecked();
         spec.moveAllRolesTogether = moveTogetherSwitch_->isChecked();
         spec.headTrackingEnabled = headTrackingSwitch_->isChecked();
@@ -752,6 +772,10 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     spec.pokeExpression = runtime_.value(QStringLiteral("poke_expression")).toString();
     spec.defaultMotion = pet.value(QStringLiteral("default_motion")).toString();
     spec.defaultExpression = pet.value(QStringLiteral("default_expression")).toString();
+    spec.idleActionsEnabled =
+        runtime_.value(QStringLiteral("idle_actions_enabled")).toBool(true);
+    spec.randomActionsEnabled =
+        runtime_.value(QStringLiteral("random_actions_enabled")).toBool(true);
     spec.dragLocked = pet.contains(QStringLiteral("drag_locked"))
         ? pet.value(QStringLiteral("drag_locked")).toBool()
         : runtime_.value(QStringLiteral("drag_locked")).toBool();

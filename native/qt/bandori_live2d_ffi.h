@@ -45,7 +45,12 @@ std::int32_t bandori_live2d_apply_default_state(
     BandoriLive2dHost* host,
     const char* configuredMotion,
     const char* configuredExpression,
-    const char* character);
+    const char* character,
+    bool idleActionsEnabled,
+    std::uint64_t choice,
+    bool applyMotion,
+    bool applyExpression);
+std::int32_t bandori_live2d_is_motion_finished(BandoriLive2dHost* host);
 std::int32_t bandori_live2d_trigger_interaction(
     BandoriLive2dHost* host,
     const char* region,

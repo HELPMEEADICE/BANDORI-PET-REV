@@ -118,6 +118,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   default motion/expression values (including `model_action_settings` fallbacks)
   cross the Rust snapshot and launch boundary, then start from the GL-ready signal;
   the configured default motion is explicitly looped by the Rust LuaJIT host.
+  When no motion is configured, Rust applies the existing Idle-name rules and
+  optionally rotates matching groups. A lightweight completion poll restores
+  the default loop after one-shot click/IPC motions and also supplies the
+  Cubism 2 compatibility path where the windowless wrapper lacks a dedicated
+  `is_motion_finished` method. Temporary expressions now reset back to the
+  configured or metadata-derived default instead of leaving stale feedback.
+  Idle and random-action switches are writable and apply live over shared IPC.
   Unknown fields cannot cross this write boundary.
   A cross-platform `QSystemTrayIcon` now owns the native main-process lifecycle:
   closing the control center hides it without killing pets, while the tray can
