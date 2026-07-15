@@ -30,6 +30,14 @@ _thread_local = threading.local()
 _APP_DIR = Path(app_base_dir()).resolve()
 
 
+def _server_timeout_seconds(server: dict) -> int:
+    try:
+        timeout = int(server.get("timeout_seconds", 30) or 30)
+    except (TypeError, ValueError, OverflowError):
+        timeout = 30
+    return max(1, min(3600, timeout))
+
+
 def mcp_proxy_tools(config: dict, exclude_native: bool = False) -> list[dict]:
     if not _mcp_enabled(config):
         return []
@@ -411,7 +419,7 @@ def _request_http_json_direct(server: dict, payload: dict, cancel_event=None) ->
     url = str(server.get("url", "") or "").strip()
     if not url:
         raise ValueError(_tr("McpBridge.http_url_empty", default="HTTP MCP server url is empty"))
-    timeout = int(server.get("timeout_seconds", 30) or 30)
+    timeout = _server_timeout_seconds(server)
     auth = str(server.get("authorization", "") or "").strip()
     body = json.dumps(payload).encode("utf-8")
 
@@ -497,7 +505,7 @@ def _send_http_cancel_notification(server: dict, request_id):
         },
     }
     retry_server = dict(server)
-    retry_server["timeout_seconds"] = min(2, int(server.get("timeout_seconds", 30) or 30))
+    retry_server["timeout_seconds"] = min(2, _server_timeout_seconds(server))
     try:
         _request_http_json_direct(retry_server, cancellation, None)
     except Exception:
@@ -732,7 +740,7 @@ class StdioMcpClient:
             if params is not None:
                 message["params"] = params
             self._write(message)
-            deadline = time.monotonic() + int(self._server.get("timeout_seconds", 30) or 30)
+            deadline = time.monotonic() + _server_timeout_seconds(self._server)
             while time.monotonic() < deadline:
                 if self._reader_error is not None:
                     raise RuntimeError(str(self._reader_error))
