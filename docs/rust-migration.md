@@ -76,12 +76,16 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   LIP messages apply the existing 180 ms hold, smoothing and configurable mouth
   limit through persistent host parameters. Cubism 2 metadata is parsed directly
   from the model manifest, so it does not depend on a Cubism 3-only Lua helper.
+  The native window now samples one physical framebuffer pixel at 16 ms intervals
+  for alpha input passthrough, retains the existing threshold and short hit grace,
+  and supports locked/local dragging. Optional group dragging sends cumulative
+  `PEER_DRAG` updates and a reliable final state, including message-loss recovery
+  and completed-session deduplication.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: remaining pet control events (peer dragging and alpha hit testing),
-  native visual/driver parity, application services, full UI replacement and
-  packaging.
+- Pending: mutual gaze/peer position and higher-level pet interactions, native
+  visual/driver parity, application services, full UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain

@@ -77,6 +77,7 @@ void PetProcessSupervisor::start(PetLaunchSpec spec) {
     spec.fps = std::clamp(spec.fps, 10, 240);
     spec.opacity = std::clamp(spec.opacity, 0.05, 1.0);
     spec.lipSyncMaxOpen = std::clamp(spec.lipSyncMaxOpen, 0.0, 1.0);
+    spec.hitAlphaThreshold = std::clamp(spec.hitAlphaThreshold, 0, 255);
     spec_ = std::move(spec);
     restartTimer_.stop();
     consecutiveFailures_ = 0;
@@ -153,6 +154,12 @@ void PetProcessSupervisor::launchNow() {
         QString::number(spec_.opacity, 'f', 3),
         QStringLiteral("--lip-sync-max-open"),
         QString::number(spec_.lipSyncMaxOpen, 'f', 3),
+        QStringLiteral("--hit-alpha-threshold"),
+        QString::number(spec_.hitAlphaThreshold),
+        QStringLiteral("--drag-locked"),
+        spec_.dragLocked ? QStringLiteral("true") : QStringLiteral("false"),
+        QStringLiteral("--move-all-roles-together"),
+        spec_.moveAllRolesTogether ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--parent-pid"),
         QString::number(QCoreApplication::applicationPid()),
         QStringLiteral("--ipc-session"),

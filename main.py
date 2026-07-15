@@ -1441,6 +1441,9 @@ def main():
                     "--fps", str(cfg.get("fps", 120)),
                     "--opacity", str(cfg.get("opacity", 1.0)),
                     "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),
+                    "--hit-alpha-threshold", str(cfg.get("live2d_hit_alpha_threshold", 8)),
+                    "--drag-locked", str(bool(cfg.get("drag_locked", False))).lower(),
+                    "--move-all-roles-together", str(bool(cfg.get("move_all_roles_together", False))).lower(),
                     "--parent-pid", str(os.getpid()),
                     "--ipc-session", os.environ.get("BANDORI_PET_IPC_SERVER_NAME", ""),
                 ]

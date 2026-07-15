@@ -48,6 +48,17 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Maximum mouth-open parameter used by pet lip sync"),
         QStringLiteral("value"),
         QStringLiteral("0.55"));
+    QCommandLineOption petHitAlphaThreshold(
+        QStringLiteral("pet-hit-alpha-threshold"),
+        QStringLiteral("Alpha threshold used for pet input passthrough"),
+        QStringLiteral("alpha"),
+        QStringLiteral("8"));
+    QCommandLineOption petDragLocked(
+        QStringLiteral("pet-drag-locked"),
+        QStringLiteral("Whether direct pet dragging is locked"));
+    QCommandLineOption petMoveAllRolesTogether(
+        QStringLiteral("pet-move-all-roles-together"),
+        QStringLiteral("Mirror drag sessions across pet processes"));
     QCommandLineOption projectRoot(
         QStringLiteral("project-root"),
         QStringLiteral("BandoriPet installation root"),
@@ -65,6 +76,9 @@ int main(int argc, char* argv[]) {
          petFps,
          petOpacity,
          petLipSyncMaxOpen,
+         petHitAlphaThreshold,
+         petDragLocked,
+         petMoveAllRolesTogether,
          projectRoot,
          userModels});
     parser.process(app);
@@ -114,6 +128,9 @@ int main(int argc, char* argv[]) {
     petSpec.fps = parser.value(petFps).toInt();
     petSpec.opacity = parser.value(petOpacity).toDouble();
     petSpec.lipSyncMaxOpen = parser.value(petLipSyncMaxOpen).toDouble();
+    petSpec.hitAlphaThreshold = parser.value(petHitAlphaThreshold).toInt();
+    petSpec.dragLocked = parser.isSet(petDragLocked);
+    petSpec.moveAllRolesTogether = parser.isSet(petMoveAllRolesTogether);
     QObject::connect(
         &supervisor,
         &bandori::PetProcessSupervisor::statusChanged,

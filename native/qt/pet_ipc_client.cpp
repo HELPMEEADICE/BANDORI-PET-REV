@@ -55,7 +55,23 @@ void PetIpcClient::stop() {
     closeQueues();
 }
 
+bool PetIpcClient::publishLine(const QString& line, bool reliable) {
+    if (line.trimmed().isEmpty() || !connectQueues()) {
+        return false;
+    }
+    SharedMemoryLineQueue* queue = reliable ? reliableInboundQueue_.get() : inboundQueue_.get();
+    return queue != nullptr
+        && queue->publish(encodeIpcEnvelope(peerId_, line, {}, {}, reliable));
+}
+
 bool PetIpcClient::connectQueues() {
+    if (sessionName_.isEmpty()) {
+        return false;
+    }
+    if (inboundQueue_ == nullptr || !inboundQueue_->isAttached()) {
+        inboundQueue_ = SharedMemoryLineQueue::attach(
+            makeSharedMemoryKey({sessionName_, QStringLiteral("main-in")}));
+    }
     if (reliableInboundQueue_ == nullptr || !reliableInboundQueue_->isAttached()) {
         reliableInboundQueue_ = SharedMemoryLineQueue::attach(
             makeSharedMemoryKey({sessionName_, QStringLiteral("main-reliable-in")}));
@@ -68,11 +84,12 @@ bool PetIpcClient::connectQueues() {
         broadcastQueue_ = SharedMemoryLineQueue::attach(
             makeSharedMemoryKey({sessionName_, QStringLiteral("main-out")}));
     }
-    return reliableInboundQueue_ != nullptr && broadcastQueue_ != nullptr
+    return inboundQueue_ != nullptr && reliableInboundQueue_ != nullptr && broadcastQueue_ != nullptr
         && controlQueue_ != nullptr;
 }
 
 void PetIpcClient::closeQueues() {
+    inboundQueue_.reset();
     reliableInboundQueue_.reset();
     broadcastQueue_.reset();
     controlQueue_.reset();

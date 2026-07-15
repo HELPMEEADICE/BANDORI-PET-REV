@@ -19,6 +19,7 @@ public:
 
     void start();
     void stop();
+    bool publishLine(const QString& line, bool reliable = false);
 
 signals:
     void shutdownRequested();
@@ -38,6 +39,7 @@ private:
     QTimer pollTimer_;
     QTimer heartbeatTimer_;
     QTimer reconnectTimer_;
+    std::unique_ptr<SharedMemoryLineQueue> inboundQueue_;
     std::unique_ptr<SharedMemoryLineQueue> reliableInboundQueue_;
     std::unique_ptr<SharedMemoryLineQueue> broadcastQueue_;
     std::unique_ptr<SharedMemoryLineQueue> controlQueue_;

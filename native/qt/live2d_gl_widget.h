@@ -4,6 +4,7 @@
 
 #include <QElapsedTimer>
 #include <QOpenGLWidget>
+#include <QPoint>
 #include <QSize>
 #include <QString>
 #include <QTimer>
@@ -35,15 +36,24 @@ public:
     ~Live2dGlWidget() override;
 
     void setFramesPerSecond(int fps);
+    void setDragLocked(bool locked);
+    void setHitAlphaThreshold(int threshold);
     void setLipSyncMaxOpen(double value);
     void setLipSyncPose(double level, double form = 0.0);
     bool triggerAction(const QString& action, const QString& character);
+
+signals:
+    void windowDragStarted();
+    void windowDragMoved(int totalDx, int totalDy);
+    void windowDragFinished(int totalDx, int totalDy);
 
 protected:
     void initializeGL() override;
     void resizeGL(int width, int height) override;
     void paintGL() override;
+    void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     static std::uintptr_t resolveGlProcedure(const char* name, void* userData);
@@ -51,6 +61,11 @@ private:
     bool syncRendererTarget(const QSize& size);
     bool blitSsaaToDefault(const QSize& targetSize);
     void clearTarget(const QSize& size);
+    void requestAlphaSample();
+    void readPendingAlphaSample(const QSize& targetSize);
+    bool isOpaqueAtGlobal(const QPoint& globalPosition);
+    void applyInputPassthroughFromSample();
+    void setInputPassthrough(bool enabled);
     void disposeRuntime();
     void reportLastError(const char* operation);
 
@@ -68,6 +83,21 @@ private:
     double lipSyncFormTarget_ = 0.0;
     double lipSyncMaxOpen_ = 0.55;
     QTimer renderTimer_;
+    QTimer alphaHitTimer_;
+    int hitAlphaThreshold_ = 8;
+    bool alphaSamplePending_ = false;
+    bool lastAlphaSampleValid_ = false;
+    bool lastAlphaSampleOpaque_ = false;
+    bool inputPassthrough_ = false;
+    QPoint pendingAlphaSampleGlobal_;
+    QPoint lastAlphaSampleGlobal_;
+    QPoint lastOpaqueGlobal_;
+    qint64 lastOpaqueMsec_ = -1'000;
+    bool draggingWindow_ = false;
+    bool dragLocked_ = false;
+    bool dragMoved_ = false;
+    QPoint dragPressGlobal_;
+    QPoint dragWindowOrigin_;
     std::unique_ptr<QOpenGLFramebufferObject> ssaaFramebuffer_;
     QSize ssaaFramebufferSize_;
     QSize rendererTargetSize_;

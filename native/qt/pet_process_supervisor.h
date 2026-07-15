@@ -23,6 +23,9 @@ struct PetLaunchSpec {
     int fps = 120;
     double opacity = 1.0;
     double lipSyncMaxOpen = 0.55;
+    int hitAlphaThreshold = 8;
+    bool dragLocked = false;
+    bool moveAllRolesTogether = false;
 };
 
 class PetProcessSupervisor final : public QObject {
