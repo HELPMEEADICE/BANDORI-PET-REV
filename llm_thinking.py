@@ -49,5 +49,13 @@ def split_thinking_text(content: str, reasoning: str = "") -> tuple[str, str]:
         if text:
             collected.append(text)
         clean = clean[:unclosed.start()]
-    clean = _CLOSE_REASONING_TAG_PATTERN.sub("", clean).strip()
+    while True:
+        orphan_close = _CLOSE_REASONING_TAG_PATTERN.search(clean)
+        if orphan_close is None:
+            break
+        text = clean[:orphan_close.start()].strip()
+        if text:
+            collected.append(text)
+        clean = clean[orphan_close.end():]
+    clean = clean.strip()
     return clean, "\n\n".join(collected).strip()
