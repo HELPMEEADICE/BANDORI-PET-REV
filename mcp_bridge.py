@@ -14,6 +14,7 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 
 from i18n_manager import tr as _tr
 from app_info import APP_NAME
+from mcp_base import MAX_MCP_CONTENT_LENGTH
 from process_utils import app_base_dir, hidden_subprocess_kwargs, run_off_gui_thread
 from tool_arguments import parse_tool_arguments
 
@@ -811,6 +812,11 @@ def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:
                 break
         if content_length is None:
             raise RuntimeError(_tr("McpBridge.missing_content_length", default="MCP server response missing Content-Length"))
+        if not 0 <= content_length <= MAX_MCP_CONTENT_LENGTH:
+            raise RuntimeError(_tr(
+                "McpBridge.invalid_content_length",
+                default="MCP server response Content-Length is outside the allowed range",
+            ))
         body_start = header_end + 4
         body_end = body_start + content_length
         if len(buffer) < body_end:
