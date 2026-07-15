@@ -10,6 +10,13 @@ from proactive_care_policy import (
 
 
 class ProactiveCarePolicyTest(unittest.TestCase):
+    def test_global_cooldown_tolerates_infinite_config_value(self):
+        policy = normalize_proactive_care_policy({
+            "global_cooldown_minutes": float("inf"),
+        })
+
+        self.assertEqual(30, policy["global_cooldown_minutes"])
+
     def test_default_policy_has_all_state_rules(self):
         policy = normalize_proactive_care_policy({})
 
