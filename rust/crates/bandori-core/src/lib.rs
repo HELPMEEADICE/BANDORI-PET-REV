@@ -4,6 +4,7 @@
 //! frontends can therefore be checked against the same configuration and IPC
 //! contracts while the application is migrated process by process.
 
+pub mod asr_settings;
 pub mod chat_actions;
 pub mod chat_attachments;
 pub mod chat_context;

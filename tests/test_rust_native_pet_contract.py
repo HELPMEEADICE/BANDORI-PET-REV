@@ -673,6 +673,48 @@ def test_native_tts_is_rust_owned_streamed_and_played_through_qt_multimedia():
     assert "Qt6::Multimedia" in cmake
 
 
+def test_native_asr_records_with_qt_and_transcribes_through_rust():
+    workspace = source("Cargo.toml")
+    transport = source("rust/crates/bandori-asr/src/lib.rs")
+    settings = source("rust/crates/bandori-core/src/asr_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert '"rust/crates/bandori-asr"' in workspace
+    assert "pub struct AsrTransport" in transport
+    assert "pub async fn transcribe" in transport
+    assert "pub fn prepare_asr_request" in transport
+    assert "multipart/form-data; boundary=" in transport
+    assert "MAX_AUDIO_BYTES" in transport
+    assert "transcript_from_payload" in transport
+    assert "transport_posts_authorized_multipart_and_parses_segments" in transport
+    assert "pub struct NativeAsrSettings" in settings
+    assert "has_api_key" in settings
+    assert "deny_unknown_fields" in settings
+    assert "blank_key_preserves_secret_and_explicit_clear_removes_it" in settings
+    assert "asr_settings_json" in backend
+    assert "startAsrTranscription" in backend
+    assert "cancelAsrTranscription" in backend
+    assert "asrTranscriptionEvent" in backend
+    assert "run_asr_transcription" in backend
+    assert "getAsrSettingsJson" in generation
+    assert "startAsrTranscription" in generation
+    assert "asrTranscriptionEvent" in generation
+    assert "QAudioSource* asrAudioSource_" in window_header
+    assert "qfw::PushButton* chatAsrButton_" in window_header
+    assert "QWidget* NativeMainWindow::createAsrSettingsPage()" in window
+    assert "QMediaDevices::defaultAudioInput" in window
+    assert "encodeWaveAudio" in window
+    assert "backend_.loadAsrSettings" in window
+    assert "backend_.saveAsrSettings" in window
+    assert "backend_.startAsrTranscription" in window
+    assert "backend_.cancelAsrTranscription" in window
+    assert 'QStringLiteral("insert_mode")' in window
+    assert 'QStringLiteral("auto_send")' in window
+
+
 def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     core = source("rust/crates/bandori-core/src/lib.rs")
     memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")

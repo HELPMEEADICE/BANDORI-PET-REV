@@ -10,6 +10,7 @@ links = "bandori_qt_bridge"
 crate-type = ["staticlib"]
 
 [dependencies]
+bandori-asr = { path = "../bandori-asr" }
 bandori-core = { path = "../bandori-core" }
 bandori-llm = { path = "../bandori-llm" }
 bandori-live2d = { path = "../bandori-live2d" }

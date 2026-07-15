@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QAudioFormat>
+#include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -17,8 +19,9 @@
 
 class QAction;
 class QAudioOutput;
-class QByteArray;
+class QAudioSource;
 class QCloseEvent;
+class QIODevice;
 class QMediaPlayer;
 class QSystemTrayIcon;
 class QTemporaryFile;
@@ -65,6 +68,7 @@ private:
     QWidget* createPersonaPage();
     QWidget* createLlmSettingsPage();
     QWidget* createTtsSettingsPage();
+    QWidget* createAsrSettingsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
     void syncSettingsControls();
@@ -106,6 +110,16 @@ private:
     void playNextNativeTtsAudio();
     void stopNativeTts();
     void updateNativeTtsLipSync();
+    void loadNativeAsrSettings();
+    void syncNativeAsrSettingsControls();
+    bool saveNativeAsrSettings();
+    void toggleNativeAsrRecording(bool forTest);
+    void startNativeAsrRecording(bool forTest);
+    void collectNativeAsrAudio();
+    void stopNativeAsrRecording(bool submit);
+    void startNativeAsrTranscription(const QByteArray& wavAudio, bool force, bool forTest);
+    void handleNativeAsrEvent(const QString& payloadJson);
+    void stopNativeAsr();
     void populateMemoryCharacters();
     void refreshNativeMemoryState();
     void renderNativeMemories();
@@ -223,6 +237,7 @@ private:
     qfw::PushButton* chatNewConversationButton_ = nullptr;
     qfw::PushButton* chatDeleteConversationButton_ = nullptr;
     qfw::PushButton* chatAttachButton_ = nullptr;
+    qfw::PushButton* chatAsrButton_ = nullptr;
     qfw::PushButton* chatClearAttachmentsButton_ = nullptr;
     qfw::CaptionLabel* chatAttachmentLabel_ = nullptr;
     QTextBrowser* chatTranscript_ = nullptr;
@@ -360,6 +375,31 @@ private:
     QTimer ttsLipSyncTimer_;
     qint64 activeTtsRequestId_ = 0;
     QString ttsPlayingCharacter_;
+    QJsonObject asrSettings_;
+    qfw::SwitchButton* asrEnabledSwitch_ = nullptr;
+    qfw::LineEdit* asrApiUrlEdit_ = nullptr;
+    qfw::LineEdit* asrApiKeyEdit_ = nullptr;
+    qfw::CheckBox* asrClearApiKeyCheckBox_ = nullptr;
+    qfw::LineEdit* asrModelIdEdit_ = nullptr;
+    qfw::ComboBox* asrLanguageComboBox_ = nullptr;
+    qfw::ComboBox* asrInsertModeComboBox_ = nullptr;
+    qfw::SwitchButton* asrAutoSendSwitch_ = nullptr;
+    qfw::SpinBox* asrMaxRecordSecondsSpinBox_ = nullptr;
+    qfw::PlainTextEdit* asrTestResultEdit_ = nullptr;
+    qfw::PrimaryPushButton* asrSaveButton_ = nullptr;
+    qfw::PushButton* asrTestButton_ = nullptr;
+    qfw::PushButton* asrCancelButton_ = nullptr;
+    qfw::CaptionLabel* asrStatusLabel_ = nullptr;
+    QAudioSource* asrAudioSource_ = nullptr;
+    QIODevice* asrAudioDevice_ = nullptr;
+    QAudioFormat asrAudioFormat_;
+    QByteArray asrRawAudio_;
+    QTimer asrRecordLimitTimer_;
+    qint64 activeAsrRequestId_ = 0;
+    bool asrRecording_ = false;
+    bool asrAudioLimitExceeded_ = false;
+    bool asrRecordingForTest_ = false;
+    bool asrRequestForTest_ = false;
     qint64 activeProviderRequestId_ = 0;
     QJsonObject memorySnapshot_;
     bool updatingMemoryControls_ = false;

@@ -24,6 +24,7 @@ pub mod ffi {
         #[qproperty(QString, reminder_state_json)]
         #[qproperty(QString, llm_settings_json)]
         #[qproperty(QString, tts_settings_json)]
+        #[qproperty(QString, asr_settings_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
         #[qproperty(QString, persona_settings_json)]
@@ -146,6 +147,31 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "cancelTtsSynthesis"]
         fn cancel_tts_synthesis(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadAsrSettings"]
+        fn load_asr_settings(self: Pin<&mut Self>, config_path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveAsrSettings"]
+        fn save_asr_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "startAsrTranscription"]
+        fn start_asr_transcription(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            audio: &QByteArray,
+            force: bool,
+        ) -> i64;
+
+        #[qinvokable]
+        #[cxx_name = "cancelAsrTranscription"]
+        fn cancel_asr_transcription(self: Pin<&mut Self>, request_id: i64) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadMemoryState"]
@@ -465,11 +491,17 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "ttsAudioEvent"]
         fn tts_audio_event(self: Pin<&mut Self>, payload_json: &QString, audio: &QByteArray);
+
+        #[qsignal]
+        #[cxx_name = "asrTranscriptionEvent"]
+        fn asr_transcription_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
 }
 
+use bandori_asr::{AsrConfig, AsrTransport};
+use bandori_core::asr_settings::{load_native_asr_settings, save_native_asr_settings};
 use bandori_core::chat_actions::parse_chat_response;
 use bandori_core::chat_attachments::{
     chat_attachment_stats, cleanup_chat_attachments as cleanup_native_chat_attachments,
@@ -605,6 +637,7 @@ pub struct BackendRust {
     reminder_state_json: QString,
     llm_settings_json: QString,
     tts_settings_json: QString,
+    asr_settings_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
     persona_settings_json: QString,
@@ -643,6 +676,9 @@ pub struct BackendRust {
     next_tts_request_id: i64,
     active_tts_request_id: i64,
     tts_cancellation: Option<CancellationToken>,
+    next_asr_request_id: i64,
+    active_asr_request_id: i64,
+    asr_cancellation: Option<CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
@@ -665,6 +701,7 @@ impl Default for BackendRust {
             ),
             llm_settings_json: QString::from("{}"),
             tts_settings_json: QString::from("{}"),
+            asr_settings_json: QString::from("{}"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
             persona_settings_json: QString::from("{}"),
@@ -703,6 +740,9 @@ impl Default for BackendRust {
             next_tts_request_id: 1,
             active_tts_request_id: 0,
             tts_cancellation: None,
+            next_asr_request_id: 1,
+            active_asr_request_id: 0,
+            asr_cancellation: None,
             memory_cancellations: HashMap::new(),
         }
     }
@@ -717,6 +757,9 @@ impl Drop for BackendRust {
             cancellation.cancel();
         }
         if let Some(cancellation) = self.tts_cancellation.take() {
+            cancellation.cancel();
+        }
+        if let Some(cancellation) = self.asr_cancellation.take() {
             cancellation.cancel();
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
@@ -1187,6 +1230,120 @@ impl ffi::Backend {
         cancellation.cancel();
         self.as_mut()
             .set_status(QString::from("Native TTS cancellation requested"));
+        true
+    }
+
+    pub fn load_asr_settings(mut self: Pin<&mut Self>, config_path: &QString) -> bool {
+        match load_native_asr_settings(Path::new(&config_path.to_string())) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native ASR settings serialization cannot fail");
+                self.as_mut().set_asr_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native ASR settings loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("ASR settings error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn save_asr_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        match save_native_asr_settings(
+            Path::new(&config_path.to_string()),
+            &settings_json.to_string(),
+        ) {
+            Ok(settings) => {
+                let payload = serde_json::to_string(&settings)
+                    .expect("native ASR settings serialization cannot fail");
+                self.as_mut().set_asr_settings_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native ASR settings saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("ASR settings save error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn start_asr_transcription(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        audio: &QByteArray,
+        force: bool,
+    ) -> i64 {
+        if self.as_ref().get_ref().rust().active_asr_request_id != 0 {
+            self.as_mut()
+                .set_status(QString::from("A native ASR request is already running"));
+            return 0;
+        }
+        let audio = Vec::<u8>::from(audio);
+        let job = match prepare_asr_transcription_job(
+            Path::new(&config_path.to_string()),
+            audio,
+            force,
+        ) {
+            Ok(Some(job)) => job,
+            Ok(None) => {
+                self.as_mut()
+                    .set_status(QString::from("Native ASR is disabled"));
+                return 0;
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&error));
+                return 0;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        let request_id = {
+            let state = self.as_mut().rust_mut().get_mut();
+            let request_id = state.next_asr_request_id.max(1);
+            state.next_asr_request_id = request_id.saturating_add(1);
+            state.active_asr_request_id = request_id;
+            state.asr_cancellation = Some(cancellation.clone());
+            request_id
+        };
+        self.as_mut()
+            .set_status(QString::from("Native ASR transcription started"));
+        let qt_thread = self.qt_thread();
+        if let Err(error) = std::thread::Builder::new()
+            .name(format!("bandori-asr-{request_id}"))
+            .spawn(move || run_asr_transcription(qt_thread, request_id, job, cancellation))
+        {
+            let state = self.as_mut().rust_mut().get_mut();
+            state.active_asr_request_id = 0;
+            state.asr_cancellation = None;
+            self.as_mut().set_status(QString::from(&format!(
+                "Could not start native ASR transcription: {error}"
+            )));
+            return 0;
+        }
+        request_id
+    }
+
+    pub fn cancel_asr_transcription(mut self: Pin<&mut Self>, request_id: i64) -> bool {
+        let state = self.as_mut().rust_mut().get_mut();
+        if state.active_asr_request_id == 0
+            || (request_id > 0 && request_id != state.active_asr_request_id)
+        {
+            return false;
+        }
+        let Some(cancellation) = state.asr_cancellation.as_ref() else {
+            return false;
+        };
+        cancellation.cancel();
+        self.as_mut()
+            .set_status(QString::from("Native ASR cancellation requested"));
         true
     }
 
@@ -3205,6 +3362,32 @@ impl ffi::Backend {
         let audio = QByteArray::from(audio.as_slice());
         self.as_mut().tts_audio_event(&payload, &audio);
     }
+
+    fn emit_asr_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
+        if self.as_ref().get_ref().rust().active_asr_request_id != request_id {
+            return;
+        }
+        let status = serde_json::from_str::<Value>(&payload)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .map(|state| match state.as_str() {
+                "finished" => "Native ASR transcription completed".to_owned(),
+                "cancelled" => "Native ASR transcription cancelled".to_owned(),
+                _ => "Native ASR transcription failed".to_owned(),
+            })
+            .unwrap_or_else(|| "Native ASR transcription ended".to_owned());
+        let state = self.as_mut().rust_mut().get_mut();
+        state.active_asr_request_id = 0;
+        state.asr_cancellation = None;
+        self.as_mut().set_status(QString::from(&status));
+        self.as_mut()
+            .asr_transcription_event(&QString::from(payload.as_str()));
+    }
 }
 
 #[derive(Clone)]
@@ -3220,6 +3403,12 @@ struct TtsSynthesisJob {
     request: TtsRequest,
     character: String,
     translation: Option<LlmTransportConfig>,
+}
+
+#[derive(Clone)]
+struct AsrTranscriptionJob {
+    config: AsrConfig,
+    audio: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -3333,6 +3522,30 @@ fn prepare_tts_synthesis_job(
         },
         character: character.trim().to_owned(),
         translation,
+    }))
+}
+
+fn prepare_asr_transcription_job(
+    config_path: &Path,
+    audio: Vec<u8>,
+    force: bool,
+) -> Result<Option<AsrTranscriptionJob>, String> {
+    let settings = load_native_asr_settings(config_path)
+        .map_err(|error| format!("ASR settings error: {error}"))?;
+    if !settings.enabled && !force {
+        return Ok(None);
+    }
+    let config =
+        ConfigDocument::load(config_path).map_err(|error| format!("ASR config error: {error}"))?;
+    Ok(Some(AsrTranscriptionJob {
+        config: AsrConfig {
+            api_url: settings.api_url,
+            api_key: config_string(&config, "asr_api_key"),
+            model_id: settings.model_id,
+            language: settings.language,
+            timeout_seconds: u64::from(settings.timeout_seconds),
+        },
+        audio,
     }))
 }
 
@@ -3707,6 +3920,81 @@ fn queue_tts_payload(
     qt_thread
         .queue(move |backend| {
             backend.emit_tts_audio_payload(request_id, payload, audio, terminal);
+        })
+        .ok();
+}
+
+fn run_asr_transcription(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: AsrTranscriptionJob,
+    cancellation: CancellationToken,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            queue_asr_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id":request_id,
+                    "state":"error",
+                    "message":format!("ASR async runtime error: {error}")
+                }),
+            );
+            return;
+        }
+    };
+    runtime.block_on(execute_asr_transcription(
+        qt_thread,
+        request_id,
+        job,
+        cancellation,
+    ));
+}
+
+async fn execute_asr_transcription(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: AsrTranscriptionJob,
+    cancellation: CancellationToken,
+) {
+    let payload = match AsrTransport::new(job.config) {
+        Ok(transport) => match transport
+            .transcribe(&job.audio, "audio/wav", &cancellation)
+            .await
+        {
+            Ok(outcome) => json!({
+                "request_id":request_id,
+                "state":"finished",
+                "text":outcome.text
+            }),
+            Err(bandori_asr::AsrError::Cancelled) => {
+                json!({"request_id":request_id,"state":"cancelled"})
+            }
+            Err(error) => json!({
+                "request_id":request_id,
+                "state":"error",
+                "message":error.to_string()
+            }),
+        },
+        Err(error) => json!({
+            "request_id":request_id,
+            "state":"error",
+            "message":error.to_string()
+        }),
+    };
+    queue_asr_payload(&qt_thread, request_id, payload);
+}
+
+fn queue_asr_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, payload: Value) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_asr_payload(request_id, payload);
         })
         .ok();
 }

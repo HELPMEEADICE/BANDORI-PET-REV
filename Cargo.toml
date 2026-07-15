@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "rust/crates/bandori-core",
+    "rust/crates/bandori-asr",
     "rust/crates/bandori-llm",
     "rust/crates/bandori-llm-protocol",
     "rust/crates/bandori-live2d",

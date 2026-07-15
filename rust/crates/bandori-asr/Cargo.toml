@@ -1,0 +1,20 @@
+[package]
+name = "bandori-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+reqwest = { workspace = true, features = ["native-tls"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }

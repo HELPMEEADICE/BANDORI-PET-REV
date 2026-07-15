@@ -291,12 +291,23 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   the existing native `LIP` lane for approximate mouth motion. Optional
   non-Chinese translation uses the auxiliary LLM and safely falls back to the
   original line.
+  Native ASR now records with Qt Multimedia, prefers 16 kHz mono signed PCM,
+  falls back to the input device's supported format, and writes a bounded WAV
+  container without Python audio libraries. The Rust `bandori-asr` transport
+  normalizes OpenAI-compatible transcription routes, builds bounded multipart
+  requests, keeps Bearer credentials out of QObject state and parses compatible
+  `text`, `transcript`, `result` or segmented responses. The Qt-Fluent settings
+  page preserves blank secrets, supports language, append/replace, duration and
+  auto-send behavior, while the chat page exposes a record/stop voice control.
+  The legacy faster-whisper installer remains usable as an external compatible
+  local endpoint; replacing that Python-managed installer with a packaged native
+  offline sidecar belongs to distribution work rather than the GUI process.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: pixel pet and remaining native visual/driver parity; ASR,
-  screen-awareness and remaining integration services; default-launcher
-  cutover, packaging and multi-platform validation.
+- Pending: pixel pet and remaining native visual/driver parity;
+  screen-awareness and remaining integration services; packaged offline ASR
+  sidecar, default-launcher cutover, packaging and multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
@@ -308,6 +319,7 @@ and Python compatibility checks remain independent of that local limitation.
 - LLM protocol and transport: `cargo test -p bandori-llm-protocol` and
   `cargo test -p bandori-llm`
 - TTS transport: `cargo test -p bandori-tts`
+- ASR transport: `cargo test -p bandori-asr`
 - Live2D host checks: `cargo test -p bandori-live2d`
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by

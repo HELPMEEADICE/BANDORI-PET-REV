@@ -3,7 +3,9 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QAudioDevice>
 #include <QAudioOutput>
+#include <QAudioSource>
 #include <QCloseEvent>
 #include <QDateTime>
 #include <QDebug>
@@ -16,10 +18,12 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
+#include <QLineEdit>
 #include <QListWidgetItem>
 #include <QMap>
 #include <QMenu>
 #include <QMediaPlayer>
+#include <QMediaDevices>
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -29,6 +33,7 @@
 #include <QSystemTrayIcon>
 #include <QTemporaryFile>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTableWidget>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -37,6 +42,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace bandori {
@@ -56,6 +62,47 @@ constexpr int kMemoryContentRole = Qt::UserRole + 22;
 constexpr int kMemoryImportanceRole = Qt::UserRole + 23;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
+constexpr qsizetype kMaximumAsrAudioBytes = 64 * 1024 * 1024;
+
+QByteArray encodeWaveAudio(const QByteArray& pcm, const QAudioFormat& format) {
+    if (pcm.isEmpty() || format.sampleRate() <= 0 || format.channelCount() <= 0
+        || format.bytesPerSample() <= 0 || format.bytesPerFrame() <= 0
+        || pcm.size() > std::numeric_limits<quint32>::max() - 36) {
+        return {};
+    }
+    const bool floatingPoint = format.sampleFormat() == QAudioFormat::Float;
+    if (!floatingPoint && format.sampleFormat() != QAudioFormat::UInt8
+        && format.sampleFormat() != QAudioFormat::Int16
+        && format.sampleFormat() != QAudioFormat::Int32) {
+        return {};
+    }
+    QByteArray wave;
+    wave.reserve(pcm.size() + 44);
+    auto append16 = [&wave](quint16 value) {
+        wave.append(static_cast<char>(value & 0xff));
+        wave.append(static_cast<char>((value >> 8) & 0xff));
+    };
+    auto append32 = [&wave](quint32 value) {
+        wave.append(static_cast<char>(value & 0xff));
+        wave.append(static_cast<char>((value >> 8) & 0xff));
+        wave.append(static_cast<char>((value >> 16) & 0xff));
+        wave.append(static_cast<char>((value >> 24) & 0xff));
+    };
+    wave.append("RIFF", 4);
+    append32(static_cast<quint32>(36 + pcm.size()));
+    wave.append("WAVEfmt ", 8);
+    append32(16);
+    append16(floatingPoint ? 3 : 1);
+    append16(static_cast<quint16>(format.channelCount()));
+    append32(static_cast<quint32>(format.sampleRate()));
+    append32(static_cast<quint32>(format.sampleRate() * format.bytesPerFrame()));
+    append16(static_cast<quint16>(format.bytesPerFrame()));
+    append16(static_cast<quint16>(format.bytesPerSample() * 8));
+    wave.append("data", 4);
+    append32(static_cast<quint32>(pcm.size()));
+    wave.append(pcm);
+    return wave;
+}
 
 QString currentLocalDateTime() {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
@@ -294,6 +341,11 @@ NativeMainWindow::NativeMainWindow(
         [this](const QString& payloadJson, const QByteArray& audio) {
             handleNativeTtsAudio(payloadJson, audio);
         });
+    connect(
+        &backend_,
+        &Backend::asrTranscriptionEvent,
+        this,
+        [this](const QString& payloadJson) { handleNativeAsrEvent(payloadJson); });
     reloadBackendState();
     setupTray();
     reminderTimer_.setInterval(15'000);
@@ -395,6 +447,7 @@ void NativeMainWindow::quitFromTray() {
     }
     exitRequested_ = true;
     stopNativeTts();
+    stopNativeAsr();
     clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
         trayIcon_->hide();
@@ -422,6 +475,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     }
     clearPendingChatAttachments();
     stopNativeTts();
+    stopNativeAsr();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
@@ -444,6 +498,7 @@ void NativeMainWindow::setupUi() {
     QWidget* personas = createPersonaPage();
     QWidget* llmSettings = createLlmSettingsPage();
     QWidget* ttsSettings = createTtsSettingsPage();
+    QWidget* asrSettings = createAsrSettingsPage();
     QWidget* settings = createSettingsPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
@@ -456,6 +511,7 @@ void NativeMainWindow::setupUi() {
     personas->setObjectName(QStringLiteral("personasPage"));
     llmSettings->setObjectName(QStringLiteral("llmSettingsPage"));
     ttsSettings->setObjectName(QStringLiteral("ttsSettingsPage"));
+    asrSettings->setObjectName(QStringLiteral("asrSettingsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
     addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
     addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
@@ -468,6 +524,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
     addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
     addSubInterface(ttsSettings, qfw::FluentIconEnum::Volume, tr("TTS settings"));
+    addSubInterface(asrSettings, qfw::FluentIconEnum::Microphone, tr("ASR voice input"));
     addSubInterface(
         settings,
         qfw::FluentIconEnum::Setting,
@@ -634,6 +691,7 @@ QWidget* NativeMainWindow::createChatPage() {
     chatSendButton_ = new qfw::PrimaryPushButton(tr("Send"), page);
     chatCancelButton_ = new qfw::PushButton(tr("Cancel"), page);
     chatAttachButton_ = new qfw::PushButton(tr("Attach"), page);
+    chatAsrButton_ = new qfw::PushButton(tr("Voice"), page);
     chatClearAttachmentsButton_ = new qfw::PushButton(tr("Clear attachments"), page);
     chatAttachmentLabel_ = new qfw::CaptionLabel(tr("No pending attachments"), page);
     chatAttachmentLabel_->setWordWrap(true);
@@ -646,6 +704,7 @@ QWidget* NativeMainWindow::createChatPage() {
     composerButtons->addStretch(1);
     auto* attachmentControls = new QHBoxLayout();
     attachmentControls->setSpacing(8);
+    attachmentControls->addWidget(chatAsrButton_);
     attachmentControls->addWidget(chatAttachButton_);
     attachmentControls->addWidget(chatClearAttachmentsButton_);
     attachmentControls->addWidget(chatAttachmentLabel_, 1);
@@ -742,6 +801,9 @@ QWidget* NativeMainWindow::createChatPage() {
     connect(chatSendButton_, &QPushButton::clicked, this, [this]() { sendNativeChat(); });
     connect(chatCancelButton_, &QPushButton::clicked, this, [this]() { cancelNativeChat(); });
     connect(chatAttachButton_, &QPushButton::clicked, this, [this]() { chooseChatAttachments(); });
+    connect(chatAsrButton_, &QPushButton::clicked, this, [this]() {
+        toggleNativeAsrRecording(false);
+    });
     connect(
         chatClearAttachmentsButton_,
         &QPushButton::clicked,
@@ -2183,6 +2245,158 @@ QWidget* NativeMainWindow::createTtsSettingsPage() {
     return page;
 }
 
+QWidget* NativeMainWindow::createAsrSettingsPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native ASR voice input"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Record through Qt Multimedia and send bounded WAV audio to an OpenAI-compatible transcription endpoint through Rust."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* service = new qfw::GroupHeaderCardWidget(tr("Transcription service"), content);
+    asrEnabledSwitch_ = new qfw::SwitchButton(service);
+    asrApiUrlEdit_ = new qfw::LineEdit(service);
+    asrApiUrlEdit_->setPlaceholderText(
+        QStringLiteral("http://127.0.0.1:8000/v1/audio/transcriptions"));
+    asrApiUrlEdit_->setMinimumWidth(360);
+    asrApiKeyEdit_ = new qfw::LineEdit(service);
+    asrApiKeyEdit_->setEchoMode(QLineEdit::Password);
+    asrApiKeyEdit_->setPlaceholderText(tr("Blank preserves the saved key"));
+    asrClearApiKeyCheckBox_ = new qfw::CheckBox(tr("Clear saved key"), service);
+    auto* keyEditor = new QWidget(service);
+    auto* keyLayout = new QHBoxLayout(keyEditor);
+    keyLayout->setContentsMargins(0, 0, 0, 0);
+    keyLayout->setSpacing(8);
+    keyLayout->addWidget(asrApiKeyEdit_, 1);
+    keyLayout->addWidget(asrClearApiKeyCheckBox_);
+    asrModelIdEdit_ = new qfw::LineEdit(service);
+    asrModelIdEdit_->setPlaceholderText(QStringLiteral("whisper-large-v3"));
+    service->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Microphone),
+        tr("Enable voice input"),
+        tr("The chat microphone remains hidden from requests until this setting is enabled"),
+        asrEnabledSwitch_);
+    service->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("ASR API endpoint"),
+        tr("Bare hosts, /v1 and /v1/audio are normalized to the compatible transcription route"),
+        asrApiUrlEdit_);
+    service->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Fingerprint),
+        tr("API key"),
+        tr("The secret is write-only and never enters QObject properties or ASR events"),
+        keyEditor);
+    service->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Model"),
+        tr("Sent as the multipart model field"),
+        asrModelIdEdit_);
+
+    auto* behavior = new qfw::GroupHeaderCardWidget(tr("Recording behavior"), content);
+    asrLanguageComboBox_ = new qfw::ComboBox(behavior);
+    asrLanguageComboBox_->addItem(tr("Automatic detection"), QVariant(), QString());
+    asrLanguageComboBox_->addItem(tr("Chinese"), QVariant(), QStringLiteral("zh"));
+    asrLanguageComboBox_->addItem(tr("Japanese"), QVariant(), QStringLiteral("ja"));
+    asrLanguageComboBox_->addItem(tr("English"), QVariant(), QStringLiteral("en"));
+    asrLanguageComboBox_->setFixedWidth(180);
+    asrInsertModeComboBox_ = new qfw::ComboBox(behavior);
+    asrInsertModeComboBox_->addItem(tr("Append to input"), QVariant(), QStringLiteral("append"));
+    asrInsertModeComboBox_->addItem(tr("Replace input"), QVariant(), QStringLiteral("replace"));
+    asrInsertModeComboBox_->setFixedWidth(180);
+    asrAutoSendSwitch_ = new qfw::SwitchButton(behavior);
+    asrMaxRecordSecondsSpinBox_ = new qfw::SpinBox(behavior);
+    asrMaxRecordSecondsSpinBox_->setRange(3, 300);
+    asrMaxRecordSecondsSpinBox_->setSuffix(tr(" s"));
+    asrMaxRecordSecondsSpinBox_->setFixedWidth(120);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Language),
+        tr("Recognition language"),
+        tr("Automatic detection omits the multipart language field"),
+        asrLanguageComboBox_);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Insert recognized text"),
+        tr("Append keeps existing draft text; replace overwrites it"),
+        asrInsertModeComboBox_);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Send),
+        tr("Send after recognition"),
+        tr("Automatically starts a chat turn only after a non-empty transcript"),
+        asrAutoSendSwitch_);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::StopWatch),
+        tr("Maximum recording duration"),
+        tr("Qt stops and submits automatically at this bounded duration"),
+        asrMaxRecordSecondsSpinBox_);
+
+    auto* test = new qfw::GroupHeaderCardWidget(tr("Microphone test"), content);
+    asrTestResultEdit_ = new qfw::PlainTextEdit(test);
+    asrTestResultEdit_->setReadOnly(true);
+    asrTestResultEdit_->setPlaceholderText(
+        tr("Start recording, speak, then stop to transcribe through the saved endpoint."));
+    asrTestResultEdit_->setMinimumHeight(82);
+    asrTestResultEdit_->setMaximumHeight(130);
+    auto* actions = new QWidget(test);
+    auto* actionsLayout = new QHBoxLayout(actions);
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(8);
+    asrTestButton_ = new qfw::PushButton(tr("Start recording"), actions);
+    asrCancelButton_ = new qfw::PushButton(tr("Cancel"), actions);
+    asrSaveButton_ = new qfw::PrimaryPushButton(tr("Save ASR settings"), actions);
+    actionsLayout->addWidget(asrTestButton_);
+    actionsLayout->addWidget(asrCancelButton_);
+    actionsLayout->addStretch(1);
+    actionsLayout->addWidget(asrSaveButton_);
+    test->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Transcript"),
+        tr("The test may run while automatic chat voice input is disabled"),
+        asrTestResultEdit_);
+    test->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Microphone),
+        tr("Actions"),
+        tr("Recording uses the default input device and prefers 16 kHz mono PCM"),
+        actions);
+
+    asrStatusLabel_ = new qfw::CaptionLabel(
+        tr("A compatible local service may still be run by the legacy ASR sidecar during migration."),
+        content);
+    asrStatusLabel_->setWordWrap(true);
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(service);
+    layout->addWidget(behavior);
+    layout->addWidget(test);
+    layout->addWidget(asrStatusLabel_);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    asrRecordLimitTimer_.setSingleShot(true);
+    connect(&asrRecordLimitTimer_, &QTimer::timeout, this, [this]() {
+        stopNativeAsrRecording(true);
+    });
+    connect(asrSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeAsrSettings();
+    });
+    connect(asrTestButton_, &QPushButton::clicked, this, [this]() {
+        if (!asrRecording_ && !saveNativeAsrSettings()) {
+            return;
+        }
+        toggleNativeAsrRecording(true);
+    });
+    connect(asrCancelButton_, &QPushButton::clicked, this, [this]() { stopNativeAsr(); });
+    asrCancelButton_->setEnabled(false);
+    return page;
+}
+
 QWidget* NativeMainWindow::createSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
@@ -2553,6 +2767,7 @@ void NativeMainWindow::applyBackendState() {
     loadNativeReminderState();
     loadNativeLlmSettings();
     loadNativeTtsSettings();
+    loadNativeAsrSettings();
     refreshNativeMemoryState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
@@ -3395,6 +3610,317 @@ void NativeMainWindow::updateNativeTtsLipSync() {
             .arg(level, 0, 'f', 3)
             .arg(form, 0, 'f', 3),
         false);
+}
+
+void NativeMainWindow::loadNativeAsrSettings() {
+    if (asrApiUrlEdit_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadAsrSettings(configPath_)) {
+        asrStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    asrSettings_ = parseObject(backend_.getAsrSettingsJson());
+    syncNativeAsrSettingsControls();
+}
+
+void NativeMainWindow::syncNativeAsrSettingsControls() {
+    if (asrApiUrlEdit_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker enabledBlocker(asrEnabledSwitch_);
+    const QSignalBlocker languageBlocker(asrLanguageComboBox_);
+    const QSignalBlocker insertBlocker(asrInsertModeComboBox_);
+    const QSignalBlocker autoSendBlocker(asrAutoSendSwitch_);
+    asrEnabledSwitch_->setChecked(asrSettings_.value(QStringLiteral("enabled")).toBool());
+    asrApiUrlEdit_->setText(
+        asrSettings_
+            .value(QStringLiteral("api_url"))
+            .toString(QStringLiteral("http://127.0.0.1:8000/v1/audio/transcriptions")));
+    asrApiKeyEdit_->clear();
+    asrApiKeyEdit_->setPlaceholderText(
+        asrSettings_.value(QStringLiteral("has_api_key")).toBool()
+            ? tr("A saved key is present; blank preserves it")
+            : tr("Local services may leave this blank"));
+    asrClearApiKeyCheckBox_->setChecked(false);
+    asrModelIdEdit_->setText(
+        asrSettings_
+            .value(QStringLiteral("model_id"))
+            .toString(QStringLiteral("whisper-large-v3")));
+    const int languageIndex = asrLanguageComboBox_->findData(
+        asrSettings_.value(QStringLiteral("language")).toString(QStringLiteral("zh")));
+    asrLanguageComboBox_->setCurrentIndex(languageIndex < 0 ? 0 : languageIndex);
+    const int insertIndex = asrInsertModeComboBox_->findData(
+        asrSettings_
+            .value(QStringLiteral("insert_mode"))
+            .toString(QStringLiteral("append")));
+    asrInsertModeComboBox_->setCurrentIndex(insertIndex < 0 ? 0 : insertIndex);
+    asrAutoSendSwitch_->setChecked(
+        asrSettings_.value(QStringLiteral("auto_send")).toBool(false));
+    asrMaxRecordSecondsSpinBox_->setValue(
+        asrSettings_.value(QStringLiteral("max_record_seconds")).toInt(60));
+    asrStatusLabel_->setText(
+        asrEnabledSwitch_->isChecked()
+            ? tr("Native chat voice input is enabled")
+            : tr("Automatic chat voice input is disabled; microphone test remains available"));
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+}
+
+bool NativeMainWindow::saveNativeAsrSettings() {
+    const QJsonObject settings {
+        {QStringLiteral("enabled"), asrEnabledSwitch_->isChecked()},
+        {QStringLiteral("api_url"), asrApiUrlEdit_->text().trimmed()},
+        {QStringLiteral("api_key"), asrApiKeyEdit_->text().trimmed()},
+        {QStringLiteral("clear_api_key"), asrClearApiKeyCheckBox_->isChecked()},
+        {QStringLiteral("model_id"), asrModelIdEdit_->text().trimmed()},
+        {QStringLiteral("language"), asrLanguageComboBox_->currentData().toString()},
+        {QStringLiteral("auto_send"), asrAutoSendSwitch_->isChecked()},
+        {QStringLiteral("insert_mode"), asrInsertModeComboBox_->currentData().toString()},
+        {QStringLiteral("sample_rate"), 16'000},
+        {QStringLiteral("max_record_seconds"), asrMaxRecordSecondsSpinBox_->value()},
+        {QStringLiteral("timeout_seconds"),
+         asrSettings_.value(QStringLiteral("timeout_seconds")).toInt(60)},
+    };
+    if (!backend_.saveAsrSettings(configPath_, compactJson(settings))) {
+        asrStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    asrSettings_ = parseObject(backend_.getAsrSettingsJson());
+    syncNativeAsrSettingsControls();
+    serviceStatusLabel_->setText(backend_.getStatus());
+    asrStatusLabel_->setText(tr("Native ASR settings saved"));
+    return true;
+}
+
+void NativeMainWindow::toggleNativeAsrRecording(bool forTest) {
+    if (asrRecording_) {
+        stopNativeAsrRecording(true);
+        return;
+    }
+    if (activeAsrRequestId_ != 0) {
+        asrStatusLabel_->setText(tr("Wait for or cancel the active transcription"));
+        return;
+    }
+    startNativeAsrRecording(forTest);
+}
+
+void NativeMainWindow::startNativeAsrRecording(bool forTest) {
+    if (!forTest && !asrSettings_.value(QStringLiteral("enabled")).toBool()) {
+        chatStatusLabel_->setText(tr("Enable ASR voice input in settings first"));
+        return;
+    }
+    const QAudioDevice input = QMediaDevices::defaultAudioInput();
+    if (input.isNull()) {
+        asrStatusLabel_->setText(tr("No audio input device is available"));
+        if (!forTest) {
+            chatStatusLabel_->setText(asrStatusLabel_->text());
+        }
+        return;
+    }
+    QAudioFormat format;
+    format.setSampleRate(
+        asrSettings_.value(QStringLiteral("sample_rate")).toInt(16'000));
+    format.setChannelCount(1);
+    format.setSampleFormat(QAudioFormat::Int16);
+    if (!input.isFormatSupported(format)) {
+        format = input.preferredFormat();
+    }
+    if (format.bytesPerSample() <= 0 || format.bytesPerFrame() <= 0) {
+        asrStatusLabel_->setText(tr("The default microphone format cannot be encoded as WAV"));
+        return;
+    }
+    asrRawAudio_.clear();
+    asrAudioLimitExceeded_ = false;
+    asrAudioFormat_ = format;
+    asrAudioSource_ = new QAudioSource(input, format, this);
+    asrAudioDevice_ = asrAudioSource_->start();
+    if (asrAudioDevice_ == nullptr) {
+        asrAudioSource_->deleteLater();
+        asrAudioSource_ = nullptr;
+        asrStatusLabel_->setText(tr("Qt Multimedia could not start microphone capture"));
+        return;
+    }
+    connect(asrAudioDevice_, &QIODevice::readyRead, this, [this]() {
+        collectNativeAsrAudio();
+    });
+    asrRecording_ = true;
+    asrRecordingForTest_ = forTest;
+    const int maximumSeconds =
+        asrSettings_.value(QStringLiteral("max_record_seconds")).toInt(60);
+    asrRecordLimitTimer_.start(std::clamp(maximumSeconds, 3, 300) * 1'000);
+    asrTestButton_->setText(tr("Stop and transcribe"));
+    asrCancelButton_->setEnabled(true);
+    chatAsrButton_->setText(tr("Stop voice"));
+    asrStatusLabel_->setText(
+        tr("Recording %1 Hz · %2 channel(s)")
+            .arg(format.sampleRate())
+            .arg(format.channelCount()));
+    if (!forTest) {
+        chatStatusLabel_->setText(tr("Recording voice input; press Voice again to transcribe"));
+    }
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+}
+
+void NativeMainWindow::collectNativeAsrAudio() {
+    if (!asrRecording_ || asrAudioDevice_ == nullptr) {
+        return;
+    }
+    const QByteArray chunk = asrAudioDevice_->readAll();
+    const qsizetype remaining = kMaximumAsrAudioBytes - asrRawAudio_.size();
+    if (chunk.size() > remaining) {
+        asrRawAudio_.append(chunk.constData(), std::max<qsizetype>(0, remaining));
+        asrAudioLimitExceeded_ = true;
+        asrStatusLabel_->setText(tr("ASR recording exceeded the 64 MiB safety limit"));
+        QTimer::singleShot(0, this, [this]() { stopNativeAsrRecording(false); });
+        return;
+    }
+    asrRawAudio_.append(chunk);
+}
+
+void NativeMainWindow::stopNativeAsrRecording(bool submit) {
+    if (!asrRecording_) {
+        return;
+    }
+    collectNativeAsrAudio();
+    asrRecording_ = false;
+    asrRecordLimitTimer_.stop();
+    if (asrAudioDevice_ != nullptr) {
+        disconnect(asrAudioDevice_, nullptr, this, nullptr);
+    }
+    if (asrAudioSource_ != nullptr) {
+        asrAudioSource_->stop();
+        asrAudioSource_->deleteLater();
+    }
+    asrAudioDevice_ = nullptr;
+    asrAudioSource_ = nullptr;
+    const bool forTest = asrRecordingForTest_;
+    asrRecordingForTest_ = false;
+    const bool audioLimitExceeded = asrAudioLimitExceeded_;
+    asrAudioLimitExceeded_ = false;
+    const QByteArray wave = submit && !audioLimitExceeded
+        ? encodeWaveAudio(asrRawAudio_, asrAudioFormat_)
+        : QByteArray();
+    asrRawAudio_.clear();
+    asrTestButton_->setText(tr("Start recording"));
+    chatAsrButton_->setText(tr("Voice"));
+    if (!submit) {
+        asrCancelButton_->setEnabled(activeAsrRequestId_ != 0);
+        setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+        return;
+    }
+    if (audioLimitExceeded) {
+        asrStatusLabel_->setText(tr("ASR recording exceeded the 64 MiB safety limit"));
+        if (!forTest) {
+            chatStatusLabel_->setText(asrStatusLabel_->text());
+        }
+        asrCancelButton_->setEnabled(false);
+        setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+        return;
+    }
+    if (wave.size() <= 44) {
+        asrStatusLabel_->setText(tr("No microphone audio was captured"));
+        if (!forTest) {
+            chatStatusLabel_->setText(asrStatusLabel_->text());
+        }
+        asrCancelButton_->setEnabled(false);
+        setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+        return;
+    }
+    startNativeAsrTranscription(wave, forTest, forTest);
+}
+
+void NativeMainWindow::startNativeAsrTranscription(
+    const QByteArray& wavAudio,
+    bool force,
+    bool forTest) {
+    const qint64 requestId =
+        backend_.startAsrTranscription(configPath_, wavAudio, force);
+    if (requestId <= 0) {
+        asrStatusLabel_->setText(backend_.getStatus());
+        if (!forTest) {
+            chatStatusLabel_->setText(backend_.getStatus());
+        }
+        asrCancelButton_->setEnabled(false);
+        setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+        return;
+    }
+    activeAsrRequestId_ = requestId;
+    asrRequestForTest_ = forTest;
+    asrCancelButton_->setEnabled(true);
+    asrTestButton_->setEnabled(false);
+    asrStatusLabel_->setText(tr("Transcribing microphone audio through Rust…"));
+    if (!forTest) {
+        chatStatusLabel_->setText(tr("Transcribing voice input…"));
+    }
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+}
+
+void NativeMainWindow::handleNativeAsrEvent(const QString& payloadJson) {
+    const QJsonObject payload = parseObject(payloadJson);
+    const qint64 requestId = payload.value(QStringLiteral("request_id")).toInteger();
+    if (requestId <= 0 || requestId != activeAsrRequestId_) {
+        return;
+    }
+    const bool forTest = asrRequestForTest_;
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    activeAsrRequestId_ = 0;
+    asrRequestForTest_ = false;
+    asrCancelButton_->setEnabled(asrRecording_);
+    asrTestButton_->setEnabled(true);
+    if (state == QStringLiteral("finished")) {
+        const QString text = payload.value(QStringLiteral("text")).toString().trimmed();
+        if (forTest) {
+            asrTestResultEdit_->setPlainText(text);
+            asrStatusLabel_->setText(tr("ASR microphone test completed"));
+        } else if (!text.isEmpty()) {
+            const bool replace =
+                asrSettings_.value(QStringLiteral("insert_mode")).toString()
+                == QStringLiteral("replace");
+            if (replace || chatInput_->toPlainText().trimmed().isEmpty()) {
+                chatInput_->setPlainText(text);
+            } else {
+                chatInput_->setPlainText(
+                    chatInput_->toPlainText().trimmed() + u'\n' + text);
+            }
+            chatInput_->moveCursor(QTextCursor::End);
+            chatInput_->setFocus();
+            chatStatusLabel_->setText(tr("Voice transcript inserted into the composer"));
+            if (asrSettings_.value(QStringLiteral("auto_send")).toBool()
+                && activeChatRequestId_ == 0 && !groupSequenceActive_) {
+                QTimer::singleShot(0, this, [this]() { sendNativeChat(); });
+            }
+        }
+    } else if (state == QStringLiteral("cancelled")) {
+        asrStatusLabel_->setText(tr("Native ASR transcription cancelled"));
+        if (!forTest) {
+            chatStatusLabel_->setText(asrStatusLabel_->text());
+        }
+    } else {
+        const QString message =
+            payload.value(QStringLiteral("message")).toString(backend_.getStatus());
+        asrStatusLabel_->setText(message);
+        if (!forTest) {
+            chatStatusLabel_->setText(message);
+        }
+    }
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+}
+
+void NativeMainWindow::stopNativeAsr() {
+    if (asrRecording_) {
+        stopNativeAsrRecording(false);
+    }
+    if (activeAsrRequestId_ != 0) {
+        backend_.cancelAsrTranscription(activeAsrRequestId_);
+    }
+    if (asrStatusLabel_ != nullptr) {
+        asrStatusLabel_->setText(tr("Native ASR stopped"));
+    }
+    if (asrCancelButton_ != nullptr) {
+        asrCancelButton_->setEnabled(activeAsrRequestId_ != 0);
+    }
 }
 
 void NativeMainWindow::populateMemoryCharacters() {
@@ -6096,7 +6622,9 @@ void NativeMainWindow::setChatBusy(bool busy) {
     if (chatInput_ == nullptr) {
         return;
     }
-    busy = busy || groupSequenceActive_;
+    const bool chatBusy = busy || groupSequenceActive_;
+    const bool asrBusy = asrRecording_ || activeAsrRequestId_ != 0;
+    busy = chatBusy || asrBusy;
     const bool hasTarget = isGroupChatMode()
         ? !selectedGroupKey().isEmpty()
         : !chatCharacterComboBox_->currentData().toString().isEmpty();
@@ -6117,13 +6645,17 @@ void NativeMainWindow::setChatBusy(bool busy) {
         !busy && backend_.getChatHasOlderMessages() && chatMessageLimit_ < kChatMessageLimit);
     chatInput_->setEnabled(!busy);
     chatAttachButton_->setEnabled(!busy && pendingChatAttachments_.size() < 32);
+    chatAsrButton_->setEnabled(
+        asrRecording_
+        || (!chatBusy && activeAsrRequestId_ == 0
+            && asrSettings_.value(QStringLiteral("enabled")).toBool()));
     chatClearAttachmentsButton_->setEnabled(!busy && !pendingChatAttachments_.isEmpty());
     chatSendButton_->setEnabled(
         !busy
         && (!chatInput_->toPlainText().trimmed().isEmpty()
             || !pendingChatAttachments_.isEmpty())
         && hasTarget);
-    chatCancelButton_->setEnabled(busy);
+    chatCancelButton_->setEnabled(chatBusy);
 }
 
 void NativeMainWindow::renderChatStreamPreview() {
