@@ -793,7 +793,7 @@ def _extract_stdio_message(buffer: bytes) -> tuple[dict | None, bytes]:
     buffer = buffer.lstrip(b"\r\n")
     if not buffer:
         return None, buffer
-    if buffer.startswith(b"Content-Length:"):
+    if buffer[:15].lower() == b"content-length:":
         header_end = buffer.find(b"\r\n\r\n")
         if header_end < 0:
             return None, buffer
