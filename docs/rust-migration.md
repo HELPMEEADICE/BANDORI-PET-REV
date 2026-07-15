@@ -161,8 +161,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   named Rust worker thread, queues structured events back onto the Qt event
   loop, filters superseded request IDs and cancels work when the backend is
   destroyed. API credentials stay inside Rust and never enter QObject
-  properties or event JSON. Local-tool execution remains staged. The database
-  layer now also starts private chat
+  properties or event JSON. The native chat loop now executes a bounded maximum
+  of three tool rounds for `poke_user`, `create_alarm` and `start_pomodoro`,
+  persists sanitized tool traces, and delivers pet/reminder effects through the
+  reliable native IPC lane. Generic MCP, web and computer-use tools remain
+  staged. The database layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -174,11 +177,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   request builder verifies conversation ownership, applies the compatible
   0-or-2..100 history limit, appends relationship and Qt-formatted current-time
   context only to the latest user message, and exposes the resulting request
-  JSON through CXX-Qt without exposing the API key. Event-calendar context,
-  group prompts and local tools
-  remain staged beyond the current composer rather than being silently
-  approximated. Completed responses are cleaned with Python-generated action-tag
-  fixtures before persistence; parsed actions cross the reliable native IPC lane
+  JSON through CXX-Qt without exposing the API key. Event-calendar context and
+  generic MCP/web/computer-use tools remain staged rather than being silently
+  approximated; group prompts and the supported native local tools are included
+  in the current path. Completed responses are cleaned with Python-generated
+  action-tag fixtures before persistence; parsed actions cross the reliable native IPC lane
   to the matching Live2D process. Empty active-profile keys also normalize to
   Python's `__default__` user partition. Request state retains the exact
   character, user partition and latest user turn entirely inside Rust until the
@@ -230,11 +233,29 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   dispatches actions to that speaker's pet and keeps the whole sequence locked
   behind one cancelable busy state. This UI path is generation/static tested but
   still awaits a Qt 6 SDK for a native compile and interactive run.
+  Reminder ownership is now native too. Rust validates and persists alarms and
+  Pomodoro sessions, runs the reminder service, routes notification actions and
+  supports add/toggle/delete management from a Qt-Fluent settings page. Chat tool
+  calls use that same core instead of a parallel Qt implementation.
+  LLM settings and profiles now have a separate Qt-Fluent page backed by Rust.
+  Provider URLs, protocol modes, history/prompt bounds and primary/auxiliary
+  profile selection are validated in the core. Secret fields are write-only:
+  blank edits preserve an existing key, explicit clear removes it, and neither
+  summaries nor QObject properties expose stored credentials.
+  Relationship state and scoped long-term memory can now be inspected and edited
+  from the native memory page. Rust enforces the selected character/user scope,
+  including the compatible `__global__` scope, and the page refreshes after chat
+  memory analysis. Native user-profile create/edit/activate/delete support keeps
+  stable profile keys, synchronizes the legacy top-level identity fields and
+  immediately refreshes chat and memory partitions when the active user changes.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: pixel pet and remaining native visual/driver parity, application
-  services, full settings/chat UI replacement and packaging.
+- Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
+  screen-awareness and remaining integration services; the remaining
+  history/statistics/data-management and persona settings pages; provider model
+  discovery/connection checks; default-launcher cutover, packaging and
+  multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
