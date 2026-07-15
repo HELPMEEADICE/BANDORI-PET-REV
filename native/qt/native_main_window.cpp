@@ -1590,8 +1590,10 @@ void NativeMainWindow::sendNativeChat() {
         chatStatusLabel_->setText(status);
         return;
     }
-    const qint64 requestId =
-        backend_.startChatStream(configPath_, backend_.getChatRequestJson());
+    const qint64 requestId = backend_.startChatStream(
+        configPath_,
+        backend_.getChatRequestJson(),
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")));
     if (requestId <= 0) {
         const QString status = backend_.getStatus();
         refreshChatState(conversationId);
@@ -1740,8 +1742,10 @@ void NativeMainWindow::startNextGroupResponse() {
         finishGroupSequence(backend_.getStatus());
         return;
     }
-    const qint64 requestId =
-        backend_.startGroupChatStream(configPath_, backend_.getChatRequestJson());
+    const qint64 requestId = backend_.startGroupChatStream(
+        configPath_,
+        backend_.getChatRequestJson(),
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")));
     if (requestId <= 0) {
         finishGroupSequence(backend_.getStatus());
         return;

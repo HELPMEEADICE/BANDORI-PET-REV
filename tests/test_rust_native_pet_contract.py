@@ -418,17 +418,22 @@ def test_native_chat_tools_are_bounded_looped_and_dispatched_through_existing_ip
     exporter = source("tools/export_rust_contracts.py")
 
     assert "CHAT_COMPLETIONS_POKE_USER_TOOL" in exporter
+    assert "CHAT_COMPLETIONS_REMINDER_TOOLS" in exporter
     assert '"chat_tools"' in exporter
     assert "pub struct NativeToolCallAccumulator" in tools
     assert "replace_arguments" in tools
     assert "MAX_TOOL_ARGUMENT_BYTES" in tools
     assert "pub fn execute_native_tool_call" in tools
+    assert "pub fn execute_native_tool_call_with_context" in tools
+    assert "pub struct NativeToolExecutionContext" in tools
     assert "Unsupported native tool" in tools
     assert "responses_tool_definition" in protocol
     assert "const MAX_NATIVE_TOOL_ROUNDS: usize = 3" in backend
     assert "async fn stream_with_native_tools" in backend
     assert "chat_tool_followup_messages" in backend
     assert "request.previous_response_id = outcome.response_id" in backend
+    assert "NativeToolRuntimeContext" in backend
+    assert "execute_native_tool_call_with_context" in backend
     assert "native_tool_trace(&outcome)" in backend
     assert 'trace.insert("tool_calls"' in tools
     assert "int dispatchChatToolEffects" in header

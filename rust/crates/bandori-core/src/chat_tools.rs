@@ -1,15 +1,24 @@
+use crate::config::ConfigDocument;
+use crate::reminder::{
+    LocalDateTime, create_alarm, create_pomodoro, normalize_alarms, normalize_pomodoros,
+    repeat_days_label,
+};
 use bandori_llm_protocol::LlmStreamEvent;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::OnceLock;
 
 pub const POKE_USER_TOOL_NAME: &str = "poke_user";
+pub const CREATE_ALARM_TOOL_NAME: &str = "create_alarm";
+pub const START_POMODORO_TOOL_NAME: &str = "start_pomodoro";
 const MAX_STREAM_TOOL_CALLS: usize = 16;
 const MAX_TOOL_ARGUMENT_BYTES: usize = 16 * 1024;
 const MAX_TOOL_NAME_BYTES: usize = 128;
 const MAX_TOOL_ID_BYTES: usize = 512;
 const MAX_POKE_MESSAGE_CHARS: usize = 280;
+const MAX_SAVED_REMINDERS: usize = 256;
 
 fn chat_tool_contract() -> &'static Value {
     static CONTRACT: OnceLock<Value> = OnceLock::new();
@@ -20,24 +29,26 @@ fn chat_tool_contract() -> &'static Value {
 }
 
 pub fn native_chat_tools() -> Vec<Value> {
-    vec![chat_tool_contract()["chat_tools"]["poke_user"].clone()]
+    let mut tools = chat_tool_contract()["chat_tools"]["reminders"]
+        .as_array()
+        .expect("generated reminder tool contract must be an array")
+        .clone();
+    tools.push(chat_tool_contract()["chat_tools"]["poke_user"].clone());
+    tools
 }
 
 pub fn native_tool_system_hint() -> &'static str {
-    chat_tool_contract()["chat_tools"]["poke_user_system_hint"]
+    chat_tool_contract()["chat_tools"]["native_system_hint"]
         .as_str()
-        .expect("generated poke-user prompt contract must be a string")
+        .expect("generated native tool prompt contract must be a string")
 }
 
 pub fn with_native_tool_system_hint(prompt: &str) -> String {
     let prompt = prompt.trim();
     if prompt.is_empty() {
-        format!("【工具使用边界】\n{}", native_tool_system_hint())
+        native_tool_system_hint().to_owned()
     } else {
-        format!(
-            "{prompt}\n\n【工具使用边界】\n{}",
-            native_tool_system_hint()
-        )
+        format!("{prompt}\n\n{}", native_tool_system_hint())
     }
 }
 
@@ -137,7 +148,20 @@ pub struct NativeToolResult {
     pub effect: Option<NativeToolEffect>,
 }
 
+pub struct NativeToolExecutionContext<'a> {
+    pub config_path: &'a Path,
+    pub now: LocalDateTime,
+    pub active_character: &'a str,
+}
+
 pub fn execute_native_tool_call(call: &NativeToolCall) -> NativeToolResult {
+    execute_native_tool_call_with_context(call, None)
+}
+
+pub fn execute_native_tool_call_with_context(
+    call: &NativeToolCall,
+    context: Option<&NativeToolExecutionContext<'_>>,
+) -> NativeToolResult {
     let failure = |content: String| NativeToolResult {
         call_id: call.call_id.clone(),
         name: call.name.clone(),
@@ -146,9 +170,6 @@ pub fn execute_native_tool_call(call: &NativeToolCall) -> NativeToolResult {
         succeeded: false,
         effect: None,
     };
-    if call.name != POKE_USER_TOOL_NAME {
-        return failure(format!("Unsupported native tool: {}", call.name));
-    }
     if call.arguments_truncated {
         return failure(format!(
             "Tool call {} was not executed because its arguments exceed the {} byte limit.",
@@ -170,6 +191,26 @@ pub fn execute_native_tool_call(call: &NativeToolCall) -> NativeToolResult {
             ));
         }
     };
+    match call.name.as_str() {
+        POKE_USER_TOOL_NAME => execute_poke_user(call, &arguments, failure),
+        CREATE_ALARM_TOOL_NAME | START_POMODORO_TOOL_NAME => {
+            let Some(context) = context else {
+                return failure(format!(
+                    "Tool call {} was not executed because the native reminder service context is unavailable.",
+                    call.name
+                ));
+            };
+            execute_reminder_tool(call, &arguments, context, failure)
+        }
+        _ => failure(format!("Unsupported native tool: {}", call.name)),
+    }
+}
+
+fn execute_poke_user(
+    call: &NativeToolCall,
+    arguments: &Map<String, Value>,
+    failure: impl FnOnce(String) -> NativeToolResult,
+) -> NativeToolResult {
     let message = match arguments.get("message") {
         None | Some(Value::Null) => String::new(),
         Some(Value::String(message)) => message.trim().to_owned(),
@@ -193,6 +234,156 @@ pub fn execute_native_tool_call(call: &NativeToolCall) -> NativeToolResult {
         content: "已戳了戳用户。请用角色口吻自然承接，不要提到工具调用细节。".to_owned(),
         succeeded: true,
         effect: Some(NativeToolEffect::PokeUser { message }),
+    }
+}
+
+fn execute_reminder_tool(
+    call: &NativeToolCall,
+    arguments: &Map<String, Value>,
+    context: &NativeToolExecutionContext<'_>,
+    failure: impl FnOnce(String) -> NativeToolResult,
+) -> NativeToolResult {
+    let active_character = context.active_character.trim();
+    if active_character.is_empty() {
+        return failure(format!(
+            "Tool call {} was not executed because no active character is available.",
+            call.name
+        ));
+    }
+    let mut config = match ConfigDocument::load(context.config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            return failure(format!("创建提醒失败：{error}"));
+        }
+    };
+    let mut alarms = normalize_alarms(config.get("alarms").unwrap_or(&Value::Null), context.now);
+    let mut pomodoros =
+        normalize_pomodoros(config.get("pomodoros").unwrap_or(&Value::Null), context.now);
+    let content = if call.name == CREATE_ALARM_TOOL_NAME {
+        if alarms.len() >= MAX_SAVED_REMINDERS {
+            return failure("创建闹钟失败：已达到 256 个提醒的安全上限。".to_owned());
+        }
+        let time = match required_string(arguments, "time") {
+            Ok(value) => value,
+            Err(error) => return failure(error),
+        };
+        let date = match optional_string(arguments, "date") {
+            Ok(value) => value,
+            Err(error) => return failure(error),
+        };
+        let description = match optional_string(arguments, "description") {
+            Ok(value) => value,
+            Err(error) => return failure(error),
+        };
+        let repeat_days = arguments.get("repeat_days").filter(|value| match value {
+            Value::Array(values) => !values.is_empty(),
+            Value::String(value) => !value.trim().is_empty(),
+            Value::Null => false,
+            _ => true,
+        });
+        let repeat = repeat_days
+            .or_else(|| arguments.get("repeat"))
+            .unwrap_or(&Value::Null);
+        let alarm = match create_alarm(
+            &time,
+            repeat,
+            &description,
+            active_character,
+            &date,
+            context.now,
+        ) {
+            Ok(alarm) => alarm,
+            Err(error) => return failure(format!("创建闹钟失败：{error}")),
+        };
+        let description_label = if alarm.description.is_empty() {
+            "无描述"
+        } else {
+            alarm.description.as_str()
+        };
+        let content = format!(
+            "已创建闹钟：{}，{}，下次 {}，描述：{}。",
+            alarm.time,
+            repeat_days_label(&alarm.repeat_days),
+            alarm.next_at.replace('T', " "),
+            description_label
+        );
+        alarms.push(alarm);
+        content
+    } else {
+        if pomodoros.len() >= MAX_SAVED_REMINDERS {
+            return failure("启动番茄钟失败：已达到 256 个计时器的安全上限。".to_owned());
+        }
+        let repeat_count = match optional_i64(arguments, "repeat_count", 1) {
+            Ok(value) => value,
+            Err(error) => return failure(error),
+        };
+        let description = match optional_string(arguments, "description") {
+            Ok(value) => value,
+            Err(error) => return failure(error),
+        };
+        let pomodoro = create_pomodoro(repeat_count, &description, active_character, context.now);
+        let description_label = if pomodoro.description.is_empty() {
+            "无描述"
+        } else {
+            pomodoro.description.as_str()
+        };
+        let content = format!(
+            "已启动番茄钟：{} 次专注循环，描述：{}。",
+            pomodoro.repeat_count, description_label
+        );
+        pomodoros.push(pomodoro);
+        content
+    };
+    config.set(
+        "alarms",
+        serde_json::to_value(alarms).expect("alarm serialization cannot fail"),
+    );
+    config.set(
+        "pomodoros",
+        serde_json::to_value(pomodoros).expect("pomodoro serialization cannot fail"),
+    );
+    if let Err(error) = config.save(context.config_path) {
+        return failure(format!("创建提醒失败：{error}"));
+    }
+    NativeToolResult {
+        call_id: call.call_id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        content,
+        succeeded: true,
+        effect: None,
+    }
+}
+
+fn required_string(arguments: &Map<String, Value>, key: &str) -> Result<String, String> {
+    let value = optional_string(arguments, key)?;
+    if value.is_empty() {
+        Err(format!("Tool call argument {key} is required."))
+    } else {
+        Ok(value)
+    }
+}
+
+fn optional_string(arguments: &Map<String, Value>, key: &str) -> Result<String, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(Value::String(value)) => Ok(value.trim().to_owned()),
+        Some(_) => Err(format!("Tool call argument {key} must be a string.")),
+    }
+}
+
+fn optional_i64(arguments: &Map<String, Value>, key: &str, default: i64) -> Result<i64, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Number(value)) => value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|value| value as i64))
+            .ok_or_else(|| format!("Tool call argument {key} must be an integer.")),
+        Some(Value::String(value)) => value
+            .trim()
+            .parse()
+            .map_err(|_| format!("Tool call argument {key} must be an integer.")),
+        Some(_) => Err(format!("Tool call argument {key} must be an integer.")),
     }
 }
 
@@ -324,19 +515,27 @@ mod tests {
     }
 
     #[test]
-    fn generated_python_poke_contract_matches_native_definition_and_hint() {
-        assert_eq!(native_chat_tools().len(), 1);
+    fn generated_python_tool_contract_matches_native_definitions_and_hint() {
+        assert_eq!(native_chat_tools().len(), 3);
         assert_eq!(
             native_chat_tools()[0]["function"]["name"],
+            CREATE_ALARM_TOOL_NAME
+        );
+        assert_eq!(
+            native_chat_tools()[1]["function"]["name"],
+            START_POMODORO_TOOL_NAME
+        );
+        assert_eq!(
+            native_chat_tools()[2]["function"]["name"],
             POKE_USER_TOOL_NAME
         );
         assert_eq!(
-            native_chat_tools()[0],
+            native_chat_tools()[2],
             chat_tool_contract()["chat_tools"]["poke_user"]
         );
         assert_eq!(
             native_tool_system_hint(),
-            chat_tool_contract()["chat_tools"]["poke_user_system_hint"]
+            chat_tool_contract()["chat_tools"]["native_system_hint"]
         );
     }
 
@@ -466,5 +665,53 @@ mod tests {
         assert_eq!(trace["tool_calls"][0]["name"], "poke_user");
         assert!(trace["tool_calls"][0].get("content").is_none());
         assert!(trace["tool_calls"][0].get("effect").is_none());
+    }
+
+    #[test]
+    fn reminder_tools_persist_bounded_active_character_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let mut config = ConfigDocument::default();
+        config.save(&path).unwrap();
+        let context = NativeToolExecutionContext {
+            config_path: &path,
+            now: LocalDateTime::parse("2026-07-15T10:30:00").unwrap(),
+            active_character: "ran",
+        };
+        let alarm = execute_native_tool_call_with_context(
+            &NativeToolCall {
+                call_id: "call_alarm".to_owned(),
+                name: CREATE_ALARM_TOOL_NAME.to_owned(),
+                arguments: json!({
+                    "time":"21:45",
+                    "repeat":"weekdays",
+                    "description":"练琴",
+                    "character":"moca"
+                })
+                .to_string(),
+                ..NativeToolCall::default()
+            },
+            Some(&context),
+        );
+        assert!(alarm.succeeded);
+        assert!(alarm.content.contains("已创建闹钟：21:45，工作日"));
+
+        let pomodoro = execute_native_tool_call_with_context(
+            &NativeToolCall {
+                call_id: "call_pomodoro".to_owned(),
+                name: START_POMODORO_TOOL_NAME.to_owned(),
+                arguments: r#"{"repeat_count":3,"description":"编曲"}"#.to_owned(),
+                ..NativeToolCall::default()
+            },
+            Some(&context),
+        );
+        assert!(pomodoro.succeeded);
+        assert!(pomodoro.content.contains("3 次专注循环"));
+
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(saved.get("alarms").unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(saved.get("alarms").unwrap()[0]["character"], "ran");
+        assert_eq!(saved.get("pomodoros").unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(saved.get("pomodoros").unwrap()[0]["character"], "ran");
     }
 }

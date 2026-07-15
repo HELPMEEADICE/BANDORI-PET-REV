@@ -37,7 +37,12 @@ def rendered_contracts() -> dict[Path, str]:
         parse_action_tags,
         strip_action_tags,
     )
-    from local_tools import CHAT_COMPLETIONS_POKE_USER_TOOL, poke_user_system_hint
+    from local_tools import (
+        CHAT_COMPLETIONS_POKE_USER_TOOL,
+        CHAT_COMPLETIONS_REMINDER_TOOLS,
+        local_tool_system_hint,
+        poke_user_system_hint,
+    )
     from relationship_memory import (
         MEMORY_EXTRACTOR_SYSTEM_PROMPT,
         analyze_interaction,
@@ -229,6 +234,8 @@ def rendered_contracts() -> dict[Path, str]:
         "chat_tools": {
             "poke_user": CHAT_COMPLETIONS_POKE_USER_TOOL,
             "poke_user_system_hint": poke_user_system_hint(),
+            "reminders": CHAT_COMPLETIONS_REMINDER_TOOLS,
+            "native_system_hint": local_tool_system_hint({}),
         },
     }
 

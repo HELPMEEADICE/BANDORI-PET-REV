@@ -209,6 +209,7 @@ pub mod ffi {
             self: Pin<&mut Self>,
             config_path: &QString,
             request_json: &QString,
+            local_datetime: &QString,
         ) -> i64;
 
         #[qinvokable]
@@ -225,6 +226,7 @@ pub mod ffi {
             self: Pin<&mut Self>,
             config_path: &QString,
             request_json: &QString,
+            local_datetime: &QString,
         ) -> i64;
 
         #[qinvokable]
@@ -257,8 +259,8 @@ use bandori_core::chat_management::{
     delete_owned_group_conversation, delete_owned_private_conversation,
 };
 use bandori_core::chat_tools::{
-    NativeToolCallAccumulator, NativeToolResult, chat_tool_followup_messages,
-    execute_native_tool_call, native_tool_trace,
+    NativeToolCallAccumulator, NativeToolExecutionContext, NativeToolResult,
+    chat_tool_followup_messages, execute_native_tool_call_with_context, native_tool_trace,
 };
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
@@ -308,6 +310,13 @@ struct NativeToolLoopFailure {
     error: LlmTransportError,
     usage: Option<TokenUsage>,
     tool_calls: Vec<NativeToolResult>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeToolRuntimeContext {
+    config_path: String,
+    now: LocalDateTime,
+    active_character: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1700,8 +1709,10 @@ impl ffi::Backend {
         mut self: Pin<&mut Self>,
         config_path: &QString,
         request_json: &QString,
+        local_datetime: &QString,
     ) -> i64 {
-        let config = match load_llm_transport_config(Path::new(&config_path.to_string())) {
+        let config_path = config_path.to_string();
+        let config = match load_llm_transport_config(Path::new(&config_path)) {
             Ok(config) => config,
             Err(error) => {
                 self.as_mut().set_status(QString::from(&error));
@@ -1722,9 +1733,15 @@ impl ffi::Backend {
             ));
             return 0;
         }
+        let Some(tool_now) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut()
+                .set_status(QString::from("Native chat needs a valid local datetime"));
+            return 0;
+        };
 
         let request_id;
         let request_conversation_id;
+        let active_character;
         let cancellation = CancellationToken::new();
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -1741,6 +1758,7 @@ impl ffi::Backend {
             state.active_chat_user_message_id = state.prepared_chat_user_message_id;
             state.prepared_chat_user_message_id = 0;
             state.active_chat_character = std::mem::take(&mut state.prepared_chat_character);
+            active_character = state.active_chat_character.clone();
             state.active_chat_user_key = std::mem::take(&mut state.prepared_chat_user_key);
             state.active_chat_user_content = std::mem::take(&mut state.prepared_chat_user_content);
             state.completed_chat_request_id = 0;
@@ -1754,11 +1772,23 @@ impl ffi::Backend {
         }
         self.as_mut()
             .set_status(QString::from("Native LLM request started"));
+        let tool_context = NativeToolRuntimeContext {
+            config_path,
+            now: tool_now,
+            active_character,
+        };
         let qt_thread = self.qt_thread();
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-llm-{request_id}"))
             .spawn(move || {
-                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+                run_llm_stream(
+                    qt_thread,
+                    request_id,
+                    config,
+                    request,
+                    cancellation,
+                    Some(tool_context),
+                );
             })
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -1836,7 +1866,7 @@ impl ffi::Backend {
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-group-plan-{request_id}"))
             .spawn(move || {
-                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+                run_llm_stream(qt_thread, request_id, config, request, cancellation, None);
             })
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -1855,6 +1885,7 @@ impl ffi::Backend {
         mut self: Pin<&mut Self>,
         config_path: &QString,
         request_json: &QString,
+        local_datetime: &QString,
     ) -> i64 {
         if self.as_ref().get_ref().rust().active_chat_request_id != 0 {
             self.as_mut()
@@ -1878,7 +1909,8 @@ impl ffi::Backend {
                 return 0;
             }
         };
-        let config = match load_llm_transport_config(Path::new(&config_path.to_string())) {
+        let config_path = config_path.to_string();
+        let config = match load_llm_transport_config(Path::new(&config_path)) {
             Ok(config) => config,
             Err(error) => {
                 self.as_mut().set_status(QString::from(&error));
@@ -1891,6 +1923,17 @@ impl ffi::Backend {
                 self.as_mut().set_status(QString::from(&error));
                 return 0;
             }
+        };
+        let Some(tool_now) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut().set_status(QString::from(
+                "Native group chat needs a valid local datetime",
+            ));
+            return 0;
+        };
+        let tool_context = NativeToolRuntimeContext {
+            config_path,
+            now: tool_now,
+            active_character: context.character.clone(),
         };
         let cancellation = CancellationToken::new();
         let request_id = {
@@ -1910,7 +1953,14 @@ impl ffi::Backend {
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-group-reply-{request_id}"))
             .spawn(move || {
-                run_llm_stream(qt_thread, request_id, config, request, cancellation);
+                run_llm_stream(
+                    qt_thread,
+                    request_id,
+                    config,
+                    request,
+                    cancellation,
+                    Some(tool_context),
+                );
             })
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -2227,6 +2277,7 @@ fn run_llm_stream(
     config: LlmTransportConfig,
     request: LlmTransportRequest,
     cancellation: CancellationToken,
+    tool_context: Option<NativeToolRuntimeContext>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2258,6 +2309,7 @@ fn run_llm_stream(
         &transport,
         request,
         &cancellation,
+        tool_context.as_ref(),
         move |event| {
             queue_stream_event(&event_thread, request_id, event);
         },
@@ -2296,6 +2348,7 @@ async fn stream_with_native_tools<F>(
     transport: &LlmTransport,
     mut request: LlmTransportRequest,
     cancellation: &CancellationToken,
+    tool_context: Option<&NativeToolRuntimeContext>,
     mut on_event: F,
 ) -> Result<NativeToolLoopOutcome, NativeToolLoopFailure>
 where
@@ -2335,9 +2388,14 @@ where
                 tool_calls: tool_results,
             });
         }
+        let execution_context = tool_context.map(|context| NativeToolExecutionContext {
+            config_path: Path::new(&context.config_path),
+            now: context.now,
+            active_character: &context.active_character,
+        });
         let round_results = calls
             .iter()
-            .map(execute_native_tool_call)
+            .map(|call| execute_native_tool_call_with_context(call, execution_context.as_ref()))
             .collect::<Vec<_>>();
         tool_results.extend(round_results.iter().cloned());
         if round + 1 >= MAX_NATIVE_TOOL_ROUNDS {

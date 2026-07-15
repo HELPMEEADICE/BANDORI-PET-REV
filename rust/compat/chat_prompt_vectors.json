@@ -634,6 +634,75 @@
         }
       }
     },
-    "poke_user_system_hint": "当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 poke_user；调用后仍要用角色口吻自然回应，不要解释工具细节。"
+    "poke_user_system_hint": "当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 poke_user；调用后仍要用角色口吻自然回应，不要解释工具细节。",
+    "reminders": [
+      {
+        "type": "function",
+        "function": {
+          "name": "create_alarm",
+          "description": "Create an alarm/reminder in BandoriPet when the user asks to set an alarm. Time is required. Use the user's local current date from context when resolving relative dates.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "time": {
+                "type": "string",
+                "description": "Required local time, preferably HH:MM in 24-hour format."
+              },
+              "date": {
+                "type": "string",
+                "description": "Optional one-time local date as YYYY-MM-DD, for requests like tomorrow or a specific date."
+              },
+              "repeat": {
+                "type": "string",
+                "description": "Repeat rule: none, daily, weekdays, weekends, or custom."
+              },
+              "repeat_days": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "For custom weekly repeat, use values such as mon/tue/wed/thu/fri/sat/sun."
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional alarm purpose, such as drink water, meeting, wake up, study."
+              },
+              "character": {
+                "type": "string",
+                "description": "Optional reminder character key or display name. Omit to use the first visible Live2D character."
+              }
+            },
+            "required": [
+              "time"
+            ]
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "start_pomodoro",
+          "description": "Start a Pomodoro timer in BandoriPet when the user asks for a Pomodoro/focus timer. Each small cycle is 25 minutes focus plus a break; a 15-minute long break is inserted after every 4 focus cycles.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "repeat_count": {
+                "type": "integer",
+                "description": "Number of 25-minute focus cycles to run. Default 1."
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional Pomodoro purpose, such as writing, coding, homework."
+              },
+              "character": {
+                "type": "string",
+                "description": "Optional reminder character key or display name. Omit to use the first visible Live2D character."
+              }
+            }
+          }
+        }
+      }
+    ],
+    "native_system_hint": "【工具使用边界】\n最终回复请保持角色口吻，不要主动提到 MCP、tool_calls、function calling、Computer Use、工具调用、JSON schema 等实现细节；如果工具失败，也用自然语言轻描淡写地说明做不到或信息不足。\n当用户表达设置闹钟、提醒、番茄钟、专注计时等明确意图时，可以直接调用对应工具创建；时间不明确时先追问，不要凭空编造具体时间。工具成功后，用角色口吻简短确认。\n当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 poke_user；调用后仍要用角色口吻自然回应，不要解释工具细节。"
   }
 }
