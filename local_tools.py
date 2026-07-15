@@ -312,10 +312,7 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "当用户表达设置闹钟、提醒、番茄钟、专注计时等明确意图时，可以直接调用对应工具创建；"
             "时间不明确时先追问，不要凭空编造具体时间。工具成功后，用角色口吻简短确认。"
         )
-    hints.append(
-        f"当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 {POKE_USER_TOOL_NAME}；"
-        "调用后仍要用角色口吻自然回应，不要解释工具细节。"
-    )
+    hints.append(poke_user_system_hint())
     if config.get("llm_auto_continue_enabled", False):
         max_turns = _normalize_auto_continue_max_turns(config.get("llm_auto_continue_max_turns", 5))
         hints.append(
@@ -354,6 +351,14 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
     if not hints:
         return ""
     return "【工具使用边界】\n" + "\n".join(hints)
+
+
+def poke_user_system_hint() -> str:
+    """Return the prompt fragment shared with the native Rust chat runtime."""
+    return (
+        f"当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 {POKE_USER_TOOL_NAME}；"
+        "调用后仍要用角色口吻自然回应，不要解释工具细节。"
+    )
 
 
 def with_local_tool_system_hint(messages: list[dict], tool_config: dict | None = None) -> list[dict]:

@@ -6,6 +6,7 @@ use crate::chat_context::{
 use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
 };
+use crate::chat_tools::{native_chat_tools, with_native_tool_system_hint};
 use crate::config::ConfigDocument;
 use crate::cross_chat_history::build_cross_chat_history;
 use crate::database::{Database, DatabaseError, GroupConversation, GroupMessage};
@@ -128,6 +129,7 @@ pub fn build_group_planner_request(
                 ),
             },
         ],
+        tools: Vec::new(),
     }
 }
 
@@ -314,7 +316,8 @@ pub fn build_native_group_chat_request(
         &markdown,
         &role_markdown,
     );
-    let system_prompt = build_group_system_prompt(&base_prompt, members);
+    let system_prompt =
+        with_native_tool_system_hint(&build_group_system_prompt(&base_prompt, members));
     let user_display_name = config
         .get("user_name")
         .and_then(Value::as_str)
@@ -376,7 +379,10 @@ pub fn build_native_group_chat_request(
         ),
     }));
     append_dynamic_context_to_last_user(&mut messages, &dynamic_context)?;
-    Ok(NativeChatRequest { messages })
+    Ok(NativeChatRequest {
+        messages,
+        tools: native_chat_tools(),
+    })
 }
 
 pub fn build_group_planner_request_from_database(
@@ -664,6 +670,7 @@ mod tests {
         .unwrap();
         let payload: Value =
             serde_json::from_str(planner.messages[1].content.as_str().unwrap()).unwrap();
+        assert!(planner.tools.is_empty());
         assert_eq!(payload["latest_interaction"]["type"], "poke");
         assert_eq!(payload["recent_history"].as_array().unwrap().len(), 2);
 
@@ -689,6 +696,7 @@ mod tests {
             "现在是测试时间",
         )
         .unwrap();
+        assert_eq!(request.tools, native_chat_tools());
         assert!(
             request.messages[0]
                 .content

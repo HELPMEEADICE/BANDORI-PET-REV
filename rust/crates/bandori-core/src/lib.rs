@@ -10,6 +10,7 @@ pub mod chat_context;
 pub mod chat_dashboard;
 pub mod chat_management;
 pub mod chat_prompt;
+pub mod chat_tools;
 pub mod config;
 pub mod config_ffi;
 pub mod cross_chat_history;

@@ -616,5 +616,24 @@
         "expected": "【青叶摩卡】\n自己的回答"
       }
     ]
+  },
+  "chat_tools": {
+    "poke_user": {
+      "type": "function",
+      "function": {
+        "name": "poke_user",
+        "description": "Playfully poke/nudge the user through BandoriPet, similar to QQ's poke interaction. Use this when the character wants to poke the user back or initiate a playful poke.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Optional short natural reason or line for the poke."
+            }
+          }
+        }
+      }
+    },
+    "poke_user_system_hint": "当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 poke_user；调用后仍要用角色口吻自然回应，不要解释工具细节。"
   }
 }

@@ -2,6 +2,7 @@ use crate::chat_attachments::chat_message_content;
 use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
 };
+use crate::chat_tools::{native_chat_tools, with_native_tool_system_hint};
 use crate::config::ConfigDocument;
 use crate::cross_chat_history::build_cross_chat_history;
 use crate::database::{Database, DatabaseError};
@@ -20,6 +21,8 @@ pub struct NativeChatMessage {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NativeChatRequest {
     pub messages: Vec<NativeChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Value>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -55,13 +58,13 @@ pub fn build_native_chat_request(
         .and_then(Value::as_str)
         .map(|role| load_character_markdown(project_root, role))
         .unwrap_or_default();
-    let system_prompt = build_native_system_prompt_with_role(
+    let system_prompt = with_native_tool_system_hint(&build_native_system_prompt_with_role(
         character,
         character_display_name,
         config.values(),
         &markdown,
         &role_markdown,
-    );
+    ));
     let user_display_name = config
         .get("user_name")
         .and_then(Value::as_str)
@@ -113,7 +116,10 @@ pub fn build_native_chat_request(
         ),
     }));
     append_dynamic_context_to_last_user(&mut messages, &dynamic_context)?;
-    Ok(NativeChatRequest { messages })
+    Ok(NativeChatRequest {
+        messages,
+        tools: native_chat_tools(),
+    })
 }
 
 pub(crate) fn history_message_limit(value: Option<&Value>) -> Option<i64> {
@@ -245,6 +251,14 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(request.tools, native_chat_tools());
+        assert!(
+            request.messages[0]
+                .content
+                .as_str()
+                .unwrap()
+                .contains("【工具使用边界】")
+        );
         assert_eq!(request.messages.len(), 3);
         assert!(
             request.messages[0]
