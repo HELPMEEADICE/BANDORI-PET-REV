@@ -237,7 +237,7 @@ def _translate_to_selected_language(config: dict, text: str, target_language: st
         message.get("content", ""),
         reasoning,
     )
-    return translated
+    return strip_tts_action_tags(translated)
 
 
 _VISEME_POSES = {
