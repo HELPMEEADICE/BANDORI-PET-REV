@@ -18,6 +18,7 @@ fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 sha1 = "0.10.6"
+rusqlite = { version = "0.40.0", features = ["bundled"] }
 tempfile = "3.19.1"
 thiserror = "2.0.12"
 tar = "0.4.44"

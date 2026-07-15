@@ -1,0 +1,710 @@
+{
+  "tables": {
+    "character_memories": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "character",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "user_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "kind",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "'note'",
+        "primary_key": false
+      },
+      {
+        "name": "content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "importance",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "50",
+        "primary_key": false
+      },
+      {
+        "name": "source_message_id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "source_group_message_id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "conversations": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "character",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "user_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "title",
+        "type": "TEXT",
+        "not_null": false,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "external_chat_messages": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "platform",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "thread_id",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "external_message_id",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "sender_id",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "sender_name",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "direction",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "'inbound'",
+        "primary_key": false
+      },
+      {
+        "name": "content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "unread",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "1",
+        "primary_key": false
+      },
+      {
+        "name": "chat_type",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "raw_json",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "external_chat_threads": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "platform",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "thread_id",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "thread_name",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "chat_type",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "unread_count",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "last_message_id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "last_message_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "group_chat_meta": [
+      {
+        "name": "group_key",
+        "type": "TEXT",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "display_name",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "group_messages": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "group_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "conversation_id",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "'default'",
+        "primary_key": false
+      },
+      {
+        "name": "user_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "role",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "reasoning_content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "attachments_json",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "tool_trace_json",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "messages": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "conversation_id",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "role",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "reasoning_content",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "attachments_json",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "tool_trace_json",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "mood_events": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "character",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "user_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "event_type",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "'interaction'",
+        "primary_key": false
+      },
+      {
+        "name": "affection_delta",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "trust_delta",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "familiarity_delta",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "affection",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "trust",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "familiarity",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "mood",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "mood_intensity",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "reason",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "relationship_states": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "character",
+        "type": "TEXT",
+        "not_null": true,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "user_key",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "affection",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "50",
+        "primary_key": false
+      },
+      {
+        "name": "trust",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "50",
+        "primary_key": false
+      },
+      {
+        "name": "familiarity",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      },
+      {
+        "name": "mood",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "'calm'",
+        "primary_key": false
+      },
+      {
+        "name": "mood_intensity",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "20",
+        "primary_key": false
+      },
+      {
+        "name": "summary",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "''",
+        "primary_key": false
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      }
+    ],
+    "usage_sessions": [
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "not_null": false,
+        "default": null,
+        "primary_key": true
+      },
+      {
+        "name": "start_time",
+        "type": "TEXT",
+        "not_null": true,
+        "default": "datetime('now', 'localtime')",
+        "primary_key": false
+      },
+      {
+        "name": "end_time",
+        "type": "TEXT",
+        "not_null": false,
+        "default": null,
+        "primary_key": false
+      },
+      {
+        "name": "duration_seconds",
+        "type": "INTEGER",
+        "not_null": true,
+        "default": "0",
+        "primary_key": false
+      }
+    ]
+  },
+  "indexes": {
+    "idx_character_memories_lookup": {
+      "table": "character_memories",
+      "unique": false,
+      "columns": [
+        "character",
+        "user_key",
+        "importance",
+        "updated_at"
+      ]
+    },
+    "idx_conversations_character_user": {
+      "table": "conversations",
+      "unique": false,
+      "columns": [
+        "character",
+        "user_key",
+        "id"
+      ]
+    },
+    "idx_external_chat_messages_chat_type": {
+      "table": "external_chat_messages",
+      "unique": false,
+      "columns": [
+        "chat_type",
+        "created_at"
+      ]
+    },
+    "idx_external_chat_messages_external_id": {
+      "table": "external_chat_messages",
+      "unique": false,
+      "columns": [
+        "platform",
+        "thread_id",
+        "external_message_id"
+      ]
+    },
+    "idx_external_chat_messages_thread": {
+      "table": "external_chat_messages",
+      "unique": false,
+      "columns": [
+        "platform",
+        "thread_id",
+        "id"
+      ]
+    },
+    "idx_external_chat_messages_unread": {
+      "table": "external_chat_messages",
+      "unique": false,
+      "columns": [
+        "unread",
+        "id"
+      ]
+    },
+    "idx_group_messages_key_user_conv_id": {
+      "table": "group_messages",
+      "unique": false,
+      "columns": [
+        "group_key",
+        "user_key",
+        "conversation_id",
+        "id"
+      ]
+    },
+    "idx_messages_conv_id": {
+      "table": "messages",
+      "unique": false,
+      "columns": [
+        "conversation_id",
+        "id"
+      ]
+    },
+    "idx_messages_conv_role_id": {
+      "table": "messages",
+      "unique": false,
+      "columns": [
+        "conversation_id",
+        "role",
+        "id"
+      ]
+    },
+    "idx_mood_events_lookup": {
+      "table": "mood_events",
+      "unique": false,
+      "columns": [
+        "character",
+        "user_key",
+        "created_at"
+      ]
+    }
+  }
+}

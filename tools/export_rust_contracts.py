@@ -29,6 +29,8 @@ def rendered_contracts() -> dict[Path, str]:
         make_shared_memory_key,
     )
 
+    database_contract = _database_contract()
+
     key_cases = [
         ["bandori-main-123", "main-in"],
         ["会话 1", "main-out"],
@@ -143,7 +145,61 @@ def rendered_contracts() -> dict[Path, str]:
             {"cases": model_cases}, ensure_ascii=False, indent=2
         )
         + "\n",
+        OUTPUT_DIR / "database_schema.json": json.dumps(
+            database_contract, ensure_ascii=False, indent=2
+        )
+        + "\n",
     }
+
+
+def _database_contract() -> dict:
+    from database_manager import DatabaseManager
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        manager = DatabaseManager(str(Path(temp_dir) / "contract.db"))
+        try:
+            conn = manager._conn
+            table_names = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name != 'sqlite_sequence' ORDER BY name"
+                ).fetchall()
+            ]
+            tables = {}
+            for table in table_names:
+                tables[table] = [
+                    {
+                        "name": row[1],
+                        "type": row[2],
+                        "not_null": bool(row[3]),
+                        "default": row[4],
+                        "primary_key": bool(row[5]),
+                    }
+                    for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                ]
+
+            indexes = {}
+            index_rows = conn.execute(
+                "SELECT name, tbl_name FROM sqlite_master "
+                "WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%' ORDER BY name"
+            ).fetchall()
+            for name, table in index_rows:
+                info = conn.execute(f"PRAGMA index_list({table})").fetchall()
+                unique = next(bool(row[2]) for row in info if row[1] == name)
+                columns = [
+                    row[2]
+                    for row in conn.execute(f"PRAGMA index_info({name})").fetchall()
+                ]
+                indexes[name] = {
+                    "table": table,
+                    "unique": unique,
+                    "columns": columns,
+                }
+        finally:
+            manager.close()
+
+    return {"tables": tables, "indexes": indexes}
 
 
 def main() -> int:

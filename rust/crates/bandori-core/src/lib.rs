@@ -5,5 +5,6 @@
 //! contracts while the application is migrated process by process.
 
 pub mod config;
+pub mod database;
 pub mod ipc;
 pub mod model;

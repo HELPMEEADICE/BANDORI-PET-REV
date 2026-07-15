@@ -51,6 +51,22 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
    suites, switch the default launcher, and remove Python packaging only after the
    rollback window and parity matrix are clean.
 
+## Current branch status
+
+- Complete: Cargo/CMake/CXX-Qt foundation and the native Qt-Fluent smoke shell.
+- Complete: configuration, shared-memory IPC and model discovery compatibility
+  cores, with Python-generated fixtures consumed by Rust tests.
+- In progress: `data.db` repositories. The schema, legacy column migrations,
+  cross-process lock, WAL mode, private/group message pagination, token accounting,
+  group labels, cascade deletion and attachment-path sanitization are available in
+  `bandori-core`.
+- Pending: relationship/memory/external-chat database repositories, LuaJIT Live2D
+  process replacement, application services, full UI replacement and packaging.
+
+The native Qt shell has not yet been compiled on the current workstation because
+no Qt SDK/C++ toolchain is installed. Core and Python compatibility checks remain
+independent of that local limitation.
+
 ## Build entry points
 
 - Core checks: `cargo test -p bandori-core`
