@@ -755,6 +755,42 @@ def test_native_statistics_are_user_scoped_and_do_not_require_qt_charts():
     assert "Charts" not in cmake
 
 
+def test_native_data_management_preserves_secrets_and_confirms_database_restore():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    data = source("rust/crates/bandori-core/src/data_management.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod data_management;" in core
+    assert "pub const DATA_PACKAGE_FORMAT" in data
+    assert "const SECRET_CONFIG_KEYS" in data
+    assert "sanitize_llm_profiles" in data
+    assert "prepare_llm_import" in data
+    assert "validate_relationship_data" in data
+    assert "write_json_atomically" in data
+    assert "pub fn export_settings_package" in data
+    assert "pub fn import_settings_package" in data
+    assert "pub fn export_chat_database" in data
+    assert "pub fn import_chat_database" in data
+    assert "settings_package_round_trip_preserves_secrets_and_rejects_unknown_keys" in data
+    assert "data_operation_json" in backend
+    assert "MAX_SETTINGS_PACKAGE_BYTES" in backend
+    assert '"getDataOperationJson"' in bridge_test
+    assert '"exportSettingsPackage"' in bridge_test
+    assert '"importSettingsPackage"' in bridge_test
+    assert '"exportChatDatabase"' in bridge_test
+    assert '"importChatDatabase"' in bridge_test
+    assert "QWidget* createDataManagementPage()" in header
+    assert "backend_.exportSettingsPackage" in window
+    assert "backend_.importSettingsPackage" in window
+    assert "backend_.exportChatDatabase" in window
+    assert "backend_.importChatDatabase" in window
+    assert 'tr("Replace current chat database?")' in window
+    assert "activeChatRequestId_ != 0 || groupSequenceActive_" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

@@ -415,6 +415,7 @@ void NativeMainWindow::setupUi() {
     chatPage_ = createChatPage();
     QWidget* history = createHistorySearchPage();
     QWidget* statistics = createStatisticsPage();
+    QWidget* dataManagement = createDataManagementPage();
     QWidget* memory = createMemoryPage();
     QWidget* userProfiles = createUserProfilesPage();
     QWidget* personas = createPersonaPage();
@@ -425,6 +426,7 @@ void NativeMainWindow::setupUi() {
     chatPage_->setObjectName(QStringLiteral("chatPage"));
     history->setObjectName(QStringLiteral("historySearchPage"));
     statistics->setObjectName(QStringLiteral("statisticsPage"));
+    dataManagement->setObjectName(QStringLiteral("dataManagementPage"));
     memory->setObjectName(QStringLiteral("memoryPage"));
     userProfiles->setObjectName(QStringLiteral("userProfilesPage"));
     personas->setObjectName(QStringLiteral("personasPage"));
@@ -435,6 +437,7 @@ void NativeMainWindow::setupUi() {
     addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
     addSubInterface(history, qfw::FluentIconEnum::Search, tr("History search"));
     addSubInterface(statistics, qfw::FluentIconEnum::Market, tr("Statistics"));
+    addSubInterface(dataManagement, qfw::FluentIconEnum::Folder, tr("Data management"));
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
     addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
     addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
@@ -991,6 +994,119 @@ QWidget* NativeMainWindow::createStatisticsPage() {
         [this](int) { refreshNativeStatistics(); });
     connect(statisticsRefreshButton_, &QPushButton::clicked, this, [this]() {
         refreshNativeStatistics();
+    });
+    return page;
+}
+
+QWidget* NativeMainWindow::createDataManagementPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setSpacing(24);
+
+    auto* title = new qfw::TitleLabel(tr("Native data management"), content);
+    auto* subtitle = new qfw::BodyLabel(
+        tr("Move whitelisted settings and relationship memory between installations, or create and restore a complete chat database backup."),
+        content);
+    subtitle->setWordWrap(true);
+
+    auto* packageCard =
+        new qfw::GroupHeaderCardWidget(tr("Portable settings package"), content);
+    dataCategoryComboBox_ = new qfw::ComboBox(packageCard);
+    const QList<QPair<QString, QString>> categories {
+        {tr("All migratable settings"), QStringLiteral("all")},
+        {tr("Live2D models and actions"), QStringLiteral("live2d_models")},
+        {tr("Click motion profiles"), QStringLiteral("click_motion_profiles")},
+        {tr("LLM settings"), QStringLiteral("llm")},
+        {tr("TTS settings"), QStringLiteral("tts")},
+        {tr("ASR settings"), QStringLiteral("asr")},
+        {tr("POV settings"), QStringLiteral("pov")},
+        {tr("Character personas"), QStringLiteral("character_persona")},
+        {tr("Relationship and memory"), QStringLiteral("relationship")},
+        {tr("Reminders"), QStringLiteral("reminders")},
+        {tr("Screen awareness"), QStringLiteral("screen_awareness")},
+        {tr("Compact window"), QStringLiteral("compact_window")},
+        {tr("Chat integrations"), QStringLiteral("chat_integration")},
+        {tr("MCP and computer use"), QStringLiteral("mcp_computer")},
+        {tr("Quality and miscellaneous"), QStringLiteral("misc")},
+    };
+    for (const auto& category : categories) {
+        dataCategoryComboBox_->addItem(category.first, QVariant(), category.second);
+    }
+    auto* packageActions = new QWidget(packageCard);
+    auto* packageActionsLayout = new QHBoxLayout(packageActions);
+    packageActionsLayout->setContentsMargins(0, 0, 0, 0);
+    packageActionsLayout->setSpacing(8);
+    dataExportButton_ = new qfw::PrimaryPushButton(tr("Export JSON"), packageActions);
+    dataImportButton_ = new qfw::PushButton(tr("Import JSON"), packageActions);
+    packageActionsLayout->addWidget(dataExportButton_);
+    packageActionsLayout->addWidget(dataImportButton_);
+    packageActionsLayout->addStretch(1);
+    packageCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Data category"),
+        tr("Choose one category or export every migratable section"),
+        dataCategoryComboBox_);
+    packageCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Import or export package"),
+        tr("API keys, ASR keys, status tokens and chat integration tokens are never exported or overwritten"),
+        packageActions);
+
+    auto* databaseCard =
+        new qfw::GroupHeaderCardWidget(tr("Complete chat database"), content);
+    auto* databaseActions = new QWidget(databaseCard);
+    auto* databaseActionsLayout = new QHBoxLayout(databaseActions);
+    databaseActionsLayout->setContentsMargins(0, 0, 0, 0);
+    databaseActionsLayout->setSpacing(8);
+    databaseExportButton_ = new qfw::PushButton(tr("Create backup"), databaseActions);
+    databaseImportButton_ = new qfw::PushButton(tr("Restore backup"), databaseActions);
+    databaseActionsLayout->addWidget(databaseExportButton_);
+    databaseActionsLayout->addWidget(databaseImportButton_);
+    databaseActionsLayout->addStretch(1);
+    databaseCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::SaveCopy),
+        tr("SQLite backup"),
+        tr("Includes private chats, group chats, relationships, memories and usage history"),
+        databaseActions);
+    databaseCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::History),
+        tr("Restore safety"),
+        tr("Restore replaces the current database, requires confirmation and is blocked while a chat response is active"),
+        new qfw::BodyLabel(tr("Keep a recent backup before restoring."), databaseCard));
+
+    auto* statusCard = new qfw::GroupHeaderCardWidget(tr("Last operation"), content);
+    dataStatusLabel_ = new qfw::CaptionLabel(tr("No data operation has run"), statusCard);
+    dataStatusLabel_->setWordWrap(true);
+    statusCard->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Info),
+        tr("Status"),
+        tr("Rust validates package format, size, category and field ownership"),
+        dataStatusLabel_);
+
+    layout->addWidget(title);
+    layout->addWidget(subtitle);
+    layout->addWidget(packageCard);
+    layout->addWidget(databaseCard);
+    layout->addWidget(statusCard);
+    layout->addStretch(1);
+    content->setMinimumWidth(620);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    connect(dataExportButton_, &QPushButton::clicked, this, [this]() {
+        exportNativeSettingsPackage();
+    });
+    connect(dataImportButton_, &QPushButton::clicked, this, [this]() {
+        importNativeSettingsPackage();
+    });
+    connect(databaseExportButton_, &QPushButton::clicked, this, [this]() {
+        exportNativeChatDatabase();
+    });
+    connect(databaseImportButton_, &QPushButton::clicked, this, [this]() {
+        importNativeChatDatabase();
     });
     return page;
 }
@@ -3690,6 +3806,167 @@ void NativeMainWindow::renderNativeStatistics() {
                                 .toString();
     statisticsStatusLabel_->setText(
         tr("Statistics refreshed for user partition %1").arg(userKey));
+}
+
+void NativeMainWindow::exportNativeSettingsPackage() {
+    const QString category = dataCategoryComboBox_->currentData().toString();
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("Export native settings package"),
+        QDir(projectRoot_).filePath(
+            QStringLiteral("bandori-settings-%1-%2.json").arg(category, stamp)),
+        tr("BandoriPet settings package (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QStringLiteral(".json");
+    }
+    dataExportButton_->setEnabled(false);
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const bool exported =
+        backend_.exportSettingsPackage(configPath_, databasePath, category, path);
+    dataExportButton_->setEnabled(true);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    if (!exported) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Settings export failed"), backend_.getStatus());
+        return;
+    }
+    showNativeDataSummary(tr("Settings package exported to %1").arg(path));
+}
+
+void NativeMainWindow::importNativeSettingsPackage() {
+    const QString category = dataCategoryComboBox_->currentData().toString();
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Import native settings package"),
+        projectRoot_,
+        tr("BandoriPet settings package (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const QMessageBox::StandardButton reply = QMessageBox::warning(
+        this,
+        tr("Confirm settings import"),
+        tr("This will overwrite whitelisted fields in the selected category. Local API keys and integration tokens will be preserved. Continue?"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+    dataImportButton_->setEnabled(false);
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const bool imported = backend_.importSettingsPackage(
+        configPath_, databasePath, category, path);
+    dataImportButton_->setEnabled(true);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    if (!imported) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Settings import failed"), backend_.getStatus());
+        return;
+    }
+    const QJsonObject summary = parseObject(backend_.getDataOperationJson());
+    reloadBackendState();
+    showNativeDataSummary(
+        tr("Imported %1 configuration fields from %2")
+            .arg(summary.value(QStringLiteral("config_keys")).toInteger())
+            .arg(path));
+}
+
+void NativeMainWindow::exportNativeChatDatabase() {
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    QString path = QFileDialog::getSaveFileName(
+        this,
+        tr("Create chat database backup"),
+        QDir(projectRoot_).filePath(QStringLiteral("bandori-chat-%1.db").arg(stamp)),
+        tr("SQLite database (*.db)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QStringLiteral(".db");
+    }
+    databaseExportButton_->setEnabled(false);
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const bool exported = backend_.exportChatDatabase(databasePath, path);
+    databaseExportButton_->setEnabled(true);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    if (!exported) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Database backup failed"), backend_.getStatus());
+        return;
+    }
+    showNativeDataSummary(tr("Chat database backup created at %1").arg(path));
+}
+
+void NativeMainWindow::importNativeChatDatabase() {
+    if (activeChatRequestId_ != 0 || groupSequenceActive_) {
+        QMessageBox::warning(
+            this,
+            tr("Chat is still active"),
+            tr("Wait for the current private or group response to finish, then restore the database."));
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Restore chat database backup"),
+        projectRoot_,
+        tr("SQLite database (*.db)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const QMessageBox::StandardButton reply = QMessageBox::warning(
+        this,
+        tr("Replace current chat database?"),
+        tr("Restoring %1 will replace all current chats, relationships, memories and usage history. This cannot be undone unless you have another backup.")
+            .arg(path),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+    databaseImportButton_->setEnabled(false);
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const bool imported = backend_.importChatDatabase(databasePath, path);
+    databaseImportButton_->setEnabled(true);
+    serviceStatusLabel_->setText(backend_.getStatus());
+    if (!imported) {
+        dataStatusLabel_->setText(backend_.getStatus());
+        QMessageBox::critical(this, tr("Database restore failed"), backend_.getStatus());
+        return;
+    }
+    reloadBackendState();
+    showNativeDataSummary(tr("Chat database restored from %1").arg(path));
+}
+
+void NativeMainWindow::showNativeDataSummary(const QString& action) {
+    const QJsonObject summary = parseObject(backend_.getDataOperationJson());
+    const QJsonObject database = summary.value(QStringLiteral("database")).toObject();
+    QStringList details;
+    const QJsonArray sections = summary.value(QStringLiteral("sections")).toArray();
+    if (!sections.isEmpty()) {
+        details.append(tr("%1 sections").arg(sections.size()));
+    }
+    const qint64 configKeys = summary.value(QStringLiteral("config_keys")).toInteger();
+    if (configKeys > 0) {
+        details.append(tr("%1 configuration fields").arg(configKeys));
+    }
+    const qint64 states = summary.value(QStringLiteral("relationship_states")).toInteger();
+    const qint64 memories = summary.value(QStringLiteral("character_memories")).toInteger();
+    if (states > 0 || memories > 0) {
+        details.append(tr("%1 relationship states · %2 memories").arg(states).arg(memories));
+    }
+    if (!database.isEmpty()) {
+        details.append(
+            tr("%1 conversations · %2 private messages · %3 group messages")
+                .arg(database.value(QStringLiteral("conversations")).toInteger())
+                .arg(database.value(QStringLiteral("messages")).toInteger())
+                .arg(database.value(QStringLiteral("group_messages")).toInteger()));
+    }
+    dataStatusLabel_->setText(
+        details.isEmpty() ? action : QStringLiteral("%1\n%2").arg(action, details.join(" · ")));
 }
 
 void NativeMainWindow::syncSettingsControls() {

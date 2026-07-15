@@ -265,14 +265,19 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   active user/role partition. The Qt-Fluent page renders these through standard
   tables and cards, so the native SDK requirement does not grow to include the
   optional Qt Charts module; group messages remain attributed through validated
-  character display aliases.
+  character display aliases. Native data management now exports and imports the
+  same whitelisted settings categories as the Python page, including merged
+  relationship/memory data. Rust strips root and nested API keys plus integration
+  tokens on export and preserves local secrets on import. Complete SQLite backup
+  and restore use the existing locked backup API; Qt requires destructive-action
+  confirmation and blocks restore while a chat response is active.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: pixel pet and remaining native visual/driver parity; TTS, ASR,
   screen-awareness and remaining integration services; the remaining
-  data-management pages; provider model
-  discovery/connection checks; default-launcher cutover, packaging and
+  attachment-retention controls; provider model discovery/connection checks;
+  default-launcher cutover, packaging and
   multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because

@@ -27,6 +27,7 @@ pub mod ffi {
         #[qproperty(QString, history_filters_json)]
         #[qproperty(QString, history_result_json)]
         #[qproperty(QString, statistics_snapshot_json)]
+        #[qproperty(QString, data_operation_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -165,6 +166,42 @@ pub mod ffi {
             self: Pin<&mut Self>,
             database_path: &QString,
             query_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "exportSettingsPackage"]
+        fn export_settings_package(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            database_path: &QString,
+            category: &QString,
+            destination_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "importSettingsPackage"]
+        fn import_settings_package(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            database_path: &QString,
+            category: &QString,
+            source_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "exportChatDatabase"]
+        fn export_chat_database(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            destination_path: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "importChatDatabase"]
+        fn import_chat_database(
+            self: Pin<&mut Self>,
+            database_path: &QString,
+            source_path: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -381,6 +418,12 @@ use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
+use bandori_core::data_management::{
+    export_chat_database as export_native_chat_database,
+    export_settings_package as export_native_settings_package,
+    import_chat_database as import_native_chat_database,
+    import_settings_package as import_native_settings_package,
+};
 use bandori_core::database::Database;
 use bandori_core::group_chat::{
     GroupMember, apply_group_plan_priority, build_group_planner_request_from_database,
@@ -429,6 +472,7 @@ const MAX_USER_PROFILE_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_PERSONA_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY_QUERY_BYTES: usize = 64 * 1024;
 const MAX_STATISTICS_QUERY_BYTES: usize = 64 * 1024;
+const MAX_SETTINGS_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -494,6 +538,7 @@ pub struct BackendRust {
     history_filters_json: QString,
     history_result_json: QString,
     statistics_snapshot_json: QString,
+    data_operation_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -545,6 +590,7 @@ impl Default for BackendRust {
             history_filters_json: QString::from("{}"),
             history_result_json: QString::from("{}"),
             statistics_snapshot_json: QString::from("{}"),
+            data_operation_json: QString::from("{}"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -1146,6 +1192,119 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Statistics load error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn export_settings_package(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        database_path: &QString,
+        category: &QString,
+        destination_path: &QString,
+    ) -> bool {
+        match export_native_settings_package(
+            Path::new(&config_path.to_string()),
+            Path::new(&database_path.to_string()),
+            &category.to_string(),
+            Path::new(&destination_path.to_string()),
+        ) {
+            Ok(summary) => {
+                let payload = serde_json::to_string(&summary)
+                    .expect("native data export summary serialization cannot fail");
+                self.as_mut()
+                    .set_data_operation_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native settings package exported"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Settings export error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn import_settings_package(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        database_path: &QString,
+        category: &QString,
+        source_path: &QString,
+    ) -> bool {
+        match import_native_settings_package(
+            Path::new(&config_path.to_string()),
+            Path::new(&database_path.to_string()),
+            &category.to_string(),
+            Path::new(&source_path.to_string()),
+            MAX_SETTINGS_PACKAGE_BYTES,
+        ) {
+            Ok(summary) => {
+                let payload = serde_json::to_string(&summary)
+                    .expect("native data import summary serialization cannot fail");
+                self.as_mut()
+                    .set_data_operation_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native settings package imported"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Settings import error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn export_chat_database(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        destination_path: &QString,
+    ) -> bool {
+        match export_native_chat_database(
+            Path::new(&database_path.to_string()),
+            Path::new(&destination_path.to_string()),
+        ) {
+            Ok(summary) => {
+                let payload = serde_json::to_string(&summary)
+                    .expect("native database export summary serialization cannot fail");
+                self.as_mut()
+                    .set_data_operation_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native chat database backup exported"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Database export error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn import_chat_database(
+        mut self: Pin<&mut Self>,
+        database_path: &QString,
+        source_path: &QString,
+    ) -> bool {
+        match import_native_chat_database(
+            Path::new(&database_path.to_string()),
+            Path::new(&source_path.to_string()),
+        ) {
+            Ok(summary) => {
+                let payload = serde_json::to_string(&summary)
+                    .expect("native database import summary serialization cannot fail");
+                self.as_mut()
+                    .set_data_operation_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native chat database restored"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Database restore error: {error}")));
                 false
             }
         }

@@ -54,6 +54,7 @@ private:
     QWidget* createChatPage();
     QWidget* createHistorySearchPage();
     QWidget* createStatisticsPage();
+    QWidget* createDataManagementPage();
     QWidget* createMemoryPage();
     QWidget* createUserProfilesPage();
     QWidget* createPersonaPage();
@@ -119,6 +120,11 @@ private:
     void populateNativeStatisticsCharacters();
     void refreshNativeStatistics();
     void renderNativeStatistics();
+    void exportNativeSettingsPackage();
+    void importNativeSettingsPackage();
+    void exportNativeChatDatabase();
+    void importNativeChatDatabase();
+    void showNativeDataSummary(const QString& action);
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -244,6 +250,12 @@ private:
     qfw::TableWidget* statisticsDailyTable_ = nullptr;
     qfw::TableWidget* statisticsHeatmapTable_ = nullptr;
     qfw::CaptionLabel* statisticsStatusLabel_ = nullptr;
+    qfw::ComboBox* dataCategoryComboBox_ = nullptr;
+    qfw::PrimaryPushButton* dataExportButton_ = nullptr;
+    qfw::PushButton* dataImportButton_ = nullptr;
+    qfw::PushButton* databaseExportButton_ = nullptr;
+    qfw::PushButton* databaseImportButton_ = nullptr;
+    qfw::CaptionLabel* dataStatusLabel_ = nullptr;
     QTimer reminderTimer_;
     QJsonObject reminderState_;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;
