@@ -1,0 +1,204 @@
+{
+  "relationship": {
+    "default": {
+      "id": 0,
+      "character": "Ran",
+      "user_key": "__default__",
+      "affection": 50,
+      "trust": 50,
+      "familiarity": 0,
+      "mood": "calm",
+      "mood_intensity": 20,
+      "summary": ""
+    },
+    "zero": {
+      "id": 1,
+      "character": "Ran",
+      "user_key": "__default__",
+      "affection": 0,
+      "trust": 0,
+      "familiarity": 0,
+      "mood": "calm",
+      "mood_intensity": 0,
+      "summary": ""
+    },
+    "delta": {
+      "id": 2,
+      "character": "Moca",
+      "user_key": "alice",
+      "affection": 57,
+      "trust": 47,
+      "familiarity": 2,
+      "mood": "happy",
+      "mood_intensity": 28,
+      "summary": ""
+    }
+  },
+  "memory": {
+    "ids": [
+      1,
+      2,
+      1
+    ],
+    "records": [
+      {
+        "id": 1,
+        "character": "Ran",
+        "user_key": "__default__",
+        "kind": "preference",
+        "content": "first",
+        "importance": 90,
+        "source_message_id": null,
+        "source_group_message_id": null
+      },
+      {
+        "id": 2,
+        "character": "Ran",
+        "user_key": "__default__",
+        "kind": "note",
+        "content": "second",
+        "importance": 50,
+        "source_message_id": null,
+        "source_group_message_id": null
+      }
+    ]
+  },
+  "chat": {
+    "ids": [
+      1,
+      2,
+      3
+    ],
+    "page": [
+      {
+        "id": 2,
+        "conversation_id": 1,
+        "role": "assistant",
+        "content": "tracked",
+        "reasoning_content": "",
+        "attachments_json": "",
+        "tool_trace_json": "{\"llm_usage\": {\"input_tokens\": 100, \"output_tokens\": 25, \"total_tokens\": 125}}"
+      },
+      {
+        "id": 3,
+        "conversation_id": 1,
+        "role": "assistant",
+        "content": "legacy",
+        "reasoning_content": "",
+        "attachments_json": "",
+        "tool_trace_json": ""
+      }
+    ],
+    "before": [
+      {
+        "id": 1,
+        "conversation_id": 1,
+        "role": "user",
+        "content": "hello",
+        "reasoning_content": "",
+        "attachments_json": "",
+        "tool_trace_json": ""
+      },
+      {
+        "id": 2,
+        "conversation_id": 1,
+        "role": "assistant",
+        "content": "tracked",
+        "reasoning_content": "",
+        "attachments_json": "",
+        "tool_trace_json": "{\"llm_usage\": {\"input_tokens\": 100, \"output_tokens\": 25, \"total_tokens\": 125}}"
+      }
+    ],
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 25,
+      "total_tokens": 125,
+      "estimated": false,
+      "request_count": 1,
+      "untracked_count": 1
+    }
+  },
+  "external": {
+    "first": {
+      "duplicate": false,
+      "message_id": 1,
+      "thread": {
+        "platform": "napcat",
+        "thread_id": "group-1",
+        "thread_name": "Band",
+        "unread_count": 1
+      },
+      "unread": {
+        "total_unread": 1,
+        "threads": [
+          {
+            "platform": "napcat",
+            "thread_id": "group-1",
+            "thread_name": "Band",
+            "unread_count": 1,
+            "messages": [
+              {
+                "id": 1,
+                "platform": "napcat",
+                "thread_id": "group-1",
+                "external_message_id": "external-1",
+                "sender_id": "42",
+                "sender_name": "Kasumi",
+                "direction": "inbound",
+                "content": "hello from chat",
+                "unread": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "duplicate": {
+      "duplicate": true,
+      "message_id": 1,
+      "thread": {
+        "platform": "napcat",
+        "thread_id": "group-1",
+        "thread_name": "Band",
+        "unread_count": 1
+      },
+      "unread": {
+        "total_unread": 1,
+        "threads": [
+          {
+            "platform": "napcat",
+            "thread_id": "group-1",
+            "thread_name": "Band",
+            "unread_count": 1,
+            "messages": [
+              {
+                "id": 1,
+                "platform": "napcat",
+                "thread_id": "group-1",
+                "external_message_id": "external-1",
+                "sender_id": "42",
+                "sender_name": "Kasumi",
+                "direction": "inbound",
+                "content": "hello from chat",
+                "unread": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "marked_read": {
+      "marked_read": 1,
+      "unread": {
+        "total_unread": 0,
+        "threads": []
+      }
+    },
+    "prune": {
+      "last_pruned": 1,
+      "retained": 50,
+      "oldest": 1,
+      "newest": 50
+    }
+  }
+}

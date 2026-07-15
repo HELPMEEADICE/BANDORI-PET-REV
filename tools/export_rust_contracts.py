@@ -30,6 +30,7 @@ def rendered_contracts() -> dict[Path, str]:
     )
 
     database_contract = _database_contract()
+    database_vectors = _database_behavior_contract()
 
     key_cases = [
         ["bandori-main-123", "main-in"],
@@ -149,6 +150,10 @@ def rendered_contracts() -> dict[Path, str]:
             database_contract, ensure_ascii=False, indent=2
         )
         + "\n",
+        OUTPUT_DIR / "database_vectors.json": json.dumps(
+            database_vectors, ensure_ascii=False, indent=2
+        )
+        + "\n",
     }
 
 
@@ -200,6 +205,174 @@ def _database_contract() -> dict:
             manager.close()
 
     return {"tables": tables, "indexes": indexes}
+
+
+def _database_behavior_contract() -> dict:
+    from database_manager import DatabaseManager
+
+    def without_times(value: dict) -> dict:
+        return {
+            key: item
+            for key, item in value.items()
+            if key not in {"created_at", "updated_at", "last_message_at"}
+        }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        manager = DatabaseManager(str(Path(temp_dir) / "vectors.db"))
+        try:
+            default_state = without_times(manager.get_relationship_state("Ran", ""))
+            zero_state = without_times(
+                manager.upsert_relationship_state(
+                    "Ran", "", affection=0, trust=0, mood_intensity=0
+                )
+            )
+            delta_state = without_times(
+                manager.apply_relationship_delta(
+                    "Moca",
+                    "alice",
+                    affection_delta=7,
+                    trust_delta=-3,
+                    familiarity_delta=2,
+                    mood="happy",
+                )
+            )
+
+            first_memory = manager.add_character_memory(
+                "Ran", "", "note", "first", 50
+            )
+            second_memory = manager.add_character_memory(
+                "Ran", "", "note", "second", 50
+            )
+            repeated_memory = manager.add_character_memory(
+                "Ran", "", "preference", "first", 90
+            )
+            memories = [
+                without_times(item)
+                for item in manager.get_character_memories("Ran", "", 8)
+            ]
+
+            conversation = manager.create_conversation("Ran", "fixture", "")
+            first_message = manager.add_message(conversation, "user", "hello")
+            second_message = manager.add_message(
+                conversation,
+                "assistant",
+                "tracked",
+                tool_trace={
+                    "llm_usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 25,
+                        "total_tokens": 125,
+                    }
+                },
+            )
+            third_message = manager.add_message(
+                conversation, "assistant", "legacy"
+            )
+            page = [
+                without_times(item)
+                for item in manager.get_messages(conversation, limit=2)
+            ]
+            before = [
+                without_times(item)
+                for item in manager.get_messages(
+                    conversation, limit=10, before_id=third_message
+                )
+            ]
+            usage = manager.get_conversation_token_usage(conversation)
+
+            external_event = {
+                "platform": "napcat",
+                "thread_id": "group-1",
+                "thread_name": "Band",
+                "message_id": "external-1",
+                "sender_id": "42",
+                "sender_name": "Kasumi",
+                "content": "hello from chat",
+                "chat_type": "group",
+            }
+            external_first = manager.add_external_chat_message(external_event)
+            external_duplicate = manager.add_external_chat_message(external_event)
+            external_marked = manager.mark_external_chat_read("napcat", "group-1")
+            prune_result = None
+            for index in range(51):
+                prune_result = manager.add_external_chat_message(
+                    {
+                        "platform": "napcat",
+                        "thread_id": "limit",
+                        "message_id": f"limit-{index}",
+                        "content": str(index),
+                        "chat_type": "group",
+                        "unread": False,
+                    }
+                )
+            retained_group = manager._conn.execute(
+                "SELECT COUNT(*), MIN(CAST(content AS INTEGER)), MAX(CAST(content AS INTEGER)) "
+                "FROM external_chat_messages WHERE platform='napcat' AND thread_id='limit'"
+            ).fetchone()
+        finally:
+            manager.close()
+
+    def normalize_unread(summary: dict) -> dict:
+        return {
+            "total_unread": summary["total_unread"],
+            "threads": [
+                {
+                    "platform": thread["platform"],
+                    "thread_id": thread["thread_id"],
+                    "thread_name": thread["thread_name"],
+                    "unread_count": thread["unread_count"],
+                    "messages": [
+                        {
+                            key: value
+                            for key, value in message.items()
+                            if key not in {"raw_json", "created_at"}
+                        }
+                        for message in thread["messages"]
+                    ],
+                }
+                for thread in summary["threads"]
+            ],
+        }
+
+    def normalize_external_result(result: dict) -> dict:
+        return {
+            "duplicate": result["duplicate"],
+            "message_id": result["message_id"],
+            "thread": without_times(result["thread"]),
+            "unread": normalize_unread(result["unread"]),
+        }
+
+    return {
+        "relationship": {
+            "default": default_state,
+            "zero": zero_state,
+            "delta": delta_state,
+        },
+        "memory": {
+            "ids": [first_memory, second_memory, repeated_memory],
+            "records": memories,
+        },
+        "chat": {
+            "ids": [first_message, second_message, third_message],
+            "page": page,
+            "before": before,
+            "usage": usage,
+        },
+        "external": {
+            "first": normalize_external_result(external_first),
+            "duplicate": normalize_external_result(external_duplicate),
+            "marked_read": {
+                "marked_read": external_marked["marked_read"],
+                "unread": normalize_unread(external_marked["unread"]),
+            },
+            "prune": {
+                "last_pruned": prune_result["pruned_messages"],
+                "retained": retained_group[0],
+                "oldest": retained_group[1],
+                "newest": retained_group[2],
+            },
+        },
+    }
 
 
 def main() -> int:
