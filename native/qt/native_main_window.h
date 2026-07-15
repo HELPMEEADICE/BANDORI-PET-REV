@@ -32,7 +32,9 @@ public:
         QWidget* parent = nullptr);
 
     void startPet(PetLaunchSpec spec);
+    void startPets(QList<PetLaunchSpec> specs);
     bool startConfiguredPet();
+    bool startConfiguredPets();
 
 private:
     void setupUi();
@@ -46,6 +48,7 @@ private:
     void startSelectedPet();
     std::optional<ModelCatalogItem> selectedModel() const;
     std::optional<ModelCatalogItem> configuredModel() const;
+    QList<ModelCatalogItem> configuredModels() const;
     PetLaunchSpec launchSpecFor(const ModelCatalogItem& model) const;
     QJsonObject configuredPetFor(const ModelCatalogItem& model) const;
 
@@ -56,7 +59,7 @@ private:
     PetProcessSupervisor supervisor_;
     QList<ModelCatalogItem> catalog_;
     QJsonObject runtime_;
-    PetLaunchSpec activeSpec_;
+    QList<PetLaunchSpec> activeSpecs_;
 
     qfw::BodyLabel* serviceStatusLabel_ = nullptr;
     qfw::CaptionLabel* configSummaryLabel_ = nullptr;

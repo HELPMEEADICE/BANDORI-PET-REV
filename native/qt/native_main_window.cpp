@@ -86,7 +86,7 @@ NativeMainWindow::NativeMainWindow(
         [this](const QString& status) {
             rendererStatusLabel_->setText(status);
             runtimeCard_->setContent(status);
-            restartButton_->setEnabled(!activeSpec_.modelPath.isEmpty());
+            restartButton_->setEnabled(!activeSpecs_.isEmpty());
             stopButton_->setEnabled(supervisor_.isRunning());
         });
     connect(
@@ -94,6 +94,20 @@ NativeMainWindow::NativeMainWindow(
         &PetProcessSupervisor::rendererLog,
         this,
         [](const QString& message) { qWarning().noquote() << message; });
+    connect(
+        &supervisor_,
+        &PetProcessSupervisor::controlRequest,
+        this,
+        [this](const QString& line) {
+            if (line.startsWith(QStringLiteral("OPEN_SETTINGS\tcostumes\t"))) {
+                if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
+                    switchTo(models);
+                }
+            } else if (line.startsWith(QStringLiteral("OPEN_CHAT_NATIVE\t"))) {
+                rendererStatusLabel_->setText(
+                    tr("Native chat UI is not ported yet; renderer remains active"));
+            }
+        });
 }
 
 void NativeMainWindow::setupUi() {
@@ -128,9 +142,9 @@ QWidget* NativeMainWindow::createDashboardPage() {
     rendererStatusLabel_ =
         new qfw::CaptionLabel(QStringLiteral("Pet renderer is not started"), page);
     startConfiguredButton_ =
-        new qfw::PrimaryPushButton(tr("Start configured pet"), page);
-    restartButton_ = new qfw::PushButton(tr("Restart active pet"), page);
-    stopButton_ = new qfw::PushButton(tr("Stop active pet"), page);
+        new qfw::PrimaryPushButton(tr("Start configured pets"), page);
+    restartButton_ = new qfw::PushButton(tr("Restart active pets"), page);
+    stopButton_ = new qfw::PushButton(tr("Stop active pets"), page);
     auto* reloadButton = new qfw::PushButton(tr("Reload configuration and models"), page);
 
     auto* buttons = new QHBoxLayout();
@@ -152,11 +166,11 @@ QWidget* NativeMainWindow::createDashboardPage() {
     restartButton_->setEnabled(false);
     stopButton_->setEnabled(false);
     connect(startConfiguredButton_, &QPushButton::clicked, this, [this]() {
-        startConfiguredPet();
+        startConfiguredPets();
     });
     connect(restartButton_, &QPushButton::clicked, this, [this]() {
-        if (!activeSpec_.modelPath.isEmpty()) {
-            supervisor_.start(activeSpec_);
+        if (!activeSpecs_.isEmpty()) {
+            supervisor_.startAll(activeSpecs_);
         }
     });
     connect(stopButton_, &QPushButton::clicked, &supervisor_, &PetProcessSupervisor::stop);
@@ -281,10 +295,12 @@ void NativeMainWindow::applyBackendState() {
         }
     }
     populateModelList();
-    const int configured = runtime_.value(QStringLiteral("configured_pets")).toArray().size();
+    const int configured = configuredModels().size();
     startConfiguredButton_->setText(
-        configured > 0 ? tr("Start configured pet") : tr("Start selected default pet"));
-    startConfiguredButton_->setEnabled(configuredModel().has_value());
+        configured > 1
+            ? tr("Start %1 configured pets").arg(configured)
+            : (configured == 1 ? tr("Start configured pet") : tr("No Live2D pet available")));
+    startConfiguredButton_->setEnabled(configured > 0);
 }
 
 void NativeMainWindow::populateModelList() {
@@ -373,6 +389,13 @@ std::optional<ModelCatalogItem> NativeMainWindow::selectedModel() const {
 }
 
 std::optional<ModelCatalogItem> NativeMainWindow::configuredModel() const {
+    const QList<ModelCatalogItem> models = configuredModels();
+    return models.isEmpty() ? std::nullopt
+                            : std::optional<ModelCatalogItem>(models.first());
+}
+
+QList<ModelCatalogItem> NativeMainWindow::configuredModels() const {
+    QList<ModelCatalogItem> models;
     const QJsonArray configured = runtime_.value(QStringLiteral("configured_pets")).toArray();
     for (const QJsonValue& value : configured) {
         const QJsonObject pet = value.toObject();
@@ -385,9 +408,16 @@ std::optional<ModelCatalogItem> NativeMainWindow::configuredModel() const {
             catalog_.cbegin(),
             catalog_.cend(),
             [&path](const ModelCatalogItem& model) { return model.path == path; });
-        if (found != catalog_.cend()) {
-            return *found;
+        const bool alreadyAdded = std::any_of(
+            models.cbegin(), models.cend(), [&path](const ModelCatalogItem& model) {
+                return model.path == path;
+            });
+        if (found != catalog_.cend() && !alreadyAdded) {
+            models.append(*found);
         }
+    }
+    if (!models.isEmpty()) {
+        return models;
     }
     const QString character = runtime_.value(QStringLiteral("selected_character")).toString();
     const QString costume = runtime_.value(QStringLiteral("selected_costume")).toString();
@@ -399,17 +429,21 @@ std::optional<ModelCatalogItem> NativeMainWindow::configuredModel() const {
                 && (costume.isEmpty() ? model.isDefault : model.costume == costume);
         });
     if (found != catalog_.cend()) {
-        return *found;
+        models.append(*found);
+        return models;
     }
     const auto fallback = std::find_if(
         catalog_.cbegin(),
         catalog_.cend(),
         [](const ModelCatalogItem& model) { return model.isDefault; });
     if (fallback != catalog_.cend()) {
-        return *fallback;
+        models.append(*fallback);
+        return models;
     }
-    return catalog_.isEmpty() ? std::nullopt
-                              : std::optional<ModelCatalogItem>(catalog_.first());
+    if (!catalog_.isEmpty()) {
+        models.append(catalog_.first());
+    }
+    return models;
 }
 
 QJsonObject NativeMainWindow::configuredPetFor(const ModelCatalogItem& model) const {
@@ -466,24 +500,44 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
 }
 
 void NativeMainWindow::startPet(PetLaunchSpec spec) {
-    if (spec.modelPath.isEmpty()) {
+    startPets({std::move(spec)});
+}
+
+void NativeMainWindow::startPets(QList<PetLaunchSpec> specs) {
+    specs.erase(
+        std::remove_if(specs.begin(), specs.end(), [](const PetLaunchSpec& spec) {
+            return spec.modelPath.isEmpty();
+        }),
+        specs.end());
+    if (specs.isEmpty()) {
         rendererStatusLabel_->setText(tr("Cannot start a pet without a model manifest"));
         return;
     }
-    activeSpec_ = std::move(spec);
+    activeSpecs_ = std::move(specs);
     rendererStatusLabel_->setText(
-        tr("Starting %1").arg(QFileInfo(activeSpec_.modelPath).fileName()));
+        activeSpecs_.size() == 1
+            ? tr("Starting %1").arg(QFileInfo(activeSpecs_.first().modelPath).fileName())
+            : tr("Starting %1 isolated pets").arg(activeSpecs_.size()));
     restartButton_->setEnabled(true);
-    supervisor_.start(activeSpec_);
+    supervisor_.startAll(activeSpecs_);
 }
 
 bool NativeMainWindow::startConfiguredPet() {
-    const std::optional<ModelCatalogItem> model = configuredModel();
-    if (!model.has_value()) {
-        rendererStatusLabel_->setText(tr("No configured Live2D model is available"));
+    return startConfiguredPets();
+}
+
+bool NativeMainWindow::startConfiguredPets() {
+    const QList<ModelCatalogItem> models = configuredModels();
+    if (models.isEmpty()) {
+        rendererStatusLabel_->setText(tr("No configured Live2D models are available"));
         return false;
     }
-    startPet(launchSpecFor(*model));
+    QList<PetLaunchSpec> specs;
+    specs.reserve(models.size());
+    for (const ModelCatalogItem& model : models) {
+        specs.append(launchSpecFor(model));
+    }
+    startPets(std::move(specs));
     return true;
 }
 

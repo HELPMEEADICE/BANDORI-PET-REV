@@ -145,4 +145,23 @@ def test_native_main_window_consumes_safe_rust_dashboard_state():
     assert "backend_.getRuntimeConfigJson" in window
     assert "qfw::SettingCardGroup" in window
     assert "startConfiguredPet" in window
-    assert "supervisor_.start(activeSpec_)" in window
+    assert "supervisor_.startAll(activeSpecs_)" in window
+
+
+def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
+    header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "void startAll(QList<PetLaunchSpec> specs)" in header
+    assert "std::vector<std::unique_ptr<ChildState>> children_" in header
+    assert "initializeIpcSession()" in supervisor
+    assert "for (const auto& child : children_)" in supervisor
+    assert 'environment.insert(QStringLiteral("BANDORI_PET_IPC_SERVER_NAME"), ipcSessionName_)' in supervisor
+    assert 'QStringLiteral("SHUTDOWN")' in supervisor
+    assert "for (const QString& raw : inboundQueue_->readAvailable())" in supervisor
+    assert "broadcastQueue_->publish(raw)" in supervisor
+    assert "controlQueue_->publish(raw)" in supervisor
+    assert 'QStringLiteral("PEER_OFFLINE\\t")' in supervisor
+    assert "supervisor_.startAll(activeSpecs_)" in window
+    assert "bool NativeMainWindow::startConfiguredPets()" in window

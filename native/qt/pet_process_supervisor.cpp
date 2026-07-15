@@ -7,7 +7,11 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QUuid>
@@ -21,214 +25,333 @@ namespace {
 constexpr int kStableRunMsec = 30'000;
 constexpr int kMaximumConsecutiveRestarts = 4;
 constexpr int kTerminateGraceMsec = 1'500;
-}
 
-PetProcessSupervisor::PetProcessSupervisor(QObject* parent)
-    : QObject(parent) {
-    process_.setProcessChannelMode(QProcess::SeparateChannels);
-    restartTimer_.setSingleShot(true);
-    terminateTimer_.setSingleShot(true);
-    killTimer_.setSingleShot(true);
-    ipcPollTimer_.setInterval(30);
-
-    connect(&restartTimer_, &QTimer::timeout, this, &PetProcessSupervisor::launchNow);
-    connect(&terminateTimer_, &QTimer::timeout, this, [this]() {
-        if (process_.state() != QProcess::NotRunning) {
-            process_.terminate();
-            killTimer_.start(kTerminateGraceMsec);
-        }
-    });
-    connect(&killTimer_, &QTimer::timeout, this, [this]() {
-        if (process_.state() != QProcess::NotRunning) {
-            emit statusChanged(QStringLiteral("Pet renderer did not stop; killing it"));
-            process_.kill();
-        }
-    });
-    connect(&ipcPollTimer_, &QTimer::timeout, this, &PetProcessSupervisor::pollIpcMessages);
-    connect(
-        &process_,
-        QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-        this,
-        &PetProcessSupervisor::handleFinished);
-    connect(&process_, &QProcess::readyReadStandardError, this, [this]() {
-        const QString message = QString::fromUtf8(process_.readAllStandardError()).trimmed();
-        if (!message.isEmpty()) {
-            emit rendererLog(message);
-        }
-    });
-    connect(&process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            emit statusChanged(
-                QStringLiteral("Failed to start pet renderer: %1").arg(process_.errorString()));
-            scheduleRestart();
-        }
-    });
-}
-
-PetProcessSupervisor::~PetProcessSupervisor() {
-    stop();
-    if (process_.state() != QProcess::NotRunning) {
-        process_.kill();
-        process_.waitForFinished(1'000);
+QString petName(const PetLaunchSpec& spec) {
+    if (!spec.character.isEmpty()) {
+        return spec.character;
     }
+    return QFileInfo(spec.modelPath).completeBaseName();
 }
 
-void PetProcessSupervisor::start(PetLaunchSpec spec) {
+PetLaunchSpec normalizedSpec(PetLaunchSpec spec) {
+    spec.projectRoot = QDir(spec.projectRoot).absolutePath();
+    spec.userModelsRoot = QDir(spec.userModelsRoot).absolutePath();
     spec.width = std::max(spec.width, 1);
     spec.height = std::max(spec.height, 1);
     spec.fps = std::clamp(spec.fps, 10, 240);
     spec.opacity = std::clamp(spec.opacity, 0.05, 1.0);
     spec.lipSyncMaxOpen = std::clamp(spec.lipSyncMaxOpen, 0.0, 1.0);
     spec.hitAlphaThreshold = std::clamp(spec.hitAlphaThreshold, 0, 255);
-    spec_ = std::move(spec);
-    restartTimer_.stop();
-    consecutiveFailures_ = 0;
-    if (process_.state() != QProcess::NotRunning) {
-        stopping_ = true;
-        relaunchAfterStop_ = true;
-        replaceIpcSessionAfterStop_ = true;
-        emit statusChanged(QStringLiteral("Replacing pet renderer"));
-        requestProcessStop();
+    return spec;
+}
+}  // namespace
+
+struct PetProcessSupervisor::ChildState {
+    explicit ChildState(PetLaunchSpec launchSpec)
+        : spec(std::move(launchSpec)) {
+        process.setProcessChannelMode(QProcess::SeparateChannels);
+        restartTimer.setSingleShot(true);
+        terminateTimer.setSingleShot(true);
+        killTimer.setSingleShot(true);
+    }
+
+    PetLaunchSpec spec;
+    QProcess process;
+    QTimer restartTimer;
+    QTimer terminateTimer;
+    QTimer killTimer;
+    QElapsedTimer uptime;
+    int consecutiveFailures = 0;
+};
+
+PetProcessSupervisor::PetProcessSupervisor(QObject* parent)
+    : QObject(parent) {
+    ipcPollTimer_.setInterval(30);
+    connect(&ipcPollTimer_, &QTimer::timeout, this, &PetProcessSupervisor::pollIpcMessages);
+}
+
+PetProcessSupervisor::~PetProcessSupervisor() {
+    stop();
+    for (const auto& child : children_) {
+        child->process.disconnect(this);
+        if (child->process.state() != QProcess::NotRunning) {
+            child->process.kill();
+            child->process.waitForFinished(1'000);
+        }
+    }
+    children_.clear();
+    resetIpcSession();
+}
+
+void PetProcessSupervisor::start(PetLaunchSpec spec) {
+    startAll({std::move(spec)});
+}
+
+void PetProcessSupervisor::startAll(QList<PetLaunchSpec> specs) {
+    QList<PetLaunchSpec> normalized;
+    QString projectRoot;
+    for (PetLaunchSpec& spec : specs) {
+        if (spec.modelPath.trimmed().isEmpty()) {
+            continue;
+        }
+        PetLaunchSpec value = normalizedSpec(std::move(spec));
+        if (projectRoot.isEmpty()) {
+            projectRoot = value.projectRoot;
+        } else if (value.projectRoot != projectRoot) {
+            emit statusChanged(QStringLiteral("All pet renderers must share one project root"));
+            return;
+        }
+        normalized.append(std::move(value));
+    }
+    if (normalized.isEmpty()) {
+        stop();
         return;
     }
+
+    pendingSpecs_ = std::move(normalized);
+    if (!children_.empty()) {
+        stopping_ = true;
+        relaunchAfterStop_ = true;
+        emit statusChanged(
+            QStringLiteral("Replacing %1 pet renderer(s)").arg(children_.size()));
+        requestFleetStop();
+        return;
+    }
+    launchPendingFleet();
+}
+
+void PetProcessSupervisor::stop() {
+    pendingSpecs_.clear();
+    relaunchAfterStop_ = false;
+    stopping_ = true;
+    if (children_.empty()) {
+        resetIpcSession();
+        return;
+    }
+    emit statusChanged(
+        QStringLiteral("Stopping %1 pet renderer(s)").arg(children_.size()));
+    requestFleetStop();
+}
+
+bool PetProcessSupervisor::isRunning() const {
+    return std::any_of(children_.cbegin(), children_.cend(), [](const auto& child) {
+        return child->process.state() != QProcess::NotRunning
+            || child->restartTimer.isActive();
+    });
+}
+
+int PetProcessSupervisor::runningCount() const {
+    return static_cast<int>(std::count_if(
+        children_.cbegin(), children_.cend(), [](const auto& child) {
+            return child->process.state() != QProcess::NotRunning;
+        }));
+}
+
+int PetProcessSupervisor::targetCount() const {
+    if (relaunchAfterStop_ && !pendingSpecs_.isEmpty()) {
+        return pendingSpecs_.size();
+    }
+    return static_cast<int>(children_.size());
+}
+
+void PetProcessSupervisor::launchPendingFleet() {
+    if (pendingSpecs_.isEmpty()) {
+        return;
+    }
+    QList<PetLaunchSpec> specs = std::move(pendingSpecs_);
+    pendingSpecs_.clear();
+    projectRoot_ = specs.first().projectRoot;
     if (!initializeIpcSession()) {
         stopping_ = true;
         return;
     }
+
     stopping_ = false;
     relaunchAfterStop_ = false;
-    replaceIpcSessionAfterStop_ = false;
-    launchNow();
+    children_.reserve(static_cast<std::size_t>(specs.size()));
+    for (PetLaunchSpec& spec : specs) {
+        auto state = std::make_unique<ChildState>(std::move(spec));
+        ChildState* child = state.get();
+        children_.push_back(std::move(state));
+
+        connect(&child->restartTimer, &QTimer::timeout, this, [this, child]() {
+            launchNow(child);
+        });
+        connect(&child->terminateTimer, &QTimer::timeout, this, [this, child]() {
+            if (child->process.state() != QProcess::NotRunning) {
+                child->process.terminate();
+                child->killTimer.start(kTerminateGraceMsec);
+            }
+        });
+        connect(&child->killTimer, &QTimer::timeout, this, [this, child]() {
+            if (child->process.state() != QProcess::NotRunning) {
+                emit statusChanged(
+                    QStringLiteral("Pet renderer %1 did not stop; killing it")
+                        .arg(petName(child->spec)));
+                child->process.kill();
+            }
+        });
+        connect(
+            &child->process,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            [this, child](int exitCode, QProcess::ExitStatus exitStatus) {
+                handleFinished(child, exitCode, static_cast<int>(exitStatus));
+            });
+        connect(&child->process, &QProcess::readyReadStandardError, this, [this, child]() {
+            const QString message =
+                QString::fromUtf8(child->process.readAllStandardError()).trimmed();
+            if (!message.isEmpty()) {
+                emit rendererLog(
+                    QStringLiteral("[%1] %2").arg(petName(child->spec), message));
+            }
+        });
+        connect(
+            &child->process,
+            &QProcess::errorOccurred,
+            this,
+            [this, child](QProcess::ProcessError error) {
+                if (error == QProcess::FailedToStart) {
+                    emit statusChanged(
+                        QStringLiteral("Failed to start pet renderer %1: %2")
+                            .arg(petName(child->spec), child->process.errorString()));
+                    scheduleRestart(child);
+                }
+            });
+    }
+
+    for (const auto& child : children_) {
+        launchNow(child.get());
+    }
+    emit statusChanged(
+        QStringLiteral("Starting %1 isolated pet renderer(s) on shared IPC")
+            .arg(children_.size()));
 }
 
-void PetProcessSupervisor::stop() {
-    stopping_ = true;
-    relaunchAfterStop_ = false;
-    replaceIpcSessionAfterStop_ = false;
-    restartTimer_.stop();
-    ipcPollTimer_.stop();
-    if (process_.state() == QProcess::NotRunning) {
-        terminateTimer_.stop();
-        killTimer_.stop();
+void PetProcessSupervisor::launchNow(ChildState* child) {
+    if (stopping_ || child == nullptr || child->process.state() != QProcess::NotRunning) {
         return;
     }
-    emit statusChanged(QStringLiteral("Stopping pet renderer"));
-    requestProcessStop();
-}
-
-bool PetProcessSupervisor::isRunning() const {
-    return process_.state() != QProcess::NotRunning;
-}
-
-void PetProcessSupervisor::launchNow() {
-    if (stopping_ || process_.state() != QProcess::NotRunning) {
-        return;
-    }
+    child->restartTimer.stop();
+    child->terminateTimer.stop();
+    child->killTimer.stop();
     const QString program = rendererProgram();
     if (program.isEmpty()) {
         emit statusChanged(QStringLiteral("Pet renderer executable was not found"));
-        scheduleRestart();
+        scheduleRestart(child);
         return;
     }
-    process_.setProgram(program);
-    process_.setWorkingDirectory(spec_.projectRoot);
+
+    const PetLaunchSpec& spec = child->spec;
+    child->process.setProgram(program);
+    child->process.setWorkingDirectory(spec.projectRoot);
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("BANDORI_PET_IPC_SERVER_NAME"), ipcSessionName_);
-    process_.setProcessEnvironment(environment);
-    process_.setArguments({
+    child->process.setProcessEnvironment(environment);
+    child->process.setArguments({
         QStringLiteral("--project-root"),
-        spec_.projectRoot,
+        spec.projectRoot,
         QStringLiteral("--user-models"),
-        spec_.userModelsRoot,
+        spec.userModelsRoot,
         QStringLiteral("--model"),
-        spec_.modelPath,
+        spec.modelPath,
         QStringLiteral("--character"),
-        spec_.character,
+        spec.character,
         QStringLiteral("--language"),
-        spec_.language,
+        spec.language,
         QStringLiteral("--format"),
-        spec_.format,
+        spec.format,
         QStringLiteral("--width"),
-        QString::number(spec_.width),
+        QString::number(spec.width),
         QStringLiteral("--height"),
-        QString::number(spec_.height),
+        QString::number(spec.height),
         QStringLiteral("--x"),
-        QString::number(spec_.x),
+        QString::number(spec.x),
         QStringLiteral("--y"),
-        QString::number(spec_.y),
+        QString::number(spec.y),
         QStringLiteral("--fps"),
-        QString::number(spec_.fps),
+        QString::number(spec.fps),
         QStringLiteral("--opacity"),
-        QString::number(spec_.opacity, 'f', 3),
+        QString::number(spec.opacity, 'f', 3),
         QStringLiteral("--lip-sync-max-open"),
-        QString::number(spec_.lipSyncMaxOpen, 'f', 3),
+        QString::number(spec.lipSyncMaxOpen, 'f', 3),
         QStringLiteral("--hit-alpha-threshold"),
-        QString::number(spec_.hitAlphaThreshold),
+        QString::number(spec.hitAlphaThreshold),
         QStringLiteral("--click-motion-actions"),
-        spec_.clickMotionActions,
+        spec.clickMotionActions,
         QStringLiteral("--poke-motion"),
-        spec_.pokeMotion,
+        spec.pokeMotion,
         QStringLiteral("--poke-expression"),
-        spec_.pokeExpression,
+        spec.pokeExpression,
         QStringLiteral("--drag-locked"),
-        spec_.dragLocked ? QStringLiteral("true") : QStringLiteral("false"),
+        spec.dragLocked ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--move-all-roles-together"),
-        spec_.moveAllRolesTogether ? QStringLiteral("true") : QStringLiteral("false"),
+        spec.moveAllRolesTogether ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--head-tracking-enabled"),
-        spec_.headTrackingEnabled ? QStringLiteral("true") : QStringLiteral("false"),
+        spec.headTrackingEnabled ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--mutual-gaze-enabled"),
-        spec_.mutualGazeEnabled ? QStringLiteral("true") : QStringLiteral("false"),
+        spec.mutualGazeEnabled ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--parent-pid"),
         QString::number(QCoreApplication::applicationPid()),
         QStringLiteral("--ipc-session"),
         ipcSessionName_,
     });
-    processUptime_.start();
-    emit statusChanged(QStringLiteral("Starting isolated pet renderer"));
-    process_.start();
+    child->uptime.start();
+    child->process.start();
 }
 
-void PetProcessSupervisor::handleFinished(int exitCode, QProcess::ExitStatus exitStatus) {
-    terminateTimer_.stop();
-    killTimer_.stop();
-    if (stopping_) {
-        if (relaunchAfterStop_) {
-            relaunchAfterStop_ = false;
-            if (replaceIpcSessionAfterStop_) {
-                replaceIpcSessionAfterStop_ = false;
-                if (!initializeIpcSession()) {
-                    stopping_ = true;
-                    return;
-                }
-            }
-            stopping_ = false;
-            launchNow();
-            return;
-        }
-        emit statusChanged(QStringLiteral("Pet renderer stopped"));
+void PetProcessSupervisor::handleFinished(
+    ChildState* child,
+    int exitCode,
+    int exitStatus) {
+    if (child == nullptr) {
         return;
     }
-    const qint64 elapsed = processUptime_.isValid() ? processUptime_.elapsed() : 0;
+    child->terminateTimer.stop();
+    child->killTimer.stop();
+    publishPeerOffline(child->spec.character);
+    if (stopping_) {
+        finalizeStoppedFleet();
+        return;
+    }
+    const qint64 elapsed = child->uptime.isValid() ? child->uptime.elapsed() : 0;
     if (elapsed >= kStableRunMsec) {
-        consecutiveFailures_ = 0;
+        child->consecutiveFailures = 0;
     }
     emit statusChanged(
-        QStringLiteral("Pet renderer exited (%1, code %2)")
-            .arg(exitStatus == QProcess::CrashExit ? QStringLiteral("crash") : QStringLiteral("normal"))
+        QStringLiteral("Pet renderer %1 exited (%2, code %3)")
+            .arg(
+                petName(child->spec),
+                exitStatus == static_cast<int>(QProcess::CrashExit)
+                    ? QStringLiteral("crash")
+                    : QStringLiteral("normal"))
             .arg(exitCode));
-    scheduleRestart();
+    scheduleRestart(child);
+}
+
+void PetProcessSupervisor::scheduleRestart(ChildState* child) {
+    if (stopping_ || child == nullptr || child->restartTimer.isActive()) {
+        return;
+    }
+    if (child->consecutiveFailures >= kMaximumConsecutiveRestarts) {
+        emit statusChanged(
+            QStringLiteral("Pet renderer %1 reached its restart limit")
+                .arg(petName(child->spec)));
+        return;
+    }
+    const int delay = std::min(4'000, 250 * (1 << child->consecutiveFailures));
+    ++child->consecutiveFailures;
+    emit statusChanged(
+        QStringLiteral("Restarting pet renderer %1 in %2 ms")
+            .arg(petName(child->spec))
+            .arg(delay));
+    child->restartTimer.start(delay);
 }
 
 bool PetProcessSupervisor::initializeIpcSession() {
-    ipcPollTimer_.stop();
-    inboundQueue_.reset();
-    reliableInboundQueue_.reset();
-    broadcastQueue_.reset();
-    controlQueue_.reset();
-
-    const QString normalizedRoot = QDir(spec_.projectRoot).absolutePath();
+    resetIpcSession();
     const QString rootDigest = QString::fromLatin1(
-        QCryptographicHash::hash(normalizedRoot.toUtf8(), QCryptographicHash::Sha1)
+        QCryptographicHash::hash(projectRoot_.toUtf8(), QCryptographicHash::Sha1)
             .toHex()
             .left(12));
     const QString random = QUuid::createUuid()
@@ -259,10 +382,7 @@ bool PetProcessSupervisor::initializeIpcSession() {
         false);
     if (inboundQueue_ == nullptr || reliableInboundQueue_ == nullptr
         || broadcastQueue_ == nullptr || controlQueue_ == nullptr) {
-        inboundQueue_.reset();
-        reliableInboundQueue_.reset();
-        broadcastQueue_.reset();
-        controlQueue_.reset();
+        resetIpcSession();
         emit statusChanged(QStringLiteral("Failed to create Rust-compatible IPC queues"));
         return false;
     }
@@ -270,54 +390,117 @@ bool PetProcessSupervisor::initializeIpcSession() {
     return true;
 }
 
-void PetProcessSupervisor::requestProcessStop() {
+void PetProcessSupervisor::resetIpcSession() {
+    ipcPollTimer_.stop();
+    inboundQueue_.reset();
+    reliableInboundQueue_.reset();
+    broadcastQueue_.reset();
+    controlQueue_.reset();
+    ipcSessionName_.clear();
+    supervisorPeerId_.clear();
+}
+
+void PetProcessSupervisor::requestFleetStop() {
+    for (const auto& child : children_) {
+        child->restartTimer.stop();
+    }
     const bool notified = controlQueue_ != nullptr
         && controlQueue_->publish(encodeIpcEnvelope(
             supervisorPeerId_, QStringLiteral("SHUTDOWN"), {}, {}, true));
-    if (notified) {
-        terminateTimer_.start(500);
+    for (const auto& child : children_) {
+        if (child->process.state() == QProcess::NotRunning) {
+            continue;
+        }
+        if (notified) {
+            child->terminateTimer.start(500);
+        } else {
+            child->process.terminate();
+            child->killTimer.start(kTerminateGraceMsec);
+        }
+    }
+    finalizeStoppedFleet();
+}
+
+void PetProcessSupervisor::finalizeStoppedFleet() {
+    if (finalizeScheduled_) {
         return;
     }
-    process_.terminate();
-    killTimer_.start(kTerminateGraceMsec);
+    const bool anyRunning = std::any_of(
+        children_.cbegin(), children_.cend(), [](const auto& child) {
+            return child->process.state() != QProcess::NotRunning;
+        });
+    if (anyRunning) {
+        return;
+    }
+    finalizeScheduled_ = true;
+    QTimer::singleShot(0, this, [this]() {
+        finalizeScheduled_ = false;
+        if (std::any_of(children_.cbegin(), children_.cend(), [](const auto& child) {
+                return child->process.state() != QProcess::NotRunning;
+            })) {
+            return;
+        }
+        children_.clear();
+        resetIpcSession();
+        if (relaunchAfterStop_ && !pendingSpecs_.isEmpty()) {
+            relaunchAfterStop_ = false;
+            launchPendingFleet();
+            return;
+        }
+        stopping_ = true;
+        emit statusChanged(QStringLiteral("All pet renderers stopped"));
+    });
+}
+
+void PetProcessSupervisor::publishPeerOffline(const QString& character) {
+    if (character.isEmpty() || controlQueue_ == nullptr) {
+        return;
+    }
+    const QString payload = QString::fromUtf8(
+        QJsonDocument(QJsonObject {{QStringLiteral("character"), character}})
+            .toJson(QJsonDocument::Compact));
+    controlQueue_->publish(encodeIpcEnvelope(
+        supervisorPeerId_,
+        QStringLiteral("PEER_OFFLINE\t") + payload,
+        {},
+        {},
+        true));
 }
 
 void PetProcessSupervisor::pollIpcMessages() {
-    if (reliableInboundQueue_ == nullptr) {
+    if (inboundQueue_ == nullptr || reliableInboundQueue_ == nullptr
+        || broadcastQueue_ == nullptr || controlQueue_ == nullptr) {
         return;
+    }
+    for (const QString& raw : inboundQueue_->readAvailable()) {
+        broadcastQueue_->publish(raw);
     }
     for (const QString& raw : reliableInboundQueue_->readAvailable()) {
         const QString line = decodeIpcEnvelopeLine(raw);
         if (line.startsWith(QStringLiteral("REGISTER\tPET\t"))) {
-            emit statusChanged(QStringLiteral("Pet renderer registered on Rust IPC"));
+            emit statusChanged(
+                QStringLiteral("Pet %1 registered on shared Rust IPC")
+                    .arg(line.section(QLatin1Char('\t'), 2, 2)));
         } else if (line.startsWith(QStringLiteral("UNREGISTER\tPET\t"))) {
-            emit statusChanged(QStringLiteral("Pet renderer unregistered"));
+            const QString character = line.section(QLatin1Char('\t'), 2, 2);
+            emit statusChanged(
+                QStringLiteral("Pet %1 unregistered")
+                    .arg(character));
+            publishPeerOffline(character);
         } else if (line.startsWith(QStringLiteral("PET_STATE\t"))) {
             const QByteArray configPath =
-                QDir(spec_.projectRoot).filePath(QStringLiteral("config.json")).toUtf8();
+                QDir(projectRoot_).filePath(QStringLiteral("config.json")).toUtf8();
             const QByteArray payload = line.mid(10).toUtf8();
             if (!bandori_config_save_pet_state(configPath.constData(), payload.constData())) {
                 emit rendererLog(
                     QStringLiteral("Failed to persist pet state: %1")
                         .arg(QString::fromUtf8(bandori_config_last_error())));
             }
+        } else {
+            controlQueue_->publish(raw);
+            emit controlRequest(line);
         }
     }
-}
-
-void PetProcessSupervisor::scheduleRestart() {
-    if (stopping_ || restartTimer_.isActive()) {
-        return;
-    }
-    if (consecutiveFailures_ >= kMaximumConsecutiveRestarts) {
-        stopping_ = true;
-        emit statusChanged(QStringLiteral("Pet renderer restart limit reached"));
-        return;
-    }
-    const int delay = std::min(4'000, 250 * (1 << consecutiveFailures_));
-    ++consecutiveFailures_;
-    emit statusChanged(QStringLiteral("Restarting pet renderer in %1 ms").arg(delay));
-    restartTimer_.start(delay);
 }
 
 QString PetProcessSupervisor::rendererProgram() const {
@@ -345,4 +528,4 @@ QString PetProcessSupervisor::rendererProgram() const {
     return QStandardPaths::findExecutable(baseName);
 }
 
-} // namespace bandori
+}  // namespace bandori

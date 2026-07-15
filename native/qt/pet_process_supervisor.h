@@ -1,12 +1,12 @@
 #pragma once
 
 #include <QObject>
-#include <QElapsedTimer>
-#include <QProcess>
+#include <QList>
 #include <QString>
 #include <QTimer>
 
 #include <memory>
+#include <vector>
 
 namespace bandori {
 
@@ -44,33 +44,39 @@ public:
     ~PetProcessSupervisor() override;
 
     void start(PetLaunchSpec spec);
+    void startAll(QList<PetLaunchSpec> specs);
     void stop();
     bool isRunning() const;
+    int runningCount() const;
+    int targetCount() const;
 
 signals:
     void statusChanged(const QString& status);
     void rendererLog(const QString& message);
+    void controlRequest(const QString& line);
 
 private:
-    void launchNow();
-    void handleFinished(int exitCode, QProcess::ExitStatus exitStatus);
-    void scheduleRestart();
+    struct ChildState;
+
+    void launchPendingFleet();
+    void launchNow(ChildState* child);
+    void handleFinished(ChildState* child, int exitCode, int exitStatus);
+    void scheduleRestart(ChildState* child);
     bool initializeIpcSession();
-    void requestProcessStop();
+    void resetIpcSession();
+    void requestFleetStop();
+    void finalizeStoppedFleet();
+    void publishPeerOffline(const QString& character);
     void pollIpcMessages();
     QString rendererProgram() const;
 
-    QProcess process_;
-    QTimer restartTimer_;
-    QTimer terminateTimer_;
-    QTimer killTimer_;
     QTimer ipcPollTimer_;
-    PetLaunchSpec spec_;
+    QList<PetLaunchSpec> pendingSpecs_;
+    std::vector<std::unique_ptr<ChildState>> children_;
+    QString projectRoot_;
     bool stopping_ = true;
     bool relaunchAfterStop_ = false;
-    bool replaceIpcSessionAfterStop_ = false;
-    int consecutiveFailures_ = 0;
-    QElapsedTimer processUptime_;
+    bool finalizeScheduled_ = false;
     QString ipcSessionName_;
     QString supervisorPeerId_;
     std::unique_ptr<SharedMemoryLineQueue> inboundQueue_;

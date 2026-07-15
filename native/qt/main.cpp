@@ -153,7 +153,7 @@ int main(int argc, char* argv[]) {
     if (!petSpec.modelPath.isEmpty()) {
         window.startPet(petSpec);
     } else {
-        window.startConfiguredPet();
+        window.startConfiguredPets();
     }
     return app.exec();
 }

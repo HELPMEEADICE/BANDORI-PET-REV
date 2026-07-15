@@ -102,15 +102,17 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   is ported. Menu open/closed lifecycle remains reliable IPC so peer z-order
   behavior can stay compatible during the dual-track migration.
   The native main application can rescan real MOC/MOC3 catalogs, select a costume,
-  start/restart/stop the renderer and restore the first configured Live2D pet.
+  start/restart/stop renderers and restore every configured Live2D pet. One native
+  supervisor now owns a single IPC session and independent restart state for each
+  child process, so group dragging and mutual gaze cross real pet processes instead
+  of being isolated by one session per pet.
   CXX-Qt generation is tested without a Qt SDK, including the generated C++
   property and invokable names.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: multi-pet supervision on one shared IPC session, pixel pet, tray and
-  remaining native visual/driver parity, application services, full settings/chat
-  UI replacement and packaging.
+- Pending: pixel pet, tray and remaining native visual/driver parity, application
+  services, full settings/chat UI replacement and packaging.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
