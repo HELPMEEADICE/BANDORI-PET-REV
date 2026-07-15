@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import mcp_bridge
+from mcp_base import extract_message_from_buffer
 
 
 class McpCancellationTests(unittest.TestCase):
@@ -65,6 +66,21 @@ class McpCancellationTests(unittest.TestCase):
         payload = stdin.getvalue()
         self.assertNotIn(b"Content-Length:", payload)
         self.assertTrue(payload.endswith(b"\n"))
+
+    def test_content_length_header_name_is_case_insensitive(self):
+        payload = b'{"jsonrpc":"2.0","id":7,"result":{}}'
+        framed = (
+            b"content-length: " + str(len(payload)).encode("ascii")
+            + b"\r\n\r\n" + payload
+        )
+
+        server_message, server_remaining = extract_message_from_buffer(framed)
+        client_message, client_remaining = mcp_bridge._extract_stdio_message(framed)
+
+        self.assertEqual(payload.decode("utf-8"), server_message)
+        self.assertEqual(b"", server_remaining)
+        self.assertEqual({"jsonrpc": "2.0", "id": 7, "result": {}}, client_message)
+        self.assertEqual(b"", client_remaining)
 
     def test_stdio_close_terminates_process_before_closing_stdout(self):
         events = []
