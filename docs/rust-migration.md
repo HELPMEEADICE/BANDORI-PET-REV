@@ -86,7 +86,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   visible saved position, accepts `PREVIEW_MOTION`, and sends reliable
   `PET_STATE` snapshots after completed drags and graceful shutdown. Both the
   Python and native supervisors persist those snapshots through the compatible
-  Rust/Python atomic configuration paths without overwriting other pets.
+  Rust/Python atomic configuration paths without overwriting other pets. Alpha
+  hit-tested single clicks now resolve per-region automatic, random, disabled,
+  or explicit motion/expression feedback in Rust. Drag locking no longer
+  suppresses clicks; double-clicks publish reliable `POKE_USER` events and both
+  local and remote pokes receive native model/window feedback. The widget also
+  exposes exact-hit right-click coordinates for the upcoming native radial menu.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

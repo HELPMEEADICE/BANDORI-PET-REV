@@ -1448,6 +1448,13 @@ def main():
                     "--opacity", str(cfg.get("opacity", 1.0)),
                     "--lip-sync-max-open", str(cfg.get("live2d_lip_sync_max_open", 0.55)),
                     "--hit-alpha-threshold", str(cfg.get("live2d_hit_alpha_threshold", 8)),
+                    "--click-motion-actions", json.dumps(
+                        model.get("click_motion_actions", {}),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    "--poke-motion", str(cfg.get("poke_motion", "") or ""),
+                    "--poke-expression", str(cfg.get("poke_expression", "") or ""),
                     "--drag-locked", str(bool(cfg.get("drag_locked", False))).lower(),
                     "--move-all-roles-together", str(bool(cfg.get("move_all_roles_together", False))).lower(),
                     "--head-tracking-enabled", str(bool(cfg.get("live2d_head_tracking_enabled", True))).lower(),

@@ -63,6 +63,19 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Alpha threshold used for pet input passthrough"),
         QStringLiteral("alpha"),
         QStringLiteral("8"));
+    QCommandLineOption petClickMotionActions(
+        QStringLiteral("pet-click-motion-actions"),
+        QStringLiteral("Per-region click motion feedback JSON"),
+        QStringLiteral("json"),
+        QStringLiteral("{}"));
+    QCommandLineOption petPokeMotion(
+        QStringLiteral("pet-poke-motion"),
+        QStringLiteral("Motion used for user poke feedback"),
+        QStringLiteral("motion"));
+    QCommandLineOption petPokeExpression(
+        QStringLiteral("pet-poke-expression"),
+        QStringLiteral("Expression used for user poke feedback"),
+        QStringLiteral("expression"));
     QCommandLineOption petDragLocked(
         QStringLiteral("pet-drag-locked"),
         QStringLiteral("Whether direct pet dragging is locked"));
@@ -95,6 +108,9 @@ int main(int argc, char* argv[]) {
          petOpacity,
          petLipSyncMaxOpen,
          petHitAlphaThreshold,
+         petClickMotionActions,
+         petPokeMotion,
+         petPokeExpression,
          petDragLocked,
          petMoveAllRolesTogether,
          petDisableHeadTracking,
@@ -151,6 +167,9 @@ int main(int argc, char* argv[]) {
     petSpec.opacity = parser.value(petOpacity).toDouble();
     petSpec.lipSyncMaxOpen = parser.value(petLipSyncMaxOpen).toDouble();
     petSpec.hitAlphaThreshold = parser.value(petHitAlphaThreshold).toInt();
+    petSpec.clickMotionActions = parser.value(petClickMotionActions);
+    petSpec.pokeMotion = parser.value(petPokeMotion);
+    petSpec.pokeExpression = parser.value(petPokeExpression);
     petSpec.dragLocked = parser.isSet(petDragLocked);
     petSpec.moveAllRolesTogether = parser.isSet(petMoveAllRolesTogether);
     petSpec.headTrackingEnabled = !parser.isSet(petDisableHeadTracking);

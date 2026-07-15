@@ -73,6 +73,30 @@ def test_native_pet_state_is_persisted_through_rust_config_boundary():
     assert "config.save(path)" in config_ffi
 
 
+def test_native_pet_click_double_click_and_poke_feedback_cross_rust_boundary():
+    widget_header = source("native/qt/live2d_gl_widget.h")
+    widget = source("native/qt/live2d_gl_widget.cpp")
+    pet = source("native/qt/pet_main.cpp")
+    live2d_ffi = source("rust/crates/bandori-live2d/src/ffi.rs")
+    runtime = source("rust/crates/bandori-live2d/src/runtime.rs")
+    main = source("main.py")
+
+    assert "void clicked(double x, double y)" in widget_header
+    assert "void doubleClicked(double x, double y)" in widget_header
+    assert "void rightClicked(int globalX, int globalY)" in widget_header
+    assert "pressedOnModel_ = isOpaqueAtGlobal(globalPosition)" in widget
+    assert "if (dragLocked_)" in widget
+    assert "emit clicked(position.x(), position.y())" in widget
+    assert "emit doubleClicked(position.x(), position.y())" in widget
+    assert "bandori_live2d_trigger_interaction" in widget
+    assert "trigger_interaction_feedback" in live2d_ffi
+    assert "select_interaction_motion" in runtime
+    assert 'QStringLiteral("POKE_USER\\t")' in pet
+    assert "shakeWindow(widget, 72)" in pet
+    assert '"--click-motion-actions", json.dumps(' in main
+    assert '"--poke-expression", str(cfg.get("poke_expression"' in main
+
+
 def test_python_supervisor_keeps_native_renderer_opt_in_and_full_fallback():
     main = source("main.py")
 

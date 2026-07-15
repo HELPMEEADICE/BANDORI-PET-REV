@@ -26,6 +26,9 @@ struct PetLaunchSpec {
     double opacity = 1.0;
     double lipSyncMaxOpen = 0.55;
     int hitAlphaThreshold = 8;
+    QString clickMotionActions = QStringLiteral("{}");
+    QString pokeMotion;
+    QString pokeExpression;
     bool dragLocked = false;
     bool moveAllRolesTogether = false;
     bool headTrackingEnabled = true;

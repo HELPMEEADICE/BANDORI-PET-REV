@@ -41,6 +41,13 @@ bool bandori_live2d_trigger_action(
     BandoriLive2dHost* host,
     const char* action,
     const char* character);
+std::int32_t bandori_live2d_trigger_interaction(
+    BandoriLive2dHost* host,
+    const char* region,
+    const char* configuredMotion,
+    const char* configuredExpression,
+    const char* character);
+bool bandori_live2d_reset_expression(BandoriLive2dHost* host);
 bool bandori_live2d_drag(BandoriLive2dHost* host, double x, double y);
 bool bandori_live2d_set_scale(BandoriLive2dHost* host, double scale);
 void bandori_live2d_destroy(BandoriLive2dHost* host);

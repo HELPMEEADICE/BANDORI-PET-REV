@@ -145,6 +145,48 @@ bool Live2dGlWidget::triggerAction(const QString& action, const QString& charact
     return triggered;
 }
 
+bool Live2dGlWidget::triggerInteraction(
+    const QString& region,
+    const QString& configuredMotion,
+    const QString& configuredExpression,
+    const QString& character) {
+    if (host_ == nullptr || region.trimmed().isEmpty()) {
+        return false;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const QByteArray regionUtf8 = region.toUtf8();
+    const QByteArray motionUtf8 = configuredMotion.toUtf8();
+    const QByteArray expressionUtf8 = configuredExpression.toUtf8();
+    const QByteArray characterUtf8 = character.toUtf8();
+    const std::int32_t result = bandori_live2d_trigger_interaction(
+        host_,
+        regionUtf8.constData(),
+        motionUtf8.constData(),
+        expressionUtf8.constData(),
+        characterUtf8.constData());
+    if (result < 0) {
+        reportLastError("trigger interaction");
+    }
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (result > 0) {
+        update();
+        if (!configuredExpression.trimmed().isEmpty()
+            && configuredMotion.trimmed() != QStringLiteral("__none__")) {
+            const std::uint64_t token = ++interactionExpressionToken_;
+            QTimer::singleShot(
+                5'000,
+                this,
+                [this, token]() { resetInteractionExpression(token); });
+        }
+    }
+    return result > 0;
+}
+
 void Live2dGlWidget::initializeGL() {
     auto* gl = context()->functions();
     gl->initializeOpenGLFunctions();
@@ -291,22 +333,43 @@ void Live2dGlWidget::paintGL() {
 }
 
 void Live2dGlWidget::mousePressEvent(QMouseEvent* event) {
+    const QPoint globalPosition = event->globalPosition().toPoint();
+    const bool nativeRightClick = event->button() == Qt::RightButton;
+#ifdef Q_OS_MACOS
+    const bool nativeControlClick = event->button() == Qt::LeftButton
+        && event->modifiers().testFlag(Qt::ControlModifier);
+#else
+    const bool nativeControlClick = false;
+#endif
+    if (nativeRightClick || nativeControlClick) {
+        const bool hit = isOpaqueAtGlobal(globalPosition);
+        rightPressHandled_ = nativeRightClick && hit;
+        if (hit) {
+            setInputPassthrough(false);
+            emit rightClicked(globalPosition.x(), globalPosition.y());
+            event->accept();
+            return;
+        }
+        QOpenGLWidget::mousePressEvent(event);
+        return;
+    }
     if (event->button() != Qt::LeftButton) {
         QOpenGLWidget::mousePressEvent(event);
         return;
     }
-    if (dragLocked_) {
-        QOpenGLWidget::mousePressEvent(event);
-        return;
-    }
-    if (!isOpaqueAtGlobal(event->globalPosition().toPoint())) {
+    pressedOnModel_ = isOpaqueAtGlobal(globalPosition);
+    if (!pressedOnModel_) {
         QOpenGLWidget::mousePressEvent(event);
         return;
     }
     setInputPassthrough(false);
+    if (dragLocked_) {
+        event->accept();
+        return;
+    }
     draggingWindow_ = true;
     dragMoved_ = false;
-    dragPressGlobal_ = event->globalPosition().toPoint();
+    dragPressGlobal_ = globalPosition;
     dragWindowOrigin_ = window()->pos();
     emit windowDragStarted();
     event->accept();
@@ -331,15 +394,68 @@ void Live2dGlWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void Live2dGlWidget::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() != Qt::LeftButton || !draggingWindow_) {
+    if (event->button() == Qt::RightButton) {
+        if (rightPressHandled_) {
+            rightPressHandled_ = false;
+            event->accept();
+            return;
+        }
         QOpenGLWidget::mouseReleaseEvent(event);
+        return;
+    }
+    if (event->button() != Qt::LeftButton || (!pressedOnModel_ && !draggingWindow_)) {
+        QOpenGLWidget::mouseReleaseEvent(event);
+        return;
+    }
+    const bool shouldClick = pressedOnModel_ && !dragMoved_;
+    pressedOnModel_ = false;
+    finishWindowDrag();
+    dragMoved_ = false;
+    if (shouldClick) {
+        const QPointF position = event->position();
+        emit clicked(position.x(), position.y());
+    }
+    event->accept();
+}
+
+void Live2dGlWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton
+        || !isOpaqueAtGlobal(event->globalPosition().toPoint())) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    pressedOnModel_ = false;
+    finishWindowDrag();
+    dragMoved_ = false;
+    const QPointF position = event->position();
+    emit doubleClicked(position.x(), position.y());
+    event->accept();
+}
+
+void Live2dGlWidget::finishWindowDrag() {
+    if (!draggingWindow_) {
         return;
     }
     const QPoint actual = window()->pos() - dragWindowOrigin_;
     draggingWindow_ = false;
     emit windowDragFinished(actual.x(), actual.y());
-    dragMoved_ = false;
-    event->accept();
+}
+
+void Live2dGlWidget::resetInteractionExpression(std::uint64_t token) {
+    if (token != interactionExpressionToken_ || host_ == nullptr) {
+        return;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    if (!bandori_live2d_reset_expression(host_)) {
+        reportLastError("reset interaction expression");
+    }
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    update();
 }
 
 std::uintptr_t Live2dGlWidget::resolveGlProcedure(const char* name, void*) {

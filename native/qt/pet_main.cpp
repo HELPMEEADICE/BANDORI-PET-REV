@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPoint>
+#include <QEasingCurve>
 #include <QRect>
 #include <QScreen>
 #include <QSet>
@@ -18,6 +19,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QUuid>
+#include <QVariantAnimation>
 
 #include <algorithm>
 #include <limits>
@@ -80,6 +82,83 @@ struct PeerDragState {
     QString dragId;
     QPoint origin;
 };
+
+struct InteractionFeedback {
+    QString motion;
+    QString expression;
+};
+
+const QString kWindowShakeObjectName = QStringLiteral("bandori-window-shake");
+
+QString interactionRegion(double x, double y, int width, int height) {
+    const double xRatio = std::clamp(x / std::max(width, 1), 0.0, 1.0);
+    const double yRatio = std::clamp(y / std::max(height, 1), 0.0, 1.0);
+    if (yRatio < 0.38) {
+        return QStringLiteral("head");
+    }
+    const QString vertical = yRatio < 0.64
+        ? QStringLiteral("upper_body")
+        : QStringLiteral("lower_body");
+    const QString horizontal = xRatio < 0.38
+        ? QStringLiteral("left")
+        : (xRatio > 0.62 ? QStringLiteral("right") : QStringLiteral("center"));
+    return vertical + u'_' + horizontal;
+}
+
+InteractionFeedback feedbackForRegion(const QJsonObject& actions, const QString& region) {
+    const QJsonValue raw = actions.value(region);
+    if (raw.isString()) {
+        return {raw.toString().trimmed(), {}};
+    }
+    if (!raw.isObject()) {
+        return {};
+    }
+    const QJsonObject value = raw.toObject();
+    return {
+        value.value(QStringLiteral("motion")).toString().trimmed(),
+        value.value(QStringLiteral("expression")).toString().trimmed(),
+    };
+}
+
+void settleWindowShake(QWidget& widget) {
+    auto* animation = widget.findChild<QVariantAnimation*>(kWindowShakeObjectName);
+    if (animation == nullptr) {
+        return;
+    }
+    const QPoint origin = animation->property("bandori-origin").toPoint();
+    animation->stop();
+    animation->setObjectName(QString {});
+    widget.move(origin);
+    animation->deleteLater();
+}
+
+void shakeWindow(QWidget& widget, int intensity) {
+    settleWindowShake(widget);
+    const QPoint origin = widget.pos();
+    const int amplitude = std::clamp(6 + intensity / 5, 8, 26);
+    auto* animation = new QVariantAnimation(&widget);
+    animation->setObjectName(kWindowShakeObjectName);
+    animation->setProperty("bandori-origin", origin);
+    animation->setDuration(360);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
+    animation->setKeyValueAt(0.0, origin);
+    animation->setKeyValueAt(0.18, origin + QPoint(-amplitude, 0));
+    animation->setKeyValueAt(0.36, origin + QPoint(amplitude, 0));
+    animation->setKeyValueAt(0.55, origin + QPoint(-amplitude / 2, 0));
+    animation->setKeyValueAt(0.74, origin + QPoint(amplitude / 2, 0));
+    animation->setKeyValueAt(1.0, origin);
+    QObject::connect(
+        animation,
+        &QVariantAnimation::valueChanged,
+        &widget,
+        [&widget](const QVariant& value) { widget.move(value.toPoint()); });
+    QObject::connect(animation, &QVariantAnimation::finished, &widget, [&widget, animation, origin]() {
+        animation->setObjectName(QString {});
+        widget.move(origin);
+        animation->deleteLater();
+    });
+    animation->start();
+}
 
 QJsonArray rectangleJson(const QRect& rectangle) {
     return {rectangle.left(), rectangle.top(), rectangle.width(), rectangle.height()};
@@ -194,6 +273,19 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Alpha threshold used for transparent input passthrough"),
         QStringLiteral("alpha"),
         QStringLiteral("8"));
+    QCommandLineOption clickMotionActions(
+        QStringLiteral("click-motion-actions"),
+        QStringLiteral("Per-region click motion feedback JSON"),
+        QStringLiteral("json"),
+        QStringLiteral("{}"));
+    QCommandLineOption pokeMotion(
+        QStringLiteral("poke-motion"),
+        QStringLiteral("Motion used for user poke feedback"),
+        QStringLiteral("motion"));
+    QCommandLineOption pokeExpression(
+        QStringLiteral("poke-expression"),
+        QStringLiteral("Expression used for user poke feedback"),
+        QStringLiteral("expression"));
     QCommandLineOption dragLocked(
         QStringLiteral("drag-locked"),
         QStringLiteral("Whether direct pet-window dragging is locked"),
@@ -237,6 +329,9 @@ int main(int argc, char* argv[]) {
          opacity,
          lipSyncMaxOpen,
          hitAlphaThreshold,
+         clickMotionActions,
+         pokeMotion,
+         pokeExpression,
          dragLocked,
          moveAllRolesTogether,
          headTrackingEnabled,
@@ -306,6 +401,13 @@ int main(int argc, char* argv[]) {
     if (characterId.isEmpty()) {
         characterId = QFileInfo(modelPath).completeBaseName();
     }
+    const QJsonDocument clickActionsDocument =
+        QJsonDocument::fromJson(parser.value(clickMotionActions).toUtf8());
+    QJsonObject configuredClickActions = clickActionsDocument.isObject()
+        ? clickActionsDocument.object()
+        : QJsonObject {};
+    QString configuredPokeMotion = parser.value(pokeMotion).trimmed();
+    QString configuredPokeExpression = parser.value(pokeExpression).trimmed();
     QString ipcSessionName = parser.value(ipcSession).trimmed();
     if (ipcSessionName.isEmpty()) {
         ipcSessionName = qEnvironmentVariable("BANDORI_PET_IPC_SERVER_NAME").trimmed();
@@ -319,6 +421,24 @@ int main(int argc, char* argv[]) {
     QHash<QString, QPoint> peerPositions;
     QPoint lastPublishedCenter;
     bool lastPublishedCenterValid = false;
+    auto triggerPokeFeedback = [&widget,
+                                &configuredClickActions,
+                                &configuredPokeMotion,
+                                &configuredPokeExpression,
+                                characterId]() {
+        InteractionFeedback feedback {
+            configuredPokeMotion,
+            configuredPokeExpression,
+        };
+        if (feedback.motion.isEmpty() && feedback.expression.isEmpty()) {
+            feedback = feedbackForRegion(configuredClickActions, QStringLiteral("head"));
+        }
+        return widget.triggerInteraction(
+            QStringLiteral("head"),
+            feedback.motion,
+            feedback.expression,
+            characterId);
+    };
     auto updateMutualGaze = [&widget, &mutualGaze, &peerPositions]() {
         if (!mutualGaze || peerPositions.isEmpty()) {
             widget.clearGazeTarget();
@@ -371,9 +491,38 @@ int main(int argc, char* argv[]) {
     peerPositionTimer.start();
     QObject::connect(
         &widget,
+        &bandori::Live2dGlWidget::clicked,
+        &widget,
+        [&widget, &configuredClickActions, characterId](double x, double y) {
+            const QString region = interactionRegion(x, y, widget.width(), widget.height());
+            const InteractionFeedback feedback = feedbackForRegion(configuredClickActions, region);
+            widget.triggerInteraction(
+                region,
+                feedback.motion,
+                feedback.expression,
+                characterId);
+        });
+    QObject::connect(
+        &widget,
+        &bandori::Live2dGlWidget::doubleClicked,
+        ipcClient,
+        [ipcClient, &widget, &triggerPokeFeedback, characterId](double, double) {
+            triggerPokeFeedback();
+            shakeWindow(widget, 72);
+            ipcClient->publishLine(
+                QStringLiteral("POKE_USER\t")
+                    + compactJson({
+                        {QStringLiteral("character"), characterId},
+                        {QStringLiteral("source"), QStringLiteral("live2d")},
+                    }),
+                true);
+        });
+    QObject::connect(
+        &widget,
         &bandori::Live2dGlWidget::windowDragStarted,
         ipcClient,
-        [&activeDragId]() {
+        [&widget, &activeDragId]() {
+            settleWindowShake(widget);
             activeDragId = QUuid::createUuid()
                                .toString(QUuid::WithoutBraces)
                                .remove(QLatin1Char('-'));
@@ -404,7 +553,12 @@ int main(int argc, char* argv[]) {
         &widget,
         &bandori::Live2dGlWidget::windowDragFinished,
         ipcClient,
-        [ipcClient, &moveAllRoles, &activeDragId, characterId](int totalDx, int totalDy) {
+        [ipcClient,
+         &widget,
+         &moveAllRoles,
+         &activeDragId,
+         characterId,
+         modelPath](int totalDx, int totalDy) {
             if (moveAllRoles && !activeDragId.isEmpty() && (totalDx != 0 || totalDy != 0)) {
                 ipcClient->publishLine(
                     QStringLiteral("PEER_DRAG_END\t")
@@ -436,6 +590,10 @@ int main(int argc, char* argv[]) {
          &peerPositions,
          &lastPublishedCenterValid,
          &updateMutualGaze,
+         &configuredClickActions,
+         &configuredPokeMotion,
+         &configuredPokeExpression,
+         &triggerPokeFeedback,
          ipcClient,
          modelPath](const QString& line) {
             const bool peerDragFinished = line.startsWith(QStringLiteral("PEER_DRAG_END\t"));
@@ -516,6 +674,28 @@ int main(int argc, char* argv[]) {
                 }
                 return;
             }
+            if (line.startsWith(QStringLiteral("POKE_USER\t"))) {
+                const QJsonObject event = ipcJsonPayload(line);
+                const QString target =
+                    event.value(QStringLiteral("character")).toString().trimmed();
+                if (!target.isEmpty() && target != characterId) {
+                    return;
+                }
+                const QString source =
+                    event.value(QStringLiteral("source")).toString().trimmed().toLower();
+                if (source == QStringLiteral("live2d")) {
+                    return;
+                }
+                const QString direction =
+                    event.value(QStringLiteral("direction")).toString().trimmed().toLower();
+                if (direction == QStringLiteral("to_user")) {
+                    shakeWindow(widget, 36);
+                    return;
+                }
+                triggerPokeFeedback();
+                shakeWindow(widget, 72);
+                return;
+            }
             if (line.startsWith(QStringLiteral("ACTION\t"))) {
                 const QStringList parts = line.split(u'\t');
                 if (parts.size() >= 3 && parts.at(1) == characterId) {
@@ -582,6 +762,35 @@ int main(int argc, char* argv[]) {
                     settings.value(QStringLiteral("live2d_mutual_gaze_enabled")).toBool(false);
                 lastPublishedCenterValid = false;
             }
+            if (settings.contains(QStringLiteral("poke_motion"))) {
+                configuredPokeMotion =
+                    settings.value(QStringLiteral("poke_motion")).toString().trimmed();
+            }
+            if (settings.contains(QStringLiteral("poke_expression"))) {
+                configuredPokeExpression =
+                    settings.value(QStringLiteral("poke_expression")).toString().trimmed();
+            }
+            if (settings.value(QStringLiteral("models")).isArray()) {
+                const QJsonArray models = settings.value(QStringLiteral("models")).toArray();
+                QJsonObject characterMatch;
+                for (const QJsonValue& value : models) {
+                    const QJsonObject entry = value.toObject();
+                    if (entry.value(QStringLiteral("character")).toString() != characterId) {
+                        continue;
+                    }
+                    if (characterMatch.isEmpty()) {
+                        characterMatch = entry;
+                    }
+                    if (entry.value(QStringLiteral("path")).toString() == modelPath) {
+                        characterMatch = entry;
+                        break;
+                    }
+                }
+                if (!characterMatch.isEmpty()) {
+                    configuredClickActions =
+                        characterMatch.value(QStringLiteral("click_motion_actions")).toObject();
+                }
+            }
             widget.setHeadTrackingEnabled(headTracking && !mutualGaze);
             updateMutualGaze();
         });
@@ -590,6 +799,7 @@ int main(int argc, char* argv[]) {
         &QCoreApplication::aboutToQuit,
         ipcClient,
         [ipcClient, &widget, characterId, modelPath]() {
+            settleWindowShake(widget);
             publishPetWindowState(ipcClient, widget, characterId, modelPath);
         });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, ipcClient, &bandori::PetIpcClient::stop);

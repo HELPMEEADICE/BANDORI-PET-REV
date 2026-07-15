@@ -45,8 +45,16 @@ public:
     void setLipSyncMaxOpen(double value);
     void setLipSyncPose(double level, double form = 0.0);
     bool triggerAction(const QString& action, const QString& character);
+    bool triggerInteraction(
+        const QString& region,
+        const QString& configuredMotion,
+        const QString& configuredExpression,
+        const QString& character);
 
 signals:
+    void clicked(double x, double y);
+    void doubleClicked(double x, double y);
+    void rightClicked(int globalX, int globalY);
     void windowDragStarted();
     void windowDragMoved(int totalDx, int totalDy);
     void windowDragFinished(int totalDx, int totalDy);
@@ -58,6 +66,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     static std::uintptr_t resolveGlProcedure(const char* name, void* userData);
@@ -71,6 +80,8 @@ private:
     bool isOpaqueAtGlobal(const QPoint& globalPosition);
     void applyInputPassthroughFromSample();
     void setInputPassthrough(bool enabled);
+    void finishWindowDrag();
+    void resetInteractionExpression(std::uint64_t token);
     void disposeRuntime();
     void reportLastError(const char* operation);
 
@@ -106,6 +117,9 @@ private:
     QPoint lastAppliedGazeWindowOrigin_;
     bool gazeWasApplied_ = false;
     bool dragMoved_ = false;
+    bool pressedOnModel_ = false;
+    bool rightPressHandled_ = false;
+    std::uint64_t interactionExpressionToken_ = 0;
     QPoint dragPressGlobal_;
     QPoint dragWindowOrigin_;
     std::unique_ptr<QOpenGLFramebufferObject> ssaaFramebuffer_;

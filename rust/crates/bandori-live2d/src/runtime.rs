@@ -21,6 +21,25 @@ local loaders = package.searchers or package.loaders
 table.insert(loaders, 1, loader)
 "#;
 
+static HEAD_INTERACTION_BUCKETS: &[&[&str]] = &[
+    &["surprised", "shame", "pui", "smile"],
+    &["kandou", "kime", "nf"],
+];
+static UPPER_LEFT_INTERACTION_BUCKETS: &[&[&str]] =
+    &[&["nf_left", "nnf_left"], &["shame", "surprised", "smile"]];
+static UPPER_CENTER_INTERACTION_BUCKETS: &[&[&str]] = &[
+    &["smile", "kime", "surprised", "shame"],
+    &["angry", "pui", "nf"],
+];
+static UPPER_RIGHT_INTERACTION_BUCKETS: &[&[&str]] =
+    &[&["nf_right", "nnf_right"], &["shame", "surprised", "smile"]];
+static LOWER_LEFT_INTERACTION_BUCKETS: &[&[&str]] =
+    &[&["nf_left", "nnf_left"], &["surprised", "sad", "smile"]];
+static LOWER_CENTER_INTERACTION_BUCKETS: &[&[&str]] =
+    &[&["shame", "surprised", "angry"], &["smile", "kime"]];
+static LOWER_RIGHT_INTERACTION_BUCKETS: &[&[&str]] =
+    &[&["nf_right", "nnf_right"], &["surprised", "sad", "smile"]];
+
 pub type GlProcResolver = Arc<dyn Fn(&str) -> Option<usize> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -353,17 +372,7 @@ impl Live2dRuntime {
             vec![normalized.as_str()]
         };
         let character = character.to_lowercase();
-        let motion = candidates.iter().find_map(|candidate| {
-            let character_candidate = format!("{character}_{candidate}");
-            info.motion_names.iter().find(|name| {
-                let name = name.to_lowercase();
-                name == **candidate
-                    || name.starts_with(*candidate)
-                    || name == character_candidate
-                    || name.starts_with(&character_candidate)
-                    || contains_action_token(&name, candidate)
-            })
-        });
+        let motion = find_motion(&info.motion_names, &candidates, &character);
         let mut triggered = false;
         if let Some(motion) = motion {
             self.start_motion(motion, 0, MotionPriority::Force, false)?;
@@ -372,6 +381,42 @@ impl Live2dRuntime {
         if let Some(expression) = find_expression(&info.expressions, &normalized, &character) {
             self.set_expression(expression)?;
             triggered = true;
+        }
+        Ok(triggered)
+    }
+
+    pub fn trigger_interaction_feedback(
+        &self,
+        region: &str,
+        configured_motion: &str,
+        configured_expression: &str,
+        character: &str,
+        choice: usize,
+    ) -> Result<bool, Live2dError> {
+        let configured_motion = configured_motion.trim();
+        if configured_motion == "__none__" {
+            return Ok(false);
+        }
+        let info = self.model_info()?;
+        let mut triggered = false;
+        if let Some(motion) = select_interaction_motion(
+            &info.motion_names,
+            region,
+            character,
+            configured_motion,
+            choice,
+        ) {
+            self.start_motion(motion, 0, MotionPriority::Force, false)?;
+            triggered = true;
+        }
+        let configured_expression = configured_expression.trim();
+        if !configured_expression.is_empty() {
+            if let Some(expression) =
+                find_expression(&info.expressions, configured_expression, character)
+            {
+                self.set_expression(expression)?;
+                triggered = true;
+            }
         }
         Ok(triggered)
     }
@@ -636,6 +681,73 @@ fn find_expression<'a>(
     })
 }
 
+fn find_motion<'a>(
+    motion_names: &'a [String],
+    candidates: &[&str],
+    character: &str,
+) -> Option<&'a str> {
+    candidates.iter().find_map(|candidate| {
+        let candidate = candidate.to_lowercase();
+        let character_candidate = format!("{character}_{candidate}");
+        motion_names.iter().find_map(|name| {
+            let normalized = name.to_lowercase();
+            (normalized == candidate
+                || normalized.starts_with(&candidate)
+                || normalized == character_candidate
+                || normalized.starts_with(&character_candidate)
+                || contains_action_token(&normalized, &candidate))
+            .then_some(name.as_str())
+        })
+    })
+}
+
+fn select_interaction_motion<'a>(
+    motion_names: &'a [String],
+    region: &str,
+    character: &str,
+    configured_motion: &str,
+    choice: usize,
+) -> Option<&'a str> {
+    if configured_motion == "__none__" {
+        return None;
+    }
+    let character = character.to_lowercase();
+    if !configured_motion.is_empty() && configured_motion != "__random__" {
+        return find_motion(motion_names, &[configured_motion], &character);
+    }
+    if configured_motion.is_empty() {
+        for bucket in interaction_buckets(region) {
+            let available = bucket
+                .iter()
+                .filter_map(|tag| find_motion(motion_names, &[*tag], &character))
+                .collect::<Vec<_>>();
+            if !available.is_empty() {
+                return Some(available[choice % available.len()]);
+            }
+        }
+    }
+    let available = motion_names
+        .iter()
+        .filter(|name| {
+            let normalized = name.to_lowercase();
+            !normalized.starts_with("idle") && !normalized.starts_with("sys-")
+        })
+        .collect::<Vec<_>>();
+    (!available.is_empty()).then(|| available[choice % available.len()].as_str())
+}
+
+fn interaction_buckets(region: &str) -> &'static [&'static [&'static str]] {
+    match region {
+        "head" => HEAD_INTERACTION_BUCKETS,
+        "upper_body_left" => UPPER_LEFT_INTERACTION_BUCKETS,
+        "upper_body_right" => UPPER_RIGHT_INTERACTION_BUCKETS,
+        "lower_body_left" => LOWER_LEFT_INTERACTION_BUCKETS,
+        "lower_body_center" => LOWER_CENTER_INTERACTION_BUCKETS,
+        "lower_body_right" => LOWER_RIGHT_INTERACTION_BUCKETS,
+        _ => UPPER_CENTER_INTERACTION_BUCKETS,
+    }
+}
+
 fn contains_action_token(name: &str, candidate: &str) -> bool {
     name.split(['_', '-']).any(|part| {
         part == candidate
@@ -759,6 +871,19 @@ return M
     #[test]
     fn action_tags_resolve_motion_extensions_and_expression_files() {
         let (_temp, runtime) = runtime(Live2dFormat::Moc3);
+        assert!(
+            !runtime
+                .trigger_interaction_feedback("head", "__none__", "smile", "aya", 0)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime
+                .renderer_table()
+                .unwrap()
+                .get::<Option<String>>("expression_name")
+                .unwrap(),
+            None
+        );
         assert!(runtime.trigger_action("[idle.motion]", "aya").unwrap());
         assert_eq!(
             runtime
@@ -776,6 +901,36 @@ return M
                 .get::<String>("expression_name")
                 .unwrap(),
             "smile"
+        );
+    }
+
+    #[test]
+    fn interaction_feedback_matches_regions_and_special_motion_values() {
+        let motions = vec![
+            "Idle".to_owned(),
+            "kasumi_smile_01".to_owned(),
+            "nf_left_02".to_owned(),
+            "wave".to_owned(),
+        ];
+        assert_eq!(
+            select_interaction_motion(&motions, "head", "kasumi", "", 0),
+            Some("kasumi_smile_01")
+        );
+        assert_eq!(
+            select_interaction_motion(&motions, "upper_body_left", "kasumi", "", 0),
+            Some("nf_left_02")
+        );
+        assert_eq!(
+            select_interaction_motion(&motions, "head", "kasumi", "__random__", 2),
+            Some("wave")
+        );
+        assert_eq!(
+            select_interaction_motion(&motions, "head", "kasumi", "__none__", 0),
+            None
+        );
+        assert_eq!(
+            select_interaction_motion(&motions, "head", "kasumi", "wave", 0),
+            Some("wave")
         );
     }
 

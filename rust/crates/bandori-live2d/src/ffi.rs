@@ -16,6 +16,7 @@ pub type BandoriGlProcResolver =
 pub struct BandoriLive2dHost {
     runtime: Live2dRuntime,
     frame_number: u64,
+    interaction_number: u64,
     parameters: BTreeMap<String, ParameterValue>,
 }
 
@@ -77,6 +78,7 @@ pub unsafe extern "C" fn bandori_live2d_create(
         Ok(Box::into_raw(Box::new(BandoriLive2dHost {
             runtime,
             frame_number: 0,
+            interaction_number: 0,
             parameters: BTreeMap::new(),
         })))
     }));
@@ -246,6 +248,73 @@ pub unsafe extern "C" fn bandori_live2d_trigger_action(
 }
 
 #[unsafe(no_mangle)]
+/// Resolves configured click or poke feedback against model metadata.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. All string pointers must contain
+/// valid NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_trigger_interaction(
+    host: *mut BandoriLive2dHost,
+    region: *const c_char,
+    configured_motion: *const c_char,
+    configured_expression: *const c_char,
+    character: *const c_char,
+) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let region = unsafe { required_string(region, "region") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let motion = unsafe { required_string(configured_motion, "configured_motion") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let expression =
+            unsafe { required_string(configured_expression, "configured_expression") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let character = unsafe { required_string(character, "character") }?;
+        host.interaction_number = host.interaction_number.wrapping_add(1);
+        host.runtime
+            .trigger_interaction_feedback(
+                &region,
+                &motion,
+                &expression,
+                &character,
+                host.interaction_number as usize,
+            )
+            .map_err(|error| error.to_string())
+    }));
+    match result {
+        Ok(Ok(triggered)) => {
+            clear_error();
+            i32::from(triggered)
+        }
+        Ok(Err(error)) => {
+            set_error(error);
+            -1
+        }
+        Err(_) => {
+            set_error("panic inside Live2D interaction FFI call");
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Resets an expression previously applied by interaction feedback.
+///
+/// # Safety
+/// `host` must be a live handle and its owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_reset_expression(host: *mut BandoriLive2dHost) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        unsafe { required_host(host) }?
+            .runtime
+            .reset_expression()
+            .map_err(|error| error.to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
 /// Renders the current Cubism 3 state without advancing its simulation.
 ///
 /// # Safety
@@ -383,6 +452,20 @@ mod tests {
     fn null_handles_fail_without_unwinding_across_ffi() {
         // SAFETY: null is an explicitly supported error input for this test.
         assert!(!unsafe { bandori_live2d_resize(ptr::null_mut(), 1, 1) });
+        let empty = c"";
+        // SAFETY: null is an explicitly supported error input for this test.
+        assert_eq!(
+            unsafe {
+                bandori_live2d_trigger_interaction(
+                    ptr::null_mut(),
+                    empty.as_ptr(),
+                    empty.as_ptr(),
+                    empty.as_ptr(),
+                    empty.as_ptr(),
+                )
+            },
+            -1
+        );
         // SAFETY: the thread-local pointer remains valid until the next FFI call.
         let error = unsafe { CStr::from_ptr(bandori_live2d_last_error()) };
         assert!(error.to_string_lossy().contains("pointer is null"));
