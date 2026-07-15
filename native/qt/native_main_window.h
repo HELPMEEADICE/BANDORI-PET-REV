@@ -42,6 +42,9 @@ private:
     QWidget* createModelsPage();
     QWidget* createSettingsPage();
     bool reloadBackendState();
+    void syncSettingsControls();
+    void saveNativeSettings();
+    void applyTheme(const QString& mode);
     void applyBackendState();
     void populateModelList();
     void updateModelDetails();
@@ -74,6 +77,14 @@ private:
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;
+    qfw::SpinBox* fpsSpinBox_ = nullptr;
+    qfw::DoubleSpinBox* opacitySpinBox_ = nullptr;
+    qfw::SwitchButton* dragLockedSwitch_ = nullptr;
+    qfw::SwitchButton* moveTogetherSwitch_ = nullptr;
+    qfw::SwitchButton* headTrackingSwitch_ = nullptr;
+    qfw::SwitchButton* mutualGazeSwitch_ = nullptr;
+    qfw::ComboBox* themeComboBox_ = nullptr;
+    qfw::PrimaryPushButton* saveSettingsButton_ = nullptr;
 };
 
 }  // namespace bandori

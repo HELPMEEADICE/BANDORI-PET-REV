@@ -32,6 +32,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "getModelCatalogJson",
         "getRuntimeConfigJson",
         "reloadState",
+        "saveNativeSettings",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

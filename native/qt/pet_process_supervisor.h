@@ -46,6 +46,7 @@ public:
     void start(PetLaunchSpec spec);
     void startAll(QList<PetLaunchSpec> specs);
     void stop();
+    bool broadcastSettings(const QString& settingsJson);
     bool isRunning() const;
     int runningCount() const;
     int targetCount() const;

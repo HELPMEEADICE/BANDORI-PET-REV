@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QListWidgetItem>
 #include <QScrollArea>
+#include <QVariant>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -225,6 +226,63 @@ QWidget* NativeMainWindow::createSettingsPage() {
     layout->setSpacing(24);
 
     auto* title = new qfw::TitleLabel(tr("Native application state"), content);
+    auto* live2d = new qfw::GroupHeaderCardWidget(tr("Live2D runtime"), content);
+    fpsSpinBox_ = new qfw::SpinBox(live2d);
+    fpsSpinBox_->setRange(10, 240);
+    fpsSpinBox_->setSuffix(QStringLiteral(" FPS"));
+    fpsSpinBox_->setFixedWidth(132);
+    opacitySpinBox_ = new qfw::DoubleSpinBox(live2d);
+    opacitySpinBox_->setRange(0.05, 1.0);
+    opacitySpinBox_->setSingleStep(0.05);
+    opacitySpinBox_->setDecimals(2);
+    opacitySpinBox_->setFixedWidth(112);
+    dragLockedSwitch_ = new qfw::SwitchButton(live2d);
+    moveTogetherSwitch_ = new qfw::SwitchButton(live2d);
+    headTrackingSwitch_ = new qfw::SwitchButton(live2d);
+    mutualGazeSwitch_ = new qfw::SwitchButton(live2d);
+    themeComboBox_ = new qfw::ComboBox(live2d);
+    themeComboBox_->addItem(
+        tr("Follow system"), QVariant(), QStringLiteral("follow_system"));
+    themeComboBox_->addItem(tr("Light"), QVariant(), QStringLiteral("off"));
+    themeComboBox_->addItem(tr("Dark"), QVariant(), QStringLiteral("on"));
+    themeComboBox_->setFixedWidth(148);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::SpeedHigh),
+        tr("Frame rate"),
+        tr("Target refresh rate for every isolated pet renderer"),
+        fpsSpinBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Transparent),
+        tr("Opacity"),
+        tr("Window opacity shared by Live2D pets"),
+        opacitySpinBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::LockClosed),
+        tr("Drag lock"),
+        tr("Prevent direct pet-window dragging"),
+        dragLockedSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Move),
+        tr("Move pets together"),
+        tr("Mirror one drag session across all active pets"),
+        moveTogetherSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Cursor head tracking"),
+        tr("Look toward the global pointer when mutual gaze is disabled"),
+        headTrackingSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::People),
+        tr("Mutual gaze"),
+        tr("Look toward the nearest pet on the shared IPC session"),
+        mutualGazeSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Brush),
+        tr("Application theme"),
+        tr("Apply light, dark or system appearance to Qt-Fluent-Widgets"),
+        themeComboBox_);
+    saveSettingsButton_ = new qfw::PrimaryPushButton(tr("Save and apply"), content);
+
     auto* sources = new qfw::SettingCardGroup(tr("Rust service sources"), content);
     configCard_ = new qfw::SettingCard(
         qfw::FluentIconEnum::Document,
@@ -259,6 +317,8 @@ QWidget* NativeMainWindow::createSettingsPage() {
     renderer->addSettingCards({runtimeCard_, stopCard});
 
     layout->addWidget(title);
+    layout->addWidget(live2d);
+    layout->addWidget(saveSettingsButton_, 0, Qt::AlignRight);
     layout->addWidget(sources);
     layout->addWidget(renderer);
     layout->addStretch(1);
@@ -269,6 +329,9 @@ QWidget* NativeMainWindow::createSettingsPage() {
 
     connect(reloadCard, &qfw::PushSettingCard::clicked, this, [this]() { reloadBackendState(); });
     connect(stopCard, &qfw::PushSettingCard::clicked, &supervisor_, &PetProcessSupervisor::stop);
+    connect(saveSettingsButton_, &QPushButton::clicked, this, [this]() {
+        saveNativeSettings();
+    });
     return page;
 }
 
@@ -284,6 +347,7 @@ void NativeMainWindow::applyBackendState() {
     configCard_->setContent(
         QStringLiteral("%1\n%2").arg(configPath_, backend_.getConfigSummary()));
     runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    syncSettingsControls();
     catalog_.clear();
     for (const QJsonValue& value : parseArray(backend_.getModelCatalogJson())) {
         if (!value.isObject()) {
@@ -301,6 +365,68 @@ void NativeMainWindow::applyBackendState() {
             ? tr("Start %1 configured pets").arg(configured)
             : (configured == 1 ? tr("Start configured pet") : tr("No Live2D pet available")));
     startConfiguredButton_->setEnabled(configured > 0);
+}
+
+void NativeMainWindow::syncSettingsControls() {
+    if (fpsSpinBox_ == nullptr) {
+        return;
+    }
+    fpsSpinBox_->setValue(runtime_.value(QStringLiteral("fps")).toInt(120));
+    opacitySpinBox_->setValue(runtime_.value(QStringLiteral("opacity")).toDouble(1.0));
+    dragLockedSwitch_->setChecked(runtime_.value(QStringLiteral("drag_locked")).toBool());
+    moveTogetherSwitch_->setChecked(
+        runtime_.value(QStringLiteral("move_all_roles_together")).toBool());
+    headTrackingSwitch_->setChecked(
+        runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true));
+    mutualGazeSwitch_->setChecked(
+        runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool());
+    const QString theme =
+        runtime_.value(QStringLiteral("dark_theme")).toString(QStringLiteral("follow_system"));
+    const int themeIndex = themeComboBox_->findData(theme);
+    themeComboBox_->setCurrentIndex(themeIndex < 0 ? 0 : themeIndex);
+    applyTheme(theme);
+}
+
+void NativeMainWindow::saveNativeSettings() {
+    const QJsonObject settings {
+        {QStringLiteral("fps"), fpsSpinBox_->value()},
+        {QStringLiteral("opacity"), opacitySpinBox_->value()},
+        {QStringLiteral("dark_theme"), themeComboBox_->currentData().toString()},
+        {QStringLiteral("drag_locked"), dragLockedSwitch_->isChecked()},
+        {QStringLiteral("move_all_roles_together"), moveTogetherSwitch_->isChecked()},
+        {QStringLiteral("live2d_head_tracking_enabled"), headTrackingSwitch_->isChecked()},
+        {QStringLiteral("live2d_mutual_gaze_enabled"), mutualGazeSwitch_->isChecked()},
+    };
+    const QString settingsJson = compactJson(settings);
+    if (!backend_.saveNativeSettings(configPath_, settingsJson)) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+
+    for (PetLaunchSpec& spec : activeSpecs_) {
+        spec.fps = fpsSpinBox_->value();
+        spec.opacity = opacitySpinBox_->value();
+        spec.dragLocked = dragLockedSwitch_->isChecked();
+        spec.moveAllRolesTogether = moveTogetherSwitch_->isChecked();
+        spec.headTrackingEnabled = headTrackingSwitch_->isChecked();
+        spec.mutualGazeEnabled = mutualGazeSwitch_->isChecked();
+    }
+    const bool delivered = !supervisor_.isRunning()
+        || supervisor_.broadcastSettings(settingsJson);
+    applyBackendState();
+    rendererStatusLabel_->setText(
+        delivered ? tr("Native settings saved and applied")
+                  : tr("Settings saved; running pets did not acknowledge the IPC broadcast"));
+}
+
+void NativeMainWindow::applyTheme(const QString& mode) {
+    if (mode == QStringLiteral("on")) {
+        qfw::setTheme(qfw::Theme::Dark);
+    } else if (mode == QStringLiteral("off")) {
+        qfw::setTheme(qfw::Theme::Light);
+    } else {
+        qfw::setTheme(qfw::Theme::Auto);
+    }
 }
 
 void NativeMainWindow::populateModelList() {

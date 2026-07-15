@@ -108,6 +108,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   of being isolated by one session per pet.
   CXX-Qt generation is tested without a Qt SDK, including the generated C++
   property and invokable names.
+  The settings page edits a Rust-whitelisted subset of renderer/UI options,
+  persists them through the same locked atomic config path, updates the
+  Qt-Fluent theme immediately, and reliably broadcasts live changes to every
+  active native pet. Unknown fields cannot cross this write boundary.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

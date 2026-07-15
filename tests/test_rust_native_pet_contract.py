@@ -139,11 +139,15 @@ def test_native_main_window_consumes_safe_rust_dashboard_state():
 
     assert "DashboardSnapshot::load" in backend
     assert "NativeRuntimeSnapshot" in backend
+    assert "persist_native_settings" in backend
     assert "llm_api_key" not in dashboard.split("#[cfg(test)]", 1)[0]
     assert "backend_.reloadState" in window
     assert "backend_.getModelCatalogJson" in window
     assert "backend_.getRuntimeConfigJson" in window
     assert "qfw::SettingCardGroup" in window
+    assert "qfw::GroupHeaderCardWidget" in window
+    assert "backend_.saveNativeSettings" in window
+    assert "supervisor_.broadcastSettings(settingsJson)" in window
     assert "startConfiguredPet" in window
     assert "supervisor_.startAll(activeSpecs_)" in window
 

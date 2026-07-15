@@ -27,11 +27,21 @@ pub mod ffi {
             user_models_root: &QString,
             config_path: &QString,
         ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "saveNativeSettings"]
+        fn save_native_settings(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            settings_json: &QString,
+        ) -> bool;
     }
 }
 
 use bandori_core::config::ConfigDocument;
-use bandori_core::dashboard::{DashboardSnapshot, NativeRuntimeSnapshot};
+use bandori_core::dashboard::{
+    DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
+};
 use core::pin::Pin;
 use cxx_qt_lib::QString;
 use std::path::Path;
@@ -128,6 +138,37 @@ impl ffi::Backend {
                     .set_config_summary(QString::from("Configuration could not be loaded"));
                 self.as_mut().set_model_catalog_json(QString::from("[]"));
                 self.as_mut().set_runtime_config_json(QString::from("{}"));
+                false
+            }
+        }
+    }
+
+    pub fn save_native_settings(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        settings_json: &QString,
+    ) -> bool {
+        let config_path = config_path.to_string();
+        let settings_json = settings_json.to_string();
+        match persist_native_settings(Path::new(&config_path), &settings_json) {
+            Ok(runtime) => {
+                let runtime_json = serde_json::to_string(&runtime)
+                    .expect("native runtime snapshot serialization cannot fail");
+                let summary = format!(
+                    "config.json · {} configured pets · {} FPS",
+                    runtime.configured_pets.len(),
+                    runtime.fps
+                );
+                self.as_mut()
+                    .set_status(QString::from("Native settings saved atomically"));
+                self.as_mut().set_config_summary(QString::from(&summary));
+                self.as_mut()
+                    .set_runtime_config_json(QString::from(&runtime_json));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Settings save error: {error}")));
                 false
             }
         }

@@ -3,6 +3,7 @@ use crate::model::{ModelCatalogEntry, ModelManager, ModelManagerPaths, ModelRoot
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
+use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConfiguredPetSnapshot {
@@ -23,6 +24,7 @@ pub struct NativeRuntimeSnapshot {
     pub selected_character: String,
     pub selected_costume: String,
     pub language: String,
+    pub dark_theme: String,
     pub fps: i64,
     pub opacity: f64,
     pub lip_sync_max_open: f64,
@@ -42,6 +44,70 @@ pub struct DashboardSnapshot {
     pub config_key_count: usize,
     pub model_catalog: Vec<ModelCatalogEntry>,
     pub runtime: NativeRuntimeSnapshot,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSettingsUpdate {
+    pub fps: Option<i64>,
+    pub opacity: Option<f64>,
+    pub dark_theme: Option<String>,
+    pub drag_locked: Option<bool>,
+    pub move_all_roles_together: Option<bool>,
+    pub live2d_head_tracking_enabled: Option<bool>,
+    pub live2d_mutual_gaze_enabled: Option<bool>,
+}
+
+#[derive(Debug, Error)]
+pub enum NativeSettingsError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("native settings JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("unsupported theme mode: {0}")]
+    UnsupportedTheme(String),
+}
+
+pub fn save_native_settings(
+    config_path: impl AsRef<Path>,
+    settings_json: &str,
+) -> Result<NativeRuntimeSnapshot, NativeSettingsError> {
+    let update: NativeSettingsUpdate = serde_json::from_str(settings_json)?;
+    let mut config = ConfigDocument::load(config_path.as_ref())?;
+    update.apply_to(&mut config)?;
+    config.save(config_path)?;
+    Ok(NativeRuntimeSnapshot::from_config(&config))
+}
+
+impl NativeSettingsUpdate {
+    pub fn apply_to(self, config: &mut ConfigDocument) -> Result<(), NativeSettingsError> {
+        if let Some(fps) = self.fps {
+            config.set("fps", Value::from(fps.clamp(10, 240)));
+        }
+        if let Some(opacity) = self.opacity {
+            config.set("opacity", Value::from(opacity.clamp(0.05, 1.0)));
+        }
+        if let Some(theme) = self.dark_theme {
+            let theme = theme.trim().to_ascii_lowercase();
+            if !matches!(theme.as_str(), "on" | "off" | "follow_system") {
+                return Err(NativeSettingsError::UnsupportedTheme(theme));
+            }
+            config.set("dark_theme", Value::String(theme));
+        }
+        if let Some(locked) = self.drag_locked {
+            config.set("drag_locked", Value::Bool(locked));
+        }
+        if let Some(enabled) = self.move_all_roles_together {
+            config.set("move_all_roles_together", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.live2d_head_tracking_enabled {
+            config.set("live2d_head_tracking_enabled", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.live2d_mutual_gaze_enabled {
+            config.set("live2d_mutual_gaze_enabled", Value::Bool(enabled));
+        }
+        Ok(())
+    }
 }
 
 impl DashboardSnapshot {
@@ -114,6 +180,7 @@ impl NativeRuntimeSnapshot {
             selected_character: string_value(values, "character", ""),
             selected_costume: string_value(values, "costume", ""),
             language: string_value(values, "language", ""),
+            dark_theme: string_value(values, "dark_theme", "follow_system"),
             fps: int_value(values, "fps", 120).clamp(1, 1000),
             opacity: float_value(values, "opacity", 1.0).clamp(0.05, 1.0),
             lip_sync_max_open: float_value(values, "live2d_lip_sync_max_open", 0.55)
@@ -259,5 +326,56 @@ mod tests {
         assert_eq!(snapshot.model_catalog.len(), 2);
         assert_eq!(snapshot.runtime.fps, 90);
         assert!(snapshot.config_loaded_from_file);
+    }
+
+    #[test]
+    fn native_settings_are_whitelisted_clamped_and_saved_atomically() {
+        let root = TempDir::new().unwrap();
+        let config_path = root.path().join("config.json");
+        write_json(
+            &config_path,
+            json!({
+                "fps": 60,
+                "opacity": 1.0,
+                "dark_theme": "follow_system",
+                "llm_api_key": "keep-me"
+            }),
+        );
+
+        let runtime = save_native_settings(
+            &config_path,
+            r#"{
+                "fps": 999,
+                "opacity": 0.01,
+                "dark_theme": "on",
+                "drag_locked": true,
+                "move_all_roles_together": true,
+                "live2d_head_tracking_enabled": false,
+                "live2d_mutual_gaze_enabled": true
+            }"#,
+        )
+        .unwrap();
+        let saved: Value = serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
+        assert_eq!(runtime.fps, 240);
+        assert_eq!(runtime.opacity, 0.05);
+        assert_eq!(runtime.dark_theme, "on");
+        assert!(runtime.drag_locked);
+        assert_eq!(saved["llm_api_key"], "keep-me");
+        assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
+    }
+
+    #[test]
+    fn native_settings_reject_unknown_keys_and_invalid_themes() {
+        let mut config = ConfigDocument::default();
+        let unknown = serde_json::from_str::<NativeSettingsUpdate>(r#"{"llm_api_key":"x"}"#);
+        assert!(unknown.is_err());
+        let invalid = NativeSettingsUpdate {
+            dark_theme: Some("sepia".into()),
+            ..NativeSettingsUpdate::default()
+        };
+        assert!(matches!(
+            invalid.apply_to(&mut config),
+            Err(NativeSettingsError::UnsupportedTheme(theme)) if theme == "sepia"
+        ));
     }
 }

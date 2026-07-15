@@ -133,6 +133,18 @@ void PetProcessSupervisor::stop() {
     requestFleetStop();
 }
 
+bool PetProcessSupervisor::broadcastSettings(const QString& settingsJson) {
+    if (controlQueue_ == nullptr || settingsJson.trimmed().isEmpty()) {
+        return false;
+    }
+    return controlQueue_->publish(encodeIpcEnvelope(
+        supervisorPeerId_,
+        QStringLiteral("SETTINGS\t") + settingsJson,
+        {},
+        {},
+        true));
+}
+
 bool PetProcessSupervisor::isRunning() const {
     return std::any_of(children_.cbegin(), children_.cend(), [](const auto& child) {
         return child->process.state() != QProcess::NotRunning
