@@ -17,6 +17,7 @@ from process_utils import (
 )
 from startup_manager import repair_startup_command
 from app_info import APP_NAME
+from local_port_security import ensure_local_port_token
 
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 from config_manager import DEFAULTS
@@ -437,24 +438,6 @@ def main():
             server.stop()
         chat_integration_ref["server"] = None
 
-    def ensure_local_port_token(token_key: str) -> str:
-        # A loopback HTTP port with no token accepts unauthenticated requests
-        # from any local process or web page (CORS does not block plain POSTs),
-        # which could inject fake chat/AI events into the pet. When such a port
-        # is enabled without a token, mint and persist one so the running server
-        # is always authenticated. cfg.save() merges with disk, so this never
-        # clobbers other settings.
-        token = str(cfg.get(token_key, "") or "").strip()
-        if token:
-            return token
-        token = secrets.token_urlsafe(18)
-        cfg.set(token_key, token)
-        try:
-            cfg.save()
-        except Exception as exc:
-            print(f"Failed to persist generated {token_key}: {exc}")
-        return token
-
     def close_chat_integration_db():
         db = chat_integration_ref.get("db")
         if db is not None:
@@ -466,7 +449,7 @@ def main():
         if not cfg.get("ai_status_port_enabled", False):
             return
         port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
-        token = ensure_local_port_token("ai_status_token")
+        token = ensure_local_port_token(cfg, "ai_status_token")
 
         def on_ai_event(event: dict):
             payload = json.dumps(event, ensure_ascii=False)
@@ -556,7 +539,7 @@ def main():
         if not cfg.get("chat_integration_enabled", False):
             return
         port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
-        token = ensure_local_port_token("chat_integration_token")
+        token = ensure_local_port_token(cfg, "chat_integration_token")
         try:
             server = ChatIntegrationHttpServer(
                 port,
