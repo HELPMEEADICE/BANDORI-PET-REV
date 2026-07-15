@@ -2,6 +2,8 @@ import json
 import sys
 from typing import Callable
 
+MAX_MCP_CONTENT_LENGTH = 64 * 1024 * 1024
+
 
 def iter_input_messages():
     stream = sys.stdin.buffer
@@ -39,6 +41,8 @@ def extract_message_from_buffer(buffer: bytes) -> tuple[str | None, bytes]:
                 break
         if content_length is None:
             raise ValueError("Missing Content-Length header")
+        if not 0 <= content_length <= MAX_MCP_CONTENT_LENGTH:
+            raise ValueError("Content-Length is outside the allowed range")
         body_start = header_end + 4
         body_end = body_start + content_length
         if len(buffer) < body_end:

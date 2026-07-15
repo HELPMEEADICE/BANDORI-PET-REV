@@ -82,6 +82,22 @@ class McpCancellationTests(unittest.TestCase):
         self.assertEqual({"jsonrpc": "2.0", "id": 7, "result": {}}, client_message)
         self.assertEqual(b"", client_remaining)
 
+    def test_content_length_rejects_negative_size(self):
+        framed = b"Content-Length: -1\r\n\r\n{}"
+
+        with self.assertRaises(ValueError):
+            extract_message_from_buffer(framed)
+        with self.assertRaises(RuntimeError):
+            mcp_bridge._extract_stdio_message(framed)
+
+    def test_content_length_rejects_oversized_frame(self):
+        framed = b"Content-Length: 67108865\r\n\r\n{}"
+
+        with self.assertRaises(ValueError):
+            extract_message_from_buffer(framed)
+        with self.assertRaises(RuntimeError):
+            mcp_bridge._extract_stdio_message(framed)
+
     def test_stdio_close_terminates_process_before_closing_stdout(self):
         events = []
 
