@@ -214,7 +214,8 @@ def test_native_chat_history_reads_existing_database_through_rust():
     assert "load_native_chat_snapshot" in core
     assert "Database::open" in core
     assert "get_conversations" in core
-    assert "get_messages(conversation_id, Some(200), None)" in core
+    assert "MAX_NATIVE_CHAT_MESSAGE_LIMIT" in core
+    assert "has_older_messages" in core
     assert "loadChatState" in backend
     assert "chat_conversations_json" in backend
     assert "chat_messages_json" in backend
@@ -222,6 +223,9 @@ def test_native_chat_history_reads_existing_database_through_rust():
     assert "backend_.loadChatState" in window
     assert "backend_.getChatConversationsJson" in window
     assert "backend_.getChatMessagesJson" in window
+    assert "backend_.getChatHasOlderMessages" in window
+    assert "chatLoadOlderButton_" in window
+    assert "attachmentSummaries" in window
     assert "void NativeMainWindow::openNativeChat" in window
     assert 'line.startsWith(QStringLiteral("OPEN_CHAT_NATIVE\\t"))' in window
     assert "Native chat UI is not ported yet" not in window

@@ -34,6 +34,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "getChatConversationsJson",
         "getChatMessagesJson",
         "getChatActiveConversationId",
+        "getChatHasOlderMessages",
         "reloadState",
         "saveNativeSettings",
         "loadChatState",

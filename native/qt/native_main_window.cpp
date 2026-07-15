@@ -30,6 +30,8 @@ constexpr int kPathRole = Qt::UserRole;
 constexpr int kCharacterRole = Qt::UserRole + 1;
 constexpr int kCostumeRole = Qt::UserRole + 2;
 constexpr int kFormatRole = Qt::UserRole + 3;
+constexpr int kChatMessagePageSize = 200;
+constexpr int kChatMessageLimit = 1000;
 
 QJsonObject parseObject(const QString& json) {
     QJsonParseError error;
@@ -47,6 +49,50 @@ QJsonArray parseArray(const QString& json) {
         return {};
     }
     return document.array();
+}
+
+QString formatAttachmentSize(qint64 size) {
+    if (size < 0) {
+        return {};
+    }
+    if (size < 1024) {
+        return QStringLiteral("%1 B").arg(size);
+    }
+    if (size < 1024 * 1024) {
+        return QStringLiteral("%1 KB").arg(QString::number(size / 1024.0, 'f', 1));
+    }
+    return QStringLiteral("%1 MB").arg(QString::number(size / (1024.0 * 1024.0), 'f', 1));
+}
+
+QStringList attachmentSummaries(const QString& json) {
+    QStringList summaries;
+    for (const QJsonValue& value : parseArray(json)) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject attachment = value.toObject();
+        const QString type = attachment.value(QStringLiteral("type")).toString().trimmed().toLower();
+        if (type != QStringLiteral("image") && type != QStringLiteral("file")) {
+            continue;
+        }
+        QString name = attachment.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) {
+            name = QFileInfo(attachment.value(QStringLiteral("path")).toString()).fileName();
+        }
+        if (name.isEmpty()) {
+            name = QStringLiteral("unnamed attachment");
+        }
+        const QString size = formatAttachmentSize(
+            attachment.value(QStringLiteral("size")).toInteger(-1));
+        summaries.append(
+            QStringLiteral("  [%1] %2%3")
+                .arg(
+                    type == QStringLiteral("image") ? QStringLiteral("Image")
+                                                     : QStringLiteral("File"),
+                    name,
+                    size.isEmpty() ? QString() : QStringLiteral(" · ") + size));
+    }
+    return summaries;
 }
 
 QString compactJson(const QJsonObject& object) {
@@ -337,12 +383,15 @@ QWidget* NativeMainWindow::createChatPage() {
     chatConversationComboBox_ = new qfw::ComboBox(page);
     chatConversationComboBox_->setMinimumWidth(280);
     auto* refreshButton = new qfw::PushButton(tr("Refresh"), page);
+    chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
+    chatLoadOlderButton_->setEnabled(false);
     auto* controls = new QHBoxLayout();
     controls->addWidget(new qfw::BodyLabel(tr("Character"), page));
     controls->addWidget(chatCharacterComboBox_);
     controls->addSpacing(8);
     controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
     controls->addWidget(chatConversationComboBox_, 1);
+    controls->addWidget(chatLoadOlderButton_);
     controls->addWidget(refreshButton);
 
     chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
@@ -356,14 +405,20 @@ QWidget* NativeMainWindow::createChatPage() {
     layout->addWidget(chatStatusLabel_);
     layout->addWidget(chatTranscript_, 1);
 
-    connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshChatState(); });
+    connect(refreshButton, &QPushButton::clicked, this, [this]() {
+        refreshChatState(chatConversationComboBox_->currentData().toString());
+    });
+    connect(chatLoadOlderButton_, &QPushButton::clicked, this, [this]() {
+        chatMessageLimit_ = std::min(chatMessageLimit_ + kChatMessagePageSize, kChatMessageLimit);
+        refreshChatState(chatConversationComboBox_->currentData().toString());
+    });
     connect(
         chatCharacterComboBox_,
         &qfw::ComboBox::currentIndexChanged,
         this,
         [this](int) {
             if (!updatingChatControls_) {
-                refreshChatState();
+                refreshChatState({}, true);
             }
         });
     connect(
@@ -372,7 +427,7 @@ QWidget* NativeMainWindow::createChatPage() {
         this,
         [this](int) {
             if (!updatingChatControls_) {
-                refreshChatState(chatConversationComboBox_->currentData().toString());
+                refreshChatState(chatConversationComboBox_->currentData().toString(), true);
             }
         });
     return page;
@@ -758,23 +813,35 @@ void NativeMainWindow::populateChatCharacters() {
     updatingChatControls_ = false;
 }
 
-void NativeMainWindow::refreshChatState(const QString& requestedConversationId) {
+void NativeMainWindow::refreshChatState(
+    const QString& requestedConversationId,
+    bool resetPagination) {
     if (chatCharacterComboBox_ == nullptr || chatTranscript_ == nullptr) {
         return;
     }
     const QString character = chatCharacterComboBox_->currentData().toString();
+    if (resetPagination) {
+        chatMessageLimit_ = kChatMessagePageSize;
+    }
     if (character.isEmpty()) {
         chatConversationComboBox_->clear();
         chatTranscript_->clear();
+        chatLoadOlderButton_->setEnabled(false);
         chatStatusLabel_->setText(tr("No character is available"));
         return;
     }
     const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
     const QString userKey =
         runtime_.value(QStringLiteral("active_user_key")).toString(QStringLiteral("default"));
-    if (!backend_.loadChatState(databasePath, character, userKey, requestedConversationId)) {
+    if (!backend_.loadChatState(
+            databasePath,
+            character,
+            userKey,
+            requestedConversationId,
+            chatMessageLimit_)) {
         chatStatusLabel_->setText(backend_.getStatus());
         chatTranscript_->clear();
+        chatLoadOlderButton_->setEnabled(false);
         return;
     }
 
@@ -807,6 +874,8 @@ void NativeMainWindow::refreshChatState(const QString& requestedConversationId) 
     updatingChatControls_ = false;
 
     const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
+    const bool hasOlderMessages = backend_.getChatHasOlderMessages();
+    chatLoadOlderButton_->setEnabled(hasOlderMessages && chatMessageLimit_ < kChatMessageLimit);
     QStringList transcript;
     transcript.reserve(messages.size() * 3);
     for (const QJsonValue& value : messages) {
@@ -818,15 +887,18 @@ void NativeMainWindow::refreshChatState(const QString& requestedConversationId) 
                 ? QStringLiteral("[%1]").arg(role)
                 : QStringLiteral("[%1 · %2]").arg(role, createdAt));
         transcript.append(message.value(QStringLiteral("content")).toString());
+        transcript.append(attachmentSummaries(
+            message.value(QStringLiteral("attachments_json")).toString()));
         transcript.append(QString());
     }
     chatTranscript_->setPlainText(transcript.join(u'\n'));
     chatStatusLabel_->setText(
         conversations.isEmpty()
             ? tr("No saved conversation for %1 and user %2").arg(character, userKey)
-            : tr("%1 conversations · %2 messages shown · read-only")
+            : tr("%1 conversations · %2 messages shown%3 · read-only")
                   .arg(conversations.size())
-                  .arg(messages.size()));
+                  .arg(messages.size())
+                  .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
 }
 
 void NativeMainWindow::openNativeChat(const QString& character) {
@@ -840,7 +912,7 @@ void NativeMainWindow::openNativeChat(const QString& character) {
         }
     }
     switchTo(chatPage_);
-    refreshChatState();
+    refreshChatState({}, true);
 }
 
 std::optional<ModelCatalogItem> NativeMainWindow::selectedModel() const {

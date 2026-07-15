@@ -58,7 +58,9 @@ private:
     void populateModelList();
     void updateModelDetails();
     void populateChatCharacters();
-    void refreshChatState(const QString& requestedConversationId = {});
+    void refreshChatState(
+        const QString& requestedConversationId = {},
+        bool resetPagination = false);
     void openNativeChat(const QString& character);
     void startSelectedPet();
     std::optional<ModelCatalogItem> selectedModel() const;
@@ -94,7 +96,9 @@ private:
     qfw::ComboBox* chatCharacterComboBox_ = nullptr;
     qfw::ComboBox* chatConversationComboBox_ = nullptr;
     qfw::CaptionLabel* chatStatusLabel_ = nullptr;
+    qfw::PushButton* chatLoadOlderButton_ = nullptr;
     QTextBrowser* chatTranscript_ = nullptr;
+    int chatMessageLimit_ = 200;
     bool updatingChatControls_ = false;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;

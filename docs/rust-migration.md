@@ -137,8 +137,11 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   The first native chat surface is now wired to the compatible Rust database
   repository. It reads the existing `data.db`, filters private conversations by
   character and active user profile, selects the requested or newest thread and
-  renders the latest 200 messages. Pet radial-menu chat requests switch directly
-  to that character. The surface is deliberately read-only until the LLM/tool
+  renders the latest 200 messages. History can expand in bounded 200-message
+  increments up to 1000 records, with Rust reporting whether older rows remain;
+  stored attachment type, name and size metadata is shown without opening paths.
+  Pet radial-menu chat requests switch directly to that character. The surface
+  is deliberately read-only until the LLM/tool
   orchestration path is ported, so dual-track operation cannot append orphaned
   user messages without an assistant response.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison

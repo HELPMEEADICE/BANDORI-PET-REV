@@ -15,6 +15,7 @@ pub mod ffi {
         #[qproperty(QString, chat_conversations_json)]
         #[qproperty(QString, chat_messages_json)]
         #[qproperty(QString, chat_active_conversation_id)]
+        #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
 
@@ -47,6 +48,7 @@ pub mod ffi {
             character: &QString,
             user_key: &QString,
             requested_conversation_id: &QString,
+            message_limit: i32,
         ) -> bool;
     }
 }
@@ -68,6 +70,7 @@ pub struct BackendRust {
     chat_conversations_json: QString,
     chat_messages_json: QString,
     chat_active_conversation_id: QString,
+    chat_has_older_messages: bool,
 }
 
 impl Default for BackendRust {
@@ -80,6 +83,7 @@ impl Default for BackendRust {
             chat_conversations_json: QString::from("[]"),
             chat_messages_json: QString::from("[]"),
             chat_active_conversation_id: QString::default(),
+            chat_has_older_messages: false,
         }
     }
 }
@@ -200,6 +204,7 @@ impl ffi::Backend {
         character: &QString,
         user_key: &QString,
         requested_conversation_id: &QString,
+        message_limit: i32,
     ) -> bool {
         let database_path = database_path.to_string();
         let character = character.to_string();
@@ -214,6 +219,7 @@ impl ffi::Backend {
             &character,
             &user_key,
             requested_conversation_id,
+            i64::from(message_limit),
         ) {
             Ok(snapshot) => {
                 let conversations_json = serde_json::to_string(&snapshot.conversations)
@@ -230,6 +236,8 @@ impl ffi::Backend {
                     .set_chat_messages_json(QString::from(&messages_json));
                 self.as_mut()
                     .set_chat_active_conversation_id(QString::from(&active_id));
+                self.as_mut()
+                    .set_chat_has_older_messages(snapshot.has_older_messages);
                 true
             }
             Err(error) => {
@@ -240,6 +248,7 @@ impl ffi::Backend {
                 self.as_mut().set_chat_messages_json(QString::from("[]"));
                 self.as_mut()
                     .set_chat_active_conversation_id(QString::default());
+                self.as_mut().set_chat_has_older_messages(false);
                 false
             }
         }
