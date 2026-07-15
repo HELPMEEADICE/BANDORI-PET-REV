@@ -27,7 +27,7 @@ def normalize_live2d_quality(profile: str) -> str:
 def clamp_live2d_scale(value: Any, default: int = 100, use_device_pixel_ratio_default: bool = False) -> int:
     try:
         pct = int(round(float(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         pct = 0 if use_device_pixel_ratio_default else default
     if pct <= 0:
         if use_device_pixel_ratio_default:
