@@ -64,6 +64,7 @@ private:
     void sendNativeChat();
     void cancelNativeChat();
     void handleChatStreamEvent(const QString& payloadJson);
+    void handleChatMemoryEvent(const QString& payloadJson);
     void setChatBusy(bool busy);
     void renderChatStreamPreview();
     void openNativeChat(const QString& character);
@@ -111,6 +112,7 @@ private:
     QString chatStreamText_;
     QString chatStreamReasoning_;
     QString activeChatCharacter_;
+    QString activeChatCharacterDisplay_;
     QString activeChatConversationId_;
     qint64 activeChatRequestId_ = 0;
     int chatMessageLimit_ = 200;

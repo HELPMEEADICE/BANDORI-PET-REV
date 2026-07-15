@@ -183,9 +183,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   Python's `__default__` user partition. Request state retains the exact
   character, user partition and latest user turn entirely inside Rust until the
   terminal response is saved; the Python-compatible fallback interaction
-  analyzer then applies affection, trust, familiarity, mood and intensity deltas
-  to the same relationship row. Model-assisted long-term memory extraction is
-  the remaining post-response stage.
+  analyzer applies affection, trust, familiarity, mood and intensity deltas to
+  the same relationship row when no memory model is configured. Model-assisted
+  long-term memory extraction is now the native post-response stage as well.
+  Python-generated fixtures pin its full system prompt, saved-memory context,
+  tolerant JSON parsing, bounds, scopes and superseded-memory aliases. Rust uses
+  the auxiliary LLM profile with primary-profile fallback on a cancellable worker,
+  writes successful relationship analysis as `chat_model`, replaces exact stale
+  global/character memory lines, and associates new memories with the source user
+  message. A transport or startup failure applies the heuristic relationship
+  update exactly once; it is never pre-applied and then doubled by a late model
+  result. A cancelled extraction skips fallback and persistence once cancellation
+  is observed, including the normal backend-destruction path.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

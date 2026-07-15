@@ -34,8 +34,15 @@ def rendered_contracts() -> dict[Path, str]:
         parse_action_tags,
         strip_action_tags,
     )
-    from relationship_memory import build_relationship_context
-    from relationship_memory import analyze_interaction
+    from relationship_memory import (
+        MEMORY_EXTRACTOR_SYSTEM_PROMPT,
+        analyze_interaction,
+        build_memory_extraction_messages,
+        build_relationship_context,
+        parse_memory_extraction_response,
+        parse_memory_supersede_response,
+        parse_relationship_analysis_response,
+    )
     from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
@@ -188,6 +195,13 @@ def rendered_contracts() -> dict[Path, str]:
                 ("普通的一天", ["smile"]),
             )
         ],
+        "memory_extraction": _memory_extraction_contract(
+            MEMORY_EXTRACTOR_SYSTEM_PROMPT,
+            build_memory_extraction_messages,
+            parse_relationship_analysis_response,
+            parse_memory_extraction_response,
+            parse_memory_supersede_response,
+        ),
     }
 
     key_cases = [
@@ -327,6 +341,91 @@ def rendered_contracts() -> dict[Path, str]:
 
 def _contract_translation(_key: str, default: str = "", **kwargs) -> str:
     return str(default).format(**kwargs)
+
+
+def _memory_extraction_contract(
+    system_prompt,
+    build_messages,
+    parse_relationship,
+    parse_memories,
+    parse_outdated,
+) -> dict:
+    message_inputs = [
+        {
+            "name": "empty_context",
+            "user_text": "  今天只是随便聊聊。  ",
+            "assistant_text": "",
+            "existing_memories": [],
+            "global_memories": [],
+            "character_name": "",
+        },
+        {
+            "name": "saved_context_and_long_reply",
+            "user_text": "以后叫我 小K，之前那个称呼不用了。",
+            "assistant_text": "明白了。\n" + "好" * 1210,
+            "existing_memories": [
+                {"content": " 和用户约好  周末一起看演唱会 "},
+                {"content": "用户称角色为小兰"},
+            ],
+            "global_memories": [
+                {"content": "希望被称呼为旧名字"},
+                {"content": " 最喜欢的乐队是 MyGO "},
+            ],
+            "character_name": "美竹兰",
+        },
+    ]
+    for case in message_inputs:
+        case["expected"] = build_messages(
+            case["user_text"],
+            case["assistant_text"],
+            case["existing_memories"],
+            global_memories=case["global_memories"],
+            character_name=case["character_name"],
+        )
+
+    response_sources = [
+        (
+            "wrapped_valid",
+            "prefix ```json\n"
+            '{"relationship":{"affection_delta":9,"trust_delta":-9,'
+            '"familiarity_delta":2,"mood":"happy","mood_intensity":120,'
+            '"reason":"  用户  分享了喜好。  "},"memories":['
+            '{"scope":"global","kind":"preference","content":"  最喜欢  MyGO。  ","importance":999},'
+            '{"scope":"char","kind":"relationship","content":"周末一起看直播","importance":65},'
+            '{"scope":"char","kind":"relationship","content":"周末一起看直播","importance":1},'
+            '{"scope":"unknown","kind":"mystery","content":"一条足够长的记录","importance":"bad"}],'
+            '"outdated":["希望被称呼为 旧名字",{"content":"最喜欢的乐队是 MyGO"},"希望被称呼为旧名字"]}'
+            " trailing",
+        ),
+        (
+            "defaults_and_aliases",
+            '{"relationship":{"affection_delta":"bad","mood":"unknown","reason":" 。 "},'
+            '"memories":[{"kind":"profile","content":"  居住在 东京  "},'
+            '{"content":"ab"},{"kind":"favorite","content":"收藏语句：永远不要放弃","importance":90}],'
+            '"superseded":["  旧地址：大阪  ","旧 地址：大阪"]}',
+        ),
+        (
+            "remove_alias_without_relationship",
+            '{"memories":[],"remove":[{"content":"旧昵称是A"}],"relationship":null}',
+        ),
+        ("invalid", "not json at all"),
+    ]
+    response_cases = []
+    for name, source in response_sources:
+        response_cases.append(
+            {
+                "name": name,
+                "source": source,
+                "relationship": parse_relationship(source),
+                "memories": parse_memories(source),
+                "outdated": parse_outdated(source),
+            }
+        )
+    return {
+        "system_prompt": system_prompt,
+        "message_cases": message_inputs,
+        "response_cases": response_cases,
+    }
 
 
 def _relationship_prompt_cases(build_relationship_context) -> list[dict]:

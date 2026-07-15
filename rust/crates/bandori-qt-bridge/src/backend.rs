@@ -80,6 +80,8 @@ pub mod ffi {
         fn save_chat_assistant(
             self: Pin<&mut Self>,
             database_path: &QString,
+            config_path: &QString,
+            character_display_name: &QString,
             request_id: i64,
             content: &QString,
             reasoning: &QString,
@@ -101,6 +103,10 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "chatStreamEvent"]
         fn chat_stream_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "chatMemoryEvent"]
+        fn chat_memory_event(self: Pin<&mut Self>, payload_json: &QString);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -114,7 +120,13 @@ use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
 };
 use bandori_core::database::Database;
-use bandori_core::relationship_analysis::apply_interaction_analysis;
+use bandori_core::memory_extraction::{
+    GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
+    build_memory_extraction_messages, parse_memory_extraction, store_extracted_memories,
+};
+use bandori_core::relationship_analysis::{
+    InteractionAnalysis, analyze_interaction, apply_interaction_analysis,
+};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest,
@@ -123,6 +135,7 @@ use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
@@ -158,6 +171,7 @@ pub struct BackendRust {
     completed_chat_user_content: String,
     next_chat_request_id: i64,
     active_chat_cancellation: Option<CancellationToken>,
+    memory_cancellations: HashMap<i64, CancellationToken>,
 }
 
 impl Default for BackendRust {
@@ -192,6 +206,7 @@ impl Default for BackendRust {
             completed_chat_user_content: String::new(),
             next_chat_request_id: 1,
             active_chat_cancellation: None,
+            memory_cancellations: HashMap::new(),
         }
     }
 }
@@ -199,6 +214,9 @@ impl Default for BackendRust {
 impl Drop for BackendRust {
     fn drop(&mut self) {
         if let Some(cancellation) = self.active_chat_cancellation.take() {
+            cancellation.cancel();
+        }
+        for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
             cancellation.cancel();
         }
     }
@@ -506,6 +524,8 @@ impl ffi::Backend {
     pub fn save_chat_assistant(
         mut self: Pin<&mut Self>,
         database_path: &QString,
+        config_path: &QString,
+        character_display_name: &QString,
         request_id: i64,
         content: &QString,
         reasoning: &QString,
@@ -567,23 +587,92 @@ impl ffi::Backend {
             trace.as_ref(),
         ) {
             Ok(message_id) => {
-                let relationship_result = if character.is_empty() || user_content.is_empty() {
-                    None
-                } else {
-                    Some(apply_interaction_analysis(
+                let fallback = (!character.is_empty() && !user_content.is_empty())
+                    .then(|| analyze_interaction(&user_content, &response.actions));
+                let memory_job = fallback.as_ref().map(|fallback| {
+                    prepare_memory_extraction_job(
                         &database,
+                        Path::new(&config_path.to_string()),
+                        &database_path.to_string(),
                         &character,
+                        &character_display_name.to_string(),
                         &user_key,
                         &user_content,
-                        &response.actions,
-                        "chat",
-                    ))
-                };
-                let (relationship_state, relationship_error) = match relationship_result {
-                    Some(Ok(state)) => (Some(state), None),
-                    Some(Err(error)) => (None, Some(error.to_string())),
-                    None => (None, None),
-                };
+                        &response.content,
+                        user_message_id,
+                        fallback,
+                    )
+                });
+                let mut relationship_state = None;
+                let mut relationship_error = None;
+                let mut relationship_pending = false;
+                match memory_job {
+                    Some(Ok(Some(job))) => {
+                        let cancellation = CancellationToken::new();
+                        self.as_mut()
+                            .rust_mut()
+                            .get_mut()
+                            .memory_cancellations
+                            .insert(request_id, cancellation.clone());
+                        let qt_thread = self.qt_thread();
+                        if let Err(error) = std::thread::Builder::new()
+                            .name(format!("bandori-memory-{request_id}"))
+                            .spawn(move || {
+                                run_memory_extraction(qt_thread, request_id, job, cancellation);
+                            })
+                        {
+                            self.as_mut()
+                                .rust_mut()
+                                .get_mut()
+                                .memory_cancellations
+                                .remove(&request_id);
+                            relationship_error =
+                                Some(format!("Could not start native memory worker: {error}"));
+                            match apply_interaction_analysis(
+                                &database,
+                                &character,
+                                &user_key,
+                                &user_content,
+                                &response.actions,
+                                "chat",
+                            ) {
+                                Ok(state) => relationship_state = Some(state),
+                                Err(error) => relationship_error = Some(error.to_string()),
+                            }
+                        } else {
+                            relationship_pending = true;
+                        }
+                    }
+                    Some(Ok(None)) | None => {
+                        if fallback.is_some() {
+                            match apply_interaction_analysis(
+                                &database,
+                                &character,
+                                &user_key,
+                                &user_content,
+                                &response.actions,
+                                "chat",
+                            ) {
+                                Ok(state) => relationship_state = Some(state),
+                                Err(error) => relationship_error = Some(error.to_string()),
+                            }
+                        }
+                    }
+                    Some(Err(error)) => {
+                        relationship_error = Some(error);
+                        match apply_interaction_analysis(
+                            &database,
+                            &character,
+                            &user_key,
+                            &user_content,
+                            &response.actions,
+                            "chat",
+                        ) {
+                            Ok(state) => relationship_state = Some(state),
+                            Err(error) => relationship_error = Some(error.to_string()),
+                        }
+                    }
+                }
                 let relationship_updated = relationship_state.is_some();
                 let payload = json!({
                     "conversation_id": conversation_id,
@@ -595,6 +684,7 @@ impl ffi::Backend {
                     "actions": response.actions,
                     "relationship_state": relationship_state,
                     "relationship_error": relationship_error,
+                    "relationship_pending": relationship_pending,
                 })
                 .to_string();
                 let state = self.as_mut().rust_mut().get_mut();
@@ -607,7 +697,9 @@ impl ffi::Backend {
                 self.as_mut().set_chat_turn_json(QString::from(&payload));
                 self.as_mut().set_chat_request_json(QString::from("{}"));
                 self.as_mut()
-                    .set_status(QString::from(if relationship_updated {
+                    .set_status(QString::from(if relationship_pending {
+                        "Native assistant response saved; memory analysis is running"
+                    } else if relationship_updated {
                         "Native assistant response and relationship state saved"
                     } else {
                         "Native assistant response saved; relationship update was unavailable"
@@ -766,6 +858,70 @@ impl ffi::Backend {
         self.as_mut()
             .chat_stream_event(&QString::from(payload.as_str()));
     }
+
+    fn emit_chat_memory_payload(mut self: Pin<&mut Self>, request_id: i64, payload: String) {
+        self.as_mut()
+            .rust_mut()
+            .get_mut()
+            .memory_cancellations
+            .remove(&request_id);
+        self.as_mut()
+            .chat_memory_event(&QString::from(payload.as_str()));
+    }
+}
+
+#[derive(Clone)]
+struct MemoryExtractionJob {
+    database_path: String,
+    character: String,
+    user_key: String,
+    source_message_id: i64,
+    fallback: InteractionAnalysis,
+    config: LlmTransportConfig,
+    request: LlmTransportRequest,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_memory_extraction_job(
+    database: &Database,
+    config_path: &Path,
+    database_path: &str,
+    character: &str,
+    character_display_name: &str,
+    user_key: &str,
+    user_text: &str,
+    assistant_text: &str,
+    source_message_id: i64,
+    fallback: &InteractionAnalysis,
+) -> Result<Option<MemoryExtractionJob>, String> {
+    let Some(config) = load_memory_transport_config(config_path)? else {
+        return Ok(None);
+    };
+    let existing = database
+        .character_memories(character, user_key, 12)
+        .map_err(|error| format!("Memory context error: {error}"))?;
+    let global = database
+        .character_memories(GLOBAL_MEMORY_CHARACTER, user_key, 12)
+        .map_err(|error| format!("Global memory context error: {error}"))?;
+    Ok(Some(MemoryExtractionJob {
+        database_path: database_path.to_owned(),
+        character: character.to_owned(),
+        user_key: user_key.to_owned(),
+        source_message_id,
+        fallback: fallback.clone(),
+        config,
+        request: LlmTransportRequest {
+            messages: build_memory_extraction_messages(
+                user_text,
+                assistant_text,
+                &existing,
+                &global,
+                character_display_name,
+            ),
+            tools: Vec::new(),
+            previous_response_id: String::new(),
+        },
+    }))
 }
 
 fn load_llm_transport_config(path: &Path) -> Result<LlmTransportConfig, String> {
@@ -786,6 +942,33 @@ fn load_llm_transport_config(path: &Path) -> Result<LlmTransportConfig, String> 
         mode: LlmApiMode::from_config(&config_string(&config, "llm_api_mode")),
         enable_thinking: config.get("llm_enable_thinking").and_then(Value::as_bool),
     })
+}
+
+fn load_memory_transport_config(path: &Path) -> Result<Option<LlmTransportConfig>, String> {
+    let config =
+        ConfigDocument::load(path).map_err(|error| format!("Memory LLM config error: {error}"))?;
+    let api_url = nonempty_config_string(&config, "llm_aux_api_url", "llm_api_url");
+    let api_key = nonempty_config_string(&config, "llm_aux_api_key", "llm_api_key");
+    let model = nonempty_config_string(&config, "llm_aux_model_id", "llm_model_id");
+    if api_url.is_empty() || api_key.is_empty() || model.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(LlmTransportConfig {
+        api_url,
+        api_key,
+        model,
+        mode: LlmApiMode::ChatCompletions,
+        enable_thinking: None,
+    }))
+}
+
+fn nonempty_config_string(config: &ConfigDocument, preferred: &str, fallback: &str) -> String {
+    let value = config_string(config, preferred);
+    if value.is_empty() {
+        config_string(config, fallback)
+    } else {
+        value
+    }
 }
 
 fn config_string(config: &ConfigDocument, key: &str) -> String {
@@ -876,6 +1059,192 @@ fn queue_terminal_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, 
     qt_thread
         .queue(move |backend| {
             backend.emit_chat_stream_payload(request_id, payload, true);
+        })
+        .ok();
+}
+
+fn run_memory_extraction(
+    qt_thread: ffi::BackendCxxQtThread,
+    request_id: i64,
+    job: MemoryExtractionJob,
+    cancellation: CancellationToken,
+) {
+    let database = match Database::open(Path::new(&job.database_path)) {
+        Ok(database) => database,
+        Err(error) => {
+            queue_memory_payload(
+                &qt_thread,
+                request_id,
+                json!({
+                    "request_id": request_id,
+                    "state": "error",
+                    "message": format!("Memory database error: {error}"),
+                }),
+            );
+            return;
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            finish_memory_with_fallback(
+                &qt_thread,
+                request_id,
+                &database,
+                &job,
+                &cancellation,
+                format!("Memory async runtime error: {error}"),
+            );
+            return;
+        }
+    };
+    let transport = match LlmTransport::new(job.config.clone()) {
+        Ok(transport) => transport,
+        Err(error) => {
+            finish_memory_with_fallback(
+                &qt_thread,
+                request_id,
+                &database,
+                &job,
+                &cancellation,
+                error.to_string(),
+            );
+            return;
+        }
+    };
+    let mut response_text = String::new();
+    let result = runtime.block_on(transport.stream(&job.request, &cancellation, |event| {
+        if let LlmStreamEvent::TextDelta { text } = event {
+            response_text.push_str(&text);
+        }
+    }));
+    match result {
+        Ok(outcome) => {
+            if cancellation.is_cancelled() {
+                queue_memory_payload(
+                    &qt_thread,
+                    request_id,
+                    json!({"request_id": request_id, "state": "cancelled"}),
+                );
+                return;
+            }
+            let parsed = parse_memory_extraction(&response_text);
+            let analysis = parsed.relationship.as_ref().unwrap_or(&job.fallback);
+            let relationship_state = match apply_model_relationship_analysis(
+                &database,
+                &job.character,
+                &job.user_key,
+                analysis,
+            ) {
+                Ok(state) => state,
+                Err(error) => {
+                    queue_memory_payload(
+                        &qt_thread,
+                        request_id,
+                        json!({
+                            "request_id": request_id,
+                            "state": "error",
+                            "message": format!("Memory relationship update error: {error}"),
+                        }),
+                    );
+                    return;
+                }
+            };
+            match store_extracted_memories(
+                &database,
+                &job.character,
+                &job.user_key,
+                &parsed,
+                Some(job.source_message_id),
+                None,
+            ) {
+                Ok(stored) => queue_memory_payload(
+                    &qt_thread,
+                    request_id,
+                    json!({
+                        "request_id": request_id,
+                        "state": "finished",
+                        "relationship_state": relationship_state,
+                        "used_model_relationship": parsed.relationship.is_some(),
+                        "memories_added": stored.added,
+                        "memories_removed": stored.removed,
+                        "usage": outcome.usage,
+                    }),
+                ),
+                Err(error) => queue_memory_payload(
+                    &qt_thread,
+                    request_id,
+                    json!({
+                        "request_id": request_id,
+                        "state": "error",
+                        "relationship_state": relationship_state,
+                        "message": format!("Memory persistence error: {error}"),
+                    }),
+                ),
+            }
+        }
+        Err(LlmTransportError::Cancelled) => queue_memory_payload(
+            &qt_thread,
+            request_id,
+            json!({"request_id": request_id, "state": "cancelled"}),
+        ),
+        Err(error) => finish_memory_with_fallback(
+            &qt_thread,
+            request_id,
+            &database,
+            &job,
+            &cancellation,
+            error.to_string(),
+        ),
+    }
+}
+
+fn finish_memory_with_fallback(
+    qt_thread: &ffi::BackendCxxQtThread,
+    request_id: i64,
+    database: &Database,
+    job: &MemoryExtractionJob,
+    cancellation: &CancellationToken,
+    message: String,
+) {
+    if cancellation.is_cancelled() {
+        queue_memory_payload(
+            qt_thread,
+            request_id,
+            json!({"request_id": request_id, "state": "cancelled"}),
+        );
+        return;
+    }
+    let payload = match apply_relationship_analysis(
+        database,
+        &job.character,
+        &job.user_key,
+        &job.fallback,
+        "chat",
+    ) {
+        Ok(state) => json!({
+            "request_id": request_id,
+            "state": "fallback",
+            "relationship_state": state,
+            "message": message,
+        }),
+        Err(error) => json!({
+            "request_id": request_id,
+            "state": "error",
+            "message": format!("{message}; fallback relationship update failed: {error}"),
+        }),
+    };
+    queue_memory_payload(qt_thread, request_id, payload);
+}
+
+fn queue_memory_payload(qt_thread: &ffi::BackendCxxQtThread, request_id: i64, payload: Value) {
+    let payload = payload.to_string();
+    qt_thread
+        .queue(move |backend| {
+            backend.emit_chat_memory_payload(request_id, payload);
         })
         .ok();
 }

@@ -262,6 +262,24 @@ def test_native_chat_composer_streams_persists_and_dispatches_actions_through_ru
     assert 'QStringLiteral("__default__")' in window
 
 
+def test_native_chat_memory_extraction_uses_model_or_single_fallback_update():
+    memory = source("rust/crates/bandori-core/src/memory_extraction.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "generated_python_memory_contract_matches_rust" in memory
+    assert "pub fn build_memory_extraction_messages" in memory
+    assert "pub fn parse_memory_extraction" in memory
+    assert "pub fn store_extracted_memories" in memory
+    assert "load_memory_transport_config" in backend
+    assert "run_memory_extraction" in backend
+    assert "finish_memory_with_fallback" in backend
+    assert 'analysis, "chat_model")' in memory
+    assert "memory_cancellations" in backend
+    assert "chatMemoryEvent" in backend
+    assert "&Backend::chatMemoryEvent" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

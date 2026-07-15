@@ -165,6 +165,11 @@ NativeMainWindow::NativeMainWindow(
         &Backend::chatStreamEvent,
         this,
         [this](const QString& payloadJson) { handleChatStreamEvent(payloadJson); });
+    connect(
+        &backend_,
+        &Backend::chatMemoryEvent,
+        this,
+        [this](const QString& payloadJson) { handleChatMemoryEvent(payloadJson); });
     reloadBackendState();
     setupTray();
 
@@ -1016,6 +1021,7 @@ void NativeMainWindow::sendNativeChat() {
 
     activeChatRequestId_ = requestId;
     activeChatCharacter_ = character;
+    activeChatCharacterDisplay_ = chatCharacterComboBox_->currentText();
     activeChatConversationId_ = conversationId;
     chatStreamText_.clear();
     chatStreamReasoning_.clear();
@@ -1064,6 +1070,8 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
         const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
         if (backend_.saveChatAssistant(
                 databasePath,
+                configPath_,
+                activeChatCharacterDisplay_,
                 requestId,
                 chatStreamText_,
                 chatStreamReasoning_,
@@ -1096,6 +1104,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
 
     activeChatRequestId_ = 0;
     activeChatCharacter_.clear();
+    activeChatCharacterDisplay_.clear();
     activeChatConversationId_.clear();
     chatStreamText_.clear();
     chatStreamReasoning_.clear();
@@ -1103,6 +1112,31 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
     refreshChatState(conversationId);
     chatStatusLabel_->setText(terminalStatus);
     chatInput_->setFocus();
+}
+
+void NativeMainWindow::handleChatMemoryEvent(const QString& payloadJson) {
+    if (activeChatRequestId_ != 0 || chatStatusLabel_ == nullptr) {
+        return;
+    }
+    const QJsonObject payload = parseObject(payloadJson);
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    if (state == QStringLiteral("finished")) {
+        const qint64 added = payload.value(QStringLiteral("memories_added")).toInteger();
+        const qint64 removed = payload.value(QStringLiteral("memories_removed")).toInteger();
+        chatStatusLabel_->setText(
+            tr("Relationship updated · %1 memories saved · %2 outdated memories removed")
+                .arg(added)
+                .arg(removed));
+    } else if (state == QStringLiteral("fallback")) {
+        chatStatusLabel_->setText(
+            tr("Memory model unavailable; heuristic relationship update saved"));
+    } else if (state == QStringLiteral("error")) {
+        QString message = payload.value(QStringLiteral("message")).toString().trimmed();
+        if (message.isEmpty()) {
+            message = tr("Native memory analysis failed");
+        }
+        chatStatusLabel_->setText(message);
+    }
 }
 
 void NativeMainWindow::setChatBusy(bool busy) {

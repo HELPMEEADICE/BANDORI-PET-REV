@@ -14,6 +14,7 @@ pub mod dashboard;
 pub mod database;
 pub mod ipc;
 pub mod ipc_ffi;
+pub mod memory_extraction;
 pub mod model;
 pub mod relationship_analysis;
 
