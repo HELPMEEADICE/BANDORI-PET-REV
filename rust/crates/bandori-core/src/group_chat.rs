@@ -279,6 +279,7 @@ pub fn build_native_group_chat_request(
     members: &[GroupMember],
     spoken_names: &[String],
     current_time_instruction: &str,
+    special_event_context: &str,
 ) -> Result<NativeChatRequest, DatabaseError> {
     let member_keys = members
         .iter()
@@ -309,13 +310,17 @@ pub fn build_native_group_chat_request(
         .and_then(Value::as_str)
         .map(|role| load_character_markdown(project_root, role))
         .unwrap_or_default();
-    let base_prompt = build_native_system_prompt_with_role(
+    let mut base_prompt = build_native_system_prompt_with_role(
         character,
         character_display_name,
         config.values(),
         &markdown,
         &role_markdown,
     );
+    if !special_event_context.trim().is_empty() {
+        base_prompt.push_str("\n\n【今日特殊事件】\n");
+        base_prompt.push_str(special_event_context.trim());
+    }
     let system_prompt =
         with_native_tool_system_hint(&build_group_system_prompt(&base_prompt, members));
     let user_display_name = config
@@ -694,6 +699,7 @@ mod tests {
             &members,
             &["美竹兰".to_owned()],
             "现在是测试时间",
+            "【夏日祭】\n今天是夏日祭。",
         )
         .unwrap();
         assert_eq!(request.tools, native_chat_tools());
@@ -703,6 +709,13 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("本轮只有你一个角色发言")
+        );
+        assert!(
+            request.messages[0]
+                .content
+                .as_str()
+                .unwrap()
+                .contains("【今日特殊事件】\n【夏日祭】")
         );
         let last_user = request
             .messages

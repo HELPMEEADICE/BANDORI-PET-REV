@@ -45,6 +45,7 @@ pub struct NativeRuntimeSnapshot {
     pub poke_expression: String,
     pub chat_attachment_auto_cleanup_enabled: bool,
     pub chat_attachment_retention_days: i64,
+    pub birthday_tray_notifications_enabled: bool,
     pub configured_pets: Vec<ConfiguredPetSnapshot>,
 }
 
@@ -73,6 +74,7 @@ pub struct NativeSettingsUpdate {
     pub live2d_mutual_gaze_enabled: Option<bool>,
     pub chat_attachment_auto_cleanup_enabled: Option<bool>,
     pub chat_attachment_retention_days: Option<i64>,
+    pub birthday_tray_notifications_enabled: Option<bool>,
 }
 
 #[derive(Debug, Error)]
@@ -157,6 +159,9 @@ impl NativeSettingsUpdate {
                 "chat_attachment_retention_days",
                 Value::from(days.clamp(1, 3650)),
             );
+        }
+        if let Some(enabled) = self.birthday_tray_notifications_enabled {
+            config.set("birthday_tray_notifications_enabled", Value::Bool(enabled));
         }
         Ok(())
     }
@@ -288,6 +293,11 @@ impl NativeRuntimeSnapshot {
             ),
             chat_attachment_retention_days: int_value(values, "chat_attachment_retention_days", 30)
                 .clamp(1, 3650),
+            birthday_tray_notifications_enabled: bool_value(
+                values,
+                "birthday_tray_notifications_enabled",
+                true,
+            ),
             configured_pets,
         }
     }
@@ -428,6 +438,7 @@ mod tests {
                 "drag_locked": true,
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 45,
+                "birthday_tray_notifications_enabled": false,
                 "active_user_profile": "alice",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
@@ -460,6 +471,7 @@ mod tests {
         assert!(!snapshot.random_actions_enabled);
         assert!(snapshot.chat_attachment_auto_cleanup_enabled);
         assert_eq!(snapshot.chat_attachment_retention_days, 45);
+        assert!(!snapshot.birthday_tray_notifications_enabled);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -476,6 +488,7 @@ mod tests {
     fn runtime_snapshot_uses_python_default_user_key() {
         let snapshot = NativeRuntimeSnapshot::from_config(&ConfigDocument::default());
         assert_eq!(snapshot.active_user_key, "__default__");
+        assert!(snapshot.birthday_tray_notifications_enabled);
     }
 
     #[test]
@@ -565,7 +578,8 @@ mod tests {
                 "live2d_head_tracking_enabled": false,
                 "live2d_mutual_gaze_enabled": true,
                 "chat_attachment_auto_cleanup_enabled": true,
-                "chat_attachment_retention_days": 9999
+                "chat_attachment_retention_days": 9999,
+                "birthday_tray_notifications_enabled": false
             }"#,
         )
         .unwrap();
@@ -581,10 +595,12 @@ mod tests {
         assert!(runtime.drag_locked);
         assert!(runtime.chat_attachment_auto_cleanup_enabled);
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
+        assert!(!runtime.birthday_tray_notifications_enabled);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);
+        assert_eq!(saved["birthday_tray_notifications_enabled"], false);
     }
 
     #[test]

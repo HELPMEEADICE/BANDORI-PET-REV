@@ -753,6 +753,39 @@ def test_native_screen_awareness_captures_with_qt_and_analyzes_through_rust():
     assert "enqueueNativeTts(text, character)" in window
 
 
+def test_native_special_events_drive_context_and_tray_notifications_without_python():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    events = source("rust/crates/bandori-core/src/special_events.rs")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    chat = source("rust/crates/bandori-core/src/chat_context.rs")
+    group_chat = source("rust/crates/bandori-core/src/group_chat.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod special_events;" in core
+    assert "pub struct SpecialEvent" in events
+    assert "pub fn load_today_special_events" in events
+    assert "pub fn build_special_event_context" in events
+    assert "MAX_EVENT_DATABASE_BYTES" in events
+    assert "leap_day_events_are_valid_and_inactive_in_non_leap_years" in events
+    assert "birthday_tray_notifications_enabled" in dashboard
+    assert "【今日特殊事件】" in chat
+    assert "【今日特殊事件】" in group_chat
+    assert "special_events_json" in backend
+    assert "fn load_special_events(" in backend
+    assert "native_special_event_context" in backend
+    assert "getSpecialEventsJson" in generation
+    assert "loadSpecialEvents" in generation
+    assert "QTimer specialEventTimer_" in window_header
+    assert "qfw::SwitchButton* birthdayNotificationsSwitch_" in window_header
+    assert "backend_.loadSpecialEvents" in window
+    assert "void NativeMainWindow::pollNativeSpecialEvents()" in window
+    assert "scheduleNativeSpecialEventPoll" in window
+    assert "currentLocalDateTime()" in window
+
+
 def test_native_memory_dashboard_is_owned_transactional_and_qt_editable():
     core = source("rust/crates/bandori-core/src/lib.rs")
     memory = source("rust/crates/bandori-core/src/memory_dashboard.rs")

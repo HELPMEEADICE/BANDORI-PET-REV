@@ -20,6 +20,7 @@
 #include <QAudioSource>
 #include <QBuffer>
 #include <QCloseEvent>
+#include <QDate>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -53,6 +54,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTableWidget>
+#include <QTime>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QUuid>
@@ -379,8 +381,13 @@ NativeMainWindow::NativeMainWindow(
     connect(&screenAwarenessTimer_, &QTimer::timeout, this, [this]() {
         triggerNativeScreenAwareness(false);
     });
+    specialEventTimer_.setSingleShot(true);
+    connect(&specialEventTimer_, &QTimer::timeout, this, [this]() {
+        pollNativeSpecialEvents();
+    });
     reloadBackendState();
     setupTray();
+    QTimer::singleShot(0, this, [this]() { pollNativeSpecialEvents(); });
     reminderTimer_.setInterval(15'000);
     connect(&reminderTimer_, &QTimer::timeout, this, [this]() { pollNativeReminders(); });
     reminderTimer_.start();
@@ -482,6 +489,7 @@ void NativeMainWindow::quitFromTray() {
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
+    specialEventTimer_.stop();
     clearPendingChatAttachments();
     if (trayIcon_ != nullptr) {
         trayIcon_->hide();
@@ -511,6 +519,7 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
+    specialEventTimer_.stop();
     qfw::FluentWindow::closeEvent(event);
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
@@ -2667,6 +2676,13 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Application theme"),
         tr("Apply light, dark or system appearance to Qt-Fluent-Widgets"),
         themeComboBox_);
+    auto* behavior = new qfw::GroupHeaderCardWidget(tr("Application behavior"), content);
+    birthdayNotificationsSwitch_ = new qfw::SwitchButton(behavior);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
+        tr("Birthday tray notifications"),
+        tr("Show native system notifications for today's character birthdays"),
+        birthdayNotificationsSwitch_);
     saveSettingsButton_ = new qfw::PrimaryPushButton(tr("Save and apply"), content);
 
     auto* reminders = new qfw::GroupHeaderCardWidget(tr("Reminders"), content);
@@ -2822,6 +2838,7 @@ QWidget* NativeMainWindow::createSettingsPage() {
 
     layout->addWidget(title);
     layout->addWidget(live2d);
+    layout->addWidget(behavior);
     layout->addWidget(saveSettingsButton_, 0, Qt::AlignRight);
     layout->addWidget(reminders);
     layout->addWidget(sources);
@@ -4456,6 +4473,7 @@ void NativeMainWindow::triggerNativeScreenAwareness(bool force) {
         displayName = character;
     }
     capture.insert(QStringLiteral("display_name"), displayName);
+    capture.insert(QStringLiteral("local_datetime"), currentLocalDateTime());
     const qint64 requestId = backend_.startScreenAwareness(
         configPath_,
         projectRoot_,
@@ -6008,6 +6026,10 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true));
     mutualGazeSwitch_->setChecked(
         runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool());
+    birthdayNotificationsSwitch_->setChecked(
+        runtime_
+            .value(QStringLiteral("birthday_tray_notifications_enabled"))
+            .toBool(true));
     const QString theme =
         runtime_.value(QStringLiteral("dark_theme")).toString(QStringLiteral("follow_system"));
     const int themeIndex = themeComboBox_->findData(theme);
@@ -6034,6 +6056,8 @@ void NativeMainWindow::saveNativeSettings() {
         {QStringLiteral("move_all_roles_together"), moveTogetherSwitch_->isChecked()},
         {QStringLiteral("live2d_head_tracking_enabled"), headTrackingSwitch_->isChecked()},
         {QStringLiteral("live2d_mutual_gaze_enabled"), mutualGazeSwitch_->isChecked()},
+        {QStringLiteral("birthday_tray_notifications_enabled"),
+         birthdayNotificationsSwitch_->isChecked()},
     };
     const QString settingsJson = compactJson(settings);
     if (!backend_.saveNativeSettings(configPath_, settingsJson)) {
@@ -6743,7 +6767,8 @@ void NativeMainWindow::sendNativeChat() {
             configPath_,
             projectRoot_,
             chatCharacterComboBox_->currentText(),
-            currentTimeInstruction())) {
+            currentTimeInstruction(),
+            currentLocalDateTime())) {
         const QString status = backend_.getStatus();
         refreshChatState(conversationId);
         chatStatusLabel_->setText(status);
@@ -6898,7 +6923,8 @@ void NativeMainWindow::startNextGroupResponse() {
             characterDisplay,
             membersJson,
             spokenNamesJson,
-            currentTimeInstruction())) {
+            currentTimeInstruction(),
+            currentLocalDateTime())) {
         finishGroupSequence(backend_.getStatus());
         return;
     }
@@ -7226,6 +7252,65 @@ void NativeMainWindow::pollNativeReminders() {
         supervisor_.broadcastControlLine(
             QStringLiteral("REMINDER_EVENT\t") + compactJson(event));
     }
+}
+
+void NativeMainWindow::pollNativeSpecialEvents() {
+    const QString today = QDate::currentDate().toString(Qt::ISODate);
+    if (today == lastSpecialEventDate_) {
+        scheduleNativeSpecialEventPoll();
+        return;
+    }
+    const QString eventsDir = QDir(projectRoot_).filePath(QStringLiteral("events"));
+    if (!backend_.loadSpecialEvents(eventsDir, currentLocalDateTime())) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        scheduleNativeSpecialEventPoll(60'000);
+        return;
+    }
+    lastSpecialEventDate_ = today;
+    for (const QJsonValue& value : parseArray(backend_.getSpecialEventsJson())) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject event = value.toObject();
+        if (event.value(QStringLiteral("event_type")).toString()
+                == QStringLiteral("birthday")
+            && !runtime_
+                    .value(QStringLiteral("birthday_tray_notifications_enabled"))
+                    .toBool(true)) {
+            continue;
+        }
+        if (trayIcon_ == nullptr) {
+            continue;
+        }
+        const QString name = event.value(QStringLiteral("name_zh")).toString().trimmed();
+        const QString text =
+            event.value(QStringLiteral("notification_text")).toString().trimmed();
+        if (!name.isEmpty() && !text.isEmpty()) {
+            trayIcon_->showMessage(
+                QStringLiteral("🎉 %1").arg(name),
+                text,
+                QSystemTrayIcon::Information,
+                15'000);
+        }
+    }
+    scheduleNativeSpecialEventPoll();
+}
+
+void NativeMainWindow::scheduleNativeSpecialEventPoll(int retryMilliseconds) {
+    specialEventTimer_.stop();
+    if (exitRequested_) {
+        return;
+    }
+    if (retryMilliseconds > 0) {
+        specialEventTimer_.start(std::clamp(retryMilliseconds, 1'000, 60 * 60 * 1'000));
+        return;
+    }
+    const QDateTime now = QDateTime::currentDateTime();
+    const QDateTime nextMidnight(
+        now.date().addDays(1), QTime(0, 0), now.timeZone());
+    const qint64 milliseconds = std::max<qint64>(1'000, now.msecsTo(nextMidnight));
+    specialEventTimer_.start(static_cast<int>(std::min<qint64>(
+        milliseconds, std::numeric_limits<int>::max())));
 }
 
 void NativeMainWindow::handleChatMemoryEvent(const QString& payloadJson) {

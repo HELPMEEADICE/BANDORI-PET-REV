@@ -26,6 +26,7 @@ pub mod ffi {
         #[qproperty(QString, tts_settings_json)]
         #[qproperty(QString, asr_settings_json)]
         #[qproperty(QString, screen_awareness_settings_json)]
+        #[qproperty(QString, special_events_json)]
         #[qproperty(QString, memory_snapshot_json)]
         #[qproperty(QString, user_profiles_json)]
         #[qproperty(QString, persona_settings_json)]
@@ -201,6 +202,14 @@ pub mod ffi {
         #[qinvokable]
         #[cxx_name = "cancelScreenAwareness"]
         fn cancel_screen_awareness(self: Pin<&mut Self>, request_id: i64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadSpecialEvents"]
+        fn load_special_events(
+            self: Pin<&mut Self>,
+            events_dir: &QString,
+            local_datetime: &QString,
+        ) -> bool;
 
         #[qinvokable]
         #[cxx_name = "loadMemoryState"]
@@ -412,6 +421,7 @@ pub mod ffi {
             project_root: &QString,
             character_display_name: &QString,
             current_time_instruction: &QString,
+            local_datetime: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -444,6 +454,7 @@ pub mod ffi {
             members_json: &QString,
             spoken_names_json: &QString,
             current_time_instruction: &QString,
+            local_datetime: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -589,6 +600,7 @@ use bandori_core::reminder::{
 use bandori_core::screen_awareness_settings::{
     load_native_screen_awareness_settings, save_native_screen_awareness_settings,
 };
+use bandori_core::special_events::{build_special_event_context, load_today_special_events};
 use bandori_core::statistics_dashboard::load_native_statistics;
 use bandori_core::tts_settings::{load_native_tts_settings, save_native_tts_settings};
 use bandori_core::user_profiles::{load_native_user_profiles, mutate_native_user_profiles};
@@ -680,6 +692,7 @@ pub struct BackendRust {
     tts_settings_json: QString,
     asr_settings_json: QString,
     screen_awareness_settings_json: QString,
+    special_events_json: QString,
     memory_snapshot_json: QString,
     user_profiles_json: QString,
     persona_settings_json: QString,
@@ -748,6 +761,7 @@ impl Default for BackendRust {
             tts_settings_json: QString::from("{}"),
             asr_settings_json: QString::from("{}"),
             screen_awareness_settings_json: QString::from("{}"),
+            special_events_json: QString::from("[]"),
             memory_snapshot_json: QString::from("{}"),
             user_profiles_json: QString::from("{}"),
             persona_settings_json: QString::from("{}"),
@@ -1530,6 +1544,36 @@ impl ffi::Backend {
             "Native screen-awareness cancellation requested",
         ));
         true
+    }
+
+    pub fn load_special_events(
+        mut self: Pin<&mut Self>,
+        events_dir: &QString,
+        local_datetime: &QString,
+    ) -> bool {
+        let Some(local_datetime) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut()
+                .set_status(QString::from("Special events need a valid local datetime"));
+            self.as_mut().set_special_events_json(QString::from("[]"));
+            return false;
+        };
+        match load_today_special_events(Path::new(&events_dir.to_string()), local_datetime) {
+            Ok(events) => {
+                let payload = serde_json::to_string(&events)
+                    .expect("native special-event serialization cannot fail");
+                self.as_mut()
+                    .set_special_events_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native special events loaded"));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_special_events_json(QString::from("[]"));
+                self.as_mut()
+                    .set_status(QString::from(&format!("Special-event load error: {error}")));
+                false
+            }
+        }
     }
 
     pub fn load_memory_state(
@@ -2449,6 +2493,7 @@ impl ffi::Backend {
         project_root: &QString,
         character_display_name: &QString,
         current_time_instruction: &QString,
+        local_datetime: &QString,
     ) -> bool {
         let (conversation_id, character, user_key) = {
             let state = self.as_ref().get_ref().rust();
@@ -2483,6 +2528,11 @@ impl ffi::Backend {
                 return false;
             }
         };
+        let special_event_context = native_special_event_context(
+            Path::new(&project_root.to_string()),
+            &local_datetime.to_string(),
+            &character,
+        );
         match build_native_chat_request(
             &database,
             &config,
@@ -2492,6 +2542,7 @@ impl ffi::Backend {
             &user_key,
             conversation_id,
             &current_time_instruction.to_string(),
+            &special_event_context,
         ) {
             Ok(request) => {
                 let payload = serde_json::to_string(&request)
@@ -2625,6 +2676,7 @@ impl ffi::Backend {
         members_json: &QString,
         spoken_names_json: &QString,
         current_time_instruction: &QString,
+        local_datetime: &QString,
     ) -> bool {
         let mut context = match self.as_ref().get_ref().rust().prepared_group_turn.clone() {
             Some(context) => context,
@@ -2685,6 +2737,11 @@ impl ffi::Backend {
                 return false;
             }
         };
+        let special_event_context = native_special_event_context(
+            Path::new(&project_root.to_string()),
+            &local_datetime.to_string(),
+            &character,
+        );
         match build_native_group_chat_request(
             &database,
             &config,
@@ -2697,6 +2754,7 @@ impl ffi::Backend {
             &members,
             &spoken_names,
             &current_time_instruction.to_string(),
+            &special_event_context,
         ) {
             Ok(request) => {
                 let payload = serde_json::to_string(&request)
@@ -3654,6 +3712,7 @@ struct ScreenAwarenessCapture {
     desktop_width: u32,
     desktop_height: u32,
     desktop_state: Value,
+    local_datetime: String,
 }
 
 #[derive(Clone)]
@@ -3839,8 +3898,14 @@ fn prepare_screen_awareness_job(
         None
     };
     let markdown = load_character_markdown(project_root, &character);
-    let system_prompt =
+    let mut system_prompt =
         build_native_system_prompt(&character, &display_name, config.values(), &markdown);
+    let special_event_context =
+        native_special_event_context(project_root, &capture.local_datetime, &character);
+    if !special_event_context.is_empty() {
+        system_prompt.push_str("\n\n【今日特殊事件】\n");
+        system_prompt.push_str(&special_event_context);
+    }
     let user_key = {
         let key = config_string(&config, "active_user_key");
         if key.is_empty() {
@@ -3894,6 +3959,18 @@ fn checked_screen_text(value: String, maximum: usize, label: &str) -> Result<Str
     } else {
         Ok(value.to_owned())
     }
+}
+
+fn native_special_event_context(
+    project_root: &Path,
+    local_datetime: &str,
+    character: &str,
+) -> String {
+    LocalDateTime::parse(local_datetime)
+        .and_then(|local_datetime| {
+            build_special_event_context(project_root.join("events"), local_datetime, character).ok()
+        })
+        .unwrap_or_default()
 }
 
 fn load_memory_transport_config(path: &Path) -> Result<Option<LlmTransportConfig>, String> {

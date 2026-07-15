@@ -312,6 +312,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   summary with main-model image fallback, honors cancellation and `NO_SPEAK`, and
   returns only bounded text/actions. Qt then routes the result through the native
   system tray or floating pet event and the existing TTS/LIP queue.
+  Native special events now load the bounded birthday and festival databases in
+  Rust, append character-aware daily context to private chat, group chat and
+  screen awareness, and safely handle recurring leap-day entries. Qt polls once
+  at startup and after each local midnight, shows festival tray notices and
+  optionally birthday notices, with that preference persisted through the
+  whitelisted native settings boundary. No Python timer or event-calendar helper
+  remains on this runtime path.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

@@ -88,6 +88,8 @@ private:
     void addNativePomodoro();
     void toggleSelectedNativeAlarm();
     void deleteSelectedNativeReminder();
+    void pollNativeSpecialEvents();
+    void scheduleNativeSpecialEventPoll(int retryMilliseconds = 0);
     void loadNativeLlmSettings();
     void syncNativeLlmSettingsControls();
     bool saveNativeLlmSettings();
@@ -317,6 +319,8 @@ private:
     qfw::BodyLabel* attachmentStatsLabel_ = nullptr;
     bool attachmentStartupCleanupRan_ = false;
     QTimer reminderTimer_;
+    QTimer specialEventTimer_;
+    QString lastSpecialEventDate_;
     QJsonObject reminderState_;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;
     qfw::TimePicker* alarmTimePicker_ = nullptr;
@@ -489,6 +493,7 @@ private:
     qfw::SwitchButton* moveTogetherSwitch_ = nullptr;
     qfw::SwitchButton* headTrackingSwitch_ = nullptr;
     qfw::SwitchButton* mutualGazeSwitch_ = nullptr;
+    qfw::SwitchButton* birthdayNotificationsSwitch_ = nullptr;
     qfw::ComboBox* themeComboBox_ = nullptr;
     qfw::PrimaryPushButton* saveSettingsButton_ = nullptr;
     QSystemTrayIcon* trayIcon_ = nullptr;

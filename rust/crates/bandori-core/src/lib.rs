@@ -30,6 +30,7 @@ pub mod persona_settings;
 pub mod relationship_analysis;
 pub mod reminder;
 pub mod screen_awareness_settings;
+pub mod special_events;
 pub mod statistics_dashboard;
 pub mod tts_settings;
 pub mod user_profiles;

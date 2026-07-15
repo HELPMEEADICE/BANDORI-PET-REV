@@ -35,6 +35,7 @@ pub fn build_native_chat_request(
     user_key: &str,
     conversation_id: i64,
     current_time_instruction: &str,
+    special_event_context: &str,
 ) -> Result<NativeChatRequest, DatabaseError> {
     let character = character.trim();
     if character.is_empty() || conversation_id <= 0 {
@@ -58,13 +59,18 @@ pub fn build_native_chat_request(
         .and_then(Value::as_str)
         .map(|role| load_character_markdown(project_root, role))
         .unwrap_or_default();
-    let system_prompt = with_native_tool_system_hint(&build_native_system_prompt_with_role(
+    let mut system_prompt = build_native_system_prompt_with_role(
         character,
         character_display_name,
         config.values(),
         &markdown,
         &role_markdown,
-    ));
+    );
+    if !special_event_context.trim().is_empty() {
+        system_prompt.push_str("\n\n【今日特殊事件】\n");
+        system_prompt.push_str(special_event_context.trim());
+    }
+    let system_prompt = with_native_tool_system_hint(&system_prompt);
     let user_display_name = config
         .get("user_name")
         .and_then(Value::as_str)
@@ -248,6 +254,7 @@ mod tests {
             "alice",
             turn.conversation_id,
             "当前时间：2026-07-15 12:30（中午）\n现在的时间判断只以上面这条为准。",
+            "【夏日祭】\n今天是夏日祭。",
         )
         .unwrap();
 
@@ -258,6 +265,13 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("【工具使用边界】")
+        );
+        assert!(
+            request.messages[0]
+                .content
+                .as_str()
+                .unwrap()
+                .contains("【今日特殊事件】\n【夏日祭】")
         );
         assert_eq!(request.messages.len(), 3);
         assert!(
@@ -330,6 +344,7 @@ mod tests {
             "",
             turn.conversation_id,
             "",
+            "",
         )
         .unwrap();
         assert_eq!(
@@ -374,6 +389,7 @@ mod tests {
             "alice",
             turn.conversation_id,
             "now",
+            "",
         )
         .unwrap();
         let parts = request.messages.last().unwrap().content.as_array().unwrap();
