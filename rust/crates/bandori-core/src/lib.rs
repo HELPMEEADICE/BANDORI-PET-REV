@@ -22,5 +22,6 @@ pub mod ipc_ffi;
 pub mod memory_extraction;
 pub mod model;
 pub mod relationship_analysis;
+pub mod reminder;
 
 pub use bandori_llm_protocol as llm_protocol;

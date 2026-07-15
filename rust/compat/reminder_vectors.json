@@ -1,0 +1,198 @@
+{
+  "now": "2026-07-15T10:30:00",
+  "normalize_time": [
+    {
+      "input": "9:05",
+      "expected": "09:05"
+    },
+    {
+      "input": "晚上 23：40",
+      "expected": "23:40"
+    },
+    {
+      "input": "7点",
+      "expected": "07:00"
+    },
+    {
+      "input": "提醒我 18时30",
+      "expected": "18:30"
+    },
+    {
+      "input": "9:5",
+      "expected": "09:00"
+    },
+    {
+      "input": "24:00",
+      "expected": "00:00"
+    },
+    {
+      "input": "none",
+      "expected": ""
+    }
+  ],
+  "normalize_repeat_days": [
+    {
+      "input": null,
+      "expected": []
+    },
+    {
+      "input": "daily",
+      "expected": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "input": "weekdays",
+      "expected": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "input": "周末",
+      "expected": [
+        5,
+        6
+      ]
+    },
+    {
+      "input": "周一、周三 fri",
+      "expected": [
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "input": [
+        0,
+        2,
+        6,
+        2
+      ],
+      "expected": [
+        0,
+        2,
+        6
+      ]
+    },
+    {
+      "input": [
+        1,
+        7,
+        "sun",
+        "bad"
+      ],
+      "expected": [
+        1,
+        6
+      ]
+    }
+  ],
+  "next_alarm": [
+    {
+      "time": "11:00",
+      "repeat": [],
+      "date": "",
+      "expected": "2026-07-15T11:00:00"
+    },
+    {
+      "time": "09:00",
+      "repeat": "daily",
+      "date": "",
+      "expected": "2026-07-16T09:00:00"
+    },
+    {
+      "time": "08:15",
+      "repeat": "weekdays",
+      "date": "",
+      "expected": "2026-07-16T08:15:00"
+    },
+    {
+      "time": "22:10",
+      "repeat": [],
+      "date": "2026-07-20",
+      "expected": "2026-07-20T22:10:00"
+    },
+    {
+      "time": "09:00",
+      "repeat": [],
+      "date": "2026-07-14",
+      "expected": ""
+    },
+    {
+      "time": "bad",
+      "repeat": [],
+      "date": "",
+      "expected": ""
+    }
+  ],
+  "created_alarm": {
+    "id": "alarm_contract",
+    "enabled": true,
+    "time": "21:45",
+    "repeat_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "description": "练琴",
+    "character": "ran",
+    "created_at": "2026-07-15T10:30:00",
+    "next_at": "2026-07-15T21:45:00",
+    "last_triggered_at": ""
+  },
+  "normalized_alarm": {
+    "id": "alarm_existing",
+    "enabled": true,
+    "time": "07:30",
+    "repeat_days": [
+      5,
+      6
+    ],
+    "description": "x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  x  ",
+    "character": "kasumi",
+    "created_at": "2026-01-01T00:00:00",
+    "next_at": "2026-07-18T07:30:00",
+    "last_triggered_at": ""
+  },
+  "created_pomodoro": {
+    "id": "pomodoro_contract",
+    "status": "running",
+    "repeat_count": 3,
+    "completed_focus_count": 0,
+    "phase": "focus",
+    "phase_started_at": "2026-07-15T10:30:00",
+    "phase_duration_sec": 1500,
+    "next_at": "2026-07-15T10:55:00",
+    "description": "编曲",
+    "character": "moca",
+    "created_at": "2026-07-15T10:30:00",
+    "updated_at": "2026-07-15T10:30:00"
+  },
+  "normalized_pomodoro": {
+    "id": "pomodoro_existing",
+    "status": "running",
+    "repeat_count": 24,
+    "completed_focus_count": 0,
+    "phase": "focus",
+    "phase_started_at": "2026-07-15T10:30:00",
+    "phase_duration_sec": 1500,
+    "next_at": "2026-07-15T10:55:00",
+    "description": "demo",
+    "character": "ran",
+    "created_at": "2026-07-15T10:30:00",
+    "updated_at": "2026-07-15T10:30:00"
+  }
+}

@@ -439,6 +439,24 @@ def test_native_chat_tools_are_bounded_looped_and_dispatched_through_existing_ip
     assert 'QStringLiteral("to_user")' in window
 
 
+def test_native_reminder_core_is_python_contract_backed_and_qt_independent():
+    reminder = source("rust/crates/bandori-core/src/reminder.rs")
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    exporter = source("tools/export_rust_contracts.py")
+
+    assert "pub mod reminder;" in core
+    assert "pub struct LocalDateTime" in reminder
+    assert "pub fn normalize_time" in reminder
+    assert "pub fn normalize_repeat_days" in reminder
+    assert "pub fn compute_next_alarm_at" in reminder
+    assert "pub fn create_alarm" in reminder
+    assert "pub fn create_pomodoro" in reminder
+    assert "pub fn tick_reminders" in reminder
+    assert "generated_python_reminder_vectors_match_rust" in reminder
+    assert "_reminder_contract(" in exporter
+    assert 'OUTPUT_DIR / "reminder_vectors.json"' in exporter
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

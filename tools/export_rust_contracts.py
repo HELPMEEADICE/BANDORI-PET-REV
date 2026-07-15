@@ -47,6 +47,16 @@ def rendered_contracts() -> dict[Path, str]:
         parse_memory_supersede_response,
         parse_relationship_analysis_response,
     )
+    from reminder_core import (
+        compute_next_alarm_at,
+        create_alarm,
+        create_pomodoro,
+        isoformat as reminder_isoformat,
+        normalize_alarm,
+        normalize_pomodoro,
+        normalize_repeat_days,
+        normalize_time,
+    )
     from model_manager import ModelManager
     from shared_memory_ipc import (
         _HEADER,
@@ -60,6 +70,16 @@ def rendered_contracts() -> dict[Path, str]:
 
     database_contract = _database_contract()
     database_vectors = _database_behavior_contract()
+    reminder_vectors = _reminder_contract(
+        normalize_time,
+        normalize_repeat_days,
+        compute_next_alarm_at,
+        create_alarm,
+        normalize_alarm,
+        create_pomodoro,
+        normalize_pomodoro,
+        reminder_isoformat,
+    )
 
     llm_endpoint_inputs = [
         "",
@@ -344,11 +364,121 @@ def rendered_contracts() -> dict[Path, str]:
             database_vectors, ensure_ascii=False, indent=2
         )
         + "\n",
+        OUTPUT_DIR / "reminder_vectors.json": json.dumps(
+            reminder_vectors, ensure_ascii=False, indent=2
+        )
+        + "\n",
     }
 
 
 def _contract_translation(_key: str, default: str = "", **kwargs) -> str:
     return str(default).format(**kwargs)
+
+
+def _reminder_contract(
+    normalize_time,
+    normalize_repeat_days,
+    compute_next_alarm_at,
+    create_alarm,
+    normalize_alarm,
+    create_pomodoro,
+    normalize_pomodoro,
+    isoformat,
+) -> dict:
+    from datetime import datetime
+
+    now = datetime(2026, 7, 15, 10, 30, 0)
+    time_inputs = [
+        "9:05",
+        "晚上 23：40",
+        "7点",
+        "提醒我 18时30",
+        "9:5",
+        "24:00",
+        "none",
+    ]
+    repeat_inputs = [
+        None,
+        "daily",
+        "weekdays",
+        "周末",
+        "周一、周三 fri",
+        [0, 2, 6, 2],
+        [1, 7, "sun", "bad"],
+    ]
+    next_cases = [
+        {"time": "11:00", "repeat": [], "date": ""},
+        {"time": "09:00", "repeat": "daily", "date": ""},
+        {"time": "08:15", "repeat": "weekdays", "date": ""},
+        {"time": "22:10", "repeat": [], "date": "2026-07-20"},
+        {"time": "09:00", "repeat": [], "date": "2026-07-14"},
+        {"time": "bad", "repeat": [], "date": ""},
+    ]
+    for case in next_cases:
+        case["expected"] = isoformat(
+            compute_next_alarm_at(
+                case["time"],
+                case["repeat"],
+                now,
+                date_text=case["date"],
+            )
+        )
+
+    with patch(
+        "reminder_core.new_id",
+        side_effect=["alarm_contract", "pomodoro_contract"],
+    ):
+        alarm = create_alarm(
+            "21:45",
+            "weekdays",
+            " 练琴 ",
+            "ran",
+            "",
+            now,
+        )
+        pomodoro = create_pomodoro(3, " 编曲 ", "moca", now)
+
+    normalized_alarm = normalize_alarm(
+        {
+            "id": "alarm_existing",
+            "enabled": "yes",
+            "time": "7点30",
+            "repeat": "周末",
+            "description": " x " * 130,
+            "role": "kasumi",
+            "created_at": "2026-01-01T00:00:00",
+        },
+        now,
+    )
+    normalized_pomodoro = normalize_pomodoro(
+        {
+            "id": "pomodoro_existing",
+            "status": "unknown",
+            "repeat_count": 99,
+            "completed_focus_count": -5,
+            "phase": "invalid",
+            "phase_duration_sec": 0,
+            "description": " demo ",
+            "role": "ran",
+        },
+        now,
+    )
+    return {
+        "now": isoformat(now),
+        "normalize_time": [
+            {"input": value, "expected": normalize_time(value)}
+            for value in time_inputs
+        ],
+        "normalize_repeat_days": [
+            {"input": value, "expected": normalize_repeat_days(value)}
+            for value in repeat_inputs
+        ],
+        "next_alarm": next_cases,
+        "created_alarm": alarm,
+        "normalized_alarm": normalized_alarm,
+        "created_pomodoro": pomodoro,
+        "normalized_pomodoro": normalized_pomodoro,
+    }
 
 
 def _memory_extraction_contract(
