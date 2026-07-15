@@ -15,6 +15,7 @@ pub mod config_ffi;
 pub mod cross_chat_history;
 pub mod dashboard;
 pub mod database;
+pub mod group_chat;
 pub mod ipc;
 pub mod ipc_ffi;
 pub mod memory_extraction;

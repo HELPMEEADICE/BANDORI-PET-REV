@@ -228,6 +228,13 @@ pub struct PrivateChatTurn {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GroupChatTurn {
+    pub group_key: String,
+    pub conversation_id: String,
+    pub user_message_id: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GroupMessage {
     pub id: i64,
     pub group_key: String,
@@ -689,6 +696,107 @@ impl Database {
             let user_message_id = transaction.last_insert_rowid();
             transaction.commit()?;
             Ok(PrivateChatTurn {
+                conversation_id,
+                user_message_id,
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_group_chat_turn(
+        &self,
+        group_key: &str,
+        user_key: &str,
+        requested_conversation_id: Option<&str>,
+        new_conversation_id: &str,
+        content: &str,
+        attachments: Option<&Value>,
+    ) -> Result<GroupChatTurn, DatabaseError> {
+        let group_key = group_key.trim();
+        let members = group_key
+            .strip_prefix("__group__:")
+            .map(|value| {
+                value
+                    .split('|')
+                    .filter(|member| !member.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if members.len() < 2 || crate::group_chat::conversation_key_for(&members, "") != group_key {
+            return Err(DatabaseError::InvalidOperation(
+                "group chat needs at least two distinct canonical members".to_owned(),
+            ));
+        }
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(DatabaseError::InvalidOperation(
+                "chat message cannot be empty".to_owned(),
+            ));
+        }
+        let user_key = normalize_user_key(user_key);
+        let requested = requested_conversation_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let candidate = new_conversation_id.trim();
+        if requested.is_none() && candidate.is_empty() {
+            return Err(DatabaseError::InvalidOperation(
+                "new group conversation needs an id".to_owned(),
+            ));
+        }
+        let attachments = sanitize_attachments(attachments, &self.attachment_dir);
+        let attachments_json = json_text(Some(&attachments))?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            let conversation_id = match requested {
+                Some(conversation_id) => transaction
+                    .query_row(
+                        concat!(
+                            "SELECT conversation_id FROM group_messages ",
+                            "WHERE group_key=? AND conversation_id=? AND user_key=? LIMIT 1"
+                        ),
+                        params![group_key, conversation_id, user_key],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                    .ok_or_else(|| {
+                        DatabaseError::InvalidOperation(
+                            "group conversation does not belong to the selected group and user"
+                                .to_owned(),
+                        )
+                    })?,
+                None => {
+                    let exists = transaction
+                        .query_row(
+                            concat!(
+                                "SELECT 1 FROM group_messages ",
+                                "WHERE group_key=? AND conversation_id=? AND user_key=? LIMIT 1"
+                            ),
+                            params![group_key, candidate, user_key],
+                            |_| Ok(()),
+                        )
+                        .optional()?
+                        .is_some();
+                    if exists {
+                        return Err(DatabaseError::InvalidOperation(
+                            "new group conversation id already exists".to_owned(),
+                        ));
+                    }
+                    candidate.to_owned()
+                }
+            };
+            transaction.execute(
+                concat!(
+                    "INSERT INTO group_messages ",
+                    "(group_key, conversation_id, user_key, role, content, reasoning_content, attachments_json, tool_trace_json) ",
+                    "VALUES (?, ?, ?, 'user', ?, '', ?, '')"
+                ),
+                params![group_key, conversation_id, user_key, content, attachments_json],
+            )?;
+            let user_message_id = transaction.last_insert_rowid();
+            transaction.commit()?;
+            Ok(GroupChatTurn {
+                group_key: group_key.to_owned(),
                 conversation_id,
                 user_message_id,
             })

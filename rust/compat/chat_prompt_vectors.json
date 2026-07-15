@@ -467,5 +467,154 @@
   },
   "cross_chat_history": {
     "expected": "以下是过去聊天摘录，仅供参考；其中提到的晚上、凌晨、昨天等都只代表当时，不代表现在。\n[2026-07-14 08:01] Alice/美竹兰：私聊里 的消息\n[2026-07-14 08:02] 美竹兰/私聊：知道了\n[2026-07-15 09:03] Alice/群聊：群聊问题\n[2026-07-15 09:04] 青叶摩卡/群聊：群聊回答"
+  },
+  "group_chat": {
+    "members": [
+      {
+        "key": "ran",
+        "name": "美竹兰"
+      },
+      {
+        "key": "moca",
+        "name": "青叶摩卡"
+      },
+      {
+        "key": "kasumi",
+        "name": "户山香澄"
+      }
+    ],
+    "key_cases": [
+      {
+        "characters": [],
+        "fallback": "ran",
+        "normalized": [],
+        "expected": "ran"
+      },
+      {
+        "characters": [
+          "moca"
+        ],
+        "fallback": "ran",
+        "normalized": [
+          "moca"
+        ],
+        "expected": "moca"
+      },
+      {
+        "characters": [
+          "ran",
+          "moca",
+          "ran",
+          ""
+        ],
+        "fallback": "ran",
+        "normalized": [
+          "ran",
+          "moca"
+        ],
+        "expected": "__group__:moca|ran"
+      },
+      {
+        "characters": [
+          "Kasumi",
+          "arisa",
+          "kasumi"
+        ],
+        "fallback": "ran",
+        "normalized": [
+          "Kasumi",
+          "arisa",
+          "kasumi"
+        ],
+        "expected": "__group__:arisa|Kasumi|kasumi"
+      }
+    ],
+    "system_prompt": "BASE\n\n【群聊规则】\n这是一个多人群聊。当前群聊成员：美竹兰、青叶摩卡、户山香澄。\n你只扮演自己，不要代替其他角色说话。\n本轮只有你一个角色发言；其他角色如果需要回应，程序会在后续轮次单独生成。\n你的输出必须是一条仅属于你自己的单人回复，不要写成多人连续对话、对手戏脚本或旁白串场。\n严禁输出其他角色的直接台词，严禁替其他角色回答，严禁在同一条回复里模拟别人接话。\n如果需要提到其他成员的反应，只能用你自己的视角转述，不能写出对方的原话。\n回复时不要添加任何角色名前缀或剧本标签，例如【角色名】、[角色名]、角色名：，程序会自动添加。",
+    "plan_cases": [
+      {
+        "source": "{\"speakers\":[\"ran\",\"青叶摩卡\",\"unknown\",\"ran\",\"kasumi\",\"moca\",\"ran\"]}",
+        "expected": [
+          "ran",
+          "moca",
+          "ran",
+          "kasumi",
+          "moca",
+          "ran"
+        ]
+      },
+      {
+        "source": "prefix {\"speakers\":[\"户山香澄\"]} suffix",
+        "expected": [
+          "kasumi"
+        ]
+      },
+      {
+        "source": "{\"speakers\":\"ran\"}",
+        "expected": []
+      },
+      {
+        "source": "not json",
+        "expected": []
+      }
+    ],
+    "priority_cases": [
+      {
+        "queue": [
+          "moca",
+          "ran",
+          "kasumi"
+        ],
+        "priority": "ran",
+        "expected": [
+          "ran",
+          "moca",
+          "kasumi"
+        ]
+      },
+      {
+        "queue": [
+          "ran"
+        ],
+        "priority": "ran",
+        "expected": [
+          "ran",
+          "moca",
+          "kasumi"
+        ]
+      },
+      {
+        "queue": [
+          "moca",
+          "kasumi"
+        ],
+        "priority": "unknown",
+        "expected": [
+          "moca",
+          "kasumi"
+        ]
+      }
+    ],
+    "assistant_cases": [
+      {
+        "character": "ran",
+        "source": "你好",
+        "expected": "【美竹兰】\n你好"
+      },
+      {
+        "character": "ran",
+        "source": "【美竹兰】你好\n【青叶摩卡】代替发言\n【美竹兰】继续",
+        "expected": "【美竹兰】\n你好\n\n继续"
+      },
+      {
+        "character": "moca",
+        "source": "美竹兰：错误角色\n户山香澄：另一条",
+        "expected": "【青叶摩卡】\n错误角色\n另一条"
+      },
+      {
+        "character": "moca",
+        "source": "[青叶摩卡] 自己的回答",
+        "expected": "【青叶摩卡】\n自己的回答"
+      }
+    ]
   }
 }

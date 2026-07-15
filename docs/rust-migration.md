@@ -213,6 +213,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   conversations can be deleted only after Rust verifies the selected character
   and user partition; cascading message deletion is followed by canonical-root
   cleanup of deduplicated attachment copies.
+  The native group-chat core now preserves Python-owned behavior through generated
+  fixtures for canonical member keys, group-only system rules, scheduler JSON
+  parsing, priority-speaker ordering and single-speaker reply cleanup. Group user
+  turns are inserted atomically into an exact user/group partition, planner and
+  per-speaker prompts read only that partition, group history is paginated, and
+  safe deletion also removes copied attachments. Qt orchestration for the planner
+  and sequential speaker streams is the next integration step.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

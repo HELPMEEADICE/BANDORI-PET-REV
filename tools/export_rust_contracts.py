@@ -9,6 +9,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,8 +148,6 @@ def rendered_contracts() -> dict[Path, str]:
             },
         },
     ]
-    from unittest.mock import patch
-
     with (
         patch("llm_manager._build_event_context", return_value=""),
         patch("llm_manager._get_character_md_prompt", return_value=""),
@@ -205,6 +204,7 @@ def rendered_contracts() -> dict[Path, str]:
             parse_memory_supersede_response,
         ),
         "cross_chat_history": _cross_chat_history_contract(),
+        "group_chat": _group_chat_contract(),
     }
 
     key_cases = [
@@ -505,6 +505,110 @@ def _cross_chat_history_contract() -> dict:
         finally:
             database.close()
     return {"expected": expected}
+
+
+def _group_chat_contract() -> dict:
+    with contextlib.redirect_stdout(io.StringIO()):
+        from chat_window import chat_window as chat_module
+
+    ChatWindow = chat_module.ChatWindow
+
+    class FixtureModelManager:
+        characters = ["ran", "moca", "kasumi"]
+        names = {
+            "ran": "美竹兰",
+            "moca": "青叶摩卡",
+            "kasumi": "户山香澄",
+        }
+
+        def get_display_name(self, character: str) -> str:
+            return self.names.get(character, character)
+
+    class Harness:
+        _normalize_group_characters = ChatWindow._normalize_group_characters
+        _conversation_key_for = ChatWindow._conversation_key_for
+        _group_system_prompt = ChatWindow._group_system_prompt
+        _parse_group_plan = ChatWindow._parse_group_plan
+        _apply_group_plan_priority = ChatWindow._apply_group_plan_priority
+        _sanitize_group_assistant_reply = ChatWindow._sanitize_group_assistant_reply
+        _assistant_content = ChatWindow._assistant_content
+
+    harness = Harness()
+    harness._character = "ran"
+    harness._group_characters = ["ran", "moca", "kasumi"]
+    harness._is_group_chat = True
+    harness._model_manager = FixtureModelManager()
+    harness._cfg = {}
+
+    key_cases = []
+    for characters in (
+        [],
+        ["moca"],
+        ["ran", "moca", "ran", ""],
+        ["Kasumi", "arisa", "kasumi"],
+    ):
+        key_cases.append(
+            {
+                "characters": characters,
+                "fallback": harness._character,
+                "normalized": harness._normalize_group_characters(characters),
+                "expected": harness._conversation_key_for(characters),
+            }
+        )
+
+    with patch(
+        "chat_window.chat_window.build_system_prompt", return_value="BASE"
+    ):
+        system_prompt = harness._group_system_prompt("ran", [])
+
+    plan_sources = (
+        '{"speakers":["ran","青叶摩卡","unknown","ran","kasumi","moca","ran"]}',
+        'prefix {"speakers":["户山香澄"]} suffix',
+        '{"speakers":"ran"}',
+        'not json',
+    )
+    plan_cases = [
+        {"source": source, "expected": harness._parse_group_plan(source)}
+        for source in plan_sources
+    ]
+    priority_cases = []
+    for queue, priority in (
+        (["moca", "ran", "kasumi"], "ran"),
+        (["ran"], "ran"),
+        (["moca", "kasumi"], "unknown"),
+    ):
+        priority_cases.append(
+            {
+                "queue": queue,
+                "priority": priority,
+                "expected": harness._apply_group_plan_priority(queue, priority),
+            }
+        )
+    assistant_cases = []
+    for character, source in (
+        ("ran", "你好"),
+        ("ran", "【美竹兰】你好\n【青叶摩卡】代替发言\n【美竹兰】继续"),
+        ("moca", "美竹兰：错误角色\n户山香澄：另一条"),
+        ("moca", "[青叶摩卡] 自己的回答"),
+    ):
+        assistant_cases.append(
+            {
+                "character": character,
+                "source": source,
+                "expected": harness._assistant_content(character, source),
+            }
+        )
+    return {
+        "members": [
+            {"key": key, "name": FixtureModelManager.names[key]}
+            for key in harness._group_characters
+        ],
+        "key_cases": key_cases,
+        "system_prompt": system_prompt,
+        "plan_cases": plan_cases,
+        "priority_cases": priority_cases,
+        "assistant_cases": assistant_cases,
+    }
 
 
 def _relationship_prompt_cases(build_relationship_context) -> list[dict]:

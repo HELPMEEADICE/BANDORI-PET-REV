@@ -1,4 +1,4 @@
-use crate::database::{Database, DatabaseError, Message};
+use crate::database::{Database, DatabaseError, GroupMessage, Message};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::{Deserialize, Serialize};
@@ -106,14 +106,41 @@ pub fn chat_message_content(
     message: &Message,
     include_raw_images: bool,
 ) -> Value {
-    let attachments = serde_json::from_str::<Value>(&message.attachments_json)
+    message_content(
+        database,
+        &message.content,
+        &message.attachments_json,
+        include_raw_images,
+    )
+}
+
+pub fn group_chat_message_content(
+    database: &Database,
+    message: &GroupMessage,
+    include_raw_images: bool,
+) -> Value {
+    message_content(
+        database,
+        &message.content,
+        &message.attachments_json,
+        include_raw_images,
+    )
+}
+
+fn message_content(
+    database: &Database,
+    content: &str,
+    attachments_json: &str,
+    include_raw_images: bool,
+) -> Value {
+    let attachments = serde_json::from_str::<Value>(attachments_json)
         .ok()
         .and_then(|value| value.as_array().cloned())
         .unwrap_or_default();
     if attachments.is_empty() {
-        return Value::String(message.content.clone());
+        return Value::String(content.to_owned());
     }
-    let mut text = message.content.clone();
+    let mut text = content.to_owned();
     let mut vision_notes = Vec::new();
     let mut file_notes = Vec::new();
     let mut raw_images = Vec::new();
@@ -181,9 +208,33 @@ pub fn chat_message_content(
 }
 
 pub fn delete_message_attachment_copies(database: &Database, messages: &[Message]) -> usize {
+    delete_attachment_copies(
+        database,
+        messages
+            .iter()
+            .map(|message| message.attachments_json.as_str()),
+    )
+}
+
+pub fn delete_group_message_attachment_copies(
+    database: &Database,
+    messages: &[GroupMessage],
+) -> usize {
+    delete_attachment_copies(
+        database,
+        messages
+            .iter()
+            .map(|message| message.attachments_json.as_str()),
+    )
+}
+
+fn delete_attachment_copies<'a>(
+    database: &Database,
+    attachments_json: impl IntoIterator<Item = &'a str>,
+) -> usize {
     let mut paths = HashSet::new();
-    for message in messages {
-        let attachments = serde_json::from_str::<Value>(&message.attachments_json)
+    for source in attachments_json {
+        let attachments = serde_json::from_str::<Value>(source)
             .ok()
             .and_then(|value| value.as_array().cloned())
             .unwrap_or_default();

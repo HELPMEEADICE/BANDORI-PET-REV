@@ -1,4 +1,6 @@
-use crate::chat_attachments::delete_message_attachment_copies;
+use crate::chat_attachments::{
+    delete_group_message_attachment_copies, delete_message_attachment_copies,
+};
 use crate::database::{Database, DatabaseError};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +30,38 @@ pub fn delete_owned_private_conversation(
     let deleted = database.delete_conversation(conversation_id)? != 0;
     let attachments_removed = if deleted {
         delete_message_attachment_copies(database, &messages)
+    } else {
+        0
+    };
+    Ok(ConversationDeleteResult {
+        deleted,
+        attachments_removed,
+    })
+}
+
+pub fn delete_owned_group_conversation(
+    database: &Database,
+    group_key: &str,
+    user_key: &str,
+    conversation_id: &str,
+) -> Result<ConversationDeleteResult, DatabaseError> {
+    let conversation_id = conversation_id.trim();
+    if conversation_id.is_empty()
+        || !database
+            .group_conversations(group_key, Some(user_key))?
+            .iter()
+            .any(|conversation| conversation.conversation_id == conversation_id)
+    {
+        return Err(DatabaseError::InvalidOperation(
+            "group conversation does not belong to the selected group and user".to_owned(),
+        ));
+    }
+    let messages =
+        database.get_group_messages(group_key, conversation_id, None, Some(user_key), None)?;
+    let deleted =
+        database.delete_group_conversation(group_key, conversation_id, Some(user_key))? != 0;
+    let attachments_removed = if deleted {
+        delete_group_message_attachment_copies(database, &messages)
     } else {
         0
     };
@@ -87,5 +121,41 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn group_delete_is_partitioned_by_group_and_user_and_cleans_attachments() {
+        let directory = tempfile::tempdir().unwrap();
+        let attachment_root = directory.path().join("chat_attachments");
+        fs::create_dir(&attachment_root).unwrap();
+        let attachment = attachment_root.join("group.txt");
+        fs::write(&attachment, "saved").unwrap();
+        let database = Database::open(directory.path().join("data.db")).unwrap();
+        database
+            .add_group_message(
+                "__group__:moca|ran",
+                "group-1",
+                "user",
+                "hello",
+                "",
+                Some(&json!([{
+                    "type": "file",
+                    "path": attachment,
+                    "name": "group.txt",
+                    "mime": "text/plain"
+                }])),
+                None,
+                "alice",
+            )
+            .unwrap();
+        assert!(
+            delete_owned_group_conversation(&database, "__group__:moca|ran", "bob", "group-1")
+                .is_err()
+        );
+        let result =
+            delete_owned_group_conversation(&database, "__group__:moca|ran", "alice", "group-1")
+                .unwrap();
+        assert_eq!(result.attachments_removed, 1);
+        assert!(!attachment.exists());
     }
 }

@@ -338,6 +338,24 @@ def test_native_private_conversation_management_validates_ownership_and_cleans_f
     assert "QMessageBox::question" in window
 
 
+def test_native_group_chat_core_is_python_contract_backed_and_user_partitioned():
+    group = source("rust/crates/bandori-core/src/group_chat.rs")
+    database = source("rust/crates/bandori-core/src/database.rs")
+    management = source("rust/crates/bandori-core/src/chat_management.rs")
+    exporter = source("tools/export_rust_contracts.py")
+
+    assert "pub fn conversation_key_for" in group
+    assert "pub fn build_group_planner_request" in group
+    assert "pub fn parse_group_plan" in group
+    assert "pub fn build_native_group_chat_request" in group
+    assert "pub fn sanitize_group_assistant_reply" in group
+    assert "generated_python_group_chat_contract_matches_rust" in group
+    assert "Some(user_key)" in group
+    assert "pub fn begin_group_chat_turn" in database
+    assert "pub fn delete_owned_group_conversation" in management
+    assert '"group_chat": _group_chat_contract()' in exporter
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

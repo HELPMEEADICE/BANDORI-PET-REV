@@ -116,7 +116,7 @@ pub fn build_native_chat_request(
     Ok(NativeChatRequest { messages })
 }
 
-fn history_message_limit(value: Option<&Value>) -> Option<i64> {
+pub(crate) fn history_message_limit(value: Option<&Value>) -> Option<i64> {
     let parsed = value
         .and_then(|value| {
             value
@@ -131,7 +131,7 @@ fn history_message_limit(value: Option<&Value>) -> Option<i64> {
     }
 }
 
-fn append_dynamic_context_to_last_user(
+pub(crate) fn append_dynamic_context_to_last_user(
     messages: &mut [NativeChatMessage],
     context: &str,
 ) -> Result<(), DatabaseError> {
