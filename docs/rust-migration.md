@@ -223,7 +223,13 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   planner and speaker requests have distinct cancellable states, a prepared group
   turn survives across sequential speakers, and each saved response keeps its
   speaker label, Live2D actions, relationship update and group-message memory
-  source. The native control-center widgets are the next integration step.
+  source. The Qt control center now exposes private/group mode, saved-group switching,
+  multi-select member composition and shared conversation history controls. A
+  group send persists its user turn, runs the auxiliary planner with fallback,
+  streams each selected speaker sequentially, refreshes history between speakers,
+  dispatches actions to that speaker's pet and keeps the whole sequence locked
+  behind one cancelable busy state. This UI path is generation/static tested but
+  still awaits a Qt 6 SDK for a native compile and interactive run.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

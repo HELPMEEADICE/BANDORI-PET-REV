@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -62,7 +63,13 @@ private:
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
+    void refreshGroupChatState(
+        const QString& requestedConversationId = {},
+        bool resetPagination = false);
     void sendNativeChat();
+    void sendNativeGroupChat(const QString& content, const QString& attachmentsJson);
+    void startNextGroupResponse();
+    void finishGroupSequence(const QString& status);
     void cancelNativeChat();
     void handleChatStreamEvent(const QString& payloadJson);
     void handleChatMemoryEvent(const QString& payloadJson);
@@ -73,6 +80,12 @@ private:
     void deleteSelectedChatConversation();
     void setChatBusy(bool busy);
     void renderChatStreamPreview();
+    bool isGroupChatMode() const;
+    QJsonArray selectedGroupMembers() const;
+    QString selectedGroupKey() const;
+    QString displayNameForCharacter(const QString& character) const;
+    QString groupDisplayName(const QString& groupKey) const;
+    void selectGroupKeyMembers(const QString& groupKey);
     void openNativeChat(const QString& character);
     void startSelectedPet();
     std::optional<ModelCatalogItem> selectedModel() const;
@@ -105,7 +118,12 @@ private:
     qfw::BodyLabel* modelDetailsLabel_ = nullptr;
     qfw::PrimaryPushButton* launchSelectedButton_ = nullptr;
     QWidget* chatPage_ = nullptr;
+    qfw::ComboBox* chatModeComboBox_ = nullptr;
+    QWidget* chatPrivateSelector_ = nullptr;
+    QWidget* chatGroupSelector_ = nullptr;
     qfw::ComboBox* chatCharacterComboBox_ = nullptr;
+    qfw::ComboBox* chatGroupComboBox_ = nullptr;
+    qfw::ListWidget* chatGroupMembersList_ = nullptr;
     qfw::ComboBox* chatConversationComboBox_ = nullptr;
     qfw::CaptionLabel* chatStatusLabel_ = nullptr;
     qfw::PushButton* chatLoadOlderButton_ = nullptr;
@@ -125,11 +143,17 @@ private:
     QString activeChatCharacter_;
     QString activeChatCharacterDisplay_;
     QString activeChatConversationId_;
+    QString activeChatPhase_;
+    QString activeGroupKey_;
+    QJsonArray activeGroupMembers_;
+    QStringList groupSpeakerQueue_;
+    QStringList groupSpokenNames_;
     QJsonArray pendingChatAttachments_;
     qint64 activeChatRequestId_ = 0;
     int chatMessageLimit_ = 200;
     bool updatingChatControls_ = false;
     bool draftingNewConversation_ = false;
+    bool groupSequenceActive_ = false;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

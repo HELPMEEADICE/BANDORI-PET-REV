@@ -25,6 +25,7 @@
 #include <QTextBrowser>
 #include <QVariant>
 #include <QVBoxLayout>
+#include <QUuid>
 
 #include <algorithm>
 #include <utility>
@@ -418,11 +419,40 @@ QWidget* NativeMainWindow::createChatPage() {
 
     auto* title = new qfw::TitleLabel(tr("Native chat"), page);
     auto* explanation = new qfw::CaptionLabel(
-        tr("Rust owns prompts, safe attachments, cancellable LLM streams and transactional data.db history. Advanced context and local tools remain staged."),
+        tr("Rust owns private/group prompts, safe attachments, cancellable speaker streams and transactional data.db history. Local tool parity remains staged."),
         page);
     explanation->setWordWrap(true);
-    chatCharacterComboBox_ = new qfw::ComboBox(page);
+    chatModeComboBox_ = new qfw::ComboBox(page);
+    chatModeComboBox_->addItem(tr("Private"), QVariant(), QStringLiteral("private"));
+    chatModeComboBox_->addItem(tr("Group"), QVariant(), QStringLiteral("group"));
+    chatPrivateSelector_ = new QWidget(page);
+    auto* privateSelectorLayout = new QHBoxLayout(chatPrivateSelector_);
+    privateSelectorLayout->setContentsMargins(0, 0, 0, 0);
+    privateSelectorLayout->setSpacing(8);
+    privateSelectorLayout->addWidget(new qfw::BodyLabel(tr("Character"), chatPrivateSelector_));
+    chatCharacterComboBox_ = new qfw::ComboBox(chatPrivateSelector_);
     chatCharacterComboBox_->setMinimumWidth(160);
+    privateSelectorLayout->addWidget(chatCharacterComboBox_);
+
+    chatGroupSelector_ = new QWidget(page);
+    auto* groupSelectorLayout = new QVBoxLayout(chatGroupSelector_);
+    groupSelectorLayout->setContentsMargins(0, 0, 0, 0);
+    groupSelectorLayout->setSpacing(6);
+    auto* savedGroupRow = new QHBoxLayout();
+    savedGroupRow->setSpacing(8);
+    savedGroupRow->addWidget(new qfw::BodyLabel(tr("Saved group"), chatGroupSelector_));
+    chatGroupComboBox_ = new qfw::ComboBox(chatGroupSelector_);
+    chatGroupComboBox_->setMinimumWidth(260);
+    savedGroupRow->addWidget(chatGroupComboBox_, 1);
+    groupSelectorLayout->addLayout(savedGroupRow);
+    groupSelectorLayout->addWidget(new qfw::CaptionLabel(
+        tr("Members · select at least two characters"), chatGroupSelector_));
+    chatGroupMembersList_ = new qfw::ListWidget(chatGroupSelector_);
+    chatGroupMembersList_->setSelectionMode(QAbstractItemView::MultiSelection);
+    chatGroupMembersList_->setMaximumHeight(112);
+    groupSelectorLayout->addWidget(chatGroupMembersList_);
+    chatGroupSelector_->setVisible(false);
+
     chatConversationComboBox_ = new qfw::ComboBox(page);
     chatConversationComboBox_->setMinimumWidth(280);
     chatRefreshButton_ = new qfw::PushButton(tr("Refresh"), page);
@@ -431,8 +461,9 @@ QWidget* NativeMainWindow::createChatPage() {
     chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
     chatLoadOlderButton_->setEnabled(false);
     auto* controls = new QHBoxLayout();
-    controls->addWidget(new qfw::BodyLabel(tr("Character"), page));
-    controls->addWidget(chatCharacterComboBox_);
+    controls->addWidget(new qfw::BodyLabel(tr("Mode"), page));
+    controls->addWidget(chatModeComboBox_);
+    controls->addWidget(chatPrivateSelector_);
     controls->addSpacing(8);
     controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
     controls->addWidget(chatConversationComboBox_, 1);
@@ -475,6 +506,7 @@ QWidget* NativeMainWindow::createChatPage() {
     layout->addWidget(title);
     layout->addWidget(explanation);
     layout->addLayout(controls);
+    layout->addWidget(chatGroupSelector_);
     layout->addWidget(chatStatusLabel_);
     layout->addWidget(chatTranscript_, 1);
     layout->addLayout(attachmentControls);
@@ -498,12 +530,50 @@ QWidget* NativeMainWindow::createChatPage() {
         refreshChatState(chatConversationComboBox_->currentData().toString());
     });
     connect(
+        chatModeComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (updatingChatControls_) {
+                return;
+            }
+            const bool group = isGroupChatMode();
+            chatPrivateSelector_->setVisible(!group);
+            chatGroupSelector_->setVisible(group);
+            refreshChatState({}, true);
+        });
+    connect(
         chatCharacterComboBox_,
         &qfw::ComboBox::currentIndexChanged,
         this,
         [this](int) {
             if (!updatingChatControls_) {
                 refreshChatState({}, true);
+            }
+        });
+    connect(
+        chatGroupComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            if (updatingChatControls_) {
+                return;
+            }
+            const QString groupKey = chatGroupComboBox_->currentData().toString();
+            if (!groupKey.isEmpty()) {
+                selectGroupKeyMembers(groupKey);
+                refreshChatState({}, true);
+            }
+        });
+    connect(
+        chatGroupMembersList_,
+        &QListWidget::itemSelectionChanged,
+        this,
+        [this]() {
+            if (!updatingChatControls_ && selectedGroupMembers().size() >= 2) {
+                refreshChatState({}, true);
+            } else {
+                setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
             }
         });
     connect(
@@ -883,12 +953,23 @@ void NativeMainWindow::updateModelDetails() {
 }
 
 void NativeMainWindow::populateChatCharacters() {
-    if (chatCharacterComboBox_ == nullptr) {
+    if (chatCharacterComboBox_ == nullptr || chatGroupMembersList_ == nullptr) {
         return;
     }
     const QString previous = chatCharacterComboBox_->currentData().toString();
+    QStringList previousGroupMembers;
+    for (const QListWidgetItem* item : chatGroupMembersList_->selectedItems()) {
+        previousGroupMembers.append(item->data(Qt::UserRole).toString());
+    }
+    if (previousGroupMembers.isEmpty() && chatGroupComboBox_ != nullptr) {
+        const QString groupKey = chatGroupComboBox_->currentData().toString();
+        if (groupKey.startsWith(QStringLiteral("__group__:"))) {
+            previousGroupMembers = groupKey.mid(10).split(u'|', Qt::SkipEmptyParts);
+        }
+    }
     updatingChatControls_ = true;
     chatCharacterComboBox_->clear();
+    chatGroupMembersList_->clear();
     QStringList added;
     for (const ModelCatalogItem& model : catalog_) {
         if (added.contains(model.character)) {
@@ -899,6 +980,10 @@ void NativeMainWindow::populateChatCharacters() {
             model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
             QVariant(),
             model.character);
+        auto* member = new QListWidgetItem(
+            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
+            chatGroupMembersList_);
+        member->setData(Qt::UserRole, model.character);
     }
     int index = chatCharacterComboBox_->findData(previous);
     if (index < 0) {
@@ -909,13 +994,131 @@ void NativeMainWindow::populateChatCharacters() {
         index = 0;
     }
     chatCharacterComboBox_->setCurrentIndex(index);
+
+    if (previousGroupMembers.isEmpty()) {
+        for (const ModelCatalogItem& model : configuredModels()) {
+            if (!previousGroupMembers.contains(model.character)) {
+                previousGroupMembers.append(model.character);
+            }
+        }
+    }
+    int selectedCount = 0;
+    for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
+        QListWidgetItem* item = chatGroupMembersList_->item(row);
+        const bool selected = previousGroupMembers.contains(
+            item->data(Qt::UserRole).toString());
+        item->setSelected(selected);
+        selectedCount += selected ? 1 : 0;
+    }
+    for (int row = 0; selectedCount < 2 && row < chatGroupMembersList_->count(); ++row) {
+        QListWidgetItem* item = chatGroupMembersList_->item(row);
+        if (!item->isSelected()) {
+            item->setSelected(true);
+            ++selectedCount;
+        }
+    }
+    const bool groupMode = isGroupChatMode();
+    chatPrivateSelector_->setVisible(!groupMode);
+    chatGroupSelector_->setVisible(groupMode);
     updatingChatControls_ = false;
+}
+
+bool NativeMainWindow::isGroupChatMode() const {
+    return chatModeComboBox_ != nullptr
+        && chatModeComboBox_->currentData().toString() == QStringLiteral("group");
+}
+
+QJsonArray NativeMainWindow::selectedGroupMembers() const {
+    QJsonArray members;
+    if (chatGroupMembersList_ == nullptr) {
+        return members;
+    }
+    for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
+        const QListWidgetItem* item = chatGroupMembersList_->item(row);
+        if (!item->isSelected()) {
+            continue;
+        }
+        const QString key = item->data(Qt::UserRole).toString();
+        if (!key.isEmpty()) {
+            members.append(QJsonObject{
+                {QStringLiteral("key"), key},
+                {QStringLiteral("name"), item->text()},
+            });
+        }
+    }
+    return members;
+}
+
+QString NativeMainWindow::selectedGroupKey() const {
+    QStringList keys;
+    for (const QJsonValue& value : selectedGroupMembers()) {
+        keys.append(value.toObject().value(QStringLiteral("key")).toString());
+    }
+    if (keys.size() < 2) {
+        return {};
+    }
+    std::stable_sort(
+        keys.begin(),
+        keys.end(),
+        [](const QString& left, const QString& right) {
+            return QString::compare(left, right, Qt::CaseInsensitive) < 0;
+        });
+    return QStringLiteral("__group__:") + keys.join(u'|');
+}
+
+QString NativeMainWindow::displayNameForCharacter(const QString& character) const {
+    if (chatGroupMembersList_ != nullptr) {
+        for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
+            const QListWidgetItem* item = chatGroupMembersList_->item(row);
+            if (item->data(Qt::UserRole).toString() == character) {
+                return item->text();
+            }
+        }
+    }
+    const auto found = std::find_if(
+        catalog_.cbegin(),
+        catalog_.cend(),
+        [&character](const ModelCatalogItem& model) {
+            return model.character == character;
+        });
+    if (found == catalog_.cend()) {
+        return character;
+    }
+    return found->characterDisplay.isEmpty() ? found->character : found->characterDisplay;
+}
+
+QString NativeMainWindow::groupDisplayName(const QString& groupKey) const {
+    if (!groupKey.startsWith(QStringLiteral("__group__:"))) {
+        return groupKey;
+    }
+    QStringList names;
+    for (const QString& character : groupKey.mid(10).split(u'|', Qt::SkipEmptyParts)) {
+        names.append(displayNameForCharacter(character));
+    }
+    return names.join(QStringLiteral("、"));
+}
+
+void NativeMainWindow::selectGroupKeyMembers(const QString& groupKey) {
+    if (chatGroupMembersList_ == nullptr
+        || !groupKey.startsWith(QStringLiteral("__group__:"))) {
+        return;
+    }
+    const QStringList keys = groupKey.mid(10).split(u'|', Qt::SkipEmptyParts);
+    const QSignalBlocker blocker(chatGroupMembersList_);
+    for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
+        QListWidgetItem* item = chatGroupMembersList_->item(row);
+        item->setSelected(keys.contains(item->data(Qt::UserRole).toString()));
+    }
 }
 
 void NativeMainWindow::refreshChatState(
     const QString& requestedConversationId,
     bool resetPagination) {
     if (chatCharacterComboBox_ == nullptr || chatTranscript_ == nullptr) {
+        return;
+    }
+    if (isGroupChatMode()) {
+        refreshGroupChatState(requestedConversationId, resetPagination);
         return;
     }
     draftingNewConversation_ = false;
@@ -1007,11 +1210,134 @@ void NativeMainWindow::refreshChatState(
                   .arg(conversations.size())
                   .arg(messages.size())
                   .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
-    setChatBusy(activeChatRequestId_ != 0);
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
+}
+
+void NativeMainWindow::refreshGroupChatState(
+    const QString& requestedConversationId,
+    bool resetPagination) {
+    if (chatGroupMembersList_ == nullptr || chatTranscript_ == nullptr) {
+        return;
+    }
+    draftingNewConversation_ = false;
+    if (resetPagination) {
+        chatMessageLimit_ = kChatMessagePageSize;
+    }
+    QString groupKey = groupSequenceActive_ ? activeGroupKey_ : selectedGroupKey();
+    if (groupKey.isEmpty() && chatGroupComboBox_ != nullptr) {
+        groupKey = chatGroupComboBox_->currentData().toString();
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    if (!backend_.loadGroupChatState(
+            databasePath,
+            groupKey,
+            userKey,
+            requestedConversationId,
+            chatMessageLimit_)) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        chatTranscriptBase_.clear();
+        chatTranscript_->clear();
+        chatLoadOlderButton_->setEnabled(false);
+        return;
+    }
+
+    const QJsonObject snapshot = parseObject(backend_.getChatTurnJson());
+    const QString activeGroupKey = snapshot
+                                       .value(QStringLiteral("active_group_key"))
+                                       .toString(groupKey);
+    if (!activeGroupKey.isEmpty()) {
+        selectGroupKeyMembers(activeGroupKey);
+    }
+    const QJsonArray chats = snapshot.value(QStringLiteral("chats")).toArray();
+    updatingChatControls_ = true;
+    chatGroupComboBox_->clear();
+    QStringList groupKeys;
+    for (const QJsonValue& value : chats) {
+        const QString key = value.toObject().value(QStringLiteral("group_key")).toString();
+        if (key.isEmpty() || groupKeys.contains(key)) {
+            continue;
+        }
+        groupKeys.append(key);
+        chatGroupComboBox_->addItem(groupDisplayName(key), QVariant(), key);
+    }
+    if (!activeGroupKey.isEmpty() && !groupKeys.contains(activeGroupKey)) {
+        groupKeys.append(activeGroupKey);
+        chatGroupComboBox_->addItem(
+            tr("New group · %1").arg(groupDisplayName(activeGroupKey)),
+            QVariant(),
+            activeGroupKey);
+    }
+    chatGroupComboBox_->setCurrentIndex(chatGroupComboBox_->findData(activeGroupKey));
+
+    const QJsonArray conversations = parseArray(backend_.getChatConversationsJson());
+    const QString activeId = backend_.getChatActiveConversationId();
+    chatConversationComboBox_->clear();
+    int activeIndex = -1;
+    for (const QJsonValue& value : conversations) {
+        const QJsonObject conversation = value.toObject();
+        const QString id = conversation.value(QStringLiteral("conversation_id")).toString();
+        QString label = conversation.value(QStringLiteral("content")).toString().trimmed();
+        if (label.isEmpty()) {
+            label = tr("Group conversation %1").arg(id);
+        }
+        const QString createdAt = conversation.value(QStringLiteral("created_at")).toString();
+        if (!createdAt.isEmpty()) {
+            label += QStringLiteral("  ·  ") + createdAt;
+        }
+        chatConversationComboBox_->addItem(label, QVariant(), id);
+        if (id == activeId) {
+            activeIndex = chatConversationComboBox_->count() - 1;
+        }
+    }
+    chatConversationComboBox_->setCurrentIndex(activeIndex);
+    updatingChatControls_ = false;
+    chatDeleteConversationButton_->setEnabled(
+        activeIndex >= 0 && activeChatRequestId_ == 0 && !groupSequenceActive_);
+
+    const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
+    const bool hasOlderMessages = backend_.getChatHasOlderMessages();
+    chatLoadOlderButton_->setEnabled(
+        hasOlderMessages && chatMessageLimit_ < kChatMessageLimit);
+    QStringList transcript;
+    transcript.reserve(messages.size() * 3);
+    for (const QJsonValue& value : messages) {
+        const QJsonObject message = value.toObject();
+        const QString role = message.value(QStringLiteral("role")).toString();
+        const QString createdAt = message.value(QStringLiteral("created_at")).toString();
+        transcript.append(
+            createdAt.isEmpty()
+                ? QStringLiteral("[%1]").arg(role)
+                : QStringLiteral("[%1 · %2]").arg(role, createdAt));
+        transcript.append(message.value(QStringLiteral("content")).toString());
+        transcript.append(attachmentSummaries(
+            message.value(QStringLiteral("attachments_json")).toString()));
+        transcript.append(QString());
+    }
+    chatTranscriptBase_ = transcript.join(u'\n');
+    if (activeChatRequestId_ == 0) {
+        chatTranscript_->setPlainText(chatTranscriptBase_);
+    } else {
+        renderChatStreamPreview();
+    }
+    chatStatusLabel_->setText(
+        conversations.isEmpty()
+            ? tr("No saved conversation for group %1 and user %2")
+                  .arg(groupDisplayName(activeGroupKey), userKey)
+            : tr("%1 group conversations · %2 messages shown%3")
+                  .arg(conversations.size())
+                  .arg(messages.size())
+                  .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
+    setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
 }
 
 void NativeMainWindow::startNewChatConversation() {
-    if (activeChatRequestId_ != 0 || chatCharacterComboBox_->currentData().toString().isEmpty()) {
+    const bool hasTarget = isGroupChatMode()
+        ? !selectedGroupKey().isEmpty()
+        : !chatCharacterComboBox_->currentData().toString().isEmpty();
+    if (activeChatRequestId_ != 0 || groupSequenceActive_ || !hasTarget) {
         return;
     }
     draftingNewConversation_ = true;
@@ -1021,18 +1347,23 @@ void NativeMainWindow::startNewChatConversation() {
     chatTranscript_->clear();
     chatLoadOlderButton_->setEnabled(false);
     chatDeleteConversationButton_->setEnabled(false);
-    chatStatusLabel_->setText(tr("New conversation · it will be created when you send"));
+    chatStatusLabel_->setText(
+        isGroupChatMode()
+            ? tr("New group conversation · it will be created when you send")
+            : tr("New conversation · it will be created when you send"));
     chatInput_->setFocus();
     setChatBusy(false);
 }
 
 void NativeMainWindow::deleteSelectedChatConversation() {
-    if (activeChatRequestId_ != 0 || draftingNewConversation_) {
+    if (activeChatRequestId_ != 0 || groupSequenceActive_ || draftingNewConversation_) {
         return;
     }
     const QString conversationId = chatConversationComboBox_->currentData().toString();
-    const QString character = chatCharacterComboBox_->currentData().toString();
-    if (conversationId.isEmpty() || character.isEmpty()) {
+    const QString targetKey = isGroupChatMode()
+        ? selectedGroupKey()
+        : chatCharacterComboBox_->currentData().toString();
+    if (conversationId.isEmpty() || targetKey.isEmpty()) {
         return;
     }
     if (QMessageBox::question(
@@ -1048,11 +1379,18 @@ void NativeMainWindow::deleteSelectedChatConversation() {
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
-    if (!backend_.deleteChatConversation(
-            databasePath,
-            character,
-            userKey,
-            conversationId)) {
+    const bool deleted = isGroupChatMode()
+        ? backend_.deleteGroupChatConversation(
+              databasePath,
+              targetKey,
+              userKey,
+              conversationId)
+        : backend_.deleteChatConversation(
+              databasePath,
+              targetKey,
+              userKey,
+              conversationId);
+    if (!deleted) {
         chatStatusLabel_->setText(backend_.getStatus());
         return;
     }
@@ -1062,7 +1400,7 @@ void NativeMainWindow::deleteSelectedChatConversation() {
 }
 
 void NativeMainWindow::chooseChatAttachments() {
-    if (activeChatRequestId_ != 0) {
+    if (activeChatRequestId_ != 0 || groupSequenceActive_) {
         return;
     }
     constexpr int kMaximumPendingAttachments = 32;
@@ -1152,11 +1490,10 @@ void NativeMainWindow::updatePendingChatAttachments() {
 }
 
 void NativeMainWindow::sendNativeChat() {
-    if (activeChatRequestId_ != 0 || chatInput_ == nullptr) {
+    if (activeChatRequestId_ != 0 || groupSequenceActive_ || chatInput_ == nullptr) {
         return;
     }
     QString content = chatInput_->toPlainText().trimmed();
-    const QString character = chatCharacterComboBox_->currentData().toString().trimmed();
     if (content.isEmpty() && !pendingChatAttachments_.isEmpty()) {
         const bool hasFile = std::any_of(
             pendingChatAttachments_.begin(),
@@ -1168,7 +1505,17 @@ void NativeMainWindow::sendNativeChat() {
         content = hasFile ? tr("Please inspect these attachments.")
                           : tr("Please look at this image.");
     }
-    if (content.isEmpty() || character.isEmpty()) {
+    if (content.isEmpty()) {
+        return;
+    }
+    const QString attachmentsJson = QString::fromUtf8(
+        QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
+    if (isGroupChatMode()) {
+        sendNativeGroupChat(content, attachmentsJson);
+        return;
+    }
+    const QString character = chatCharacterComboBox_->currentData().toString().trimmed();
+    if (character.isEmpty()) {
         return;
     }
     const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
@@ -1178,8 +1525,6 @@ void NativeMainWindow::sendNativeChat() {
     const QString requestedConversationId = draftingNewConversation_
         ? QString()
         : chatConversationComboBox_->currentData().toString();
-    const QString attachmentsJson = QString::fromUtf8(
-        QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
     if (!backend_.prepareChatTurn(
             databasePath,
             character,
@@ -1216,6 +1561,7 @@ void NativeMainWindow::sendNativeChat() {
     }
 
     activeChatRequestId_ = requestId;
+    activeChatPhase_ = QStringLiteral("private");
     activeChatCharacter_ = character;
     activeChatCharacterDisplay_ = chatCharacterComboBox_->currentText();
     activeChatConversationId_ = conversationId;
@@ -1225,6 +1571,175 @@ void NativeMainWindow::sendNativeChat() {
     refreshChatState(conversationId);
     renderChatStreamPreview();
     chatStatusLabel_->setText(tr("Streaming native response…"));
+}
+
+void NativeMainWindow::sendNativeGroupChat(
+    const QString& content,
+    const QString& attachmentsJson) {
+    const QJsonArray members = selectedGroupMembers();
+    const QString groupKey = selectedGroupKey();
+    if (members.size() < 2 || groupKey.isEmpty()) {
+        chatStatusLabel_->setText(tr("Select at least two group members"));
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString userKey = runtime_
+                                .value(QStringLiteral("active_user_key"))
+                                .toString(QStringLiteral("__default__"));
+    const QString requestedConversationId = draftingNewConversation_
+        ? QString()
+        : chatConversationComboBox_->currentData().toString();
+    const QString newConversationId = QStringLiteral("group-%1-%2")
+                                          .arg(
+                                              QDateTime::currentDateTime().toString(
+                                                  QStringLiteral("yyyyMMddhhmmsszzz")),
+                                              QUuid::createUuid()
+                                                  .toString(QUuid::WithoutBraces)
+                                                  .left(8));
+    if (!backend_.prepareGroupChatTurn(
+            databasePath,
+            groupKey,
+            userKey,
+            requestedConversationId,
+            newConversationId,
+            content,
+            attachmentsJson)) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+
+    draftingNewConversation_ = false;
+    chatInput_->clear();
+    pendingChatAttachments_ = QJsonArray();
+    updatePendingChatAttachments();
+    activeChatConversationId_ = backend_.getChatActiveConversationId();
+    activeGroupKey_ = groupKey;
+    activeGroupMembers_ = members;
+    groupSpeakerQueue_.clear();
+    groupSpokenNames_.clear();
+    groupSequenceActive_ = true;
+    activeChatPhase_ = QStringLiteral("group_plan");
+    const QString membersJson = QString::fromUtf8(
+        QJsonDocument(members).toJson(QJsonDocument::Compact));
+    if (!backend_.buildGroupPlanRequest(databasePath, membersJson, QString())) {
+        finishGroupSequence(backend_.getStatus());
+        return;
+    }
+    const qint64 requestId =
+        backend_.startGroupPlanStream(configPath_, backend_.getChatRequestJson());
+    if (requestId <= 0) {
+        const QString plannerStatus = backend_.getStatus();
+        if (!backend_.resolveGroupPlan(membersJson, QString(), QString())) {
+            finishGroupSequence(plannerStatus);
+            return;
+        }
+        const QJsonArray speakers = parseObject(backend_.getChatTurnJson())
+                                        .value(QStringLiteral("speakers"))
+                                        .toArray();
+        for (const QJsonValue& value : speakers) {
+            const QString speaker = value.toString();
+            if (!speaker.isEmpty()) {
+                groupSpeakerQueue_.append(speaker);
+            }
+        }
+        activeChatPhase_.clear();
+        setChatBusy(true);
+        chatStatusLabel_->setText(
+            tr("%1 · using fallback speaker order").arg(plannerStatus));
+        startNextGroupResponse();
+        return;
+    }
+
+    activeChatRequestId_ = requestId;
+    chatStreamText_.clear();
+    chatStreamReasoning_.clear();
+    setChatBusy(true);
+    refreshChatState(activeChatConversationId_);
+    renderChatStreamPreview();
+    chatStatusLabel_->setText(tr("Scheduling group speakers…"));
+}
+
+void NativeMainWindow::startNextGroupResponse() {
+    if (!groupSequenceActive_ || activeChatRequestId_ != 0) {
+        return;
+    }
+    if (groupSpeakerQueue_.isEmpty()) {
+        finishGroupSequence(tr("Native group response sequence completed"));
+        return;
+    }
+    const QString character = groupSpeakerQueue_.takeFirst();
+    QString characterDisplay;
+    for (const QJsonValue& value : activeGroupMembers_) {
+        const QJsonObject member = value.toObject();
+        if (member.value(QStringLiteral("key")).toString() == character) {
+            characterDisplay = member.value(QStringLiteral("name")).toString();
+            break;
+        }
+    }
+    if (characterDisplay.isEmpty()) {
+        finishGroupSequence(tr("The planned group speaker is no longer available"));
+        return;
+    }
+    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString membersJson = QString::fromUtf8(
+        QJsonDocument(activeGroupMembers_).toJson(QJsonDocument::Compact));
+    QJsonArray spokenNames;
+    for (const QString& name : std::as_const(groupSpokenNames_)) {
+        spokenNames.append(name);
+    }
+    const QString spokenNamesJson = QString::fromUtf8(
+        QJsonDocument(spokenNames).toJson(QJsonDocument::Compact));
+    if (!backend_.buildGroupChatRequest(
+            databasePath,
+            configPath_,
+            projectRoot_,
+            character,
+            characterDisplay,
+            membersJson,
+            spokenNamesJson,
+            currentTimeInstruction())) {
+        finishGroupSequence(backend_.getStatus());
+        return;
+    }
+    const qint64 requestId =
+        backend_.startGroupChatStream(configPath_, backend_.getChatRequestJson());
+    if (requestId <= 0) {
+        finishGroupSequence(backend_.getStatus());
+        return;
+    }
+    activeChatRequestId_ = requestId;
+    activeChatPhase_ = QStringLiteral("group_speaker");
+    activeChatCharacter_ = character;
+    activeChatCharacterDisplay_ = characterDisplay;
+    chatStreamText_.clear();
+    chatStreamReasoning_.clear();
+    setChatBusy(true);
+    renderChatStreamPreview();
+    chatStatusLabel_->setText(
+        tr("%1 is replying · %2 speaker(s) remain")
+            .arg(characterDisplay)
+            .arg(groupSpeakerQueue_.size()));
+}
+
+void NativeMainWindow::finishGroupSequence(const QString& status) {
+    const QString conversationId = activeChatConversationId_;
+    backend_.finishGroupChatTurn();
+    activeChatRequestId_ = 0;
+    activeChatPhase_.clear();
+    activeChatCharacter_.clear();
+    activeChatCharacterDisplay_.clear();
+    chatStreamText_.clear();
+    chatStreamReasoning_.clear();
+    groupSpeakerQueue_.clear();
+    groupSpokenNames_.clear();
+    activeGroupMembers_ = QJsonArray();
+    groupSequenceActive_ = false;
+    setChatBusy(false);
+    refreshChatState(conversationId);
+    activeChatConversationId_.clear();
+    activeGroupKey_.clear();
+    chatStatusLabel_->setText(status);
+    chatInput_->setFocus();
 }
 
 void NativeMainWindow::cancelNativeChat() {
@@ -1256,6 +1771,107 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
             chatStreamReasoning_ += event.value(QStringLiteral("text")).toString();
             renderChatStreamPreview();
         }
+        return;
+    }
+
+    if (activeChatPhase_ == QStringLiteral("group_plan")) {
+        const QString plannerResponse = chatStreamText_;
+        activeChatRequestId_ = 0;
+        chatStreamText_.clear();
+        chatStreamReasoning_.clear();
+        activeChatPhase_.clear();
+        if (state == QStringLiteral("cancelled")) {
+            finishGroupSequence(
+                tr("Group scheduling cancelled; the user message remains in history"));
+            return;
+        }
+        const QString membersJson = QString::fromUtf8(
+            QJsonDocument(activeGroupMembers_).toJson(QJsonDocument::Compact));
+        const QString response = state == QStringLiteral("finished")
+            ? plannerResponse
+            : QString();
+        if (!backend_.resolveGroupPlan(membersJson, QString(), response)) {
+            finishGroupSequence(backend_.getStatus());
+            return;
+        }
+        groupSpeakerQueue_.clear();
+        const QJsonObject plan = parseObject(backend_.getChatTurnJson());
+        for (const QJsonValue& value : plan.value(QStringLiteral("speakers")).toArray()) {
+            const QString speaker = value.toString();
+            if (!speaker.isEmpty()) {
+                groupSpeakerQueue_.append(speaker);
+            }
+        }
+        if (groupSpeakerQueue_.isEmpty()) {
+            finishGroupSequence(tr("The group planner returned no usable speakers"));
+            return;
+        }
+        chatStatusLabel_->setText(
+            plan.value(QStringLiteral("used_fallback")).toBool()
+                ? tr("Planner unavailable; using fallback speaker order")
+                : tr("Group speaker order ready"));
+        startNextGroupResponse();
+        return;
+    }
+
+    if (activeChatPhase_ == QStringLiteral("group_speaker")) {
+        const QString character = activeChatCharacter_;
+        const QString characterDisplay = activeChatCharacterDisplay_;
+        const QString conversationId = activeChatConversationId_;
+        QString terminalStatus;
+        bool saved = false;
+        if (state == QStringLiteral("finished")) {
+            const QString databasePath =
+                QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+            saved = backend_.saveGroupChatAssistant(
+                databasePath,
+                configPath_,
+                requestId,
+                chatStreamText_,
+                chatStreamReasoning_,
+                compactJson(payload));
+            if (saved) {
+                const QJsonObject turn = parseObject(backend_.getChatTurnJson());
+                int actionsSent = 0;
+                for (const QJsonValue& value : turn.value(QStringLiteral("actions")).toArray()) {
+                    const QString action = value.toString();
+                    if (!action.isEmpty()
+                        && supervisor_.broadcastControlLine(
+                            QStringLiteral("ACTION\t%1\t%2").arg(character, action))) {
+                        ++actionsSent;
+                    }
+                }
+                terminalStatus = actionsSent > 0
+                    ? tr("%1 · %2 Live2D action(s) sent")
+                          .arg(backend_.getStatus())
+                          .arg(actionsSent)
+                    : backend_.getStatus();
+                groupSpokenNames_.append(characterDisplay);
+            } else {
+                terminalStatus = backend_.getStatus();
+            }
+        } else if (state == QStringLiteral("cancelled")) {
+            terminalStatus = tr("Group response cancelled; completed speakers remain saved");
+        } else {
+            terminalStatus = payload.value(QStringLiteral("message")).toString().trimmed();
+            if (terminalStatus.isEmpty()) {
+                terminalStatus = tr("Native group speaker request failed");
+            }
+        }
+
+        activeChatRequestId_ = 0;
+        activeChatPhase_.clear();
+        activeChatCharacter_.clear();
+        activeChatCharacterDisplay_.clear();
+        chatStreamText_.clear();
+        chatStreamReasoning_.clear();
+        if (!saved) {
+            finishGroupSequence(terminalStatus);
+            return;
+        }
+        refreshChatState(conversationId);
+        chatStatusLabel_->setText(terminalStatus);
+        startNextGroupResponse();
         return;
     }
 
@@ -1299,6 +1915,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
     }
 
     activeChatRequestId_ = 0;
+    activeChatPhase_.clear();
     activeChatCharacter_.clear();
     activeChatCharacterDisplay_.clear();
     activeChatConversationId_.clear();
@@ -1339,11 +1956,20 @@ void NativeMainWindow::setChatBusy(bool busy) {
     if (chatInput_ == nullptr) {
         return;
     }
+    busy = busy || groupSequenceActive_;
+    const bool hasTarget = isGroupChatMode()
+        ? !selectedGroupKey().isEmpty()
+        : !chatCharacterComboBox_->currentData().toString().isEmpty();
+    chatModeComboBox_->setEnabled(!busy);
+    chatPrivateSelector_->setEnabled(!busy);
+    chatGroupSelector_->setEnabled(!busy);
     chatCharacterComboBox_->setEnabled(!busy);
+    chatGroupComboBox_->setEnabled(!busy);
+    chatGroupMembersList_->setEnabled(!busy);
     chatConversationComboBox_->setEnabled(!busy);
     chatRefreshButton_->setEnabled(!busy);
     chatNewConversationButton_->setEnabled(
-        !busy && !chatCharacterComboBox_->currentData().toString().isEmpty());
+        !busy && hasTarget);
     chatDeleteConversationButton_->setEnabled(
         !busy && !draftingNewConversation_
         && !chatConversationComboBox_->currentData().toString().isEmpty());
@@ -1356,7 +1982,7 @@ void NativeMainWindow::setChatBusy(bool busy) {
         !busy
         && (!chatInput_->toPlainText().trimmed().isEmpty()
             || !pendingChatAttachments_.isEmpty())
-        && !chatCharacterComboBox_->currentData().toString().isEmpty());
+        && hasTarget);
     chatCancelButton_->setEnabled(busy);
 }
 
@@ -1376,7 +2002,13 @@ void NativeMainWindow::renderChatStreamPreview() {
     if (!transcript.isEmpty()) {
         transcript += QStringLiteral("\n\n");
     }
-    transcript += QStringLiteral("[assistant · streaming]\n");
+    if (activeChatPhase_ == QStringLiteral("group_plan")) {
+        transcript += QStringLiteral("[planner · scheduling]\n");
+    } else if (activeChatPhase_ == QStringLiteral("group_speaker")) {
+        transcript += QStringLiteral("[%1 · streaming]\n").arg(activeChatCharacterDisplay_);
+    } else {
+        transcript += QStringLiteral("[assistant · streaming]\n");
+    }
     transcript += response.isEmpty() ? QStringLiteral("…") : response;
     chatTranscript_->setPlainText(transcript);
     QScrollBar* scrollBar = chatTranscript_->verticalScrollBar();
@@ -1395,6 +2027,13 @@ void NativeMainWindow::openNativeChat(const QString& character) {
         return;
     }
     if (!character.trimmed().isEmpty()) {
+        const QSignalBlocker modeBlocker(chatModeComboBox_);
+        const int privateMode = chatModeComboBox_->findData(QStringLiteral("private"));
+        if (privateMode >= 0) {
+            chatModeComboBox_->setCurrentIndex(privateMode);
+            chatPrivateSelector_->setVisible(true);
+            chatGroupSelector_->setVisible(false);
+        }
         const QSignalBlocker blocker(chatCharacterComboBox_);
         const int index = chatCharacterComboBox_->findData(character.trimmed());
         if (index >= 0) {

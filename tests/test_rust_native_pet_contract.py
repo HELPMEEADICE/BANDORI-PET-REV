@@ -386,6 +386,29 @@ def test_native_group_chat_bridge_sequences_planner_speakers_and_group_memory_so
         assert method in generation
 
 
+def test_native_qt_chat_page_exposes_group_selection_and_sequential_speaker_streams():
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "qfw::ComboBox* chatModeComboBox_" in header
+    assert "qfw::ComboBox* chatGroupComboBox_" in header
+    assert "qfw::ListWidget* chatGroupMembersList_" in header
+    assert "QAbstractItemView::MultiSelection" in window
+    assert "QString NativeMainWindow::selectedGroupKey() const" in window
+    assert 'QStringLiteral("__group__:")' in window
+    assert "backend_.loadGroupChatState" in window
+    assert "backend_.prepareGroupChatTurn" in window
+    assert "backend_.startGroupPlanStream" in window
+    assert "backend_.resolveGroupPlan" in window
+    assert "void NativeMainWindow::startNextGroupResponse()" in window
+    assert "backend_.startGroupChatStream" in window
+    assert "backend_.saveGroupChatAssistant" in window
+    assert "groupSpokenNames_.append(characterDisplay)" in window
+    assert 'QStringLiteral("group_plan")' in window
+    assert 'QStringLiteral("group_speaker")' in window
+    assert "backend_.finishGroupChatTurn()" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")
