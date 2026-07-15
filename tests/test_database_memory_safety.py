@@ -12,6 +12,31 @@ from database_manager import DatabaseManager
 
 
 class DatabaseMemorySafetyTests(unittest.TestCase):
+    def test_usage_statistics_tolerate_overflowing_session_duration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = DatabaseManager(str(Path(temp_dir) / "data.db"))
+            try:
+                db._conn.execute(
+                    "INSERT INTO usage_sessions "
+                    "(start_time, end_time, duration_seconds) "
+                    "VALUES (datetime('now','localtime'), "
+                    "datetime('now','localtime'), ?)",
+                    (float("inf"),),
+                )
+                db._conn.commit()
+
+                today = db.get_usage_today()
+                week = db.get_usage_week()
+                all_time = db.get_usage_all_time()
+                daily = db.get_usage_daily()
+            finally:
+                db.close()
+
+        self.assertEqual(0, today)
+        self.assertEqual(0, week)
+        self.assertEqual(0, all_time)
+        self.assertEqual(0, daily[-1]["seconds"])
+
     def test_relationship_zero_values_are_not_replaced_by_defaults(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = DatabaseManager(str(Path(temp_dir) / "data.db"))

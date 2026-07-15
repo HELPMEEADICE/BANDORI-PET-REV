@@ -2181,7 +2181,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions "
             "WHERE date(start_time)=date('now','localtime')"
         ).fetchone()
-        total = int(row[0]) if row else 0
+        total = (_db_int(row[0]) or 0) if row else 0
         cur = self._conn.execute(
             "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
             "WHERE end_time IS NULL AND date(start_time)=date('now','localtime') "
@@ -2192,8 +2192,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
                 "FROM usage_sessions WHERE id=?", (int(cur[0]),)
             ).fetchone()
-            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
-            total = total - int(cur[1]) + live
+            live = (_db_int(live_row[0]) or 0) if live_row else 0
+            total = total - (_db_int(cur[1]) or 0) + live
         return total
 
     def get_usage_week(self) -> int:
@@ -2201,7 +2201,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions "
             "WHERE start_time>=datetime('now','localtime','-6 days','start of day')"
         ).fetchone()
-        total = int(row[0]) if row else 0
+        total = (_db_int(row[0]) or 0) if row else 0
         cur = self._conn.execute(
             "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
             "WHERE end_time IS NULL AND start_time>=datetime('now','localtime','-6 days','start of day') "
@@ -2212,15 +2212,15 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
                 "FROM usage_sessions WHERE id=?", (int(cur[0]),)
             ).fetchone()
-            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
-            total = total - int(cur[1]) + live
+            live = (_db_int(live_row[0]) or 0) if live_row else 0
+            total = total - (_db_int(cur[1]) or 0) + live
         return total
 
     def get_usage_all_time(self) -> int:
         row = self._conn.execute(
             "SELECT COALESCE(SUM(duration_seconds),0) FROM usage_sessions"
         ).fetchone()
-        total = int(row[0]) if row else 0
+        total = (_db_int(row[0]) or 0) if row else 0
         cur = self._conn.execute(
             "SELECT id, COALESCE(duration_seconds,0) FROM usage_sessions "
             "WHERE end_time IS NULL ORDER BY id DESC LIMIT 1"
@@ -2230,8 +2230,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "SELECT CAST((julianday('now','localtime')-julianday(start_time))*86400 AS INTEGER) "
                 "FROM usage_sessions WHERE id=?", (int(cur[0]),)
             ).fetchone()
-            live = int(live_row[0]) if live_row and live_row[0] is not None else 0
-            total = total - int(cur[1]) + live
+            live = (_db_int(live_row[0]) or 0) if live_row else 0
+            total = total - (_db_int(cur[1]) or 0) + live
         return total
 
     def get_usage_daily(self, days: int = 30) -> list[dict]:
@@ -2242,7 +2242,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "GROUP BY date(start_time) ORDER BY day ASC",
             (f"-{days} days",),
         ).fetchall()
-        return [{"day": r[0], "seconds": int(r[1])} for r in rows]
+        return [{"day": r[0], "seconds": _db_int(r[1]) or 0} for r in rows]
 
     # ── Statistics queries ──────────────────────────────────────────────
 
