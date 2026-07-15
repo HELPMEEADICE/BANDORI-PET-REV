@@ -525,7 +525,7 @@ def _run_poke_user_tool_call(arguments, tool_config: dict | None = None) -> dict
 def _normalize_auto_continue_max_turns(value) -> int:
     try:
         return max(1, min(20, int(value)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 5
 
 
@@ -534,7 +534,7 @@ def _run_auto_continue_tool_call(arguments, tool_config: dict) -> dict:
     max_turns = _normalize_auto_continue_max_turns(tool_config.get("llm_auto_continue_max_turns", 5))
     try:
         current = max(0, int(tool_config.get("_auto_continue_count", 0) or 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         current = 0
     remaining = max(0, max_turns - current - 1)
     return {
