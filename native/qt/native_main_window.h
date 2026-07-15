@@ -5,6 +5,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
 #include <optional>
 
@@ -74,6 +75,7 @@ private:
     void handleChatStreamEvent(const QString& payloadJson);
     void handleChatMemoryEvent(const QString& payloadJson);
     int dispatchChatToolEffects(const QJsonObject& payload, const QString& character);
+    void pollNativeReminders();
     void chooseChatAttachments();
     void clearPendingChatAttachments();
     void updatePendingChatAttachments();
@@ -155,6 +157,7 @@ private:
     bool updatingChatControls_ = false;
     bool draftingNewConversation_ = false;
     bool groupSequenceActive_ = false;
+    QTimer reminderTimer_;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

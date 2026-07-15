@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QPoint>
 #include <QEasingCurve>
 #include <QRect>
@@ -466,6 +467,17 @@ int main(int argc, char* argv[]) {
             available.left() + (available.width() - widget.width()) / 2,
             available.top() + (available.height() - widget.height()) / 2);
     }
+    QLabel reminderBubble(&widget);
+    reminderBubble.setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    reminderBubble.setAlignment(Qt::AlignCenter);
+    reminderBubble.setWordWrap(true);
+    reminderBubble.setMargin(10);
+    reminderBubble.setStyleSheet(QStringLiteral(
+        "QLabel { color: white; background: rgba(28, 28, 32, 220); "
+        "border: 1px solid rgba(255, 255, 255, 72); border-radius: 12px; "
+        "font-size: 13px; }"));
+    reminderBubble.hide();
+    int reminderBubbleGeneration = 0;
     bandori::NativeRadialMenu radialMenu;
     radialMenu.setLocked(widget.dragLocked());
     radialMenu.setLanguage(parser.value(language));
@@ -771,6 +783,8 @@ int main(int argc, char* argv[]) {
          &currentScale,
          modelFormat,
          &triggerPokeFeedback,
+         &reminderBubble,
+         &reminderBubbleGeneration,
          &radialMenu,
          ipcClient,
          modelPath](const QString& line) {
@@ -850,6 +864,45 @@ int main(int argc, char* argv[]) {
                         widget.triggerAction(parts.at(3), characterId);
                     }
                 }
+                return;
+            }
+            if (line.startsWith(QStringLiteral("REMINDER_EVENT\t"))) {
+                const QJsonObject event = ipcJsonPayload(line);
+                const QString target =
+                    event.value(QStringLiteral("character")).toString().trimmed();
+                if (!target.isEmpty() && target != characterId) {
+                    return;
+                }
+                const QString action =
+                    event.value(QStringLiteral("action")).toString().trimmed();
+                if (!action.isEmpty()) {
+                    widget.triggerAction(action, characterId);
+                }
+                const QString text = event.value(QStringLiteral("text")).toString().trimmed();
+                if (text.isEmpty()) {
+                    return;
+                }
+                reminderBubble.setMaximumWidth(std::max(180, widget.width() - 32));
+                reminderBubble.setText(text);
+                reminderBubble.adjustSize();
+                reminderBubble.move(
+                    std::max(8, (widget.width() - reminderBubble.width()) / 2),
+                    16);
+                reminderBubble.raise();
+                reminderBubble.show();
+                const int generation = ++reminderBubbleGeneration;
+                const int ttl = std::clamp(
+                    event.value(QStringLiteral("ttl_ms")).toInt(18'000),
+                    1'000,
+                    60'000);
+                QTimer::singleShot(
+                    ttl,
+                    &widget,
+                    [&reminderBubble, &reminderBubbleGeneration, generation]() {
+                        if (reminderBubbleGeneration == generation) {
+                            reminderBubble.hide();
+                        }
+                    });
                 return;
             }
             if (line.startsWith(QStringLiteral("POKE_USER\t"))) {

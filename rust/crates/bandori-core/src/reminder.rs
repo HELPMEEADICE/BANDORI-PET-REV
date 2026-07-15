@@ -1,6 +1,8 @@
+use crate::config::{ConfigDocument, ConfigError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -524,6 +526,71 @@ pub fn tick_reminders(
     events
 }
 
+pub fn tick_config_reminders(
+    config_path: &Path,
+    now: LocalDateTime,
+) -> Result<Vec<Value>, ConfigError> {
+    let mut config = ConfigDocument::load(config_path)?;
+    let mut alarms = normalize_alarms(config.get("alarms").unwrap_or(&Value::Null), now);
+    let mut pomodoros = normalize_pomodoros(config.get("pomodoros").unwrap_or(&Value::Null), now);
+    let normalized_alarms =
+        serde_json::to_value(&alarms).expect("normalized alarm serialization cannot fail");
+    let normalized_pomodoros =
+        serde_json::to_value(&pomodoros).expect("normalized pomodoro serialization cannot fail");
+    let mut changed = config.get("alarms") != Some(&normalized_alarms)
+        || config.get("pomodoros") != Some(&normalized_pomodoros);
+    let mut events = tick_reminders(&mut alarms, &mut pomodoros, now);
+    if !events.is_empty() {
+        changed = true;
+    }
+    let display_mode = config
+        .get("reminder_display_mode")
+        .and_then(Value::as_str)
+        .filter(|mode| matches!(*mode, "floating" | "system"))
+        .unwrap_or("floating")
+        .to_owned();
+    let default_character = config
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model.get("character").and_then(Value::as_str))
+        .map(str::trim)
+        .find(|character| !character.is_empty())
+        .unwrap_or_default()
+        .to_owned();
+    for event in &mut events {
+        if let Some(event) = event.as_object_mut() {
+            event.insert(
+                "display_mode".to_owned(),
+                Value::String(display_mode.clone()),
+            );
+            let missing_character = event
+                .get("character")
+                .and_then(Value::as_str)
+                .is_none_or(|character| character.trim().is_empty());
+            if missing_character && !default_character.is_empty() {
+                event.insert(
+                    "character".to_owned(),
+                    Value::String(default_character.clone()),
+                );
+            }
+        }
+    }
+    if changed {
+        config.set(
+            "alarms",
+            serde_json::to_value(alarms).expect("alarm serialization cannot fail"),
+        );
+        config.set(
+            "pomodoros",
+            serde_json::to_value(pomodoros).expect("pomodoro serialization cannot fail"),
+        );
+        config.save(config_path)?;
+    }
+    Ok(events)
+}
+
 fn advance_pomodoro(pomodoro: &mut Pomodoro, now: LocalDateTime, events: &mut Vec<Value>) {
     let duration;
     if pomodoro.phase == "focus" {
@@ -929,5 +996,41 @@ mod tests {
         );
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].time, "11:00");
+    }
+
+    #[test]
+    fn config_tick_persists_state_and_returns_display_delivery_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let now = LocalDateTime::parse("2026-07-15T11:00:00").unwrap();
+        let mut config = ConfigDocument::default();
+        config.set(
+            "models",
+            json!([{"character":"ran","path":"models/ran/model3.json"}]),
+        );
+        config.set("reminder_display_mode", json!("system"));
+        config.set(
+            "alarms",
+            json!([{
+                "id":"alarm_1",
+                "enabled":true,
+                "time":"11:00",
+                "repeat_days":[],
+                "description":"练琴",
+                "character":"",
+                "created_at":"2026-07-15T10:00:00",
+                "next_at":"2026-07-15T11:00:00",
+                "last_triggered_at":""
+            }]),
+        );
+        config.save(&path).unwrap();
+
+        let events = tick_config_reminders(&path, now).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["display_mode"], "system");
+        assert_eq!(events[0]["character"], "ran");
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(saved.get("alarms").unwrap()[0]["enabled"], false);
+        assert_eq!(saved.get("alarms").unwrap()[0]["next_at"], "");
     }
 }

@@ -18,6 +18,7 @@ pub mod ffi {
         #[qproperty(QString, chat_turn_json)]
         #[qproperty(QString, chat_request_json)]
         #[qproperty(QString, chat_imported_attachments_json)]
+        #[qproperty(QString, reminder_events_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -41,6 +42,14 @@ pub mod ffi {
             self: Pin<&mut Self>,
             config_path: &QString,
             settings_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "tickReminders"]
+        fn tick_reminders(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            local_datetime: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -268,6 +277,7 @@ use bandori_core::memory_extraction::{
 use bandori_core::relationship_analysis::{
     InteractionAnalysis, analyze_interaction, apply_interaction_analysis,
 };
+use bandori_core::reminder::{LocalDateTime, tick_config_reminders};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest, TokenUsage,
@@ -332,6 +342,7 @@ pub struct BackendRust {
     chat_turn_json: QString,
     chat_request_json: QString,
     chat_imported_attachments_json: QString,
+    reminder_events_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -372,6 +383,7 @@ impl Default for BackendRust {
             chat_turn_json: QString::from("{}"),
             chat_request_json: QString::from("{}"),
             chat_imported_attachments_json: QString::from("{\"attachments\":[],\"errors\":[]}"),
+            reminder_events_json: QString::from("[]"),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -517,6 +529,34 @@ impl ffi::Backend {
             Err(error) => {
                 self.as_mut()
                     .set_status(QString::from(&format!("Settings save error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn tick_reminders(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        local_datetime: &QString,
+    ) -> bool {
+        let Some(now) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut()
+                .set_status(QString::from("Reminder tick needs a valid local datetime"));
+            self.as_mut().set_reminder_events_json(QString::from("[]"));
+            return false;
+        };
+        match tick_config_reminders(Path::new(&config_path.to_string()), now) {
+            Ok(events) => {
+                let payload = serde_json::to_string(&events)
+                    .expect("native reminder event serialization cannot fail");
+                self.as_mut()
+                    .set_reminder_events_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Reminder tick error: {error}")));
+                self.as_mut().set_reminder_events_json(QString::from("[]"));
                 false
             }
         }

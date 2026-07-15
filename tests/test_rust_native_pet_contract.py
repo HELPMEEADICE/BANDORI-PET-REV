@@ -457,6 +457,29 @@ def test_native_reminder_core_is_python_contract_backed_and_qt_independent():
     assert 'OUTPUT_DIR / "reminder_vectors.json"' in exporter
 
 
+def test_native_reminder_service_persists_and_delivers_system_or_pet_notifications():
+    reminder = source("rust/crates/bandori-core/src/reminder.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    pet = source("native/qt/pet_main.cpp")
+
+    assert "pub fn tick_config_reminders" in reminder
+    assert "config.save(config_path)?" in reminder
+    assert "default_character" in reminder
+    assert "fn tick_reminders(" in backend
+    assert "tick_config_reminders" in backend
+    assert "reminder_events_json" in backend
+    assert "QTimer reminderTimer_" in header
+    assert "void NativeMainWindow::pollNativeReminders()" in window
+    assert "backend_.tickReminders" in window
+    assert "trayIcon_->showMessage" in window
+    assert 'QStringLiteral("REMINDER_EVENT\\t")' in window
+    assert "QLabel reminderBubble" in pet
+    assert 'line.startsWith(QStringLiteral("REMINDER_EVENT\\t"))' in pet
+    assert "reminderBubbleGeneration" in pet
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

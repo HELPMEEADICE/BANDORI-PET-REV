@@ -131,6 +131,41 @@ QString compactJson(const QJsonObject& object) {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
 }
 
+QString reminderFallbackText(const QJsonObject& event, QString displayName) {
+    if (displayName.trimmed().isEmpty()) {
+        displayName = QStringLiteral("BandoriPet");
+    }
+    const QString description = event.value(QStringLiteral("description")).toString().trimmed();
+    const QString kind = event.value(QStringLiteral("kind")).toString();
+    if (kind == QStringLiteral("alarm")) {
+        const QString purpose = description.isEmpty() ? QStringLiteral("时间到了") : description;
+        return QStringLiteral("%1：%2，该准备啦。").arg(displayName, purpose);
+    }
+    if (kind == QStringLiteral("pomodoro_break")) {
+        const QString purpose = description.isEmpty()
+            ? QStringLiteral("这轮专注")
+            : QStringLiteral("“%1”").arg(description);
+        const QString phase = event.value(QStringLiteral("phase")).toString()
+                == QStringLiteral("long_break")
+            ? QStringLiteral("长休息")
+            : QStringLiteral("短休息");
+        return QStringLiteral("%1：%2结束了，进入%3。").arg(displayName, purpose, phase);
+    }
+    if (kind == QStringLiteral("pomodoro_focus")) {
+        const QString purpose = description.isEmpty()
+            ? QStringLiteral("下一轮")
+            : QStringLiteral("“%1”").arg(description);
+        return QStringLiteral("%1：休息结束，%2开始专注吧。").arg(displayName, purpose);
+    }
+    if (kind == QStringLiteral("pomodoro_done")) {
+        const QString purpose = description.isEmpty()
+            ? QStringLiteral("番茄钟")
+            : QStringLiteral("“%1”").arg(description);
+        return QStringLiteral("%1：%2完成了，辛苦啦。").arg(displayName, purpose);
+    }
+    return QStringLiteral("%1：提醒时间到了。").arg(displayName);
+}
+
 QString modelTitle(const ModelCatalogItem& model) {
     const QString character =
         model.characterDisplay.isEmpty() ? model.character : model.characterDisplay;
@@ -175,6 +210,10 @@ NativeMainWindow::NativeMainWindow(
         [this](const QString& payloadJson) { handleChatMemoryEvent(payloadJson); });
     reloadBackendState();
     setupTray();
+    reminderTimer_.setInterval(15'000);
+    connect(&reminderTimer_, &QTimer::timeout, this, [this]() { pollNativeReminders(); });
+    reminderTimer_.start();
+    QTimer::singleShot(1'200, this, [this]() { pollNativeReminders(); });
 
     connect(
         &supervisor_,
@@ -1969,6 +2008,46 @@ int NativeMainWindow::dispatchChatToolEffects(
         }
     }
     return dispatched;
+}
+
+void NativeMainWindow::pollNativeReminders() {
+    const QString now = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+    if (!backend_.tickReminders(configPath_, now)) {
+        return;
+    }
+    for (const QJsonValue& value : parseArray(backend_.getReminderEventsJson())) {
+        if (!value.isObject()) {
+            continue;
+        }
+        QJsonObject event = value.toObject();
+        const QString character = event.value(QStringLiteral("character")).toString().trimmed();
+        QString displayName = displayNameForCharacter(character).trimmed();
+        if (displayName.isEmpty()) {
+            displayName = QStringLiteral("BandoriPet");
+        }
+        const QString text = reminderFallbackText(event, displayName);
+        const bool systemMode =
+            event.value(QStringLiteral("display_mode")).toString() == QStringLiteral("system");
+        if (systemMode && trayIcon_ != nullptr) {
+            trayIcon_->showMessage(
+                displayName,
+                text,
+                QSystemTrayIcon::Information,
+                15'000);
+            continue;
+        }
+        event.insert(QStringLiteral("source"), QStringLiteral("reminder"));
+        event.insert(QStringLiteral("state"), QStringLiteral("done"));
+        event.insert(QStringLiteral("mode"), QStringLiteral("replace_raw"));
+        event.insert(QStringLiteral("title"), displayName);
+        event.insert(QStringLiteral("text"), text);
+        event.insert(QStringLiteral("action"), QStringLiteral("surprised"));
+        event.insert(QStringLiteral("ttl_ms"), 18'000);
+        event.insert(QStringLiteral("anchor_to_pet"), true);
+        supervisor_.broadcastControlLine(
+            QStringLiteral("REMINDER_EVENT\t") + compactJson(event));
+    }
 }
 
 void NativeMainWindow::handleChatMemoryEvent(const QString& payloadJson) {
