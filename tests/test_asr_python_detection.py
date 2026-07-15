@@ -5,6 +5,27 @@ import asr_manager
 
 
 class ASRPythonDetectionTest(unittest.TestCase):
+    def test_numeric_config_tolerates_infinite_values(self):
+        self.assertEqual(16000, asr_manager._asr_sample_rate(float("inf")))
+        self.assertEqual(
+            60.0,
+            asr_manager._bounded_float(
+                float("inf"),
+                default=60.0,
+                minimum=1.0,
+                maximum=300.0,
+            ),
+        )
+        self.assertEqual(
+            600.0,
+            asr_manager._bounded_float(
+                9999,
+                default=60.0,
+                minimum=5.0,
+                maximum=600.0,
+            ),
+        )
+
     def test_windows_store_alias_is_rejected(self):
         alias = r"C:\Users\demo\AppData\Local\Microsoft\WindowsApps\python.exe"
         with (
