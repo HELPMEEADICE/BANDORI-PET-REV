@@ -61,6 +61,15 @@ private:
     void populateModelList();
     void updateModelDetails();
     void populateChatCharacters();
+    void populateReminderCharacters();
+    void loadNativeReminderState();
+    void refreshNativeReminderList();
+    void updateNativeReminderActions();
+    bool mutateNativeReminder(const QJsonObject& command);
+    void addNativeAlarm();
+    void addNativePomodoro();
+    void toggleSelectedNativeAlarm();
+    void deleteSelectedNativeReminder();
     void refreshChatState(
         const QString& requestedConversationId = {},
         bool resetPagination = false);
@@ -158,6 +167,23 @@ private:
     bool draftingNewConversation_ = false;
     bool groupSequenceActive_ = false;
     QTimer reminderTimer_;
+    QJsonObject reminderState_;
+    qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;
+    qfw::TimePicker* alarmTimePicker_ = nullptr;
+    qfw::ComboBox* alarmRepeatComboBox_ = nullptr;
+    QWidget* alarmCustomDaysWidget_ = nullptr;
+    QList<qfw::CheckBox*> alarmWeekdayCheckBoxes_;
+    qfw::LineEdit* alarmDescriptionEdit_ = nullptr;
+    qfw::ComboBox* alarmCharacterComboBox_ = nullptr;
+    qfw::PrimaryPushButton* addAlarmButton_ = nullptr;
+    qfw::SpinBox* pomodoroRepeatSpinBox_ = nullptr;
+    qfw::LineEdit* pomodoroDescriptionEdit_ = nullptr;
+    qfw::ComboBox* pomodoroCharacterComboBox_ = nullptr;
+    qfw::PrimaryPushButton* addPomodoroButton_ = nullptr;
+    qfw::ListWidget* reminderList_ = nullptr;
+    qfw::PushButton* toggleReminderButton_ = nullptr;
+    qfw::PushButton* deleteReminderButton_ = nullptr;
+    qfw::CaptionLabel* reminderStatusLabel_ = nullptr;
     qfw::SettingCard* configCard_ = nullptr;
     qfw::SettingCard* modelRootCard_ = nullptr;
     qfw::SettingCard* runtimeCard_ = nullptr;

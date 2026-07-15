@@ -38,8 +38,52 @@ constexpr int kPathRole = Qt::UserRole;
 constexpr int kCharacterRole = Qt::UserRole + 1;
 constexpr int kCostumeRole = Qt::UserRole + 2;
 constexpr int kFormatRole = Qt::UserRole + 3;
+constexpr int kReminderKindRole = Qt::UserRole + 10;
+constexpr int kReminderIdRole = Qt::UserRole + 11;
+constexpr int kReminderEnabledRole = Qt::UserRole + 12;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
+
+QString currentLocalDateTime() {
+    return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+}
+
+QString repeatDaysLabel(const QJsonArray& source) {
+    QList<int> days;
+    for (const QJsonValue& value : source) {
+        const int day = value.toInt(-1);
+        if (day >= 0 && day <= 6 && !days.contains(day)) {
+            days.append(day);
+        }
+    }
+    std::sort(days.begin(), days.end());
+    if (days.isEmpty()) {
+        return QStringLiteral("不重复");
+    }
+    if (days == QList<int>({0, 1, 2, 3, 4, 5, 6})) {
+        return QStringLiteral("每天");
+    }
+    if (days == QList<int>({0, 1, 2, 3, 4})) {
+        return QStringLiteral("工作日");
+    }
+    if (days == QList<int>({5, 6})) {
+        return QStringLiteral("周末");
+    }
+    const QStringList labels {
+        QStringLiteral("周一"),
+        QStringLiteral("周二"),
+        QStringLiteral("周三"),
+        QStringLiteral("周四"),
+        QStringLiteral("周五"),
+        QStringLiteral("周六"),
+        QStringLiteral("周日"),
+    };
+    QStringList selected;
+    for (const int day : days) {
+        selected.append(labels.at(day));
+    }
+    return selected.join(QStringLiteral("、"));
+}
 
 QString currentTimeInstruction() {
     const QDateTime now = QDateTime::currentDateTime();
@@ -742,6 +786,124 @@ QWidget* NativeMainWindow::createSettingsPage() {
         themeComboBox_);
     saveSettingsButton_ = new qfw::PrimaryPushButton(tr("Save and apply"), content);
 
+    auto* reminders = new qfw::GroupHeaderCardWidget(tr("Reminders"), content);
+    reminderDisplayModeComboBox_ = new qfw::ComboBox(reminders);
+    reminderDisplayModeComboBox_->addItem(
+        tr("Floating pet bubble"), QVariant(), QStringLiteral("floating"));
+    reminderDisplayModeComboBox_->addItem(
+        tr("System notification"), QVariant(), QStringLiteral("system"));
+    reminderDisplayModeComboBox_->setFixedWidth(190);
+
+    auto* alarmEditor = new QWidget(reminders);
+    auto* alarmEditorLayout = new QVBoxLayout(alarmEditor);
+    alarmEditorLayout->setContentsMargins(0, 0, 0, 0);
+    alarmEditorLayout->setSpacing(8);
+    auto* alarmPrimaryRow = new QHBoxLayout();
+    alarmPrimaryRow->setContentsMargins(0, 0, 0, 0);
+    alarmPrimaryRow->setSpacing(8);
+    alarmTimePicker_ = new qfw::TimePicker(alarmEditor);
+    alarmTimePicker_->setTime(QTime::currentTime().addSecs(3600));
+    alarmTimePicker_->setFixedWidth(112);
+    alarmRepeatComboBox_ = new qfw::ComboBox(alarmEditor);
+    alarmRepeatComboBox_->addItem(tr("Once"), QVariant(), QStringLiteral("none"));
+    alarmRepeatComboBox_->addItem(tr("Daily"), QVariant(), QStringLiteral("daily"));
+    alarmRepeatComboBox_->addItem(
+        tr("Weekdays"), QVariant(), QStringLiteral("weekdays"));
+    alarmRepeatComboBox_->addItem(
+        tr("Weekends"), QVariant(), QStringLiteral("weekends"));
+    alarmRepeatComboBox_->addItem(
+        tr("Custom days"), QVariant(), QStringLiteral("custom"));
+    alarmRepeatComboBox_->setFixedWidth(132);
+    alarmCharacterComboBox_ = new qfw::ComboBox(alarmEditor);
+    alarmCharacterComboBox_->setMinimumWidth(160);
+    alarmPrimaryRow->addWidget(alarmTimePicker_);
+    alarmPrimaryRow->addWidget(alarmRepeatComboBox_);
+    alarmPrimaryRow->addWidget(alarmCharacterComboBox_, 1);
+    alarmEditorLayout->addLayout(alarmPrimaryRow);
+
+    alarmCustomDaysWidget_ = new QWidget(alarmEditor);
+    auto* weekdayLayout = new QHBoxLayout(alarmCustomDaysWidget_);
+    weekdayLayout->setContentsMargins(0, 0, 0, 0);
+    weekdayLayout->setSpacing(7);
+    for (const QString& label : {
+             tr("Mon"), tr("Tue"), tr("Wed"), tr("Thu"), tr("Fri"), tr("Sat"), tr("Sun")}) {
+        auto* checkBox = new qfw::CheckBox(label, alarmCustomDaysWidget_);
+        alarmWeekdayCheckBoxes_.append(checkBox);
+        weekdayLayout->addWidget(checkBox);
+    }
+    weekdayLayout->addStretch(1);
+    alarmCustomDaysWidget_->setVisible(false);
+    alarmEditorLayout->addWidget(alarmCustomDaysWidget_);
+
+    auto* alarmDescriptionRow = new QHBoxLayout();
+    alarmDescriptionRow->setContentsMargins(0, 0, 0, 0);
+    alarmDescriptionRow->setSpacing(8);
+    alarmDescriptionEdit_ = new qfw::LineEdit(alarmEditor);
+    alarmDescriptionEdit_->setPlaceholderText(tr("Description, for example: practice guitar"));
+    addAlarmButton_ = new qfw::PrimaryPushButton(tr("Add alarm"), alarmEditor);
+    alarmDescriptionRow->addWidget(alarmDescriptionEdit_, 1);
+    alarmDescriptionRow->addWidget(addAlarmButton_);
+    alarmEditorLayout->addLayout(alarmDescriptionRow);
+
+    auto* pomodoroEditor = new QWidget(reminders);
+    auto* pomodoroEditorLayout = new QHBoxLayout(pomodoroEditor);
+    pomodoroEditorLayout->setContentsMargins(0, 0, 0, 0);
+    pomodoroEditorLayout->setSpacing(8);
+    pomodoroRepeatSpinBox_ = new qfw::SpinBox(pomodoroEditor);
+    pomodoroRepeatSpinBox_->setRange(1, 24);
+    pomodoroRepeatSpinBox_->setValue(1);
+    pomodoroRepeatSpinBox_->setSuffix(tr(" rounds"));
+    pomodoroRepeatSpinBox_->setFixedWidth(120);
+    pomodoroDescriptionEdit_ = new qfw::LineEdit(pomodoroEditor);
+    pomodoroDescriptionEdit_->setPlaceholderText(tr("Description, for example: write code"));
+    pomodoroCharacterComboBox_ = new qfw::ComboBox(pomodoroEditor);
+    pomodoroCharacterComboBox_->setMinimumWidth(160);
+    addPomodoroButton_ = new qfw::PrimaryPushButton(tr("Start Pomodoro"), pomodoroEditor);
+    pomodoroEditorLayout->addWidget(pomodoroRepeatSpinBox_);
+    pomodoroEditorLayout->addWidget(pomodoroDescriptionEdit_, 1);
+    pomodoroEditorLayout->addWidget(pomodoroCharacterComboBox_);
+    pomodoroEditorLayout->addWidget(addPomodoroButton_);
+
+    auto* reminderManager = new QWidget(reminders);
+    auto* reminderManagerLayout = new QVBoxLayout(reminderManager);
+    reminderManagerLayout->setContentsMargins(0, 0, 0, 0);
+    reminderManagerLayout->setSpacing(8);
+    reminderList_ = new qfw::ListWidget(reminderManager);
+    reminderList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    reminderList_->setMinimumHeight(180);
+    auto* reminderActions = new QHBoxLayout();
+    reminderActions->setContentsMargins(0, 0, 0, 0);
+    reminderActions->setSpacing(8);
+    reminderStatusLabel_ = new qfw::CaptionLabel(tr("No reminder selected"), reminderManager);
+    toggleReminderButton_ = new qfw::PushButton(tr("Disable alarm"), reminderManager);
+    deleteReminderButton_ = new qfw::PushButton(tr("Delete"), reminderManager);
+    reminderActions->addWidget(reminderStatusLabel_, 1);
+    reminderActions->addWidget(toggleReminderButton_);
+    reminderActions->addWidget(deleteReminderButton_);
+    reminderManagerLayout->addWidget(reminderList_);
+    reminderManagerLayout->addLayout(reminderActions);
+
+    reminders->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Delivery"),
+        tr("Choose a non-blocking pet bubble or the system notification tray"),
+        reminderDisplayModeComboBox_);
+    reminders->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Clock),
+        tr("New alarm"),
+        tr("Schedule a one-time or repeating character reminder"),
+        alarmEditor);
+    reminders->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Clock),
+        tr("New Pomodoro"),
+        tr("Each round is 25 minutes of focus followed by a 5 minute break"),
+        pomodoroEditor);
+    reminders->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
+        tr("Saved reminders"),
+        tr("Enable, disable, or delete persisted alarms and Pomodoro timers"),
+        reminderManager);
+
     auto* sources = new qfw::SettingCardGroup(tr("Rust service sources"), content);
     configCard_ = new qfw::SettingCard(
         qfw::FluentIconEnum::Document,
@@ -778,6 +940,7 @@ QWidget* NativeMainWindow::createSettingsPage() {
     layout->addWidget(title);
     layout->addWidget(live2d);
     layout->addWidget(saveSettingsButton_, 0, Qt::AlignRight);
+    layout->addWidget(reminders);
     layout->addWidget(sources);
     layout->addWidget(renderer);
     layout->addStretch(1);
@@ -791,6 +954,46 @@ QWidget* NativeMainWindow::createSettingsPage() {
     connect(saveSettingsButton_, &QPushButton::clicked, this, [this]() {
         saveNativeSettings();
     });
+    connect(
+        alarmRepeatComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) {
+            alarmCustomDaysWidget_->setVisible(
+                alarmRepeatComboBox_->currentData().toString() == QStringLiteral("custom"));
+        });
+    connect(addAlarmButton_, &QPushButton::clicked, this, [this]() { addNativeAlarm(); });
+    connect(
+        addPomodoroButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { addNativePomodoro(); });
+    connect(
+        reminderDisplayModeComboBox_,
+        &qfw::ComboBox::activated,
+        this,
+        [this](int) {
+            mutateNativeReminder({
+                {QStringLiteral("op"), QStringLiteral("set_display_mode")},
+                {QStringLiteral("mode"), reminderDisplayModeComboBox_->currentData().toString()},
+            });
+        });
+    connect(
+        reminderList_,
+        &QListWidget::itemSelectionChanged,
+        this,
+        [this]() { updateNativeReminderActions(); });
+    connect(
+        toggleReminderButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { toggleSelectedNativeAlarm(); });
+    connect(
+        deleteReminderButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { deleteSelectedNativeReminder(); });
+    updateNativeReminderActions();
     return page;
 }
 
@@ -819,12 +1022,258 @@ void NativeMainWindow::applyBackendState() {
     }
     populateModelList();
     populateChatCharacters();
+    populateReminderCharacters();
+    loadNativeReminderState();
     const int configured = configuredModels().size();
     startConfiguredButton_->setText(
         configured > 1
             ? tr("Start %1 configured pets").arg(configured)
             : (configured == 1 ? tr("Start configured pet") : tr("No Live2D pet available")));
     startConfiguredButton_->setEnabled(configured > 0);
+}
+
+void NativeMainWindow::populateReminderCharacters() {
+    if (alarmCharacterComboBox_ == nullptr || pomodoroCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString previousAlarm = alarmCharacterComboBox_->currentData().toString();
+    const QString previousPomodoro = pomodoroCharacterComboBox_->currentData().toString();
+    alarmCharacterComboBox_->clear();
+    pomodoroCharacterComboBox_->clear();
+    alarmCharacterComboBox_->addItem(
+        tr("Default configured character"), QVariant(), QString());
+    pomodoroCharacterComboBox_->addItem(
+        tr("Default configured character"), QVariant(), QString());
+
+    QStringList added;
+    for (const ModelCatalogItem& model : configuredModels()) {
+        if (model.character.isEmpty() || added.contains(model.character)) {
+            continue;
+        }
+        added.append(model.character);
+        const QString display = model.characterDisplay.isEmpty()
+            ? model.character
+            : model.characterDisplay;
+        alarmCharacterComboBox_->addItem(display, QVariant(), model.character);
+        pomodoroCharacterComboBox_->addItem(display, QVariant(), model.character);
+    }
+    const int alarmIndex = alarmCharacterComboBox_->findData(previousAlarm);
+    alarmCharacterComboBox_->setCurrentIndex(alarmIndex < 0 ? 0 : alarmIndex);
+    const int pomodoroIndex = pomodoroCharacterComboBox_->findData(previousPomodoro);
+    pomodoroCharacterComboBox_->setCurrentIndex(pomodoroIndex < 0 ? 0 : pomodoroIndex);
+}
+
+void NativeMainWindow::loadNativeReminderState() {
+    if (reminderList_ == nullptr) {
+        return;
+    }
+    if (!backend_.loadReminderState(configPath_, currentLocalDateTime())) {
+        reminderStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return;
+    }
+    reminderState_ = parseObject(backend_.getReminderStateJson());
+    const QString mode = reminderState_
+                             .value(QStringLiteral("display_mode"))
+                             .toString(QStringLiteral("floating"));
+    const int modeIndex = reminderDisplayModeComboBox_->findData(mode);
+    reminderDisplayModeComboBox_->setCurrentIndex(modeIndex < 0 ? 0 : modeIndex);
+    refreshNativeReminderList();
+}
+
+void NativeMainWindow::refreshNativeReminderList() {
+    if (reminderList_ == nullptr) {
+        return;
+    }
+    QString selectedKind;
+    QString selectedId;
+    if (const QListWidgetItem* selected = reminderList_->currentItem()) {
+        selectedKind = selected->data(kReminderKindRole).toString();
+        selectedId = selected->data(kReminderIdRole).toString();
+    }
+    reminderList_->clear();
+
+    const QJsonArray alarms = reminderState_.value(QStringLiteral("alarms")).toArray();
+    for (const QJsonValue& value : alarms) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject alarm = value.toObject();
+        const bool enabled = alarm.value(QStringLiteral("enabled")).toBool(true);
+        const QString character = alarm.value(QStringLiteral("character")).toString();
+        const QString display = character.isEmpty()
+            ? tr("default character")
+            : displayNameForCharacter(character);
+        QString description = alarm.value(QStringLiteral("description")).toString().trimmed();
+        if (description.isEmpty()) {
+            description = tr("Alarm");
+        }
+        QString nextAt = alarm.value(QStringLiteral("next_at")).toString();
+        const QString detail = nextAt.isEmpty()
+            ? tr("not scheduled")
+            : tr("next %1").arg(nextAt.replace(QStringLiteral("T"), QStringLiteral(" ")));
+        const QString text = QStringLiteral("%1 %2 · %3 · %4\n%5 · %6")
+                                 .arg(
+                                     enabled ? QStringLiteral("●") : QStringLiteral("○"),
+                                     alarm.value(QStringLiteral("time")).toString(),
+                                     repeatDaysLabel(
+                                         alarm.value(QStringLiteral("repeat_days")).toArray()),
+                                     description,
+                                     display,
+                                     detail);
+        auto* item = new QListWidgetItem(text, reminderList_);
+        item->setData(kReminderKindRole, QStringLiteral("alarm"));
+        item->setData(kReminderIdRole, alarm.value(QStringLiteral("id")).toString());
+        item->setData(kReminderEnabledRole, enabled);
+        if (selectedKind == QStringLiteral("alarm")
+            && selectedId == item->data(kReminderIdRole).toString()) {
+            reminderList_->setCurrentItem(item);
+        }
+    }
+
+    const QJsonArray pomodoros = reminderState_.value(QStringLiteral("pomodoros")).toArray();
+    for (const QJsonValue& value : pomodoros) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject pomodoro = value.toObject();
+        const QString character = pomodoro.value(QStringLiteral("character")).toString();
+        const QString display = character.isEmpty()
+            ? tr("default character")
+            : displayNameForCharacter(character);
+        QString description = pomodoro.value(QStringLiteral("description")).toString().trimmed();
+        if (description.isEmpty()) {
+            description = tr("Pomodoro");
+        }
+        const int completed = pomodoro
+                                  .value(QStringLiteral("completed_focus_count"))
+                                  .toInt();
+        const int repeats = pomodoro.value(QStringLiteral("repeat_count")).toInt(1);
+        const QString status = pomodoro
+                                   .value(QStringLiteral("status"))
+                                   .toString(QStringLiteral("running"));
+        const QString phase = pomodoro
+                                  .value(QStringLiteral("phase"))
+                                  .toString(QStringLiteral("focus"));
+        const QString text = tr("Pomodoro · %1/%2 rounds · %3\n%4 · %5 · %6")
+                                 .arg(completed)
+                                 .arg(repeats)
+                                 .arg(description, display, status, phase);
+        auto* item = new QListWidgetItem(text, reminderList_);
+        item->setData(kReminderKindRole, QStringLiteral("pomodoro"));
+        item->setData(kReminderIdRole, pomodoro.value(QStringLiteral("id")).toString());
+        item->setData(kReminderEnabledRole, false);
+        if (selectedKind == QStringLiteral("pomodoro")
+            && selectedId == item->data(kReminderIdRole).toString()) {
+            reminderList_->setCurrentItem(item);
+        }
+    }
+    updateNativeReminderActions();
+}
+
+void NativeMainWindow::updateNativeReminderActions() {
+    if (reminderList_ == nullptr) {
+        return;
+    }
+    const QListWidgetItem* selected = reminderList_->currentItem();
+    const bool hasSelection = selected != nullptr;
+    const bool isAlarm = hasSelection
+        && selected->data(kReminderKindRole).toString() == QStringLiteral("alarm");
+    const bool enabled = isAlarm && selected->data(kReminderEnabledRole).toBool();
+    toggleReminderButton_->setEnabled(isAlarm);
+    toggleReminderButton_->setText(enabled ? tr("Disable alarm") : tr("Enable alarm"));
+    deleteReminderButton_->setEnabled(hasSelection);
+    if (hasSelection) {
+        reminderStatusLabel_->setText(
+            isAlarm ? tr("Alarm selected") : tr("Pomodoro selected"));
+    } else {
+        const int alarmCount = reminderState_.value(QStringLiteral("alarms")).toArray().size();
+        const int pomodoroCount =
+            reminderState_.value(QStringLiteral("pomodoros")).toArray().size();
+        reminderStatusLabel_->setText(
+            tr("%1 alarm(s), %2 Pomodoro timer(s)").arg(alarmCount).arg(pomodoroCount));
+    }
+}
+
+bool NativeMainWindow::mutateNativeReminder(const QJsonObject& command) {
+    if (!backend_.mutateReminder(configPath_, currentLocalDateTime(), compactJson(command))) {
+        serviceStatusLabel_->setText(backend_.getStatus());
+        reminderStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    reminderState_ = parseObject(backend_.getReminderStateJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    refreshNativeReminderList();
+    return true;
+}
+
+void NativeMainWindow::addNativeAlarm() {
+    QJsonValue repeatDays(alarmRepeatComboBox_->currentData().toString());
+    if (alarmRepeatComboBox_->currentData().toString() == QStringLiteral("custom")) {
+        QJsonArray selectedDays;
+        for (int index = 0; index < alarmWeekdayCheckBoxes_.size(); ++index) {
+            if (alarmWeekdayCheckBoxes_.at(index)->isChecked()) {
+                selectedDays.append(index);
+            }
+        }
+        if (selectedDays.isEmpty()) {
+            reminderStatusLabel_->setText(tr("Select at least one custom repeat day"));
+            return;
+        }
+        repeatDays = selectedDays;
+    }
+    const QJsonObject command {
+        {QStringLiteral("op"), QStringLiteral("add_alarm")},
+        {QStringLiteral("time"), alarmTimePicker_->time().toString(QStringLiteral("HH:mm"))},
+        {QStringLiteral("repeat_days"), repeatDays},
+        {QStringLiteral("description"), alarmDescriptionEdit_->text().trimmed()},
+        {QStringLiteral("character"), alarmCharacterComboBox_->currentData().toString()},
+    };
+    if (mutateNativeReminder(command)) {
+        alarmDescriptionEdit_->clear();
+        reminderStatusLabel_->setText(tr("Alarm added"));
+    }
+}
+
+void NativeMainWindow::addNativePomodoro() {
+    const QJsonObject command {
+        {QStringLiteral("op"), QStringLiteral("add_pomodoro")},
+        {QStringLiteral("repeat_count"), pomodoroRepeatSpinBox_->value()},
+        {QStringLiteral("description"), pomodoroDescriptionEdit_->text().trimmed()},
+        {QStringLiteral("character"), pomodoroCharacterComboBox_->currentData().toString()},
+    };
+    if (mutateNativeReminder(command)) {
+        pomodoroDescriptionEdit_->clear();
+        reminderStatusLabel_->setText(tr("Pomodoro timer started"));
+    }
+}
+
+void NativeMainWindow::toggleSelectedNativeAlarm() {
+    const QListWidgetItem* selected = reminderList_->currentItem();
+    if (selected == nullptr
+        || selected->data(kReminderKindRole).toString() != QStringLiteral("alarm")) {
+        return;
+    }
+    mutateNativeReminder({
+        {QStringLiteral("op"), QStringLiteral("toggle_alarm")},
+        {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
+        {QStringLiteral("enabled"), !selected->data(kReminderEnabledRole).toBool()},
+    });
+}
+
+void NativeMainWindow::deleteSelectedNativeReminder() {
+    const QListWidgetItem* selected = reminderList_->currentItem();
+    if (selected == nullptr) {
+        return;
+    }
+    const QString kind = selected->data(kReminderKindRole).toString();
+    mutateNativeReminder({
+        {QStringLiteral("op"),
+         kind == QStringLiteral("alarm")
+             ? QStringLiteral("delete_alarm")
+             : QStringLiteral("delete_pomodoro")},
+        {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
+    });
 }
 
 void NativeMainWindow::syncSettingsControls() {
@@ -2015,11 +2464,11 @@ int NativeMainWindow::dispatchChatToolEffects(
 }
 
 void NativeMainWindow::pollNativeReminders() {
-    const QString now = QDateTime::currentDateTime().toString(
-        QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+    const QString now = currentLocalDateTime();
     if (!backend_.tickReminders(configPath_, now)) {
         return;
     }
+    loadNativeReminderState();
     for (const QJsonValue& value : parseArray(backend_.getReminderEventsJson())) {
         if (!value.isObject()) {
             continue;

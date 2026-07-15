@@ -485,6 +485,44 @@ def test_native_reminder_service_persists_and_delivers_system_or_pet_notificatio
     assert "reminderBubbleGeneration" in pet
 
 
+def test_native_qt_reminder_management_uses_whitelisted_rust_mutations():
+    reminder = source("rust/crates/bandori-core/src/reminder.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub struct NativeReminderState" in reminder
+    assert "enum NativeReminderMutation" in reminder
+    assert '#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]' in reminder
+    assert "pub fn load_native_reminder_state" in reminder
+    assert "pub fn mutate_native_reminders" in reminder
+    assert "at most 256 alarms can be saved" in reminder
+    assert "config.save(config_path)?" in reminder
+    assert "native_management_commands_are_whitelisted_owned_and_atomic" in reminder
+    assert "reminder_state_json" in backend
+    assert "fn load_reminder_state(" in backend
+    assert "fn mutate_reminder(" in backend
+    assert "MAX_REMINDER_COMMAND_BYTES" in backend
+    assert '"getReminderStateJson"' in bridge_test
+    assert '"loadReminderState"' in bridge_test
+    assert '"mutateReminder"' in bridge_test
+    assert "QJsonObject reminderState_" in header
+    assert "qfw::TimePicker* alarmTimePicker_" in header
+    assert "qfw::ListWidget* reminderList_" in header
+    assert "void NativeMainWindow::populateReminderCharacters()" in window
+    assert "backend_.loadReminderState" in window
+    assert "backend_.mutateReminder" in window
+    assert 'QStringLiteral("set_display_mode")' in window
+    assert 'QStringLiteral("add_alarm")' in window
+    assert 'QStringLiteral("toggle_alarm")' in window
+    assert 'QStringLiteral("delete_alarm")' in window
+    assert 'QStringLiteral("add_pomodoro")' in window
+    assert 'QStringLiteral("delete_pomodoro")' in window
+    assert "alarmWeekdayCheckBoxes_" in window
+    assert "loadNativeReminderState();" in window
+
+
 def test_native_supervisor_runs_all_pets_on_one_shared_ipc_session():
     header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")

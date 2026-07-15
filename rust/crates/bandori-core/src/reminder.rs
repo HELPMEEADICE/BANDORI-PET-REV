@@ -156,6 +156,62 @@ pub enum ReminderError {
     CannotComputeNextAlarm,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeReminderState {
+    pub display_mode: String,
+    pub alarms: Vec<Alarm>,
+    pub pomodoros: Vec<Pomodoro>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum NativeReminderMutation {
+    AddAlarm {
+        time: String,
+        #[serde(default)]
+        repeat_days: Value,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        character: String,
+        #[serde(default)]
+        date: String,
+    },
+    ToggleAlarm {
+        id: String,
+        enabled: bool,
+    },
+    DeleteAlarm {
+        id: String,
+    },
+    AddPomodoro {
+        #[serde(default = "default_repeat_count")]
+        repeat_count: i64,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        character: String,
+    },
+    DeletePomodoro {
+        id: String,
+    },
+    SetDisplayMode {
+        mode: String,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum NativeReminderError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("native reminder command JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Reminder(#[from] ReminderError),
+    #[error("native reminder operation is invalid: {0}")]
+    InvalidOperation(String),
+}
+
 pub fn normalize_time(source: &str) -> String {
     let chars = source.trim().chars().collect::<Vec<_>>();
     if chars.is_empty() {
@@ -589,6 +645,181 @@ pub fn tick_config_reminders(
         config.save(config_path)?;
     }
     Ok(events)
+}
+
+pub fn load_native_reminder_state(
+    config_path: &Path,
+    now: LocalDateTime,
+) -> Result<NativeReminderState, NativeReminderError> {
+    let config = ConfigDocument::load(config_path)?;
+    Ok(reminder_state_from_config(&config, now))
+}
+
+pub fn mutate_native_reminders(
+    config_path: &Path,
+    now: LocalDateTime,
+    command_json: &str,
+    max_bytes: usize,
+) -> Result<NativeReminderState, NativeReminderError> {
+    if command_json.len() > max_bytes {
+        return Err(NativeReminderError::InvalidOperation(format!(
+            "command exceeds the {max_bytes} byte limit"
+        )));
+    }
+    let command = serde_json::from_str::<NativeReminderMutation>(command_json)?;
+    let mut config = ConfigDocument::load(config_path)?;
+    let mut state = reminder_state_from_config(&config, now);
+    match command {
+        NativeReminderMutation::AddAlarm {
+            time,
+            repeat_days,
+            description,
+            character,
+            date,
+        } => {
+            if state.alarms.len() >= 256 {
+                return Err(NativeReminderError::InvalidOperation(
+                    "at most 256 alarms can be saved".to_owned(),
+                ));
+            }
+            let character = resolve_reminder_character(&config, &character)?;
+            state.alarms.push(create_alarm(
+                &time,
+                &repeat_days,
+                &description,
+                &character,
+                &date,
+                now,
+            )?);
+        }
+        NativeReminderMutation::ToggleAlarm { id, enabled } => {
+            let id = required_id(&id)?;
+            let alarm = state
+                .alarms
+                .iter_mut()
+                .find(|alarm| alarm.id == id)
+                .ok_or_else(|| {
+                    NativeReminderError::InvalidOperation(
+                        "selected alarm does not exist".to_owned(),
+                    )
+                })?;
+            alarm.enabled = enabled;
+            alarm.next_at.clear();
+            state.alarms = normalize_alarms(
+                &serde_json::to_value(&state.alarms).expect("alarm serialization cannot fail"),
+                now,
+            );
+        }
+        NativeReminderMutation::DeleteAlarm { id } => {
+            let id = required_id(&id)?;
+            let previous = state.alarms.len();
+            state.alarms.retain(|alarm| alarm.id != id);
+            if state.alarms.len() == previous {
+                return Err(NativeReminderError::InvalidOperation(
+                    "selected alarm does not exist".to_owned(),
+                ));
+            }
+        }
+        NativeReminderMutation::AddPomodoro {
+            repeat_count,
+            description,
+            character,
+        } => {
+            if state.pomodoros.len() >= 256 {
+                return Err(NativeReminderError::InvalidOperation(
+                    "at most 256 Pomodoro timers can be saved".to_owned(),
+                ));
+            }
+            let character = resolve_reminder_character(&config, &character)?;
+            state
+                .pomodoros
+                .push(create_pomodoro(repeat_count, &description, &character, now));
+        }
+        NativeReminderMutation::DeletePomodoro { id } => {
+            let id = required_id(&id)?;
+            let previous = state.pomodoros.len();
+            state.pomodoros.retain(|pomodoro| pomodoro.id != id);
+            if state.pomodoros.len() == previous {
+                return Err(NativeReminderError::InvalidOperation(
+                    "selected Pomodoro timer does not exist".to_owned(),
+                ));
+            }
+        }
+        NativeReminderMutation::SetDisplayMode { mode } => {
+            let mode = mode.trim().to_lowercase();
+            if !matches!(mode.as_str(), "floating" | "system") {
+                return Err(NativeReminderError::InvalidOperation(format!(
+                    "unsupported reminder display mode: {mode}"
+                )));
+            }
+            state.display_mode = mode;
+        }
+    }
+    config.set("reminder_display_mode", json!(state.display_mode));
+    config.set(
+        "alarms",
+        serde_json::to_value(&state.alarms).expect("alarm serialization cannot fail"),
+    );
+    config.set(
+        "pomodoros",
+        serde_json::to_value(&state.pomodoros).expect("pomodoro serialization cannot fail"),
+    );
+    config.save(config_path)?;
+    Ok(state)
+}
+
+fn reminder_state_from_config(config: &ConfigDocument, now: LocalDateTime) -> NativeReminderState {
+    NativeReminderState {
+        display_mode: config
+            .get("reminder_display_mode")
+            .and_then(Value::as_str)
+            .filter(|mode| matches!(*mode, "floating" | "system"))
+            .unwrap_or("floating")
+            .to_owned(),
+        alarms: normalize_alarms(config.get("alarms").unwrap_or(&Value::Null), now),
+        pomodoros: normalize_pomodoros(config.get("pomodoros").unwrap_or(&Value::Null), now),
+    }
+}
+
+fn resolve_reminder_character(
+    config: &ConfigDocument,
+    requested: &str,
+) -> Result<String, NativeReminderError> {
+    let configured = config
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model.get("character").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|character| !character.is_empty())
+        .collect::<Vec<_>>();
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Ok(configured.first().copied().unwrap_or_default().to_owned());
+    }
+    if configured.is_empty() || configured.contains(&requested) {
+        Ok(requested.to_owned())
+    } else {
+        Err(NativeReminderError::InvalidOperation(
+            "reminder character is not configured".to_owned(),
+        ))
+    }
+}
+
+fn required_id(value: &str) -> Result<&str, NativeReminderError> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 {
+        Err(NativeReminderError::InvalidOperation(
+            "reminder id is invalid".to_owned(),
+        ))
+    } else {
+        Ok(value)
+    }
+}
+
+fn default_repeat_count() -> i64 {
+    1
 }
 
 fn advance_pomodoro(pomodoro: &mut Pomodoro, now: LocalDateTime, events: &mut Vec<Value>) {
@@ -1032,5 +1263,106 @@ mod tests {
         let saved = ConfigDocument::load(&path).unwrap();
         assert_eq!(saved.get("alarms").unwrap()[0]["enabled"], false);
         assert_eq!(saved.get("alarms").unwrap()[0]["next_at"], "");
+    }
+
+    #[test]
+    fn native_management_commands_are_whitelisted_owned_and_atomic() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let now = LocalDateTime::parse("2026-07-15T10:30:00").unwrap();
+        let mut config = ConfigDocument::default();
+        config.set(
+            "models",
+            json!([{"character":"ran","path":"models/ran/model3.json"}]),
+        );
+        config.save(&path).unwrap();
+
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            r#"{"op":"add_alarm","time":"21:45","repeat_days":"weekdays","description":"练琴","character":"ran"}"#,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(state.alarms.len(), 1);
+        assert_eq!(state.alarms[0].repeat_days, vec![0, 1, 2, 3, 4]);
+        let alarm_id = state.alarms[0].id.clone();
+
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            &json!({"op":"toggle_alarm","id":alarm_id,"enabled":false}).to_string(),
+            4096,
+        )
+        .unwrap();
+        assert!(!state.alarms[0].enabled);
+        assert!(state.alarms[0].next_at.is_empty());
+
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            r#"{"op":"add_pomodoro","repeat_count":2,"description":"编曲","character":"ran"}"#,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(state.pomodoros.len(), 1);
+        let pomodoro_id = state.pomodoros[0].id.clone();
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            &json!({"op":"delete_pomodoro","id":pomodoro_id}).to_string(),
+            4096,
+        )
+        .unwrap();
+        assert!(state.pomodoros.is_empty());
+
+        assert!(
+            mutate_native_reminders(
+                &path,
+                now,
+                r#"{"op":"add_alarm","time":"12:00","character":"unknown"}"#,
+                4096,
+            )
+            .is_err()
+        );
+        assert!(
+            mutate_native_reminders(&path, now, r#"{"op":"delete_alarm","id":"missing"}"#, 4096,)
+                .is_err()
+        );
+        assert_eq!(
+            load_native_reminder_state(&path, now).unwrap().alarms.len(),
+            1
+        );
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            r#"{"op":"set_display_mode","mode":"system"}"#,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(state.display_mode, "system");
+        assert!(
+            mutate_native_reminders(
+                &path,
+                now,
+                r#"{"op":"set_display_mode","mode":"system","unexpected":true}"#,
+                4096,
+            )
+            .is_err()
+        );
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            &json!({"op":"delete_alarm","id":alarm_id}).to_string(),
+            4096,
+        )
+        .unwrap();
+        assert!(state.alarms.is_empty());
+        assert_eq!(
+            ConfigDocument::load(&path)
+                .unwrap()
+                .get("reminder_display_mode"),
+            Some(&json!("system"))
+        );
     }
 }

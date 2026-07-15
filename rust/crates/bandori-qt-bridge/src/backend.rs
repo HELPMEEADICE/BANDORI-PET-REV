@@ -19,6 +19,7 @@ pub mod ffi {
         #[qproperty(QString, chat_request_json)]
         #[qproperty(QString, chat_imported_attachments_json)]
         #[qproperty(QString, reminder_events_json)]
+        #[qproperty(QString, reminder_state_json)]
         #[qproperty(bool, chat_has_older_messages)]
         #[namespace = "bandori"]
         type Backend = super::BackendRust;
@@ -50,6 +51,23 @@ pub mod ffi {
             self: Pin<&mut Self>,
             config_path: &QString,
             local_datetime: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "loadReminderState"]
+        fn load_reminder_state(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            local_datetime: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "mutateReminder"]
+        fn mutate_reminder(
+            self: Pin<&mut Self>,
+            config_path: &QString,
+            local_datetime: &QString,
+            command_json: &QString,
         ) -> bool;
 
         #[qinvokable]
@@ -279,7 +297,9 @@ use bandori_core::memory_extraction::{
 use bandori_core::relationship_analysis::{
     InteractionAnalysis, analyze_interaction, apply_interaction_analysis,
 };
-use bandori_core::reminder::{LocalDateTime, tick_config_reminders};
+use bandori_core::reminder::{
+    LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
+};
 use bandori_llm::{
     LlmApiMode, LlmStreamEvent, LlmTransport, LlmTransportConfig, LlmTransportError,
     LlmTransportRequest, TokenUsage,
@@ -295,6 +315,7 @@ use tokio_util::sync::CancellationToken;
 const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 const MAX_ATTACHMENT_JSON_BYTES: usize = 256 * 1024;
 const MAX_GROUP_MEMBERS_JSON_BYTES: usize = 64 * 1024;
+const MAX_REMINDER_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
 
 #[derive(Debug)]
@@ -352,6 +373,7 @@ pub struct BackendRust {
     chat_request_json: QString,
     chat_imported_attachments_json: QString,
     reminder_events_json: QString,
+    reminder_state_json: QString,
     chat_has_older_messages: bool,
     prepared_chat_conversation_id: i64,
     prepared_chat_user_message_id: i64,
@@ -393,6 +415,9 @@ impl Default for BackendRust {
             chat_request_json: QString::from("{}"),
             chat_imported_attachments_json: QString::from("{\"attachments\":[],\"errors\":[]}"),
             reminder_events_json: QString::from("[]"),
+            reminder_state_json: QString::from(
+                "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[]}",
+            ),
             chat_has_older_messages: false,
             prepared_chat_conversation_id: 0,
             prepared_chat_user_message_id: 0,
@@ -566,6 +591,68 @@ impl ffi::Backend {
                 self.as_mut()
                     .set_status(QString::from(&format!("Reminder tick error: {error}")));
                 self.as_mut().set_reminder_events_json(QString::from("[]"));
+                false
+            }
+        }
+    }
+
+    pub fn load_reminder_state(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        local_datetime: &QString,
+    ) -> bool {
+        let Some(now) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut().set_status(QString::from(
+                "Loading reminders needs a valid local datetime",
+            ));
+            return false;
+        };
+        match load_native_reminder_state(Path::new(&config_path.to_string()), now) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native reminder state serialization cannot fail");
+                self.as_mut()
+                    .set_reminder_state_json(QString::from(&payload));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Reminder load error: {error}")));
+                false
+            }
+        }
+    }
+
+    pub fn mutate_reminder(
+        mut self: Pin<&mut Self>,
+        config_path: &QString,
+        local_datetime: &QString,
+        command_json: &QString,
+    ) -> bool {
+        let Some(now) = LocalDateTime::parse(&local_datetime.to_string()) else {
+            self.as_mut().set_status(QString::from(
+                "Changing reminders needs a valid local datetime",
+            ));
+            return false;
+        };
+        match mutate_native_reminders(
+            Path::new(&config_path.to_string()),
+            now,
+            &command_json.to_string(),
+            MAX_REMINDER_COMMAND_BYTES,
+        ) {
+            Ok(state) => {
+                let payload = serde_json::to_string(&state)
+                    .expect("native reminder state serialization cannot fail");
+                self.as_mut()
+                    .set_reminder_state_json(QString::from(&payload));
+                self.as_mut()
+                    .set_status(QString::from("Native reminders saved atomically"));
+                true
+            }
+            Err(error) => {
+                self.as_mut()
+                    .set_status(QString::from(&format!("Reminder change error: {error}")));
                 false
             }
         }
