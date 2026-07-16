@@ -1,0 +1,6 @@
+[submodule "third_party/Qt-Fluent-Widgets"]
+	path = third_party/Qt-Fluent-Widgets
+	url = https://github.com/Fairy-Oracle-Sanctuary/Qt-Fluent-Widgets.git
+[submodule "third_party/Live2D-v2-Lua"]
+	path = third_party/Live2D-v2-Lua
+	url = https://github.com/HELPMEEADICE/Live2D-v2-Lua.git

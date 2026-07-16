@@ -36,6 +36,9 @@ QString petName(const PetLaunchSpec& spec) {
 PetLaunchSpec normalizedSpec(PetLaunchSpec spec) {
     spec.projectRoot = QDir(spec.projectRoot).absolutePath();
     spec.userModelsRoot = QDir(spec.userModelsRoot).absolutePath();
+    spec.configPath = spec.configPath.trimmed().isEmpty()
+        ? QDir(spec.projectRoot).filePath(QStringLiteral("config.json"))
+        : QFileInfo(spec.configPath).absoluteFilePath();
     spec.width = std::max(spec.width, 1);
     spec.height = std::max(spec.height, 1);
     spec.fps = std::clamp(spec.fps, 10, 240);
@@ -95,6 +98,7 @@ void PetProcessSupervisor::start(PetLaunchSpec spec) {
 void PetProcessSupervisor::startAll(QList<PetLaunchSpec> specs) {
     QList<PetLaunchSpec> normalized;
     QString projectRoot;
+    QString configPath;
     for (PetLaunchSpec& spec : specs) {
         if (spec.modelPath.trimmed().isEmpty()) {
             continue;
@@ -102,8 +106,12 @@ void PetProcessSupervisor::startAll(QList<PetLaunchSpec> specs) {
         PetLaunchSpec value = normalizedSpec(std::move(spec));
         if (projectRoot.isEmpty()) {
             projectRoot = value.projectRoot;
+            configPath = value.configPath;
         } else if (value.projectRoot != projectRoot) {
             emit statusChanged(QStringLiteral("All pet renderers must share one project root"));
+            return;
+        } else if (value.configPath != configPath) {
+            emit statusChanged(QStringLiteral("All pet renderers must share one config path"));
             return;
         }
         normalized.append(std::move(value));
@@ -182,6 +190,7 @@ void PetProcessSupervisor::launchPendingFleet() {
     QList<PetLaunchSpec> specs = std::move(pendingSpecs_);
     pendingSpecs_.clear();
     projectRoot_ = specs.first().projectRoot;
+    configPath_ = specs.first().configPath;
     if (!initializeIpcSession()) {
         stopping_ = true;
         return;
@@ -531,8 +540,7 @@ void PetProcessSupervisor::pollIpcMessages() {
                     .arg(character));
             publishPeerOffline(character);
         } else if (line.startsWith(QStringLiteral("PET_STATE\t"))) {
-            const QByteArray configPath =
-                QDir(projectRoot_).filePath(QStringLiteral("config.json")).toUtf8();
+            const QByteArray configPath = configPath_.toUtf8();
             const QByteArray payload = line.mid(10).toUtf8();
             if (!bandori_config_save_pet_state(configPath.constData(), payload.constData())) {
                 emit rendererLog(

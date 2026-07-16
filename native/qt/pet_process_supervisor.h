@@ -15,6 +15,7 @@ class SharedMemoryLineQueue;
 struct PetLaunchSpec {
     QString projectRoot;
     QString userModelsRoot;
+    QString configPath;
     QString modelPath;
     QString character;
     QString language;
@@ -87,6 +88,7 @@ private:
     QList<PetLaunchSpec> pendingSpecs_;
     std::vector<std::unique_ptr<ChildState>> children_;
     QString projectRoot_;
+    QString configPath_;
     bool stopping_ = true;
     bool relaunchAfterStop_ = false;
     bool finalizeScheduled_ = false;

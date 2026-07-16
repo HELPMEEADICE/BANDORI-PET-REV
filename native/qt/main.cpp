@@ -1,12 +1,55 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
+#include <QFileInfo>
 #include <QStandardPaths>
+#include <QStringList>
+
+#include <utility>
 
 #include <qtfluentwidgets.h>
 
 #include "native_main_window.h"
+
+namespace {
+
+bool isBandoriResourceRoot(const QString& path) {
+    const QDir root(path);
+    return QFileInfo::exists(root.filePath(QStringLiteral("outfit.json")))
+        && QFileInfo::exists(root.filePath(QStringLiteral("band.json")))
+        && QFileInfo::exists(root.filePath(
+            QStringLiteral("third_party/Live2D-v2-Lua/live2d_moc3_pet_embed.lua")));
+}
+
+QString discoverBandoriResourceRoot() {
+    QStringList candidates;
+    const QString environment = qEnvironmentVariable("BANDORI_PET_PROJECT_ROOT").trimmed();
+    if (!environment.isEmpty()) {
+        candidates.append(environment);
+    }
+    const QDir application(QCoreApplication::applicationDirPath());
+    candidates.append(application.absolutePath());
+    candidates.append(application.absoluteFilePath(QStringLiteral("../Resources")));
+    candidates.append(application.absoluteFilePath(QStringLiteral("../share/bandoripet")));
+    candidates.append(QDir::currentPath());
+    for (const QString& candidate : std::as_const(candidates)) {
+        const QString absolute = QDir(candidate).absolutePath();
+        if (isBandoriResourceRoot(absolute)) {
+            return absolute;
+        }
+    }
+    return QDir::currentPath();
+}
+
+bool isPackagedResourceRoot(const QString& path) {
+    return QFileInfo::exists(
+        QDir(path).filePath(QStringLiteral(".bandoripet-native-package")));
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
@@ -92,13 +135,19 @@ int main(int argc, char* argv[]) {
     QCommandLineOption projectRoot(
         QStringLiteral("project-root"),
         QStringLiteral("BandoriPet installation root"),
-        QStringLiteral("path"),
-        QDir::currentPath());
+        QStringLiteral("path"));
+    QCommandLineOption dataRoot(
+        QStringLiteral("data-root"),
+        QStringLiteral("Writable BandoriPet configuration and database directory"),
+        QStringLiteral("path"));
+    QCommandLineOption configPathOption(
+        QStringLiteral("config"),
+        QStringLiteral("Explicit config.json path; its directory becomes the default data root"),
+        QStringLiteral("path"));
     QCommandLineOption userModels(
         QStringLiteral("user-models"),
         QStringLiteral("Writable user model directory"),
-        QStringLiteral("path"),
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/models"));
+        QStringLiteral("path"));
     parser.addOptions(
         {petModel,
          petFormat,
@@ -118,17 +167,46 @@ int main(int argc, char* argv[]) {
          petDisableHeadTracking,
          petMutualGaze,
          projectRoot,
+         dataRoot,
+         configPathOption,
          userModels});
     parser.process(app);
 
     Q_INIT_RESOURCE(resource);
     qfw::setTheme(qfw::Theme::Auto);
 
-    const QString configPath =
-        QDir(parser.value(projectRoot)).filePath(QStringLiteral("config.json"));
+    const QString resolvedProjectRoot = parser.isSet(projectRoot)
+        ? QDir(parser.value(projectRoot)).absolutePath()
+        : discoverBandoriResourceRoot();
+    QString resolvedDataRoot;
+    if (parser.isSet(dataRoot)) {
+        resolvedDataRoot = QDir(parser.value(dataRoot)).absolutePath();
+    } else if (parser.isSet(configPathOption)) {
+        resolvedDataRoot = QFileInfo(parser.value(configPathOption)).absolutePath();
+    } else if (parser.isSet(projectRoot) || !isPackagedResourceRoot(resolvedProjectRoot)) {
+        resolvedDataRoot = resolvedProjectRoot;
+    } else {
+        resolvedDataRoot =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    }
+    if (resolvedDataRoot.isEmpty() || !QDir().mkpath(resolvedDataRoot)) {
+        qCritical("Could not create the BandoriPet data directory");
+        return 2;
+    }
+    const QString configPath = parser.isSet(configPathOption)
+        ? QFileInfo(parser.value(configPathOption)).absoluteFilePath()
+        : QDir(resolvedDataRoot).filePath(QStringLiteral("config.json"));
+    const QString resolvedUserModels = parser.isSet(userModels)
+        ? QDir(parser.value(userModels)).absolutePath()
+        : QDir(resolvedDataRoot).filePath(QStringLiteral("models"));
+    if (!QDir().mkpath(resolvedUserModels)) {
+        qCritical("Could not create the BandoriPet user-model directory");
+        return 2;
+    }
     bandori::PetLaunchSpec petSpec;
-    petSpec.projectRoot = parser.value(projectRoot);
-    petSpec.userModelsRoot = parser.value(userModels);
+    petSpec.projectRoot = resolvedProjectRoot;
+    petSpec.userModelsRoot = resolvedUserModels;
+    petSpec.configPath = configPath;
     petSpec.modelPath = parser.value(petModel);
     petSpec.character = parser.value(petCharacter);
     petSpec.language = parser.value(petLanguage);
@@ -147,8 +225,9 @@ int main(int argc, char* argv[]) {
     petSpec.headTrackingEnabled = !parser.isSet(petDisableHeadTracking);
     petSpec.mutualGazeEnabled = parser.isSet(petMutualGaze);
     bandori::NativeMainWindow window(
-        parser.value(projectRoot),
-        parser.value(userModels),
+        resolvedProjectRoot,
+        resolvedUserModels,
+        resolvedDataRoot,
         configPath);
     window.show();
     if (!petSpec.modelPath.isEmpty()) {

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BandoriPet
+Comment=Bandori desktop pet
+Exec=BandoriPet
+Icon=bandoripet
+Terminal=false
+Categories=Game;Utility;
+StartupWMClass=BandoriPet

@@ -368,12 +368,24 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   sender mentions and action-tag stripping as the Python implementation. The
   Qt-Fluent-Widgets page saves redacted NapCat settings and stops both socket
   and reply workers during shutdown.
+  Native distribution entry points are now present for all release targets.
+  CMake installs the control center, sibling renderer, Qt runtime dependencies,
+  Qt-Fluent resources and the minimal trusted Live2D Lua module tree, then CPack
+  produces ZIP/NSIS on Windows, DragNDrop on macOS, and TGZ/DEB on Linux. The two
+  third-party source trees are pinned outer-repository submodules so a clean clone
+  is buildable. Packaged applications discover their read-only resource root
+  relative to the executable or app bundle, while `config.json`, `data.db`, chat
+  attachments and downloaded models use Qt's writable AppData location. Explicit
+  `--project-root`, `--data-root`, `--config` and `--user-models` overrides keep
+  source-tree and portable workflows available. Repository models are excluded by
+  default to avoid an accidental 1.4 GB package and can be included deliberately
+  with `-DBANDORI_PET_PACKAGE_BUNDLED_MODELS=ON`.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
 - Pending: remaining native visual/driver parity, non-Windows Computer Use input
-  drivers, packaged offline ASR sidecar, default-launcher cutover, packaging and
-  multi-platform validation.
+  drivers, packaged offline ASR sidecar, default-launcher cutover, release
+  signing/notarization and multi-platform package validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
@@ -390,6 +402,16 @@ and Python compatibility checks remain independent of that local limitation.
 - Contract drift: `python tools/export_rust_contracts.py --check`
 - Native application: `cmake -S . -B build-rust` followed by
   `cmake --build build-rust --config Release`
+- Native packages: `cmake --build build-rust --config Release --target package`.
+  The platform generator emits ZIP/NSIS, DragNDrop, or TGZ/DEB artifacts under
+  `build-rust`. Add `-DBANDORI_PET_PACKAGE_BUNDLED_MODELS=ON` at configure time
+  only for a deliberately model-inclusive release.
+
+Initialize the pinned native dependencies before configuring a clean checkout:
+
+```bash
+git submodule update --init --recursive
+```
 
 The Python supervisor keeps the Python pet as the default. To replace only the
 pet renderer during the compatibility window, set

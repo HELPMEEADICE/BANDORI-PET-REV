@@ -535,11 +535,13 @@ bool nativeComputerPressKeys(const QString& keys, QString* error) {
 NativeMainWindow::NativeMainWindow(
     QString projectRoot,
     QString userModelsRoot,
+    QString dataRoot,
     QString configPath,
     QWidget* parent)
     : qfw::FluentWindow(parent),
       projectRoot_(QDir(std::move(projectRoot)).absolutePath()),
       userModelsRoot_(QDir(std::move(userModelsRoot)).absolutePath()),
+      dataRoot_(QDir(std::move(dataRoot)).absolutePath()),
       configPath_(QDir::cleanPath(std::move(configPath))),
       supervisor_(this) {
     setupUi();
@@ -3213,8 +3215,7 @@ QWidget* NativeMainWindow::createIntegrationPage() {
             != QMessageBox::Yes) {
             return;
         }
-        const QString databasePath =
-            QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        const QString databasePath = nativeDatabasePath();
         if (!backend_.deleteNapcatRecords(databasePath, chatType)) {
             napcatStatusLabel_->setText(backend_.getStatus());
             return;
@@ -3596,6 +3597,10 @@ bool NativeMainWindow::reloadBackendState() {
     return loaded;
 }
 
+QString NativeMainWindow::nativeDatabasePath() const {
+    return QDir(dataRoot_).filePath(QStringLiteral("data.db"));
+}
+
 void NativeMainWindow::applyBackendState() {
     serviceStatusLabel_->setText(backend_.getStatus());
     configSummaryLabel_->setText(backend_.getConfigSummary());
@@ -3615,8 +3620,7 @@ void NativeMainWindow::applyBackendState() {
         if (!attachmentStartupCleanupRan_) {
             attachmentStartupCleanupRan_ = true;
             if (attachmentAutoCleanupSwitch_->isChecked()) {
-                const QString databasePath =
-                    QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+                const QString databasePath = nativeDatabasePath();
                 if (!backend_.cleanupChatAttachments(
                         databasePath, attachmentRetentionDaysSpinBox_->value())) {
                     dataStatusLabel_->setText(backend_.getStatus());
@@ -5647,7 +5651,7 @@ void NativeMainWindow::triggerNativeScreenAwareness(bool force) {
     const qint64 requestId = backend_.startScreenAwareness(
         configPath_,
         projectRoot_,
-        QDir(projectRoot_).filePath(QStringLiteral("data.db")),
+        nativeDatabasePath(),
         compactJson(capture),
         png,
         force);
@@ -5980,7 +5984,7 @@ bool NativeMainWindow::saveNativeIntegrationSettings() {
 }
 
 bool NativeMainWindow::restartNativeIntegrationServices() {
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.startIntegrationServices(configPath_, databasePath)) {
         integrationStatus_ = parseObject(backend_.getIntegrationStatusJson());
         integrationStatusLabel_->setText(backend_.getStatus());
@@ -6205,7 +6209,7 @@ void NativeMainWindow::handleNativeNapcatMessage(const QString& message) {
         return;
     }
     const QString eventJson = compactJson(document.object());
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.ingestNapcatEvent(configPath_, databasePath, eventJson)) {
         if (napcatStatusLabel_ != nullptr) {
             napcatStatusLabel_->setText(backend_.getStatus());
@@ -6378,7 +6382,7 @@ void NativeMainWindow::refreshNativeMemoryState() {
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.loadMemoryState(databasePath, character, userKey)) {
         memoryStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -6478,7 +6482,7 @@ bool NativeMainWindow::mutateNativeMemory(const QJsonObject& command) {
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.mutateMemory(databasePath, character, userKey, compactJson(command))) {
         serviceStatusLabel_->setText(backend_.getStatus());
         memoryStatusLabel_->setText(backend_.getStatus());
@@ -7123,7 +7127,7 @@ void NativeMainWindow::loadNativeHistoryFilters() {
     if (historyCharacterComboBox_ == nullptr) {
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.loadHistoryFilters(databasePath)) {
         historyStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -7191,7 +7195,7 @@ void NativeMainWindow::searchNativeHistory(bool append) {
         {QStringLiteral("offset"), offset},
         {QStringLiteral("skip_count"), append},
     };
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.searchHistory(databasePath, compactJson(query))) {
         historyStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -7341,7 +7345,7 @@ void NativeMainWindow::refreshNativeStatistics() {
              .toString(QStringLiteral("__default__"))},
         {QStringLiteral("display_aliases"), aliases},
     };
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.loadStatistics(databasePath, compactJson(query))) {
         statisticsStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -7472,7 +7476,7 @@ void NativeMainWindow::exportNativeSettingsPackage() {
     QString path = QFileDialog::getSaveFileName(
         this,
         tr("Export native settings package"),
-        QDir(projectRoot_).filePath(
+        QDir(dataRoot_).filePath(
             QStringLiteral("bandori-settings-%1-%2.json").arg(category, stamp)),
         tr("BandoriPet settings package (*.json)"));
     if (path.isEmpty()) {
@@ -7482,7 +7486,7 @@ void NativeMainWindow::exportNativeSettingsPackage() {
         path += QStringLiteral(".json");
     }
     dataExportButton_->setEnabled(false);
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const bool exported =
         backend_.exportSettingsPackage(configPath_, databasePath, category, path);
     dataExportButton_->setEnabled(true);
@@ -7500,7 +7504,7 @@ void NativeMainWindow::importNativeSettingsPackage() {
     const QString path = QFileDialog::getOpenFileName(
         this,
         tr("Import native settings package"),
-        projectRoot_,
+        dataRoot_,
         tr("BandoriPet settings package (*.json)"));
     if (path.isEmpty()) {
         return;
@@ -7515,7 +7519,7 @@ void NativeMainWindow::importNativeSettingsPackage() {
         return;
     }
     dataImportButton_->setEnabled(false);
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const bool imported = backend_.importSettingsPackage(
         configPath_, databasePath, category, path);
     dataImportButton_->setEnabled(true);
@@ -7538,7 +7542,7 @@ void NativeMainWindow::exportNativeChatDatabase() {
     QString path = QFileDialog::getSaveFileName(
         this,
         tr("Create chat database backup"),
-        QDir(projectRoot_).filePath(QStringLiteral("bandori-chat-%1.db").arg(stamp)),
+        QDir(dataRoot_).filePath(QStringLiteral("bandori-chat-%1.db").arg(stamp)),
         tr("SQLite database (*.db)"));
     if (path.isEmpty()) {
         return;
@@ -7547,7 +7551,7 @@ void NativeMainWindow::exportNativeChatDatabase() {
         path += QStringLiteral(".db");
     }
     databaseExportButton_->setEnabled(false);
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const bool exported = backend_.exportChatDatabase(databasePath, path);
     databaseExportButton_->setEnabled(true);
     serviceStatusLabel_->setText(backend_.getStatus());
@@ -7570,7 +7574,7 @@ void NativeMainWindow::importNativeChatDatabase() {
     const QString path = QFileDialog::getOpenFileName(
         this,
         tr("Restore chat database backup"),
-        projectRoot_,
+        dataRoot_,
         tr("SQLite database (*.db)"));
     if (path.isEmpty()) {
         return;
@@ -7586,7 +7590,7 @@ void NativeMainWindow::importNativeChatDatabase() {
         return;
     }
     databaseImportButton_->setEnabled(false);
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const bool imported = backend_.importChatDatabase(databasePath, path);
     databaseImportButton_->setEnabled(true);
     serviceStatusLabel_->setText(backend_.getStatus());
@@ -7631,7 +7635,7 @@ void NativeMainWindow::refreshNativeAttachmentStats() {
     if (attachmentStatsLabel_ == nullptr) {
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.loadAttachmentStats(databasePath)) {
         attachmentStatsLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -7677,7 +7681,7 @@ void NativeMainWindow::saveNativeAttachmentSettings() {
     }
     runtime_ = parseObject(backend_.getRuntimeConfigJson());
     if (attachmentAutoCleanupSwitch_->isChecked()) {
-        const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        const QString databasePath = nativeDatabasePath();
         if (!backend_.cleanupChatAttachments(
                 databasePath, attachmentRetentionDaysSpinBox_->value())) {
             dataStatusLabel_->setText(backend_.getStatus());
@@ -7731,7 +7735,7 @@ void NativeMainWindow::cleanupNativeChatAttachments(bool clearAll) {
 
     attachmentCleanupOldButton_->setEnabled(false);
     attachmentClearAllButton_->setEnabled(false);
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     if (!backend_.cleanupChatAttachments(databasePath, clearAll ? 0 : retentionDays)) {
         dataStatusLabel_->setText(backend_.getStatus());
         serviceStatusLabel_->setText(backend_.getStatus());
@@ -8130,7 +8134,7 @@ void NativeMainWindow::refreshChatState(
         chatStatusLabel_->setText(tr("No character is available"));
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString userKey =
         runtime_.value(QStringLiteral("active_user_key")).toString(QStringLiteral("__default__"));
     if (!backend_.loadChatState(
@@ -8223,7 +8227,7 @@ void NativeMainWindow::refreshGroupChatState(
     if (groupKey.isEmpty() && chatGroupComboBox_ != nullptr) {
         groupKey = chatGroupComboBox_->currentData().toString();
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
@@ -8371,7 +8375,7 @@ void NativeMainWindow::deleteSelectedChatConversation() {
         != QMessageBox::Yes) {
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
@@ -8418,7 +8422,7 @@ void NativeMainWindow::chooseChatAttachments() {
     for (const QString& path : paths) {
         sources.append(path);
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString sourceJson =
         QString::fromUtf8(QJsonDocument(sources).toJson(QJsonDocument::Compact));
     const bool imported = backend_.importChatAttachments(databasePath, sourceJson);
@@ -8446,7 +8450,7 @@ void NativeMainWindow::clearPendingChatAttachments() {
         updatePendingChatAttachments();
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString attachmentsJson = QString::fromUtf8(
         QJsonDocument(pendingChatAttachments_).toJson(QJsonDocument::Compact));
     if (!backend_.discardChatAttachments(databasePath, attachmentsJson)) {
@@ -8515,7 +8519,7 @@ void NativeMainWindow::sendNativeChat() {
         return;
     }
     stopNativeTts();
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
@@ -8583,7 +8587,7 @@ void NativeMainWindow::sendNativeGroupChat(
         return;
     }
     stopNativeTts();
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString userKey = runtime_
                                 .value(QStringLiteral("active_user_key"))
                                 .toString(QStringLiteral("__default__"));
@@ -8681,7 +8685,7 @@ void NativeMainWindow::startNextGroupResponse() {
         finishGroupSequence(tr("The planned group speaker is no longer available"));
         return;
     }
-    const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+    const QString databasePath = nativeDatabasePath();
     const QString membersJson = QString::fromUtf8(
         QJsonDocument(activeGroupMembers_).toJson(QJsonDocument::Compact));
     QJsonArray spokenNames;
@@ -8826,8 +8830,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
         QString terminalStatus;
         bool saved = false;
         if (state == QStringLiteral("finished")) {
-            const QString databasePath =
-                QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+            const QString databasePath = nativeDatabasePath();
             saved = backend_.saveGroupChatAssistant(
                 databasePath,
                 configPath_,
@@ -8886,7 +8889,7 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
     dispatchChatToolEffects(payload, character);
     QString terminalStatus;
     if (state == QStringLiteral("finished")) {
-        const QString databasePath = QDir(projectRoot_).filePath(QStringLiteral("data.db"));
+        const QString databasePath = nativeDatabasePath();
         if (backend_.saveChatAssistant(
                 databasePath,
                 configPath_,
@@ -9307,6 +9310,7 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     PetLaunchSpec spec;
     spec.projectRoot = projectRoot_;
     spec.userModelsRoot = userModelsRoot_;
+    spec.configPath = configPath_;
     spec.modelPath = model.path;
     spec.character = model.character;
     spec.language = runtime_.value(QStringLiteral("language")).toString();

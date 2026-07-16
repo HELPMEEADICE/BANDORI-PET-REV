@@ -1185,6 +1185,44 @@ def test_native_control_center_owns_cross_platform_tray_lifecycle():
     assert "QCoreApplication::quit()" in window
 
 
+def test_native_packaging_separates_read_only_resources_from_writable_user_data():
+    submodules = source(".gitmodules")
+    cmake = source("CMakeLists.txt")
+    native_cmake = source("native/qt/CMakeLists.txt")
+    main = source("native/qt/main.cpp")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    desktop = source("packaging/linux/bandoripet.desktop")
+
+    assert "third_party/Qt-Fluent-Widgets" in submodules
+    assert "third_party/Live2D-v2-Lua" in submodules
+    assert "APP_VERSION" in cmake
+    assert "BANDORI_PET_RESOURCE_DESTINATION" in cmake
+    assert "BANDORI_PET_PACKAGE_BUNDLED_MODELS" in cmake
+    assert "third_party/Live2D-v2-Lua/live2d" in cmake
+    assert 'set(CPACK_GENERATOR "ZIP;NSIS")' in cmake
+    assert 'set(CPACK_GENERATOR "DragNDrop")' in cmake
+    assert 'set(CPACK_GENERATOR "TGZ;DEB")' in cmake
+    assert "qt_generate_deploy_app_script" in native_cmake
+    assert "MACOSX_BUNDLE_GUI_IDENTIFIER" in native_cmake
+    assert "INSTALL_RPATH" in native_cmake
+    assert "discoverBandoriResourceRoot" in main
+    assert 'QStringLiteral("data-root")' in main
+    assert 'QStringLiteral("config")' in main
+    assert "QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)" in main
+    assert 'QStringLiteral(".bandoripet-native-package")' in main
+    assert "QString dataRoot" in header
+    assert "QString dataRoot_" in header
+    assert "QString NativeMainWindow::nativeDatabasePath() const" in window
+    assert 'QDir(projectRoot_).filePath(QStringLiteral("data.db"))' not in window
+    assert "QString configPath" in supervisor_header
+    assert "QString configPath_" in supervisor_header
+    assert "const QByteArray configPath = configPath_.toUtf8()" in supervisor
+    assert "Exec=BandoriPet" in desktop
+
+
 def test_native_loopback_integrations_are_bounded_redacted_and_pet_visible():
     core = source("rust/crates/bandori-core/src/lib.rs")
     integration = source("rust/crates/bandori-core/src/local_integration.rs")

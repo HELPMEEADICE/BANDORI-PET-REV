@@ -47,6 +47,7 @@ public:
     NativeMainWindow(
         QString projectRoot,
         QString userModelsRoot,
+        QString dataRoot,
         QString configPath,
         QWidget* parent = nullptr);
 
@@ -244,6 +245,7 @@ private:
     QList<ModelCatalogItem> configuredModels() const;
     PetLaunchSpec launchSpecFor(const ModelCatalogItem& model) const;
     QJsonObject configuredPetFor(const ModelCatalogItem& model) const;
+    QString nativeDatabasePath() const;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -251,6 +253,7 @@ protected:
 private:
     QString projectRoot_;
     QString userModelsRoot_;
+    QString dataRoot_;
     QString configPath_;
     Backend backend_;
     PetProcessSupervisor supervisor_;
