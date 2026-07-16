@@ -31,6 +31,7 @@ struct PetLaunchSpec {
     bool obsWindowCaptureCompatible = false;
     bool hideLive2dModel = false;
     bool vsync = true;
+    bool gpuAcceleration = true;
     QString live2dQuality = QStringLiteral("balanced");
     int live2dScale = 100;
     double lipSyncMaxOpen = 0.55;

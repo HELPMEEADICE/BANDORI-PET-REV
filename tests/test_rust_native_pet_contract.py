@@ -114,6 +114,7 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     main = source("main.py")
 
     assert "pub vsync: bool" in dashboard
+    assert "pub gpu_acceleration: bool" in dashboard
     assert "pub live2d_quality: String" in dashboard
     assert "pub live2d_scale: i64" in dashboard
     assert "pub default_motion: String" in dashboard
@@ -121,8 +122,10 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert "pub idle_actions_enabled: bool" in dashboard
     assert "pub random_actions_enabled: bool" in dashboard
     assert "bool vsync = true" in supervisor_header
+    assert "bool gpuAcceleration = true" in supervisor_header
     assert 'QString live2dQuality = QStringLiteral("balanced")' in supervisor_header
     assert 'QStringLiteral("--vsync")' in supervisor
+    assert 'QStringLiteral("--gpu-acceleration")' in supervisor
     assert 'QStringLiteral("--quality")' in supervisor
     assert 'QStringLiteral("--scale")' in supervisor
     assert 'QStringLiteral("--default-motion")' in supervisor
@@ -147,6 +150,10 @@ def test_native_renderer_honors_surface_quality_and_configured_default_state():
     assert "select_default_motion" in runtime
     assert "select_default_expression" in runtime
     assert "rendererRestartRequired" in window
+    assert 'QStringLiteral("gpu_acceleration")' in window
+    assert "AA_UseSoftwareOpenGL" in pet
+    assert "AA_UseDesktopOpenGL" in pet
+    assert 'qEnvironmentVariable("BANDORI_GPU_ACCELERATION")' in pet
     assert "supervisor_.startAll(activeSpecs_)" in window
     assert '"--vsync", str(bool(cfg.get("vsync"' in main
     assert '"--quality", str(cfg.get("live2d_quality"' in main
@@ -319,6 +326,34 @@ def test_native_pet_window_compatibility_and_compact_style_apply_live():
     assert "enforceGameTopmost" in pet
     assert "compactOverlayStyle" in pet
     assert "if (!modelHidden)" in pet
+
+
+def test_native_chat_presentation_state_is_rust_owned_and_qt_applied():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    for key in (
+        "chat_avatar_paths",
+        "chat_display_names",
+        "chat_window_always_on_top",
+        "chat_window_normal_window",
+        "fluent_chat_window_enabled",
+        "group_chat_sidebar_collapsed",
+        "group_chat_sidebar_ratio",
+        "pinned_chat_keys",
+    ):
+        assert f'"{key}"' in dashboard
+    assert "normalized_chat_string_map" in dashboard
+    assert "normalized_pinned_chat_keys" in dashboard
+    assert "QSplitter* chatGroupSplitter_" in window_header
+    assert "saveChatPresentationSettings" in window
+    assert "toggleCurrentChatPin" in window
+    assert "renameCurrentPrivateChat" in window
+    assert "chooseCurrentChatAvatar" in window
+    assert "toggleGroupChatSidebar" in window
+    assert "applyChatWindowPolicy" in window
+    assert 'QStringLiteral("chat_window_always_on_top")' in window
 
 
 def test_native_chat_history_reads_existing_database_through_rust():

@@ -6,6 +6,7 @@ use crate::config::{ConfigDocument, ConfigError};
 use crate::model::{ModelCatalogEntry, ModelManager, ModelManagerPaths, ModelRoot};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use thiserror::Error;
 
@@ -43,11 +44,20 @@ pub struct NativeRuntimeSnapshot {
     pub chat_window_y: Option<i64>,
     pub chat_window_width: Option<i64>,
     pub chat_window_height: Option<i64>,
+    pub chat_window_always_on_top: bool,
+    pub legacy_chat_window_normal_window: bool,
+    pub legacy_fluent_chat_window_enabled: bool,
+    pub chat_display_names: BTreeMap<String, String>,
+    pub chat_avatar_paths: BTreeMap<String, String>,
+    pub pinned_chat_keys: Vec<String>,
+    pub group_chat_sidebar_ratio: f64,
+    pub group_chat_sidebar_collapsed: bool,
     pub language: String,
     pub auto_start: bool,
     pub active_user_key: String,
     pub dark_theme: String,
     pub vsync: bool,
+    pub gpu_acceleration: bool,
     pub live2d_quality: String,
     pub live2d_scale: i64,
     pub fps: i64,
@@ -100,6 +110,7 @@ pub struct NativeSettingsUpdate {
     pub auto_start: Option<bool>,
     pub dark_theme: Option<String>,
     pub vsync: Option<bool>,
+    pub gpu_acceleration: Option<bool>,
     pub live2d_quality: Option<String>,
     pub live2d_scale: Option<i64>,
     pub live2d_idle_actions_enabled: Option<bool>,
@@ -113,6 +124,12 @@ pub struct NativeSettingsUpdate {
     pub chat_window_y: Option<i64>,
     pub chat_window_width: Option<i64>,
     pub chat_window_height: Option<i64>,
+    pub chat_window_always_on_top: Option<bool>,
+    pub chat_display_names: Option<BTreeMap<String, String>>,
+    pub chat_avatar_paths: Option<BTreeMap<String, String>>,
+    pub pinned_chat_keys: Option<Vec<String>>,
+    pub group_chat_sidebar_ratio: Option<f64>,
+    pub group_chat_sidebar_collapsed: Option<bool>,
     pub chat_attachment_auto_cleanup_enabled: Option<bool>,
     pub chat_attachment_retention_days: Option<i64>,
     pub birthday_tray_notifications_enabled: Option<bool>,
@@ -171,6 +188,9 @@ impl NativeSettingsUpdate {
         if let Some(vsync) = self.vsync {
             config.set("vsync", Value::Bool(vsync));
         }
+        if let Some(enabled) = self.gpu_acceleration {
+            config.set("gpu_acceleration", Value::Bool(enabled));
+        }
         if let Some(quality) = self.live2d_quality {
             let quality = quality.trim().to_ascii_lowercase();
             if !matches!(quality.as_str(), "performance" | "balanced") {
@@ -218,6 +238,36 @@ impl NativeSettingsUpdate {
         }
         if let Some(value) = self.chat_window_height {
             config.set("chat_window_height", Value::from(value.clamp(520, 16_384)));
+        }
+        if let Some(enabled) = self.chat_window_always_on_top {
+            config.set("chat_window_always_on_top", Value::Bool(enabled));
+        }
+        if let Some(values) = self.chat_display_names {
+            config.set(
+                "chat_display_names",
+                Value::Object(normalized_chat_string_map(values, 80)),
+            );
+        }
+        if let Some(values) = self.chat_avatar_paths {
+            config.set(
+                "chat_avatar_paths",
+                Value::Object(normalized_chat_string_map(values, 4096)),
+            );
+        }
+        if let Some(values) = self.pinned_chat_keys {
+            config.set(
+                "pinned_chat_keys",
+                Value::Array(normalized_pinned_chat_keys(values)),
+            );
+        }
+        if let Some(ratio) = self.group_chat_sidebar_ratio {
+            config.set(
+                "group_chat_sidebar_ratio",
+                Value::from(ratio.clamp(0.18, 0.46)),
+            );
+        }
+        if let Some(collapsed) = self.group_chat_sidebar_collapsed {
+            config.set("group_chat_sidebar_collapsed", Value::Bool(collapsed));
         }
         if let Some(enabled) = self.chat_attachment_auto_cleanup_enabled {
             config.set("chat_attachment_auto_cleanup_enabled", Value::Bool(enabled));
@@ -366,11 +416,29 @@ impl NativeRuntimeSnapshot {
             chat_window_y: optional_int_value(values, "chat_window_y"),
             chat_window_width: optional_int_value(values, "chat_window_width"),
             chat_window_height: optional_int_value(values, "chat_window_height"),
+            chat_window_always_on_top: bool_value(values, "chat_window_always_on_top", false),
+            legacy_chat_window_normal_window: bool_value(
+                values,
+                "chat_window_normal_window",
+                false,
+            ),
+            legacy_fluent_chat_window_enabled: bool_value(
+                values,
+                "fluent_chat_window_enabled",
+                true,
+            ),
+            chat_display_names: config_string_map(values, "chat_display_names", 80),
+            chat_avatar_paths: config_string_map(values, "chat_avatar_paths", 4096),
+            pinned_chat_keys: config_pinned_chat_keys(values),
+            group_chat_sidebar_ratio: float_value(values, "group_chat_sidebar_ratio", 0.28)
+                .clamp(0.18, 0.46),
+            group_chat_sidebar_collapsed: bool_value(values, "group_chat_sidebar_collapsed", false),
             language: string_value(values, "language", ""),
             auto_start: bool_value(values, "auto_start", false),
             active_user_key,
             dark_theme: string_value(values, "dark_theme", "follow_system"),
             vsync: bool_value(values, "vsync", true),
+            gpu_acceleration: bool_value(values, "gpu_acceleration", true),
             live2d_quality: normalized_live2d_quality(values),
             live2d_scale: normalized_live2d_scale(values),
             fps: int_value(values, "fps", 120).clamp(1, 1000),
@@ -497,6 +565,81 @@ fn bool_value(values: &Map<String, Value>, key: &str, fallback: bool) -> bool {
     values.get(key).and_then(Value::as_bool).unwrap_or(fallback)
 }
 
+fn normalized_chat_string_map(
+    values: BTreeMap<String, String>,
+    maximum_value_chars: usize,
+) -> Map<String, Value> {
+    values
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim();
+            let value = value.trim();
+            if key.is_empty() || value.is_empty() || key.chars().count() > 128 {
+                return None;
+            }
+            Some((
+                key.to_owned(),
+                Value::String(value.chars().take(maximum_value_chars).collect()),
+            ))
+        })
+        .take(256)
+        .collect()
+}
+
+fn config_string_map(
+    values: &Map<String, Value>,
+    key: &str,
+    maximum_value_chars: usize,
+) -> BTreeMap<String, String> {
+    let source = values
+        .get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    normalized_chat_string_map(
+        source
+            .into_iter()
+            .filter_map(|(key, value)| value.as_str().map(|value| (key, value.to_owned())))
+            .collect(),
+        maximum_value_chars,
+    )
+    .into_iter()
+    .filter_map(|(key, value)| value.as_str().map(|value| (key, value.to_owned())))
+    .collect()
+}
+
+fn normalized_pinned_chat_keys(values: Vec<String>) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter_map(|value| {
+            let value = value.trim();
+            if value.is_empty() || value.chars().count() > 512 || !seen.insert(value.to_owned()) {
+                None
+            } else {
+                Some(Value::String(value.to_owned()))
+            }
+        })
+        .take(256)
+        .collect()
+}
+
+fn config_pinned_chat_keys(values: &Map<String, Value>) -> Vec<String> {
+    normalized_pinned_chat_keys(
+        values
+            .get("pinned_chat_keys")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+    )
+    .into_iter()
+    .filter_map(|value| value.as_str().map(str::to_owned))
+    .collect()
+}
+
 fn object_string(values: &Map<String, Value>, key: &str, fallback: &str) -> String {
     string_value(values, key, fallback)
 }
@@ -568,54 +711,70 @@ mod tests {
 
     #[test]
     fn runtime_snapshot_exposes_only_native_launch_fields() {
-        let config = ConfigDocument::from_value(
-            json!({
-                "fps": 240,
-                "opacity": 0.7,
-                "game_topmost": true,
-                "obs_window_capture_compatible": true,
-                "hide_live2d_model": true,
-                "vsync": false,
-                "live2d_quality": "performance",
-                "live2d_scale": 250,
-                "live2d_idle_actions_enabled": false,
-                "live2d_random_actions_enabled": false,
-                "drag_locked": true,
-                "chat_attachment_auto_cleanup_enabled": true,
-                "chat_attachment_retention_days": 45,
-                "birthday_tray_notifications_enabled": false,
-                "pet_mode": "pixel",
-                "pixel_window_x": 77,
-                "pixel_window_y": 88,
-                "chat_window_x": 101,
-                "chat_window_y": 202,
-                "chat_window_width": 900,
-                "chat_window_height": 700,
-                "active_user_profile": "alice",
-                "compact_ai_window_opacity": 63,
-                "compact_ai_window_font_size": 17,
-                "compact_ai_window_background_color": "#123456",
-                "compact_ai_window_text_color": "#abcdef",
-                "llm_api_key": "must-not-leak",
-                "model_action_settings": {
-                    "tomorin\tlive_01": {
-                        "default_motion": "Idle",
-                        "default_expression": "smile",
-                        "click_motion_profile_name": "genki",
-                        "click_motion_actions": {"upper_body_center": "tap_body"}
-                    }
-                },
-                "models": [{
-                    "character": "tomorin",
-                    "costume": "live_01",
-                    "path": "models/tomorin/live_01/model.json",
-                    "window_x": 42,
-                    "click_motion_actions": {"head": "tap_head"}
-                }]
-            }),
-            true,
-        )
-        .unwrap();
+        let mut values = json!({
+            "fps": 240,
+            "opacity": 0.7,
+            "game_topmost": true,
+            "obs_window_capture_compatible": true,
+            "hide_live2d_model": true,
+            "vsync": false,
+            "gpu_acceleration": false,
+            "live2d_quality": "performance",
+            "live2d_scale": 250,
+            "live2d_idle_actions_enabled": false,
+            "live2d_random_actions_enabled": false,
+            "drag_locked": true,
+            "chat_attachment_auto_cleanup_enabled": true,
+            "chat_attachment_retention_days": 45,
+            "birthday_tray_notifications_enabled": false,
+            "pet_mode": "pixel",
+            "pixel_window_x": 77,
+            "pixel_window_y": 88,
+            "chat_window_x": 101,
+            "chat_window_y": 202,
+            "chat_window_width": 900,
+            "chat_window_height": 700,
+            "active_user_profile": "alice",
+            "compact_ai_window_opacity": 63,
+            "compact_ai_window_font_size": 17,
+            "compact_ai_window_background_color": "#123456",
+            "compact_ai_window_text_color": "#abcdef",
+            "llm_api_key": "must-not-leak",
+            "model_action_settings": {
+                "tomorin\tlive_01": {
+                    "default_motion": "Idle",
+                    "default_expression": "smile",
+                    "click_motion_profile_name": "genki",
+                    "click_motion_actions": {"upper_body_center": "tap_body"}
+                }
+            },
+            "models": [{
+                "character": "tomorin",
+                "costume": "live_01",
+                "path": "models/tomorin/live_01/model.json",
+                "window_x": 42,
+                "click_motion_actions": {"head": "tap_head"}
+            }]
+        });
+        let values = values.as_object_mut().unwrap();
+        values.insert("chat_window_always_on_top".into(), json!(true));
+        values.insert("chat_window_normal_window".into(), json!(true));
+        values.insert("fluent_chat_window_enabled".into(), json!(false));
+        values.insert(
+            "chat_display_names".into(),
+            json!({"tomorin": "Tomori custom"}),
+        );
+        values.insert(
+            "chat_avatar_paths".into(),
+            json!({"tomorin": "C:/avatars/tomorin.png"}),
+        );
+        values.insert(
+            "pinned_chat_keys".into(),
+            json!(["tomorin", "__group__:anon|tomorin"]),
+        );
+        values.insert("group_chat_sidebar_ratio".into(), json!(0.32));
+        values.insert("group_chat_sidebar_collapsed".into(), json!(true));
+        let config = ConfigDocument::from_value(Value::Object(values.clone()), true).unwrap();
 
         let snapshot = NativeRuntimeSnapshot::from_config(&config);
         let serialized = serde_json::to_string(&snapshot).unwrap();
@@ -623,6 +782,7 @@ mod tests {
         assert!(snapshot.game_topmost);
         assert!(snapshot.obs_window_capture_compatible);
         assert!(snapshot.hide_live2d_model);
+        assert!(!snapshot.gpu_acceleration);
         assert_eq!(snapshot.compact_ai_window_opacity, 63);
         assert_eq!(snapshot.compact_ai_window_font_size, 17);
         assert_eq!(snapshot.compact_ai_window_background_color, "#123456");
@@ -643,6 +803,17 @@ mod tests {
         assert_eq!(snapshot.chat_window_y, Some(202));
         assert_eq!(snapshot.chat_window_width, Some(900));
         assert_eq!(snapshot.chat_window_height, Some(700));
+        assert!(snapshot.chat_window_always_on_top);
+        assert!(snapshot.legacy_chat_window_normal_window);
+        assert!(!snapshot.legacy_fluent_chat_window_enabled);
+        assert_eq!(snapshot.chat_display_names["tomorin"], "Tomori custom");
+        assert_eq!(
+            snapshot.chat_avatar_paths["tomorin"],
+            "C:/avatars/tomorin.png"
+        );
+        assert_eq!(snapshot.pinned_chat_keys[0], "tomorin");
+        assert_eq!(snapshot.group_chat_sidebar_ratio, 0.32);
+        assert!(snapshot.group_chat_sidebar_collapsed);
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -751,6 +922,7 @@ mod tests {
                 "auto_start": true,
                 "dark_theme": "on",
                 "vsync": false,
+                "gpu_acceleration": false,
                 "live2d_quality": "performance",
                 "live2d_scale": 999,
                 "live2d_idle_actions_enabled": false,
@@ -764,6 +936,12 @@ mod tests {
                 "chat_window_y": 999999,
                 "chat_window_width": 1,
                 "chat_window_height": 999999,
+                "chat_window_always_on_top": true,
+                "chat_display_names": {" tomorin ": "  Tomori native  ", "": "bad"},
+                "chat_avatar_paths": {"tomorin": " C:/avatar.png "},
+                "pinned_chat_keys": ["tomorin", "tomorin", "", "__group__:anon|tomorin"],
+                "group_chat_sidebar_ratio": 0.99,
+                "group_chat_sidebar_collapsed": true,
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 9999,
                 "birthday_tray_notifications_enabled": false
@@ -779,6 +957,7 @@ mod tests {
         assert!(runtime.auto_start);
         assert_eq!(runtime.dark_theme, "on");
         assert!(!runtime.vsync);
+        assert!(!runtime.gpu_acceleration);
         assert_eq!(runtime.live2d_quality, "performance");
         assert_eq!(runtime.live2d_scale, 500);
         assert!(!runtime.idle_actions_enabled);
@@ -789,6 +968,12 @@ mod tests {
         assert_eq!(runtime.chat_window_y, Some(100_000));
         assert_eq!(runtime.chat_window_width, Some(760));
         assert_eq!(runtime.chat_window_height, Some(16_384));
+        assert!(runtime.chat_window_always_on_top);
+        assert_eq!(runtime.chat_display_names["tomorin"], "Tomori native");
+        assert_eq!(runtime.chat_avatar_paths["tomorin"], "C:/avatar.png");
+        assert_eq!(runtime.pinned_chat_keys.len(), 2);
+        assert_eq!(runtime.group_chat_sidebar_ratio, 0.46);
+        assert!(runtime.group_chat_sidebar_collapsed);
         assert!(runtime.chat_attachment_auto_cleanup_enabled);
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert!(!runtime.birthday_tray_notifications_enabled);
@@ -797,12 +982,19 @@ mod tests {
         assert_eq!(saved["game_topmost"], true);
         assert_eq!(saved["obs_window_capture_compatible"], true);
         assert_eq!(saved["hide_live2d_model"], true);
+        assert_eq!(saved["gpu_acceleration"], false);
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
         assert_eq!(saved["emotion_behavior_enabled"], false);
         assert_eq!(saved["chat_window_x"], -100_000);
         assert_eq!(saved["chat_window_y"], 100_000);
         assert_eq!(saved["chat_window_width"], 760);
         assert_eq!(saved["chat_window_height"], 16_384);
+        assert_eq!(saved["chat_window_always_on_top"], true);
+        assert_eq!(saved["chat_display_names"]["tomorin"], "Tomori native");
+        assert_eq!(saved["chat_avatar_paths"]["tomorin"], "C:/avatar.png");
+        assert_eq!(saved["pinned_chat_keys"].as_array().unwrap().len(), 2);
+        assert_eq!(saved["group_chat_sidebar_ratio"], 0.46);
+        assert_eq!(saved["group_chat_sidebar_collapsed"], true);
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);
         assert_eq!(saved["birthday_tray_notifications_enabled"], false);

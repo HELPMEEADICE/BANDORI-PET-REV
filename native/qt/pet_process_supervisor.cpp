@@ -313,6 +313,8 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         spec.hideLive2dModel ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--vsync"),
         spec.vsync ? QStringLiteral("true") : QStringLiteral("false"),
+        QStringLiteral("--gpu-acceleration"),
+        spec.gpuAcceleration ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--quality"),
         spec.live2dQuality,
         QStringLiteral("--scale"),

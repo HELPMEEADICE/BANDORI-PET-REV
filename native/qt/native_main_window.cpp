@@ -35,6 +35,8 @@
 #include <QHash>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QIcon>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
@@ -57,6 +59,7 @@
 #include <QScreen>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QSplitter>
 #include <QSystemTrayIcon>
 #include <QTemporaryFile>
 #include <QTextBrowser>
@@ -73,6 +76,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -562,6 +566,22 @@ NativeMainWindow::NativeMainWindow(
       dataRoot_(QDir(std::move(dataRoot)).absolutePath()),
       configPath_(QDir::cleanPath(std::move(configPath))),
       supervisor_(this) {
+    chatLayoutSaveTimer_.setSingleShot(true);
+    chatLayoutSaveTimer_.setInterval(350);
+    connect(&chatLayoutSaveTimer_, &QTimer::timeout, this, [this]() {
+        if (chatGroupSplitter_ == nullptr || !isGroupChatMode()) {
+            return;
+        }
+        const QList<int> sizes = chatGroupSplitter_->sizes();
+        const int total = std::accumulate(sizes.cbegin(), sizes.cend(), 0);
+        if (sizes.size() < 2 || total <= 0) {
+            return;
+        }
+        saveChatPresentationSettings({
+            {QStringLiteral("group_chat_sidebar_ratio"),
+             std::clamp(static_cast<double>(sizes.first()) / total, 0.18, 0.46)},
+        });
+    });
     nativeWindowGeometryTimer_.setSingleShot(true);
     nativeWindowGeometryTimer_.setInterval(350);
     connect(
@@ -736,6 +756,20 @@ void NativeMainWindow::showControlCenter() {
     showNormal();
     raise();
     activateWindow();
+}
+
+void NativeMainWindow::applyChatWindowPolicy() {
+    const bool alwaysOnTop = runtime_
+                                 .value(QStringLiteral("chat_window_always_on_top"))
+                                 .toBool(false);
+    if (windowFlags().testFlag(Qt::WindowStaysOnTopHint) == alwaysOnTop) {
+        return;
+    }
+    const bool wasVisible = isVisible();
+    setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
+    if (wasVisible) {
+        showControlCenter();
+    }
 }
 
 void NativeMainWindow::quitFromTray() {
@@ -1028,6 +1062,8 @@ QWidget* NativeMainWindow::createChatPage() {
     privateSelectorLayout->addWidget(chatCharacterComboBox_);
 
     chatGroupSelector_ = new QWidget(page);
+    chatGroupSelector_->setMinimumWidth(180);
+    chatGroupSelector_->setMaximumWidth(460);
     auto* groupSelectorLayout = new QVBoxLayout(chatGroupSelector_);
     groupSelectorLayout->setContentsMargins(0, 0, 0, 0);
     groupSelectorLayout->setSpacing(6);
@@ -1049,6 +1085,11 @@ QWidget* NativeMainWindow::createChatPage() {
     chatConversationComboBox_ = new qfw::ComboBox(page);
     chatConversationComboBox_->setMinimumWidth(280);
     chatRefreshButton_ = new qfw::PushButton(tr("Refresh"), page);
+    chatPinButton_ = new qfw::PushButton(tr("Pin chat"), page);
+    chatRenameButton_ = new qfw::PushButton(tr("Rename"), page);
+    chatAvatarButton_ = new qfw::PushButton(tr("Avatar"), page);
+    chatResetAvatarButton_ = new qfw::PushButton(tr("Reset avatar"), page);
+    chatGroupSidebarToggleButton_ = new qfw::PushButton(tr("Hide members"), page);
     chatNewConversationButton_ = new qfw::PushButton(tr("New"), page);
     chatDeleteConversationButton_ = new qfw::PushButton(tr("Delete"), page);
     chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
@@ -1064,6 +1105,14 @@ QWidget* NativeMainWindow::createChatPage() {
     controls->addWidget(chatNewConversationButton_);
     controls->addWidget(chatDeleteConversationButton_);
     controls->addWidget(chatRefreshButton_);
+    auto* presentationControls = new QHBoxLayout();
+    presentationControls->setSpacing(8);
+    presentationControls->addWidget(chatPinButton_);
+    presentationControls->addWidget(chatRenameButton_);
+    presentationControls->addWidget(chatAvatarButton_);
+    presentationControls->addWidget(chatResetAvatarButton_);
+    presentationControls->addWidget(chatGroupSidebarToggleButton_);
+    presentationControls->addStretch(1);
 
     chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
     chatTranscript_ = new QTextBrowser(page);
@@ -1098,17 +1147,47 @@ QWidget* NativeMainWindow::createChatPage() {
     composer->addWidget(chatInput_, 1);
     composer->addLayout(composerButtons);
 
+    auto* conversationPane = new QWidget(page);
+    auto* conversationLayout = new QVBoxLayout(conversationPane);
+    conversationLayout->setContentsMargins(0, 0, 0, 0);
+    conversationLayout->setSpacing(10);
+    conversationLayout->addWidget(chatStatusLabel_);
+    conversationLayout->addWidget(chatTranscript_, 1);
+    conversationLayout->addLayout(attachmentControls);
+    conversationLayout->addLayout(composer);
+    chatGroupSplitter_ = new QSplitter(Qt::Horizontal, page);
+    chatGroupSplitter_->setChildrenCollapsible(false);
+    chatGroupSplitter_->addWidget(chatGroupSelector_);
+    chatGroupSplitter_->addWidget(conversationPane);
+    chatGroupSplitter_->setStretchFactor(0, 0);
+    chatGroupSplitter_->setStretchFactor(1, 1);
+
     layout->addWidget(title);
     layout->addWidget(explanation);
     layout->addLayout(controls);
-    layout->addWidget(chatGroupSelector_);
-    layout->addWidget(chatStatusLabel_);
-    layout->addWidget(chatTranscript_, 1);
-    layout->addLayout(attachmentControls);
-    layout->addLayout(composer);
+    layout->addLayout(presentationControls);
+    layout->addWidget(chatGroupSplitter_, 1);
 
     connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
         refreshChatState(chatConversationComboBox_->currentData().toString());
+    });
+    connect(chatPinButton_, &QPushButton::clicked, this, [this]() {
+        toggleCurrentChatPin();
+    });
+    connect(chatRenameButton_, &QPushButton::clicked, this, [this]() {
+        renameCurrentPrivateChat();
+    });
+    connect(chatAvatarButton_, &QPushButton::clicked, this, [this]() {
+        chooseCurrentChatAvatar();
+    });
+    connect(chatResetAvatarButton_, &QPushButton::clicked, this, [this]() {
+        resetCurrentChatAvatar();
+    });
+    connect(chatGroupSidebarToggleButton_, &QPushButton::clicked, this, [this]() {
+        toggleGroupChatSidebar();
+    });
+    connect(chatGroupSplitter_, &QSplitter::splitterMoved, this, [this](int, int) {
+        scheduleGroupChatLayoutSave();
     });
     connect(
         chatNewConversationButton_,
@@ -1134,7 +1213,7 @@ QWidget* NativeMainWindow::createChatPage() {
             }
             const bool group = isGroupChatMode();
             chatPrivateSelector_->setVisible(!group);
-            chatGroupSelector_->setVisible(group);
+            syncChatPresentationControls();
             refreshChatState({}, true);
         });
     connect(
@@ -1197,6 +1276,7 @@ QWidget* NativeMainWindow::createChatPage() {
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
+    syncChatPresentationControls();
     return page;
 }
 
@@ -3425,6 +3505,7 @@ QWidget* NativeMainWindow::createSettingsPage() {
     obsWindowCaptureSwitch_ = new qfw::SwitchButton(live2d);
     hideLive2dModelSwitch_ = new qfw::SwitchButton(live2d);
     vsyncSwitch_ = new qfw::SwitchButton(live2d);
+    gpuAccelerationSwitch_ = new qfw::SwitchButton(live2d);
     qualityComboBox_ = new qfw::ComboBox(live2d);
     qualityComboBox_->addItem(tr("Performance"), QVariant(), QStringLiteral("performance"));
     qualityComboBox_->addItem(tr("Balanced"), QVariant(), QStringLiteral("balanced"));
@@ -3477,6 +3558,11 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Recreate renderer surfaces with the configured swap interval"),
         vsyncSwitch_);
     live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::SpeedHigh),
+        tr("GPU acceleration"),
+        tr("Prefer desktop OpenGL; disabling selects Qt software OpenGL on the next pet restart"),
+        gpuAccelerationSwitch_);
+    live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::View),
         tr("Render quality"),
         tr("Performance uses native resolution; balanced enables Cubism 3 SSAA"),
@@ -3528,12 +3614,18 @@ QWidget* NativeMainWindow::createSettingsPage() {
         themeComboBox_);
     auto* behavior = new qfw::GroupHeaderCardWidget(tr("Application behavior"), content);
     autoStartSwitch_ = new qfw::SwitchButton(behavior);
+    chatWindowAlwaysOnTopSwitch_ = new qfw::SwitchButton(behavior);
     birthdayNotificationsSwitch_ = new qfw::SwitchButton(behavior);
     behavior->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Sync),
         tr("Start with the desktop session"),
         tr("Register this native executable for the current user on Windows, macOS or Linux"),
         autoStartSwitch_);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Up),
+        tr("Keep chat control center on top"),
+        tr("Native chat is integrated into this normal Qt-Fluent window"),
+        chatWindowAlwaysOnTopSwitch_);
     behavior->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
         tr("Birthday tray notifications"),
@@ -3827,6 +3919,7 @@ void NativeMainWindow::applyBackendState() {
         QStringLiteral("%1\n%2").arg(configPath_, backend_.getConfigSummary()));
     runtime_ = parseObject(backend_.getRuntimeConfigJson());
     syncSettingsControls();
+    applyChatWindowPolicy();
     if (attachmentAutoCleanupSwitch_ != nullptr) {
         const QSignalBlocker switchBlocker(attachmentAutoCleanupSwitch_);
         const QSignalBlocker daysBlocker(attachmentRetentionDaysSpinBox_);
@@ -8070,6 +8163,8 @@ void NativeMainWindow::syncSettingsControls() {
     hideLive2dModelSwitch_->setChecked(
         runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false));
     vsyncSwitch_->setChecked(runtime_.value(QStringLiteral("vsync")).toBool(true));
+    gpuAccelerationSwitch_->setChecked(
+        runtime_.value(QStringLiteral("gpu_acceleration")).toBool(true));
     const QString quality =
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
     const int qualityIndex = qualityComboBox_->findData(quality);
@@ -8090,6 +8185,8 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true));
     autoStartSwitch_->setChecked(
         runtime_.value(QStringLiteral("auto_start")).toBool(false));
+    chatWindowAlwaysOnTopSwitch_->setChecked(
+        runtime_.value(QStringLiteral("chat_window_always_on_top")).toBool(false));
     birthdayNotificationsSwitch_->setChecked(
         runtime_
             .value(QStringLiteral("birthday_tray_notifications_enabled"))
@@ -8129,6 +8226,8 @@ void NativeMainWindow::saveNativeSettings() {
     const QString quality = qualityComboBox_->currentData().toString();
     const bool rendererRestartRequired =
         runtime_.value(QStringLiteral("vsync")).toBool(true) != vsyncSwitch_->isChecked()
+        || runtime_.value(QStringLiteral("gpu_acceleration")).toBool(true)
+               != gpuAccelerationSwitch_->isChecked()
         || runtime_.value(QStringLiteral("live2d_quality"))
                .toString(QStringLiteral("balanced")) != quality;
     const bool desiredAutoStart = autoStartSwitch_->isChecked();
@@ -8150,7 +8249,10 @@ void NativeMainWindow::saveNativeSettings() {
          obsWindowCaptureSwitch_->isChecked()},
         {QStringLiteral("hide_live2d_model"), hideLive2dModelSwitch_->isChecked()},
         {QStringLiteral("auto_start"), desiredAutoStart},
+        {QStringLiteral("chat_window_always_on_top"),
+         chatWindowAlwaysOnTopSwitch_->isChecked()},
         {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
+        {QStringLiteral("gpu_acceleration"), gpuAccelerationSwitch_->isChecked()},
         {QStringLiteral("live2d_quality"), quality},
         {QStringLiteral("live2d_scale"), scaleSpinBox_->value()},
         {QStringLiteral("live2d_idle_actions_enabled"), idleActionsSwitch_->isChecked()},
@@ -8183,6 +8285,7 @@ void NativeMainWindow::saveNativeSettings() {
         spec.obsWindowCaptureCompatible = obsWindowCaptureSwitch_->isChecked();
         spec.hideLive2dModel = hideLive2dModelSwitch_->isChecked();
         spec.vsync = vsyncSwitch_->isChecked();
+        spec.gpuAcceleration = gpuAccelerationSwitch_->isChecked();
         spec.live2dQuality = quality;
         spec.live2dScale = scaleSpinBox_->value();
         spec.idleActionsEnabled = idleActionsSwitch_->isChecked();
@@ -8203,7 +8306,7 @@ void NativeMainWindow::saveNativeSettings() {
     applyBackendState();
     rendererStatusLabel_->setText(
         wasRunning && rendererRestartRequired
-            ? tr("Native settings saved; pet renderers are restarting for VSync or quality")
+            ? tr("Native settings saved; pet renderers are restarting for OpenGL policy, VSync or quality")
             : (delivered
                    ? tr("Native settings saved and applied")
                    : tr("Settings saved; running pets did not acknowledge the IPC broadcast")));
@@ -8483,20 +8586,53 @@ void NativeMainWindow::populateChatCharacters() {
     updatingChatControls_ = true;
     chatCharacterComboBox_->clear();
     chatGroupMembersList_->clear();
+    QStringList pinnedKeys;
+    for (const QJsonValue& value : runtime_.value(QStringLiteral("pinned_chat_keys")).toArray()) {
+        const QString key = value.toString().trimmed();
+        if (!key.isEmpty() && !pinnedKeys.contains(key)) {
+            pinnedKeys.append(key);
+        }
+    }
+    QList<ModelCatalogItem> chatModels;
     QStringList added;
     for (const ModelCatalogItem& model : catalog_) {
         if (added.contains(model.character)) {
             continue;
         }
         added.append(model.character);
+        chatModels.append(model);
+    }
+    std::stable_sort(
+        chatModels.begin(),
+        chatModels.end(),
+        [&pinnedKeys](const ModelCatalogItem& left, const ModelCatalogItem& right) {
+            const int leftIndex = pinnedKeys.indexOf(left.character);
+            const int rightIndex = pinnedKeys.indexOf(right.character);
+            if (leftIndex < 0 && rightIndex < 0) {
+                return false;
+            }
+            if (leftIndex < 0) {
+                return false;
+            }
+            return rightIndex < 0 || leftIndex < rightIndex;
+        });
+    for (const ModelCatalogItem& model : std::as_const(chatModels)) {
+        const QString displayName = displayNameForCharacter(model.character);
+        const QString avatarPath = chatAvatarPath(model.character);
+        const QVariant avatar = avatarPath.isEmpty()
+            ? QVariant()
+            : QVariant::fromValue(QIcon(avatarPath));
         chatCharacterComboBox_->addItem(
-            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
-            QVariant(),
+            displayName,
+            avatar,
             model.character);
         auto* member = new QListWidgetItem(
-            model.characterDisplay.isEmpty() ? model.character : model.characterDisplay,
+            displayName,
             chatGroupMembersList_);
         member->setData(Qt::UserRole, model.character);
+        if (!avatarPath.isEmpty()) {
+            member->setIcon(QIcon(avatarPath));
+        }
     }
     int index = chatCharacterComboBox_->findData(previous);
     if (index < 0) {
@@ -8532,8 +8668,8 @@ void NativeMainWindow::populateChatCharacters() {
     }
     const bool groupMode = isGroupChatMode();
     chatPrivateSelector_->setVisible(!groupMode);
-    chatGroupSelector_->setVisible(groupMode);
     updatingChatControls_ = false;
+    syncChatPresentationControls();
 }
 
 bool NativeMainWindow::isGroupChatMode() const {
@@ -8579,7 +8715,250 @@ QString NativeMainWindow::selectedGroupKey() const {
     return QStringLiteral("__group__:") + keys.join(u'|');
 }
 
+QString NativeMainWindow::currentChatKey() const {
+    if (isGroupChatMode()) {
+        QString key = selectedGroupKey();
+        if (key.isEmpty() && chatGroupComboBox_ != nullptr) {
+            key = chatGroupComboBox_->currentData().toString();
+        }
+        return key.trimmed();
+    }
+    return chatCharacterComboBox_ == nullptr
+        ? QString()
+        : chatCharacterComboBox_->currentData().toString().trimmed();
+}
+
+QString NativeMainWindow::chatAvatarPath(const QString& character) const {
+    const QString path = runtime_
+                             .value(QStringLiteral("chat_avatar_paths"))
+                             .toObject()
+                             .value(character)
+                             .toString()
+                             .trimmed();
+    return QFileInfo::exists(path) ? path : QString();
+}
+
+void NativeMainWindow::syncChatPresentationControls() {
+    if (chatGroupSelector_ == nullptr || chatPinButton_ == nullptr) {
+        return;
+    }
+    const bool group = isGroupChatMode();
+    const bool collapsed = runtime_
+                               .value(QStringLiteral("group_chat_sidebar_collapsed"))
+                               .toBool(false);
+    chatGroupSelector_->setVisible(group && !collapsed);
+    chatGroupSidebarToggleButton_->setVisible(group);
+    chatGroupSidebarToggleButton_->setText(
+        collapsed ? tr("Show members") : tr("Hide members"));
+    chatRenameButton_->setVisible(!group);
+    chatAvatarButton_->setVisible(!group);
+    chatResetAvatarButton_->setVisible(!group);
+
+    const QString key = currentChatKey();
+    const QJsonArray pinned = runtime_.value(QStringLiteral("pinned_chat_keys")).toArray();
+    bool isPinned = false;
+    for (const QJsonValue& value : pinned) {
+        if (value.toString() == key) {
+            isPinned = true;
+            break;
+        }
+    }
+    chatPinButton_->setEnabled(!key.isEmpty());
+    chatPinButton_->setText(isPinned ? tr("Unpin chat") : tr("Pin chat"));
+    if (!group) {
+        const QString character = currentChatKey();
+        chatRenameButton_->setEnabled(!character.isEmpty());
+        chatAvatarButton_->setEnabled(!character.isEmpty());
+        chatResetAvatarButton_->setEnabled(!chatAvatarPath(character).isEmpty());
+    }
+
+    if (group && !collapsed && chatGroupSplitter_ != nullptr) {
+        const double ratio = std::clamp(
+            runtime_
+                .value(QStringLiteral("group_chat_sidebar_ratio"))
+                .toDouble(0.28),
+            0.18,
+            0.46);
+        const int total = std::max(640, chatGroupSplitter_->width());
+        const QSignalBlocker blocker(chatGroupSplitter_);
+        chatGroupSplitter_->setSizes(
+            {static_cast<int>(std::round(total * ratio)),
+             static_cast<int>(std::round(total * (1.0 - ratio)))});
+    }
+}
+
+bool NativeMainWindow::saveChatPresentationSettings(const QJsonObject& changes) {
+    if (changes.isEmpty()) {
+        return true;
+    }
+    if (!backend_.saveNativeSettings(configPath_, compactJson(changes))) {
+        chatStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    serviceStatusLabel_->setText(backend_.getStatus());
+    return true;
+}
+
+void NativeMainWindow::toggleCurrentChatPin() {
+    const QString key = currentChatKey();
+    if (key.isEmpty()) {
+        return;
+    }
+    QJsonArray next;
+    bool wasPinned = false;
+    for (const QJsonValue& value : runtime_.value(QStringLiteral("pinned_chat_keys")).toArray()) {
+        const QString existing = value.toString().trimmed();
+        if (existing == key) {
+            wasPinned = true;
+        } else if (!existing.isEmpty()) {
+            next.append(existing);
+        }
+    }
+    if (!wasPinned) {
+        next.insert(0, key);
+    }
+    if (!saveChatPresentationSettings({
+            {QStringLiteral("pinned_chat_keys"), next},
+        })) {
+        return;
+    }
+    populateChatCharacters();
+    refreshChatState({}, true);
+    syncChatPresentationControls();
+}
+
+void NativeMainWindow::renameCurrentPrivateChat() {
+    if (isGroupChatMode()) {
+        return;
+    }
+    const QString character = currentChatKey();
+    if (character.isEmpty()) {
+        return;
+    }
+    const QJsonObject names = runtime_.value(QStringLiteral("chat_display_names")).toObject();
+    bool accepted = false;
+    const QString current = names.value(character).toString(displayNameForCharacter(character));
+    const QString name = QInputDialog::getText(
+                             this,
+                             tr("Rename private chat"),
+                             tr("Display name; leave blank to restore the model name"),
+                             QLineEdit::Normal,
+                             current,
+                             &accepted)
+                             .trimmed();
+    if (!accepted) {
+        return;
+    }
+    QJsonObject updated = names;
+    if (name.isEmpty()) {
+        updated.remove(character);
+    } else {
+        updated.insert(character, name.left(80));
+    }
+    if (saveChatPresentationSettings({
+            {QStringLiteral("chat_display_names"), updated},
+        })) {
+        populateChatCharacters();
+        refreshChatState({}, true);
+    }
+}
+
+void NativeMainWindow::chooseCurrentChatAvatar() {
+    if (isGroupChatMode()) {
+        return;
+    }
+    const QString character = currentChatKey();
+    if (character.isEmpty()) {
+        return;
+    }
+    const QString source = QFileDialog::getOpenFileName(
+        this,
+        tr("Choose chat avatar"),
+        QString(),
+        tr("Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"));
+    if (source.isEmpty()) {
+        return;
+    }
+    const QString avatarRoot = QDir(dataRoot_).filePath(QStringLiteral("chat_avatars"));
+    if (!QDir().mkpath(avatarRoot)) {
+        chatStatusLabel_->setText(tr("Could not create the chat avatar directory"));
+        return;
+    }
+    QString suffix = QFileInfo(source).suffix().toLower();
+    if (!QStringList {QStringLiteral("png"), QStringLiteral("jpg"),
+                      QStringLiteral("jpeg"), QStringLiteral("webp"),
+                      QStringLiteral("bmp"), QStringLiteral("gif")}
+             .contains(suffix)) {
+        suffix = QStringLiteral("png");
+    }
+    const QString target = QDir(avatarRoot).filePath(
+        QStringLiteral("%1.%2")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces), suffix));
+    if (!QFile::copy(source, target)) {
+        chatStatusLabel_->setText(tr("Could not copy the selected chat avatar"));
+        return;
+    }
+    QJsonObject avatars = runtime_.value(QStringLiteral("chat_avatar_paths")).toObject();
+    avatars.insert(character, target);
+    if (saveChatPresentationSettings({
+            {QStringLiteral("chat_avatar_paths"), avatars},
+        })) {
+        populateChatCharacters();
+        syncChatPresentationControls();
+    }
+}
+
+void NativeMainWindow::resetCurrentChatAvatar() {
+    if (isGroupChatMode()) {
+        return;
+    }
+    const QString character = currentChatKey();
+    QJsonObject avatars = runtime_.value(QStringLiteral("chat_avatar_paths")).toObject();
+    if (character.isEmpty() || !avatars.contains(character)) {
+        return;
+    }
+    avatars.remove(character);
+    if (saveChatPresentationSettings({
+            {QStringLiteral("chat_avatar_paths"), avatars},
+        })) {
+        populateChatCharacters();
+        syncChatPresentationControls();
+    }
+}
+
+void NativeMainWindow::toggleGroupChatSidebar() {
+    if (!isGroupChatMode()) {
+        return;
+    }
+    const bool collapsed = runtime_
+                               .value(QStringLiteral("group_chat_sidebar_collapsed"))
+                               .toBool(false);
+    if (saveChatPresentationSettings({
+            {QStringLiteral("group_chat_sidebar_collapsed"), !collapsed},
+        })) {
+        syncChatPresentationControls();
+    }
+}
+
+void NativeMainWindow::scheduleGroupChatLayoutSave() {
+    if (!updatingChatControls_ && isGroupChatMode()
+        && chatGroupSelector_ != nullptr && chatGroupSelector_->isVisible()) {
+        chatLayoutSaveTimer_.start();
+    }
+}
+
 QString NativeMainWindow::displayNameForCharacter(const QString& character) const {
+    const QString customName = runtime_
+                                   .value(QStringLiteral("chat_display_names"))
+                                   .toObject()
+                                   .value(character)
+                                   .toString()
+                                   .trimmed();
+    if (!customName.isEmpty()) {
+        return customName;
+    }
     if (chatGroupMembersList_ != nullptr) {
         for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
             const QListWidgetItem* item = chatGroupMembersList_->item(row);
@@ -8690,6 +9069,7 @@ void NativeMainWindow::refreshChatState(
     }
     chatConversationComboBox_->setCurrentIndex(activeIndex);
     updatingChatControls_ = false;
+    syncChatPresentationControls();
     chatDeleteConversationButton_->setEnabled(activeIndex >= 0 && activeChatRequestId_ == 0);
 
     const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
@@ -8767,9 +9147,38 @@ void NativeMainWindow::refreshGroupChatState(
     const QJsonArray chats = snapshot.value(QStringLiteral("chats")).toArray();
     updatingChatControls_ = true;
     chatGroupComboBox_->clear();
-    QStringList groupKeys;
+    QStringList pinnedKeys;
+    for (const QJsonValue& value : runtime_.value(QStringLiteral("pinned_chat_keys")).toArray()) {
+        const QString key = value.toString().trimmed();
+        if (!key.isEmpty() && !pinnedKeys.contains(key)) {
+            pinnedKeys.append(key);
+        }
+    }
+    QList<QJsonObject> sortedChats;
     for (const QJsonValue& value : chats) {
-        const QString key = value.toObject().value(QStringLiteral("group_key")).toString();
+        if (value.isObject()) {
+            sortedChats.append(value.toObject());
+        }
+    }
+    std::stable_sort(
+        sortedChats.begin(),
+        sortedChats.end(),
+        [&pinnedKeys](const QJsonObject& left, const QJsonObject& right) {
+            const int leftIndex = pinnedKeys.indexOf(
+                left.value(QStringLiteral("group_key")).toString());
+            const int rightIndex = pinnedKeys.indexOf(
+                right.value(QStringLiteral("group_key")).toString());
+            if (leftIndex < 0 && rightIndex < 0) {
+                return false;
+            }
+            if (leftIndex < 0) {
+                return false;
+            }
+            return rightIndex < 0 || leftIndex < rightIndex;
+        });
+    QStringList groupKeys;
+    for (const QJsonObject& chat : std::as_const(sortedChats)) {
+        const QString key = chat.value(QStringLiteral("group_key")).toString();
         if (key.isEmpty() || groupKeys.contains(key)) {
             continue;
         }
@@ -8807,6 +9216,7 @@ void NativeMainWindow::refreshGroupChatState(
     }
     chatConversationComboBox_->setCurrentIndex(activeIndex);
     updatingChatControls_ = false;
+    syncChatPresentationControls();
     chatDeleteConversationButton_->setEnabled(
         activeIndex >= 0 && activeChatRequestId_ == 0 && !groupSequenceActive_);
 
@@ -9748,7 +10158,7 @@ void NativeMainWindow::openNativeChat(const QString& character) {
         if (privateMode >= 0) {
             chatModeComboBox_->setCurrentIndex(privateMode);
             chatPrivateSelector_->setVisible(true);
-            chatGroupSelector_->setVisible(false);
+            syncChatPresentationControls();
         }
         const QSignalBlocker blocker(chatCharacterComboBox_);
         const int index = chatCharacterComboBox_->findData(character.trimmed());
@@ -9892,6 +10302,8 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
     spec.hideLive2dModel =
         runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false);
     spec.vsync = runtime_.value(QStringLiteral("vsync")).toBool(true);
+    spec.gpuAcceleration =
+        runtime_.value(QStringLiteral("gpu_acceleration")).toBool(true);
     spec.live2dQuality =
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
     spec.live2dScale = runtime_.value(QStringLiteral("live2d_scale")).toInt(100);

@@ -5,7 +5,8 @@
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/HELPMEEADICE/BANDORI-PET-REV?color=blue"></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/HELPMEEADICE/BANDORI-PET-REV?color=yellow"></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/HELPMEEADICE/BANDORI-PET-REV?color=orange"></a>
-  <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust" src="https://img.shields.io/badge/Rust-1.85+-000000?logo=rust&logoColor=white"></a>
+  <a href="https://www.qt.io/"><img alt="Qt" src="https://img.shields.io/badge/Qt-6.5+-41CD52?logo=qt&logoColor=white"></a>
   <a href="https://luajit.org/"><img alt="LuaJIT" src="https://img.shields.io/badge/LuaJIT-2.1+-000080?logo=lua&logoColor=white"></a>
   <a href="https://www.live2d.com/"><img alt="Live2D" src="https://img.shields.io/badge/Live2D-Cubism%20v2-EE82EE?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNy45M2MtMy45NS0uNDktNy0zLjg1LTctNy45M3MzLjA1LTcuNDQgNy03LjkzdjE1Ljg2em0yLTE1Ljg2YzMuOTUuNDkgNyAzLjg1IDcgNy45M3MtMy4wNSA3LjQ0LTcgNy45M1Y0LjA3eiIvPjwvc3ZnPg=="></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/HELPMEEADICE/BANDORI-PET-REV?color=green"></a>
@@ -17,7 +18,7 @@
 
 **现在，你的梦想实现了！！！**
 
-BandoriPet 是一个基于 Live2D Cubism SDK 和 PySide6 的开源桌面宠物项目，支持 **51+ 位** BanG Dream! 角色、**305+ 套**服装，让你的桌面一秒变成 CiRCLE 排练室！
+BandoriPet 是一个基于 **Rust + LuaJIT + Qt 6** 与 Live2D Cubism SDK 的开源桌面宠物项目，支持 **51+ 位** BanG Dream! 角色、**305+ 套**服装，让你的桌面一秒变成 CiRCLE 排练室！Python + PySide 仅在迁移回退窗口中作为显式兼容入口保留。
 
 QQ群：1033517952
 
@@ -46,7 +47,7 @@ QQ群：1033517952
 
 ### 1. 环境要求
 
-- **Python 3.10+** & **LuaJIT 2.1+**
+- **Rust 1.85+、Qt 6.5+、CMake 3.24+、C++17 工具链**
 - Windows, macOS, Linux(部分兼容)
 - 支持 OpenGL 3.3+ 的显卡（核显也能跑）
 - Live2D 默认启用 Qt 硬件 OpenGL/GPU 加速；如需排查驱动问题，可设置 `BANDORI_GPU_ACCELERATION=0` 临时切换到软件渲染。
@@ -271,14 +272,14 @@ Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Rel
 
 | 技术 | 用途 |
 |------|------|
-| **PySide6** | Qt for Python 主框架 |
-| **Live2D-v2-Lua** | 自研 LuaJIT Live2D v2 渲染核心（替代 live2d-py，性能提升 6x+） |
-| **lupa** | Python ↔ LuaJIT FFI 桥接 |
-| **PyQt-Fluent-Widgets** | Win11 风格 Fluent Design 组件库 |
-| **PyOpenGL** | OpenGL 渲染后端 |
-| **cx_Freeze** | 打包为独立 exe |
-| **OpenAI / MCP SDK** | LLM API 接入 & MCP 协议扩展 |
-| **sounddevice / soundfile** | TTS 语音合成播放 |
+| **Rust / Cargo** | 配置、数据库、LLM/MCP、提醒、IPC 与应用服务核心 |
+| **LuaJIT + mlua** | 每个宠物进程独立的 Cubism 2/3 Lua 渲染运行时 |
+| **Qt 6 / C++17 / CXX-Qt** | 原生窗口、OpenGL、系统托盘、多媒体及 Rust ↔ Qt 窄桥接 |
+| **Qt-Fluent-Widgets** | `third_party/Qt-Fluent-Widgets` 原生 Fluent Design 组件库 |
+| **OpenGL / QOpenGLWidget** | Live2D 与像素宠物硬件/软件渲染后端 |
+| **CMake / CPack** | Windows、macOS、Linux 原生构建与安装包 |
+| **reqwest / Tokio** | LLM、MCP、Web、TTS、ASR 等异步网络服务 |
+| **Python + PySide（兼容）** | 迁移回退窗口中的显式旧运行时，不属于默认应用路径 |
 
 ---
 
@@ -293,7 +294,7 @@ Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Rel
 ## 🙏 致谢
 
 - [Live2D Cubism SDK](https://www.live2d.com/)
-- [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets)
+- [Qt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets)
 - [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua) — 自研 LuaJIT 渲染核心
 - 所有为 BanG Dream! 角色模型做出贡献的同人作者们 💙
 

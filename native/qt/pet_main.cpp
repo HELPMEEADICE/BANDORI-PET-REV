@@ -470,6 +470,23 @@ bool publishPetWindowState(
 
 int main(int argc, char* argv[]) {
     const bool initialVsync = earlyBooleanOption(argc, argv, QStringLiteral("--vsync"), true);
+    bool initialGpuAcceleration =
+        earlyBooleanOption(argc, argv, QStringLiteral("--gpu-acceleration"), true);
+    const QString gpuOverride =
+        qEnvironmentVariable("BANDORI_GPU_ACCELERATION").trimmed().toLower();
+    if (!gpuOverride.isEmpty()) {
+        initialGpuAcceleration = optionBool(gpuOverride, initialGpuAcceleration);
+    }
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#ifndef Q_OS_MACOS
+    if (initialGpuAcceleration) {
+        qputenv("QT_OPENGL", QByteArrayLiteral("desktop"));
+        QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+    } else {
+        qputenv("QT_OPENGL", QByteArrayLiteral("software"));
+        QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
+    }
+#endif
     bandori::Live2dGlWidget::configureDefaultSurfaceFormat(initialVsync);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("BandoriPetRenderer"));
@@ -547,6 +564,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Enable the OpenGL swap interval before QApplication starts"),
         QStringLiteral("bool"),
         initialVsync ? QStringLiteral("true") : QStringLiteral("false"));
+    QCommandLineOption gpuAcceleration(
+        QStringLiteral("gpu-acceleration"),
+        QStringLiteral("Prefer desktop OpenGL instead of Qt's software OpenGL backend"),
+        QStringLiteral("bool"),
+        initialGpuAcceleration ? QStringLiteral("true") : QStringLiteral("false"));
     QCommandLineOption quality(
         QStringLiteral("quality"),
         QStringLiteral("Live2D texture and Cubism 3 SSAA quality: performance or balanced"),
@@ -685,6 +707,7 @@ int main(int argc, char* argv[]) {
          obsWindowCaptureCompatible,
          hideLive2dModel,
          vsync,
+         gpuAcceleration,
          quality,
          live2dScale,
          lipSyncMaxOpen,

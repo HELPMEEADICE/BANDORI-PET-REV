@@ -401,6 +401,16 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   background and foreground controls; Rust clamps numeric ranges and validates
   colors before Qt builds the stylesheet. A blank legacy background still follows
   the active user-avatar color.
+  Native renderer startup now preserves the `gpu_acceleration` contract as well:
+  Rust owns the setting, each isolated Qt child selects desktop or software OpenGL
+  before `QApplication` exists, changing the value restarts the fleet, and the
+  `BANDORI_GPU_ACCELERATION` environment override remains available for recovery.
+  The integrated Qt-Fluent chat surface consumes legacy custom display names and
+  avatar paths, persists pin ordering, and restores a bounded collapsible group
+  member splitter. Its always-on-top option applies to the native control center;
+  the former Python-only normal-window and Fluent-window selectors remain readable
+  compatibility metadata because the native control center is always a normal
+  Qt-Fluent application window.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
