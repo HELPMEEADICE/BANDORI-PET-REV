@@ -2001,6 +2001,43 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         tr("Inject visual outfit context into compatible character prompts"),
         llmOutfitRecognitionSwitch_);
 
+    auto* webTools = new qfw::GroupHeaderCardWidget(tr("Web tools"), content);
+    llmWebSearchSwitch_ = new qfw::SwitchButton(webTools);
+    llmWebSearchEngineComboBox_ = new qfw::ComboBox(webTools);
+    llmWebSearchEngineComboBox_->addItem(
+        tr("Bing CN"), QVariant(), QStringLiteral("bing_cn"));
+    llmWebSearchEngineComboBox_->addItem(
+        tr("Bing"), QVariant(), QStringLiteral("bing"));
+    llmWebSearchEngineComboBox_->addItem(
+        tr("Google"), QVariant(), QStringLiteral("google"));
+    llmWebSearchEngineComboBox_->addItem(
+        tr("DuckDuckGo"), QVariant(), QStringLiteral("duckduckgo"));
+    llmWebSearchEngineComboBox_->addItem(
+        tr("Baidu"), QVariant(), QStringLiteral("baidu"));
+    llmWebSearchEngineComboBox_->setFixedWidth(180);
+    llmWebSearchSourcesSwitch_ = new qfw::SwitchButton(webTools);
+    llmWebFetchSwitch_ = new qfw::SwitchButton(webTools);
+    webTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Search),
+        tr("Public web search"),
+        tr("Let the model search current public information through a bounded native Rust tool"),
+        llmWebSearchSwitch_);
+    webTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Search),
+        tr("Search engine"),
+        tr("Falls back to DuckDuckGo when the selected engine returns no usable results"),
+        llmWebSearchEngineComboBox_);
+    webTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("Show sources"),
+        tr("Ask the model to append the compatible JSON source block"),
+        llmWebSearchSourcesSwitch_);
+    webTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Link),
+        tr("WebFetch public URLs"),
+        tr("Blocks credentials, private addresses and unsafe redirects; response bodies are bounded"),
+        llmWebFetchSwitch_);
+
     auto* context = new qfw::GroupHeaderCardWidget(tr("Conversation context"), content);
     llmHistoryLimitSpinBox_ = new qfw::SpinBox(context);
     llmHistoryLimitSpinBox_->setRange(0, 100);
@@ -2056,6 +2093,7 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     layout->addWidget(profiles);
     layout->addWidget(primary);
     layout->addWidget(auxiliary);
+    layout->addWidget(webTools);
     layout->addWidget(context);
     layout->addLayout(actionRow);
     layout->addStretch(1);
@@ -2079,6 +2117,14 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         &qfw::SwitchButton::checkedChanged,
         this,
         [this](bool enabled) { llmCustomPromptEdit_->setEnabled(enabled); });
+    connect(
+        llmWebSearchSwitch_,
+        &qfw::SwitchButton::checkedChanged,
+        this,
+        [this](bool enabled) {
+            llmWebSearchEngineComboBox_->setEnabled(enabled);
+            llmWebSearchSourcesSwitch_->setEnabled(enabled);
+        });
     connect(
         llmProfileComboBox_,
         &qfw::ComboBox::currentIndexChanged,
@@ -3629,6 +3675,22 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
         llmSettings_.value(QStringLiteral("compact_history_message_limit")).toInt(12));
     llmCrossChatHistorySwitch_->setChecked(
         llmSettings_.value(QStringLiteral("cross_chat_history_enabled")).toBool(true));
+    const bool webSearchEnabled =
+        llmSettings_.value(QStringLiteral("web_search_enabled")).toBool(false);
+    llmWebSearchSwitch_->setChecked(webSearchEnabled);
+    const QString webSearchEngine = llmSettings_
+                                        .value(QStringLiteral("web_search_engine"))
+                                        .toString(QStringLiteral("bing_cn"));
+    const int webSearchEngineIndex =
+        llmWebSearchEngineComboBox_->findData(webSearchEngine);
+    llmWebSearchEngineComboBox_->setCurrentIndex(
+        webSearchEngineIndex < 0 ? 0 : webSearchEngineIndex);
+    llmWebSearchEngineComboBox_->setEnabled(webSearchEnabled);
+    llmWebSearchSourcesSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("web_search_show_sources")).toBool(true));
+    llmWebSearchSourcesSwitch_->setEnabled(webSearchEnabled);
+    llmWebFetchSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("web_fetch_enabled")).toBool(false));
     const bool customPromptEnabled =
         llmSettings_.value(QStringLiteral("custom_system_prompt_enabled")).toBool(true);
     llmCustomPromptSwitch_->setChecked(customPromptEnabled);
@@ -3692,6 +3754,12 @@ bool NativeMainWindow::saveNativeLlmSettings() {
          llmCompactHistoryLimitSpinBox_->value()},
         {QStringLiteral("cross_chat_history_enabled"),
          llmCrossChatHistorySwitch_->isChecked()},
+        {QStringLiteral("web_search_enabled"), llmWebSearchSwitch_->isChecked()},
+        {QStringLiteral("web_search_engine"),
+         llmWebSearchEngineComboBox_->currentData().toString()},
+        {QStringLiteral("web_search_show_sources"),
+         llmWebSearchSourcesSwitch_->isChecked()},
+        {QStringLiteral("web_fetch_enabled"), llmWebFetchSwitch_->isChecked()},
         {QStringLiteral("custom_system_prompt_enabled"),
          llmCustomPromptSwitch_->isChecked()},
         {QStringLiteral("custom_system_prompt"),

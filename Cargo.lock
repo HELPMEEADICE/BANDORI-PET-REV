@@ -49,6 +49,7 @@ dependencies = [
  "fs2",
  "getrandom 0.4.3",
  "httparse",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -56,6 +57,8 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
  "url",
  "zstd",
 ]

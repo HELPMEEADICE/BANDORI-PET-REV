@@ -16,11 +16,20 @@ serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 rusqlite.workspace = true
+reqwest.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tar.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 zstd.workspace = true
 url.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+reqwest = { workspace = true, features = ["native-tls"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 
 [dev-dependencies]
 cxx-qt-gen = "0.9"

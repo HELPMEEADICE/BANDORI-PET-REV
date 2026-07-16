@@ -3,12 +3,16 @@ use crate::reminder::{
     LocalDateTime, create_alarm, create_pomodoro, normalize_alarms, normalize_pomodoros,
     repeat_days_label,
 };
+use crate::web_tools::{
+    NativeWebToolSettings, WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME, web_fetch, web_search,
+};
 use bandori_llm_protocol::LlmStreamEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
+use tokio_util::sync::CancellationToken;
 
 pub const POKE_USER_TOOL_NAME: &str = "poke_user";
 pub const CREATE_ALARM_TOOL_NAME: &str = "create_alarm";
@@ -37,6 +41,59 @@ pub fn native_chat_tools() -> Vec<Value> {
     tools
 }
 
+pub fn native_chat_tools_for_config(config: &ConfigDocument) -> Vec<Value> {
+    let web = NativeWebToolSettings::from_config(config);
+    let mut tools = Vec::new();
+    if web.search_enabled {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": WEB_SEARCH_TOOL_NAME,
+                "description": "Search the public web for current or external information. Use this for news, latest facts, prices, schedules, software/API details, or anything that may have changed recently.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The web search query, including enough keywords to be specific."
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "How many search results to return, from 1 to 8."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }));
+    }
+    if web.fetch_enabled {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": WEB_FETCH_TOOL_NAME,
+                "description": "Fetch and extract readable text from a public http/https URL. Use this when the user provides a link and asks about its content. If web_search is enabled, you may also fetch URLs returned by web_search.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The full http or https URL to fetch."
+                        },
+                        "max_chars": {
+                            "type": "integer",
+                            "description": "Maximum characters of extracted page text to return, from 500 to 12000."
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        }));
+    }
+    tools.extend(native_chat_tools());
+    tools
+}
+
 pub fn native_tool_system_hint() -> &'static str {
     chat_tool_contract()["chat_tools"]["native_system_hint"]
         .as_str()
@@ -50,6 +107,29 @@ pub fn with_native_tool_system_hint(prompt: &str) -> String {
     } else {
         format!("{prompt}\n\n{}", native_tool_system_hint())
     }
+}
+
+pub fn with_native_tool_system_hint_for_config(prompt: &str, config: &ConfigDocument) -> String {
+    let mut prompt = with_native_tool_system_hint(prompt);
+    let web = NativeWebToolSettings::from_config(config);
+    if web.search_enabled {
+        let source_rule = if web.show_sources {
+            "工具返回搜索结果后，请基于结果作答，并在回复末尾输出严格 JSON 来源块，格式为 {\"web_search_sources\":[{\"title\":\"网页标题\",\"url\":\"https://...\"}]}；不要用 Markdown 列表展示来源。"
+        } else {
+            "工具返回搜索结果后，请自然消化资料并保持角色口吻；除非用户明确要求来源，不要列出 URL 或引用列表。"
+        };
+        prompt.push_str(
+            "\n\n【联网搜索工具】\n如果用户询问最新、实时、新闻、价格、日程、版本、API 文档、外部事实，或任何可能随时间变化的信息，你可以调用 web_search 工具。普通闲聊、角色扮演、情感陪伴、改写润色、总结已有上下文时不要搜索。query 必须直接包含用户真正想查询的主体、时间或关键词，不要使用代词，也不要把整段提示词原样塞进去。",
+        );
+        prompt.push_str(source_rule);
+        prompt.push_str("如果没有收到真实工具结果，不要声称已经联网搜索；结果失败或不足时必须直接说明没有查到可靠结果。");
+    }
+    if web.fetch_enabled {
+        prompt.push_str(
+            "\n\n【网页读取边界】\n当用户提供网页链接并询问内容，或已通过 web_search 得到候选网页且需要正文时，可以调用 web_fetch。只抓取 http/https 公网链接，不要声称访问了未实际调用工具的网页。",
+        );
+    }
+    prompt
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -203,6 +283,104 @@ pub fn execute_native_tool_call_with_context(
             execute_reminder_tool(call, &arguments, context, failure)
         }
         _ => failure(format!("Unsupported native tool: {}", call.name)),
+    }
+}
+
+pub async fn execute_native_tool_call_with_context_async(
+    call: &NativeToolCall,
+    context: Option<&NativeToolExecutionContext<'_>>,
+    cancellation: &CancellationToken,
+) -> NativeToolResult {
+    if !matches!(
+        call.name.as_str(),
+        WEB_SEARCH_TOOL_NAME | WEB_FETCH_TOOL_NAME
+    ) {
+        return execute_native_tool_call_with_context(call, context);
+    }
+    let failure = |content: String| NativeToolResult {
+        call_id: call.call_id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        content,
+        succeeded: false,
+        effect: None,
+    };
+    if call.arguments_truncated {
+        return failure(format!(
+            "Tool call {} was not executed because its arguments exceed the {} byte limit.",
+            call.name, MAX_TOOL_ARGUMENT_BYTES
+        ));
+    }
+    let arguments = match serde_json::from_str::<Value>(&call.arguments) {
+        Ok(Value::Object(arguments)) => arguments,
+        Ok(_) => {
+            return failure(format!(
+                "Tool call {} was not executed because its arguments must be a JSON object.",
+                call.name
+            ));
+        }
+        Err(error) => {
+            return failure(format!(
+                "Tool call {} was not executed because its arguments are invalid JSON: {error}.",
+                call.name
+            ));
+        }
+    };
+    let Some(context) = context else {
+        return failure(format!(
+            "Tool call {} was not executed because the native web service context is unavailable.",
+            call.name
+        ));
+    };
+    let config = match ConfigDocument::load(context.config_path) {
+        Ok(config) => config,
+        Err(error) => return failure(format!("联网工具配置读取失败：{error}")),
+    };
+    let settings = NativeWebToolSettings::from_config(&config);
+    let result = if call.name == WEB_SEARCH_TOOL_NAME {
+        if !settings.search_enabled {
+            return failure("联网搜索已在设置中禁用。".to_owned());
+        }
+        let query = match required_string(&arguments, "query") {
+            Ok(query) => query,
+            Err(error) => return failure(error),
+        };
+        let max_results = match optional_i64(&arguments, "max_results", 5) {
+            Ok(value) => value.clamp(1, 8) as usize,
+            Err(error) => return failure(error),
+        };
+        web_search(
+            &query,
+            max_results,
+            settings.search_engine,
+            context.now,
+            cancellation,
+        )
+        .await
+    } else {
+        if !settings.fetch_enabled {
+            return failure("WebFetch 已在设置中禁用。".to_owned());
+        }
+        let url = match required_string(&arguments, "url") {
+            Ok(url) => url,
+            Err(error) => return failure(error),
+        };
+        let max_chars = match optional_i64(&arguments, "max_chars", 6000) {
+            Ok(value) => value.clamp(500, 12_000) as usize,
+            Err(error) => return failure(error),
+        };
+        web_fetch(&url, max_chars, context.now, cancellation).await
+    };
+    match result {
+        Ok(content) => NativeToolResult {
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            content,
+            succeeded: true,
+            effect: None,
+        },
+        Err(error) => failure(error),
     }
 }
 
@@ -537,6 +715,49 @@ mod tests {
             native_tool_system_hint(),
             chat_tool_contract()["chat_tools"]["native_system_hint"]
         );
+    }
+
+    #[test]
+    fn configured_web_tools_are_dynamic_and_keep_source_policy_in_the_prompt() {
+        let mut config = ConfigDocument::default();
+        config.set("llm_web_search_enabled", Value::Bool(true));
+        config.set("llm_web_fetch_enabled", Value::Bool(true));
+        config.set("llm_web_search_show_sources", Value::Bool(false));
+        let tools = native_chat_tools_for_config(&config);
+        assert_eq!(tools.len(), 5);
+        assert_eq!(tools[0]["function"]["name"], WEB_SEARCH_TOOL_NAME);
+        assert_eq!(tools[1]["function"]["name"], WEB_FETCH_TOOL_NAME);
+        assert_eq!(tools[4]["function"]["name"], POKE_USER_TOOL_NAME);
+        let prompt = with_native_tool_system_hint_for_config("role", &config);
+        assert!(prompt.contains("【联网搜索工具】"));
+        assert!(prompt.contains("【网页读取边界】"));
+        assert!(prompt.contains("除非用户明确要求来源，不要列出 URL"));
+        assert!(!prompt.contains("严格 JSON 来源块"));
+    }
+
+    #[tokio::test]
+    async fn async_web_executor_enforces_saved_switches_before_network_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        ConfigDocument::default().save(&path).unwrap();
+        let context = NativeToolExecutionContext {
+            config_path: &path,
+            now: LocalDateTime::parse("2026-07-15T10:30:00").unwrap(),
+            active_character: "ran",
+        };
+        let result = execute_native_tool_call_with_context_async(
+            &NativeToolCall {
+                call_id: "call_web".to_owned(),
+                name: WEB_SEARCH_TOOL_NAME.to_owned(),
+                arguments: r#"{"query":"Bandori"}"#.to_owned(),
+                ..NativeToolCall::default()
+            },
+            Some(&context),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(!result.succeeded);
+        assert!(result.content.contains("已在设置中禁用"));
     }
 
     #[test]

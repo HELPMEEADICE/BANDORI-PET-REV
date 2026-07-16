@@ -60,6 +60,10 @@ pub struct NativeLlmSettingsState {
     pub chat_history_message_limit: i64,
     pub compact_history_message_limit: i64,
     pub cross_chat_history_enabled: bool,
+    pub web_search_enabled: bool,
+    pub web_search_engine: String,
+    pub web_search_show_sources: bool,
+    pub web_fetch_enabled: bool,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
     pub active_api_profile: String,
@@ -89,6 +93,10 @@ pub struct NativeLlmSettingsUpdate {
     pub chat_history_message_limit: i64,
     pub compact_history_message_limit: i64,
     pub cross_chat_history_enabled: bool,
+    pub web_search_enabled: bool,
+    pub web_search_engine: String,
+    pub web_search_show_sources: bool,
+    pub web_fetch_enabled: bool,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
 }
@@ -247,6 +255,13 @@ impl NativeLlmSettingsState {
                 12,
             ),
             cross_chat_history_enabled: config_bool(config, "llm_cross_chat_history_enabled", true),
+            web_search_enabled: config_bool(config, "llm_web_search_enabled", false),
+            web_search_engine: normalized_web_search_engine(&config_string(
+                config,
+                "llm_web_search_engine",
+            )),
+            web_search_show_sources: config_bool(config, "llm_web_search_show_sources", true),
+            web_fetch_enabled: config_bool(config, "llm_web_fetch_enabled", false),
             custom_system_prompt_enabled: config_bool(
                 config,
                 "llm_custom_system_prompt_enabled",
@@ -266,6 +281,7 @@ impl NativeLlmSettingsUpdate {
         let model_id = checked_text(&self.model_id, MAX_MODEL_BYTES, "primary model ID")?;
         let aux_model_id = checked_text(&self.aux_model_id, MAX_MODEL_BYTES, "auxiliary model ID")?;
         let api_mode = normalized_api_mode_checked(&self.api_mode)?;
+        let web_search_engine = normalized_web_search_engine_checked(&self.web_search_engine)?;
         let custom_system_prompt = checked_prompt(&self.custom_system_prompt)?;
 
         config.set("llm_api_url", Value::String(api_url));
@@ -317,6 +333,16 @@ impl NativeLlmSettingsUpdate {
             "llm_cross_chat_history_enabled",
             Value::Bool(self.cross_chat_history_enabled),
         );
+        config.set(
+            "llm_web_search_enabled",
+            Value::Bool(self.web_search_enabled),
+        );
+        config.set("llm_web_search_engine", Value::String(web_search_engine));
+        config.set(
+            "llm_web_search_show_sources",
+            Value::Bool(self.web_search_show_sources),
+        );
+        config.set("llm_web_fetch_enabled", Value::Bool(self.web_fetch_enabled));
         config.set(
             "llm_custom_system_prompt_enabled",
             Value::Bool(self.custom_system_prompt_enabled),
@@ -489,6 +515,31 @@ fn normalized_api_mode_checked(value: &str) -> Result<String, NativeLlmSettingsE
     }
 }
 
+fn normalized_web_search_engine(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "bing" => "bing",
+        "google" => "google",
+        "duckduckgo" => "duckduckgo",
+        "baidu" => "baidu",
+        _ => "bing_cn",
+    }
+    .to_owned()
+}
+
+fn normalized_web_search_engine_checked(value: &str) -> Result<String, NativeLlmSettingsError> {
+    let value = value.trim().to_ascii_lowercase();
+    if matches!(
+        value.as_str(),
+        "bing" | "bing_cn" | "google" | "duckduckgo" | "baidu"
+    ) {
+        Ok(value)
+    } else {
+        Err(NativeLlmSettingsError::Invalid(format!(
+            "unsupported web search engine: {value}"
+        )))
+    }
+}
+
 fn normalize_history_limit(value: i64) -> i64 {
     if value == 0 { 0 } else { value.clamp(2, 100) }
 }
@@ -529,6 +580,10 @@ mod tests {
             "chat_history_message_limit":101,
             "compact_history_message_limit":0,
             "cross_chat_history_enabled":false,
+            "web_search_enabled":true,
+            "web_search_engine":"duckduckgo",
+            "web_search_show_sources":false,
+            "web_fetch_enabled":true,
             "custom_system_prompt_enabled":true,
             "custom_system_prompt":"  Always stay in character.  "
         })
@@ -552,6 +607,10 @@ mod tests {
         assert_eq!(state.active_api_profile, "");
         assert_eq!(state.chat_history_message_limit, 100);
         assert_eq!(state.compact_history_message_limit, 0);
+        assert!(state.web_search_enabled);
+        assert_eq!(state.web_search_engine, "duckduckgo");
+        assert!(!state.web_search_show_sources);
+        assert!(state.web_fetch_enabled);
         let serialized = serde_json::to_string(&state).unwrap();
         assert!(!serialized.contains("primary-secret"));
         assert!(!serialized.contains("aux-secret"));

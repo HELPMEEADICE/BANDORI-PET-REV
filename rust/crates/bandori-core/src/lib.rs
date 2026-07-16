@@ -36,5 +36,6 @@ pub mod special_events;
 pub mod statistics_dashboard;
 pub mod tts_settings;
 pub mod user_profiles;
+pub mod web_tools;
 
 pub use bandori_llm_protocol as llm_protocol;

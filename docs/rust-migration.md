@@ -162,10 +162,14 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   loop, filters superseded request IDs and cancels work when the backend is
   destroyed. API credentials stay inside Rust and never enter QObject
   properties or event JSON. The native chat loop now executes a bounded maximum
-  of three tool rounds for `poke_user`, `create_alarm` and `start_pomodoro`,
+  of three tool rounds for `poke_user`, `create_alarm`, `start_pomodoro`,
+  `web_search` and `web_fetch`,
   persists sanitized tool traces, and delivers pet/reminder effects through the
-  reliable native IPC lane. Generic MCP, web and computer-use tools remain
-  staged. The database layer now also starts private chat
+  reliable native IPC lane. The web tools are configured from the redacted
+  Qt-Fluent LLM page and execute asynchronously in Rust with cancellation,
+  public-DNS validation, per-redirect revalidation, DNS pinning, proxy bypass,
+  textual-content checks and bounded response bodies. Generic MCP and
+  computer-use tools remain staged. The database layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -178,9 +182,10 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   0-or-2..100 history limit, appends relationship and Qt-formatted current-time
   context only to the latest user message, and exposes the resulting request
   JSON through CXX-Qt without exposing the API key. Event-calendar context and
-  generic MCP/web/computer-use tools remain staged rather than being silently
-  approximated; group prompts and the supported native local tools are included
-  in the current path. Completed responses are cleaned with Python-generated
+  generic MCP/computer-use tools remain staged rather than being silently
+  approximated; event-calendar context, web tools, group prompts and the other
+  supported native local tools are included in the current path. Completed
+  responses are cleaned with Python-generated
   action-tag fixtures before persistence; parsed actions cross the reliable native IPC lane
   to the matching Live2D process. Empty active-profile keys also normalize to
   Python's `__default__` user partition. Request state retains the exact

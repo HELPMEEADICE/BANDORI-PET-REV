@@ -644,7 +644,7 @@ use bandori_core::chat_prompt::{
 };
 use bandori_core::chat_tools::{
     NativeToolCallAccumulator, NativeToolExecutionContext, NativeToolResult,
-    chat_tool_followup_messages, execute_native_tool_call_with_context, native_tool_trace,
+    chat_tool_followup_messages, execute_native_tool_call_with_context_async, native_tool_trace,
 };
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
@@ -5358,10 +5358,17 @@ where
             now: context.now,
             active_character: &context.active_character,
         });
-        let round_results = calls
-            .iter()
-            .map(|call| execute_native_tool_call_with_context(call, execution_context.as_ref()))
-            .collect::<Vec<_>>();
+        let mut round_results = Vec::with_capacity(calls.len());
+        for call in &calls {
+            round_results.push(
+                execute_native_tool_call_with_context_async(
+                    call,
+                    execution_context.as_ref(),
+                    cancellation,
+                )
+                .await,
+            );
+        }
         tool_results.extend(round_results.iter().cloned());
         if round + 1 >= MAX_NATIVE_TOOL_ROUNDS {
             return Err(NativeToolLoopFailure {

@@ -507,6 +507,39 @@ def test_native_chat_tools_are_bounded_looped_and_dispatched_through_existing_ip
     assert 'QStringLiteral("to_user")' in window
 
 
+def test_native_web_tools_are_configured_bounded_and_executed_in_rust():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    web = source("rust/crates/bandori-core/src/web_tools.rs")
+    tools = source("rust/crates/bandori-core/src/chat_tools.rs")
+    context = source("rust/crates/bandori-core/src/chat_context.rs")
+    group = source("rust/crates/bandori-core/src/group_chat.rs")
+    settings = source("rust/crates/bandori-core/src/llm_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod web_tools;" in core
+    assert "pub struct NativeWebToolSettings" in web
+    assert "async fn request_public_text_with_final_url" in web
+    assert "resolve_public_addresses" in web
+    assert ".resolve_to_addrs(host, addresses)" in web
+    assert "Policy::none()" in web
+    assert ".no_proxy()" in web
+    assert "MAX_REDIRECTS" in web
+    assert "MAX_FETCH_BODY_BYTES" in web
+    assert "pub fn native_chat_tools_for_config" in tools
+    assert "pub async fn execute_native_tool_call_with_context_async" in tools
+    assert "with_native_tool_system_hint_for_config" in context
+    assert "with_native_tool_system_hint_for_config" in group
+    assert "web_search_enabled: bool" in settings
+    assert "web_fetch_enabled: bool" in settings
+    assert "execute_native_tool_call_with_context_async" in backend
+    assert "qfw::SwitchButton* llmWebSearchSwitch_" in header
+    assert "qfw::SwitchButton* llmWebFetchSwitch_" in header
+    assert 'QStringLiteral("web_search_enabled")' in window
+    assert 'QStringLiteral("web_fetch_enabled")' in window
+
+
 def test_native_reminder_core_is_python_contract_backed_and_qt_independent():
     reminder = source("rust/crates/bandori-core/src/reminder.rs")
     core = source("rust/crates/bandori-core/src/lib.rs")

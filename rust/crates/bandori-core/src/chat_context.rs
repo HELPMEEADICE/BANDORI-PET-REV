@@ -2,7 +2,7 @@ use crate::chat_attachments::chat_message_content;
 use crate::chat_prompt::{
     build_native_system_prompt_with_role, build_relationship_context, load_character_markdown,
 };
-use crate::chat_tools::{native_chat_tools, with_native_tool_system_hint};
+use crate::chat_tools::{native_chat_tools_for_config, with_native_tool_system_hint_for_config};
 use crate::config::ConfigDocument;
 use crate::cross_chat_history::build_cross_chat_history;
 use crate::database::{Database, DatabaseError};
@@ -70,7 +70,7 @@ pub fn build_native_chat_request(
         system_prompt.push_str("\n\n【今日特殊事件】\n");
         system_prompt.push_str(special_event_context.trim());
     }
-    let system_prompt = with_native_tool_system_hint(&system_prompt);
+    let system_prompt = with_native_tool_system_hint_for_config(&system_prompt, config);
     let user_display_name = config
         .get("user_name")
         .and_then(Value::as_str)
@@ -125,7 +125,7 @@ pub fn build_native_chat_request(
     append_dynamic_context_to_last_user(&mut messages, &dynamic_context)?;
     Ok(NativeChatRequest {
         messages,
-        tools: native_chat_tools(),
+        tools: native_chat_tools_for_config(config),
     })
 }
 
@@ -282,7 +282,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(request.tools, native_chat_tools());
+        assert_eq!(request.tools, native_chat_tools_for_config(&config));
         assert!(
             request.messages[0]
                 .content

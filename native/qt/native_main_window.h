@@ -385,6 +385,10 @@ private:
     qfw::SpinBox* llmHistoryLimitSpinBox_ = nullptr;
     qfw::SpinBox* llmCompactHistoryLimitSpinBox_ = nullptr;
     qfw::SwitchButton* llmCrossChatHistorySwitch_ = nullptr;
+    qfw::SwitchButton* llmWebSearchSwitch_ = nullptr;
+    qfw::ComboBox* llmWebSearchEngineComboBox_ = nullptr;
+    qfw::SwitchButton* llmWebSearchSourcesSwitch_ = nullptr;
+    qfw::SwitchButton* llmWebFetchSwitch_ = nullptr;
     qfw::SwitchButton* llmCustomPromptSwitch_ = nullptr;
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;
