@@ -1,9 +1,25 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import zst_model_archive
 
 
 class ZstModelArchiveMoc3Test(unittest.TestCase):
+    def tearDown(self):
+        zst_model_archive.clear_virtual_byte_cache()
+
+    def test_consumed_virtual_bytes_leave_no_duplicate_python_cache(self):
+        with TemporaryDirectory() as tmp:
+            archive = Path(tmp) / "model.zst"
+            virtual_path = zst_model_archive.make_virtual_path(archive, "live/model.moc3")
+            payload = b"model-bytes"
+            zst_model_archive._store_virtual_bytes(virtual_path, payload)
+
+            self.assertEqual(payload, zst_model_archive.consume_virtual_bytes(virtual_path))
+            self.assertEqual(0, zst_model_archive._VIRTUAL_BYTE_CACHE_BYTES)
+            self.assertNotIn(virtual_path, zst_model_archive._VIRTUAL_BYTE_CACHE)
+
     def test_model_resource_members_include_model3_file_references(self):
         model_json = {
             "FileReferences": {

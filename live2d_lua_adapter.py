@@ -6,18 +6,28 @@ Cubism 2 or Cubism 3 adapter then owns the Lua runtime, embed module and model
 renderer for that model.
 """
 
-from live2d_lua_adapter_base import (
-    MODEL_FORMAT_MOC3,
-    MotionPriority,
-    _model_manifest_format,
-)
-from live2d_lua_adapter_moc import live2d_moc
-from live2d_lua_adapter_moc3 import live2d_moc3
+MODEL_FORMAT_MOC = "moc"
+MODEL_FORMAT_MOC3 = "moc3"
+
+
+class MotionPriority:
+    IDLE = 1
+    NORMAL = 2
+    FORCE = 3
+
+
+def _model_manifest_format(path: str) -> str:
+    # Importing the adapter base loads LuaJIT. Keep that cost out of pixel-only
+    # pet processes and out of Live2D processes until a model is actually used.
+    from live2d_lua_adapter_base import _model_manifest_format as detect_format
+
+    return detect_format(path)
 
 __all__ = [
     "LuaLAppModel",
     "LuaLive2DModule",
     "live2d",
+    "live2d_for_format",
 ]
 
 
@@ -26,9 +36,14 @@ class LuaLive2DModule:
 
     MotionPriority = MotionPriority
 
-    def __init__(self, moc_runtime=None, moc3_runtime=None):
-        self._moc_runtime = live2d_moc if moc_runtime is None else moc_runtime
-        self._moc3_runtime = live2d_moc3 if moc3_runtime is None else moc3_runtime
+    def __init__(self, moc_runtime=None, moc3_runtime=None, *, preferred_format: str = ""):
+        self._moc_runtime = moc_runtime
+        self._moc3_runtime = moc3_runtime
+        self._preferred_format = (
+            preferred_format
+            if preferred_format in {MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3}
+            else ""
+        )
 
     def glInit(self):
         """Keep initialization lazy until the model format is known.
@@ -41,18 +56,33 @@ class LuaLive2DModule:
     def dispose(self):
         disposed = set()
         for runtime in (self._moc_runtime, self._moc3_runtime):
+            if runtime is None:
+                continue
             runtime_id = id(runtime)
             if runtime_id in disposed:
                 continue
             disposed.add(runtime_id)
             runtime.dispose()
 
+    def compact_memory(self):
+        for runtime in (self._moc_runtime, self._moc3_runtime):
+            if runtime is not None:
+                runtime.compact_memory()
+
     def LAppModel(self):
         return LuaLAppModel(self)
 
     def _runtime_for_format(self, model_format: str):
         if model_format == MODEL_FORMAT_MOC3:
+            if self._moc3_runtime is None:
+                from live2d_lua_adapter_moc3 import live2d_moc3
+
+                self._moc3_runtime = live2d_moc3
             return self._moc3_runtime
+        if self._moc_runtime is None:
+            from live2d_lua_adapter_moc import live2d_moc
+
+            self._moc_runtime = live2d_moc
         return self._moc_runtime
 
 
@@ -67,7 +97,7 @@ class LuaLAppModel:
 
     def LoadModelJson(self, model_json_path: str):
         self._dispose_renderer()
-        model_format = _model_manifest_format(model_json_path)
+        model_format = self._module._preferred_format or _model_manifest_format(model_json_path)
         runtime = self._module._runtime_for_format(model_format)
         delegate = runtime.LAppModel()
         delegate.Resize(self._width, self._height)
@@ -107,3 +137,9 @@ class LuaLAppModel:
 
 
 live2d = LuaLive2DModule()
+
+
+def live2d_for_format(model_format: str) -> LuaLive2DModule:
+    """Return a facade that imports only the renderer required by one pet."""
+
+    return LuaLive2DModule(preferred_format=model_format)

@@ -61,6 +61,24 @@ def load_virtual_bytes(path: str, cache: bool = True) -> bytes:
     raise KeyError(path)
 
 
+def consume_virtual_bytes(path: str) -> bytes:
+    """Return one virtual resource without keeping a duplicate byte cache.
+
+    Initial model prefetches still avoid repeated archive scans, but the raw
+    model/texture/action bytes leave the Python cache as soon as the Lua
+    runtime has accepted them. A cache miss is read without being retained.
+    """
+
+    global _VIRTUAL_BYTE_CACHE_BYTES
+    cache_key = make_virtual_path(*split_virtual_path(path))
+    with _CACHE_LOCK:
+        cached = _VIRTUAL_BYTE_CACHE.pop(cache_key, None)
+        if cached is not None:
+            _VIRTUAL_BYTE_CACHE_BYTES -= len(cached)
+            return cached
+    return load_virtual_bytes(cache_key, cache=False)
+
+
 def read_virtual_text(path: str, encoding: str = "utf-8") -> str:
     return load_virtual_bytes(path).decode(encoding)
 
@@ -153,7 +171,12 @@ def prefetch_virtual_action_resources(
         return
 
     archive_path, model_member = split_virtual_path(model_json_path)
-    model_bytes = load_virtual_bytes(make_virtual_path(archive_path, model_member))
+    # The manifest is only needed to discover action paths. It is already held
+    # by the renderer and must not be reintroduced into the persistent cache.
+    model_bytes = load_virtual_bytes(
+        make_virtual_path(archive_path, model_member),
+        cache=False,
+    )
     try:
         model_json = json.loads(model_bytes.decode("utf-8"))
     except Exception:

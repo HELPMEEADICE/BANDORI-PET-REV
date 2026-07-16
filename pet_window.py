@@ -230,8 +230,8 @@ PEER_POS_BROADCAST_INTERVAL_MS = 200
 MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS = 0.08
 MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE = 12
-LIVE2D_PREWARM_MAX_MOTIONS = 64
-LIVE2D_PREWARM_MAX_EXPRESSIONS = 32
+LIVE2D_PREWARM_MAX_MOTIONS = 2
+LIVE2D_PREWARM_MAX_EXPRESSIONS = 2
 LIVE2D_PREWARM_STEP_MS = 90
 STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS = (0, 100, 300, 800, 1600, 3000)
 
@@ -1486,7 +1486,9 @@ class PetWindow(QWidget):
             self._user_hidden_live2d_model = False
             if self.isVisible():
                 self.hide()
+            self._release_live2d_resources()
         elif was_config_hidden and not self._user_hidden_live2d_model and not self.isVisible():
+            self._resume_live2d_resources()
             self.show()
 
     def set_live2d_idle_actions_enabled(self, enabled: bool):
@@ -1890,9 +1892,13 @@ class PetWindow(QWidget):
             self._set_live2d_model_format(
                 self._model_manager.get_model_format(self._current_char, self._current_costume)
             )
-            self._live2d_widget.set_model_path(path)
-            if self._pixel_mode and not self._enable_pixel_mode(save=False):
-                self._enable_live2d_mode(save=False)
+            if self._pixel_mode:
+                if self._enable_pixel_mode(save=False):
+                    self._update_tooltip()
+                    return
+                self._pixel_mode = False
+            if not self._hide_live2d_model and not self._user_hidden_live2d_model:
+                self._live2d_widget.set_model_path(path)
             self._update_tooltip()
 
     @staticmethod
@@ -2225,7 +2231,6 @@ class PetWindow(QWidget):
             pass
 
     def _build_live2d_prewarm_motion_queue(self) -> list[str]:
-        from live2d_click_actions import normalize_click_motion_actions
         model = self._live2d_widget.model
         if model is None:
             return []
@@ -2240,23 +2245,13 @@ class PetWindow(QWidget):
 
         entry = self._current_model_entry()
         add(entry.get("default_motion", ""))
-        for feedback in normalize_click_motion_actions(
-            entry.get("click_motion_actions", {}),
-            motion_names,
-            self._current_expression_names(),
-        ).values():
-            add(feedback.get("motion", ""))
-        for tag in ("smile", "nf", "idle02", "surprised", "stretch", "akubi", "sigh", "sleep", "sad", "stare", "mitore", "thinking", "eeto", "odoodo"):
-            add(self._resolve_motion_tag(tag, motion_names))
         for name in motion_names:
-            if not str(name).lower().startswith(("idle", "sys-")):
+            if self._is_idle_motion_name(name):
                 add(name)
-        for name in motion_names:
-            add(name)
+                break
         return ordered[:LIVE2D_PREWARM_MAX_MOTIONS]
 
     def _build_live2d_prewarm_expression_queue(self) -> list[str]:
-        from live2d_click_actions import normalize_click_motion_actions
         expression_names = self._current_expression_names()
         expression_set = set(expression_names)
         ordered = []
@@ -2268,16 +2263,8 @@ class PetWindow(QWidget):
 
         entry = self._current_model_entry()
         add(entry.get("default_expression", ""))
-        for feedback in normalize_click_motion_actions(
-            entry.get("click_motion_actions", {}),
-            self._current_motion_names(),
-            expression_names,
-        ).values():
-            add(feedback.get("expression", ""))
-        for tag in ("smile", "default", "idle", "surprised", "sad", "sleep"):
+        for tag in ("default", "idle"):
             add(self._find_expression_tag(tag))
-        for name in expression_names:
-            add(name)
         return ordered[:LIVE2D_PREWARM_MAX_EXPRESSIONS]
 
     def _prewarm_next_live2d_action(self, token: int):
@@ -2285,6 +2272,12 @@ class PetWindow(QWidget):
             return
         model = self._live2d_widget.model
         if model is None:
+            return
+        if not self._live2d_prewarm_motion_queue and not self._live2d_prewarm_expression_queue:
+            QTimer.singleShot(
+                1000,
+                lambda t=token: self._clear_live2d_archive_cache_if_current(t),
+            )
             return
         self._prefetch_live2d_action_resources(token)
         prefer_expression = bool(self._live2d_prewarm_expression_queue) and (
@@ -2308,6 +2301,22 @@ class PetWindow(QWidget):
             except Exception:
                 pass
             QTimer.singleShot(LIVE2D_PREWARM_STEP_MS, lambda t=token: self._prewarm_next_live2d_action(t))
+
+    def _clear_live2d_archive_cache_if_current(self, token: int):
+        if token != self._live2d_prewarm_token:
+            return
+        try:
+            from zst_model_archive import clear_virtual_byte_cache
+
+            clear_virtual_byte_cache()
+        except Exception:
+            pass
+        compact_memory = getattr(self._live2d, "compact_memory", None)
+        if callable(compact_memory):
+            try:
+                compact_memory()
+            except Exception:
+                pass
 
     def _note_user_interaction(self):
         self._last_user_interaction_at = time.monotonic()
@@ -4603,6 +4612,7 @@ class PetWindow(QWidget):
         self._restore_pixel_position()
         self._pixel_widget.set_drag_locked(self._live2d_widget._drag_locked)
         self._motion_guard_token += 1
+        self._release_live2d_resources()
         if save:
             self._save_config()
         return True
@@ -4612,13 +4622,28 @@ class PetWindow(QWidget):
         self._pixel_mode = False
         self._stack.setCurrentWidget(self._live2d_widget)
         self._restore_live2d_position()
+        self._resume_live2d_resources()
         if save:
             self._save_config()
+
+    def _release_live2d_resources(self):
+        self._live2d_prewarm_token += 1
+        self._live2d_prewarm_motion_queue = []
+        self._live2d_prewarm_expression_queue = []
+        self._live2d_prewarmed_motions.clear()
+        self._live2d_prewarmed_expressions.clear()
+        self._live2d_widget.release_model()
+
+    def _resume_live2d_resources(self):
+        if self._pixel_mode or self._live2d_widget.model is not None:
+            return
+        self._load_initial_model()
 
     def _toggle_visible(self):
         if self.isVisible():
             self._user_hidden_live2d_model = True
             self.hide()
+            self._release_live2d_resources()
         else:
             self._user_hidden_live2d_model = False
             self._hide_live2d_model = False
@@ -4626,6 +4651,7 @@ class PetWindow(QWidget):
                 self._cfg.load()
                 self._cfg.set("hide_live2d_model", False)
                 self._persist_runtime_config()
+            self._resume_live2d_resources()
             self.show()
 
     def _open_settings(self, start_on_costumes=False):

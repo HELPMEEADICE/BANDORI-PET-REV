@@ -306,6 +306,30 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._custom_hit_areas.dispose()
             self._custom_hit_areas = None
 
+    def release_model(self):
+        """Release model CPU/GPU state while keeping the widget reusable."""
+
+        self._render_timer.stop()
+        if self._initialized_gl:
+            self._safe_make_current()
+        self._dispose_model_renderer()
+        if self._live2d is not None:
+            try:
+                self._live2d.dispose()
+            except Exception:
+                pass
+        self._model_path = ""
+        self._pending_model = ""
+        if self._custom_hit_areas is not None:
+            self._custom_hit_areas.clear()
+        try:
+            from zst_model_archive import clear_virtual_byte_cache
+
+            clear_virtual_byte_cache()
+        except Exception:
+            pass
+        self._reset_render_failure_state()
+
     def _dispose_model_renderer(self):
         model = self._model
         self._model = None

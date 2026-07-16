@@ -92,3 +92,40 @@ def test_reset_positions_persists_position_once():
     PetWindow._apply_settings(harness, {"reset_pet_positions": True})
 
     assert calls == ["reset", "stop", "save"]
+
+
+def test_action_prewarm_keeps_only_default_and_one_idle_motion():
+    harness = SimpleNamespace(
+        _live2d_widget=SimpleNamespace(model=object()),
+        _current_motion_names=lambda: ["smile01", "idle01", "idle02", "wave01"],
+        _current_model_entry=lambda: {"default_motion": "smile01"},
+        _is_idle_motion_name=PetWindow._is_idle_motion_name,
+    )
+
+    assert PetWindow._build_live2d_prewarm_motion_queue(harness) == ["smile01", "idle01"]
+
+
+def test_pixel_startup_does_not_load_live2d_model_first():
+    calls = []
+    harness = SimpleNamespace(
+        _current_char="anon",
+        _current_costume="live_01",
+        _pixel_mode=True,
+        _hide_live2d_model=False,
+        _user_hidden_live2d_model=False,
+        _model_manager=SimpleNamespace(
+            get_model_json_path=lambda *_args: "anon.zst::live_01/model3.json",
+            get_model_format=lambda *_args: "moc3",
+        ),
+        _set_live2d_model_format=lambda value: calls.append(("format", value)),
+        _enable_pixel_mode=lambda save=False: calls.append(("pixel", save)) or True,
+        _live2d_widget=SimpleNamespace(
+            set_model_path=lambda path: calls.append(("live2d", path)),
+        ),
+        _update_tooltip=lambda: calls.append(("tooltip",)),
+    )
+
+    PetWindow._load_initial_model(harness)
+
+    assert ("live2d", "anon.zst::live_01/model3.json") not in calls
+    assert ("pixel", False) in calls

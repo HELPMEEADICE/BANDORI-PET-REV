@@ -13,6 +13,27 @@ from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
 import live2d_widget_moc3
 
 
+def test_releasing_hidden_model_disposes_renderer_and_runtime_for_reuse():
+    calls = []
+    harness = SimpleNamespace(
+        _render_timer=SimpleNamespace(stop=lambda: calls.append("timer")),
+        _initialized_gl=True,
+        _safe_make_current=lambda: calls.append("context"),
+        _dispose_model_renderer=lambda: calls.append("renderer"),
+        _live2d=SimpleNamespace(dispose=lambda: calls.append("runtime")),
+        _model_path="model.zst::live/model.json",
+        _pending_model="pending",
+        _custom_hit_areas=SimpleNamespace(clear=lambda: calls.append("hit-areas")),
+        _reset_render_failure_state=lambda: calls.append("reset"),
+    )
+
+    Live2DWidget.release_model(harness)
+
+    assert harness._model_path == ""
+    assert harness._pending_model == ""
+    assert calls == ["timer", "context", "renderer", "runtime", "hit-areas", "reset"]
+
+
 def test_only_cubism2_runtime_installs_platform_manager_override():
     assert LuaLive2DModuleMOC._configure_runtime is not LuaLive2DRuntimeBase._configure_runtime
     assert LuaLive2DModuleMOC3._configure_runtime is LuaLive2DRuntimeBase._configure_runtime

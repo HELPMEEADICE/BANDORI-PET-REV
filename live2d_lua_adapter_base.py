@@ -10,7 +10,12 @@ from lupa.luajit21 import LuaRuntime
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir, app_data_dir
-from zst_model_archive import is_virtual_path, load_virtual_bytes, split_virtual_path
+from zst_model_archive import (
+    consume_virtual_bytes,
+    is_virtual_path,
+    load_virtual_bytes,
+    split_virtual_path,
+)
 
 
 BASE_DIR = Path(app_base_dir())
@@ -233,12 +238,14 @@ def _require_bundled_lua_module(lua: LuaRuntime, module_name: str):
     )
 
 
-def _load_model_bytes(path: str) -> bytes:
+def _load_model_bytes(path: str, *, consume_virtual: bool = False) -> bytes:
     path = _normalize_lua_path(path)
     if is_virtual_path(path):
         archive_path, _member_path = split_virtual_path(path)
         _safe_model_file_path(archive_path)
         try:
+            if consume_virtual:
+                return consume_virtual_bytes(path)
             return load_virtual_bytes(path)
         except KeyError:
             fixed = _fix_mtn_path(path)
@@ -425,6 +432,10 @@ class LuaLive2DRuntimeBase:
     def glInit(self):
         self._ensure_runtime()
 
+    def compact_memory(self):
+        if self._lua is not None:
+            self._lua.gccollect()
+
     def dispose(self):
         if self._embed is not None:
             try:
@@ -594,7 +605,10 @@ class LuaLive2DRuntimeBase:
         lua = self._lua
 
         def resource_loader(path):
-            return _load_model_bytes(_normalize_lua_path(path))
+            return _load_model_bytes(
+                _normalize_lua_path(path),
+                consume_virtual=True,
+            )
 
         def texture_loader(no, path):
             profile = get_live2d_texture_quality()
@@ -606,7 +620,7 @@ class LuaLive2DRuntimeBase:
                 archive_path, _member_path = split_virtual_path(normalized_path)
                 _safe_model_file_path(archive_path)
                 entry[b"path"] = normalized_path.encode("utf-8")
-                raw_bytes = load_virtual_bytes(normalized_path)
+                raw_bytes = consume_virtual_bytes(normalized_path)
                 entry[b"bytes"] = raw_bytes
             else:
                 fs_path = _safe_model_file_path(normalized_path)
@@ -626,7 +640,10 @@ class LuaLive2DRuntimeBase:
 
         resources = lua.table()
         resources[b"__loader"] = resource_loader
-        resources[_normalize_lua_path(model_path).encode("utf-8")] = _load_model_bytes(model_path)
+        resources[_normalize_lua_path(model_path).encode("utf-8")] = _load_model_bytes(
+            model_path,
+            consume_virtual=True,
+        )
 
         textures = lua.table()
         textures[b"__loader"] = texture_loader

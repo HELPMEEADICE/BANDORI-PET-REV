@@ -17,13 +17,14 @@ from process_utils import (
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmapCache
 from PySide6.QtWidgets import QApplication
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
 from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
-from live2d_lua_adapter import live2d
+from live2d_lua_adapter import live2d_for_format
 from model_manager import (
     MODEL_FORMAT_MOC,
     MODEL_FORMAT_MOC3,
@@ -138,6 +139,7 @@ def main():
     ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
+    live2d = live2d_for_format(args.model_format)
     cfg = _STARTUP_CONFIG
     set_language(cfg.get("language", "") or detect_system_language())
 
@@ -146,6 +148,9 @@ def main():
     set_windows_app_user_model_id(APP_NAME)
 
     app = QApplication(sys.argv)
+    # Pet processes only need a handful of tray/window icons. The Qt default
+    # cache is sized for full desktop applications and is duplicated per pet.
+    QPixmapCache.setCacheLimit(2048)
     app.setWindowIcon(load_tray_icon())
     normal_shutdown_requested = threading.Event()
     install_parent_death_watch(
