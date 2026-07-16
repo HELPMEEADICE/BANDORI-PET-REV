@@ -1,3 +1,7 @@
+use crate::click_motion_profiles::{
+    ClickMotionProfileSummary, click_motion_profile_summaries,
+    normalized_active_click_motion_profile,
+};
 use crate::config::{ConfigDocument, ConfigError};
 use crate::model::{ModelCatalogEntry, ModelManager, ModelManagerPaths, ModelRoot};
 use serde::{Deserialize, Serialize};
@@ -20,6 +24,7 @@ pub struct ConfiguredPetSnapshot {
     pub drag_locked: bool,
     pub default_motion: String,
     pub default_expression: String,
+    pub click_motion_profile_name: String,
     pub click_motion_actions: Map<String, Value>,
 }
 
@@ -54,6 +59,8 @@ pub struct NativeRuntimeSnapshot {
     pub head_tracking_enabled: bool,
     pub mutual_gaze_enabled: bool,
     pub emotion_behavior_enabled: bool,
+    pub click_motion_active_profile: String,
+    pub click_motion_profiles: Vec<ClickMotionProfileSummary>,
     pub move_all_roles_together: bool,
     pub drag_locked: bool,
     pub poke_motion: String,
@@ -260,6 +267,8 @@ impl NativeRuntimeSnapshot {
                 let profile = model_action_profile(values, &character, &costume);
                 let default_motion = object_string(entry, "default_motion", "");
                 let default_expression = object_string(entry, "default_expression", "");
+                let click_motion_profile_name =
+                    object_string(entry, "click_motion_profile_name", "");
                 let click_motion_actions = entry
                     .get("click_motion_actions")
                     .and_then(Value::as_object)
@@ -297,6 +306,11 @@ impl NativeRuntimeSnapshot {
                         default_expression,
                         profile,
                         "default_expression",
+                    ),
+                    click_motion_profile_name: non_empty_or_profile(
+                        click_motion_profile_name,
+                        profile,
+                        "click_motion_profile_name",
                     ),
                     click_motion_actions,
                 })
@@ -350,6 +364,8 @@ impl NativeRuntimeSnapshot {
             head_tracking_enabled: bool_value(values, "live2d_head_tracking_enabled", true),
             mutual_gaze_enabled: bool_value(values, "live2d_mutual_gaze_enabled", false),
             emotion_behavior_enabled: bool_value(values, "emotion_behavior_enabled", true),
+            click_motion_active_profile: normalized_active_click_motion_profile(config),
+            click_motion_profiles: click_motion_profile_summaries(config),
             move_all_roles_together: bool_value(values, "move_all_roles_together", false),
             drag_locked: global_drag_locked,
             poke_motion: string_value(values, "poke_motion", ""),
@@ -535,6 +551,7 @@ mod tests {
                     "tomorin\tlive_01": {
                         "default_motion": "Idle",
                         "default_expression": "smile",
+                        "click_motion_profile_name": "genki",
                         "click_motion_actions": {"upper_body_center": "tap_body"}
                     }
                 },
@@ -574,11 +591,17 @@ mod tests {
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
         assert_eq!(snapshot.configured_pets[0].default_expression, "smile");
         assert_eq!(
+            snapshot.configured_pets[0].click_motion_profile_name,
+            "genki"
+        );
+        assert_eq!(
             snapshot.configured_pets[0].click_motion_actions["head"],
             "tap_head"
         );
         assert!(!serialized.contains("must-not-leak"));
         assert!(!serialized.contains("llm_api_key"));
+        assert_eq!(snapshot.click_motion_active_profile, "");
+        assert_eq!(snapshot.click_motion_profiles.len(), 7);
     }
 
     #[test]

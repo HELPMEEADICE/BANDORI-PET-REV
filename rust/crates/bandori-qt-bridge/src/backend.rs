@@ -73,6 +73,16 @@ pub mod ffi {
         ) -> QString;
 
         #[qinvokable]
+        #[cxx_name = "mutateClickMotionProfile"]
+        fn mutate_click_motion_profile(
+            self: Pin<&mut Self>,
+            project_root: &QString,
+            user_models_root: &QString,
+            config_path: &QString,
+            command_json: &QString,
+        ) -> bool;
+
+        #[qinvokable]
         #[cxx_name = "tickReminders"]
         fn tick_reminders(
             self: Pin<&mut Self>,
@@ -675,6 +685,7 @@ use bandori_core::chat_tools::{
     NativeToolCallAccumulator, NativeToolExecutionContext, NativeToolResult,
     chat_tool_followup_messages, execute_native_tool_call_with_context_async, native_tool_trace,
 };
+use bandori_core::click_motion_profiles::mutate_click_motion_profiles;
 use bandori_core::computer_tools::{NativeComputerSettings, is_computer_tool_name};
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
@@ -1188,6 +1199,53 @@ impl ffi::Backend {
             .and_then(|behavior| serde_json::to_string(&behavior).ok())
             .unwrap_or_else(|| "{}".to_owned());
         QString::from(&payload)
+    }
+
+    pub fn mutate_click_motion_profile(
+        mut self: Pin<&mut Self>,
+        project_root: &QString,
+        user_models_root: &QString,
+        config_path: &QString,
+        command_json: &QString,
+    ) -> bool {
+        let project_root = project_root.to_string();
+        let user_models_root = user_models_root.to_string();
+        let config_path = config_path.to_string();
+        let command_json = command_json.to_string();
+        let result = mutate_click_motion_profiles(
+            Path::new(&project_root),
+            Path::new(&user_models_root),
+            Path::new(&config_path),
+            &command_json,
+        );
+        match result.and_then(|message| {
+            DashboardSnapshot::load(
+                Path::new(&project_root),
+                Path::new(&user_models_root),
+                Path::new(&config_path),
+            )
+            .map(|snapshot| (message, snapshot))
+            .map_err(Into::into)
+        }) {
+            Ok((message, snapshot)) => {
+                let catalog_json = serde_json::to_string(&snapshot.model_catalog)
+                    .expect("model catalog serialization cannot fail");
+                let runtime_json = serde_json::to_string(&snapshot.runtime)
+                    .expect("native runtime snapshot serialization cannot fail");
+                self.as_mut().set_status(QString::from(&message));
+                self.as_mut()
+                    .set_model_catalog_json(QString::from(&catalog_json));
+                self.as_mut()
+                    .set_runtime_config_json(QString::from(&runtime_json));
+                true
+            }
+            Err(error) => {
+                self.as_mut().set_status(QString::from(&format!(
+                    "Click-motion profile error: {error}"
+                )));
+                false
+            }
+        }
     }
 
     pub fn tick_reminders(

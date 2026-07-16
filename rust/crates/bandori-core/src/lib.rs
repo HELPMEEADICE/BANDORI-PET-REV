@@ -12,6 +12,7 @@ pub mod chat_dashboard;
 pub mod chat_management;
 pub mod chat_prompt;
 pub mod chat_tools;
+pub mod click_motion_profiles;
 pub mod computer_tools;
 pub mod config;
 pub mod config_ffi;

@@ -262,6 +262,32 @@ def test_native_control_center_restores_and_debounces_legacy_chat_geometry():
     assert "void resizeEvent(QResizeEvent* event) override" in window_header
 
 
+def test_native_click_motion_profiles_are_rust_owned_editable_and_hot_applied():
+    profiles = source("rust/crates/bandori-core/src/click_motion_profiles.rs")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    pet = source("native/qt/pet_main.cpp")
+
+    assert "pub fn mutate_click_motion_profiles" in profiles
+    assert "pub fn click_motion_profile_summaries" in profiles
+    assert "builtins_and_custom_crud_persist_model_actions_and_active_profile" in profiles
+    assert '"click_motion_active_profile"' in profiles
+    assert '"model_action_settings"' in profiles
+    assert "click_motion_active_profile" in dashboard
+    assert "click_motion_profile_name" in dashboard
+    assert "mutateClickMotionProfile" in backend
+    assert "mutateClickMotionProfile" in generation
+    assert "qfw::ComboBox* clickMotionProfileComboBox_" in window_header
+    assert "saveCurrentClickMotionProfile" in window
+    assert "deleteSelectedClickMotionProfile" in window
+    assert "broadcastClickMotionSettings" in window
+    assert "supervisor_.broadcastSettings" in window
+    assert 'QStringLiteral("click_motion_actions")' in pet
+
+
 def test_native_chat_history_reads_existing_database_through_rust():
     core = source("rust/crates/bandori-core/src/chat_dashboard.rs")
     backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")

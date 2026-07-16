@@ -90,6 +90,13 @@ private:
     void applyBackendState();
     void populateModelList();
     void updateModelDetails();
+    void populateClickMotionProfiles();
+    void syncClickMotionProfileControls();
+    bool mutateSelectedClickMotionProfile(const QString& operation, const QString& name);
+    void applySelectedClickMotionProfile();
+    void saveCurrentClickMotionProfile();
+    void deleteSelectedClickMotionProfile();
+    void broadcastClickMotionSettings(const ModelCatalogItem& model);
     void populateChatCharacters();
     void populateReminderCharacters();
     void loadNativeReminderState();
@@ -284,6 +291,13 @@ private:
     qfw::CaptionLabel* modelCountLabel_ = nullptr;
     qfw::BodyLabel* modelDetailsLabel_ = nullptr;
     qfw::PrimaryPushButton* launchSelectedButton_ = nullptr;
+    qfw::ComboBox* clickMotionProfileComboBox_ = nullptr;
+    qfw::LineEdit* clickMotionProfileNameEdit_ = nullptr;
+    qfw::PushButton* clickMotionApplyButton_ = nullptr;
+    qfw::PushButton* clickMotionSaveButton_ = nullptr;
+    qfw::PushButton* clickMotionDeleteButton_ = nullptr;
+    qfw::CaptionLabel* clickMotionStatusLabel_ = nullptr;
+    bool updatingClickMotionControls_ = false;
     QWidget* chatPage_ = nullptr;
     qfw::ComboBox* chatModeComboBox_ = nullptr;
     QWidget* chatPrivateSelector_ = nullptr;

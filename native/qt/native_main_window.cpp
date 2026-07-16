@@ -32,6 +32,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QJsonArray>
@@ -141,6 +142,19 @@ QByteArray encodeWaveAudio(const QByteArray& pcm, const QAudioFormat& format) {
 
 QString currentLocalDateTime() {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+}
+
+bool isBuiltinClickMotionProfile(const QString& name) {
+    static const QSet<QString> names {
+        QStringLiteral("auto"),
+        QStringLiteral("genki"),
+        QStringLiteral("tsundere"),
+        QStringLiteral("shy"),
+        QStringLiteral("cool"),
+        QStringLiteral("surprised"),
+        QStringLiteral("random"),
+    };
+    return names.contains(name);
 }
 
 QString repeatDaysLabel(const QJsonArray& source) {
@@ -908,6 +922,47 @@ QWidget* NativeMainWindow::createModelsPage() {
     modelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     modelDetailsLabel_ = new qfw::BodyLabel(tr("Select a costume to inspect it"), page);
     modelDetailsLabel_->setWordWrap(true);
+    auto* clickProfiles = new qfw::GroupHeaderCardWidget(tr("Click behavior profile"), page);
+    auto* profileSelector = new QWidget(clickProfiles);
+    auto* profileSelectorLayout = new QHBoxLayout(profileSelector);
+    profileSelectorLayout->setContentsMargins(0, 0, 0, 0);
+    profileSelectorLayout->setSpacing(8);
+    clickMotionProfileComboBox_ = new qfw::ComboBox(profileSelector);
+    clickMotionProfileComboBox_->setMinimumWidth(220);
+    clickMotionApplyButton_ = new qfw::PushButton(tr("Apply to selected costume"), profileSelector);
+    profileSelectorLayout->addWidget(clickMotionProfileComboBox_, 1);
+    profileSelectorLayout->addWidget(clickMotionApplyButton_);
+
+    auto* customProfileEditor = new QWidget(clickProfiles);
+    auto* customProfileLayout = new QHBoxLayout(customProfileEditor);
+    customProfileLayout->setContentsMargins(0, 0, 0, 0);
+    customProfileLayout->setSpacing(8);
+    clickMotionProfileNameEdit_ = new qfw::LineEdit(customProfileEditor);
+    clickMotionProfileNameEdit_->setPlaceholderText(tr("Custom profile name"));
+    clickMotionProfileNameEdit_->setMaxLength(80);
+    clickMotionSaveButton_ = new qfw::PushButton(tr("Save current"), customProfileEditor);
+    clickMotionDeleteButton_ = new qfw::PushButton(tr("Delete custom"), customProfileEditor);
+    customProfileLayout->addWidget(clickMotionProfileNameEdit_, 1);
+    customProfileLayout->addWidget(clickMotionSaveButton_);
+    customProfileLayout->addWidget(clickMotionDeleteButton_);
+    clickMotionStatusLabel_ = new qfw::CaptionLabel(
+        tr("Choose a configured costume to manage click feedback"), clickProfiles);
+    clickMotionStatusLabel_->setWordWrap(true);
+    clickProfiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Play),
+        tr("Active profile"),
+        tr("Built-in presets are resolved against this model's motions and expressions in Rust"),
+        profileSelector);
+    clickProfiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save),
+        tr("Custom profiles"),
+        tr("Save the selected costume's current click map or remove a custom profile"),
+        customProfileEditor);
+    clickProfiles->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Info),
+        tr("Profile status"),
+        tr("Running pets receive the updated map through the shared Rust IPC session"),
+        clickMotionStatusLabel_);
     launchSelectedButton_ = new qfw::PrimaryPushButton(tr("Start selected model"), page);
     auto* reloadButton = new qfw::PushButton(tr("Rescan models"), page);
 
@@ -921,6 +976,7 @@ QWidget* NativeMainWindow::createModelsPage() {
     layout->addWidget(modelCountLabel_);
     layout->addWidget(modelList_, 1);
     layout->addWidget(modelDetailsLabel_);
+    layout->addWidget(clickProfiles);
     layout->addLayout(buttons);
 
     launchSelectedButton_->setEnabled(false);
@@ -930,6 +986,20 @@ QWidget* NativeMainWindow::createModelsPage() {
         this,
         [this](QListWidgetItem*, QListWidgetItem*) { updateModelDetails(); });
     connect(launchSelectedButton_, &QPushButton::clicked, this, [this]() { startSelectedPet(); });
+    connect(
+        clickMotionProfileComboBox_,
+        &qfw::ComboBox::currentIndexChanged,
+        this,
+        [this](int) { syncClickMotionProfileControls(); });
+    connect(clickMotionApplyButton_, &QPushButton::clicked, this, [this]() {
+        applySelectedClickMotionProfile();
+    });
+    connect(clickMotionSaveButton_, &QPushButton::clicked, this, [this]() {
+        saveCurrentClickMotionProfile();
+    });
+    connect(clickMotionDeleteButton_, &QPushButton::clicked, this, [this]() {
+        deleteSelectedClickMotionProfile();
+    });
     connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadBackendState(); });
     return page;
 }
@@ -3736,6 +3806,7 @@ void NativeMainWindow::applyBackendState() {
         }
     }
     populateModelList();
+    populateClickMotionProfiles();
     loadNativeUserProfiles();
     loadNativePersonaSettings();
     loadNativeHistoryFilters();
@@ -8071,11 +8142,173 @@ void NativeMainWindow::populateModelList() {
     }
 }
 
+void NativeMainWindow::populateClickMotionProfiles() {
+    if (clickMotionProfileComboBox_ == nullptr) {
+        return;
+    }
+    const std::optional<ModelCatalogItem> model = selectedModel();
+    const QString selectedName = model.has_value()
+        ? configuredPetFor(*model)
+              .value(QStringLiteral("click_motion_profile_name"))
+              .toString()
+        : QString();
+    const QHash<QString, QString> builtinLabels {
+        {QStringLiteral("auto"), tr("Automatic matching")},
+        {QStringLiteral("genki"), tr("Energetic")},
+        {QStringLiteral("tsundere"), tr("Tsundere")},
+        {QStringLiteral("shy"), tr("Shy")},
+        {QStringLiteral("cool"), tr("Cool")},
+        {QStringLiteral("surprised"), tr("Surprised")},
+        {QStringLiteral("random"), tr("Random")},
+    };
+
+    updatingClickMotionControls_ = true;
+    clickMotionProfileComboBox_->clear();
+    clickMotionProfileComboBox_->addItem(
+        tr("Current custom behavior"), QVariant(), QString());
+    for (const QJsonValue& value :
+         runtime_.value(QStringLiteral("click_motion_profiles")).toArray()) {
+        const QJsonObject profile = value.toObject();
+        const QString name = profile.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty()) {
+            continue;
+        }
+        const bool builtin = profile.value(QStringLiteral("is_builtin")).toBool(false);
+        const QString label = builtin
+            ? builtinLabels.value(name, name)
+            : name;
+        clickMotionProfileComboBox_->addItem(label, QVariant(), name);
+    }
+    int selectedIndex = clickMotionProfileComboBox_->findData(selectedName);
+    if (selectedIndex < 0) {
+        selectedIndex = 0;
+    }
+    clickMotionProfileComboBox_->setCurrentIndex(selectedIndex);
+    updatingClickMotionControls_ = false;
+    syncClickMotionProfileControls();
+}
+
+void NativeMainWindow::syncClickMotionProfileControls() {
+    if (clickMotionProfileComboBox_ == nullptr || updatingClickMotionControls_) {
+        return;
+    }
+    const std::optional<ModelCatalogItem> model = selectedModel();
+    const bool configured = model.has_value() && !configuredPetFor(*model).isEmpty();
+    const QString name = clickMotionProfileComboBox_->currentData().toString();
+    const bool builtin = isBuiltinClickMotionProfile(name);
+    clickMotionApplyButton_->setEnabled(configured);
+    clickMotionSaveButton_->setEnabled(configured);
+    clickMotionDeleteButton_->setEnabled(!name.isEmpty() && !builtin);
+    if (!builtin && !name.isEmpty()) {
+        clickMotionProfileNameEdit_->setText(name);
+    } else if (builtin) {
+        clickMotionProfileNameEdit_->clear();
+    }
+    if (!configured) {
+        clickMotionStatusLabel_->setText(
+            tr("This costume is not in the configured pet fleet; add it before editing behavior."));
+    } else if (name.isEmpty()) {
+        clickMotionStatusLabel_->setText(
+            tr("The selected costume keeps its current custom click map."));
+    } else {
+        clickMotionStatusLabel_->setText(
+            tr("Ready to apply profile “%1” to the selected costume.").arg(name));
+    }
+}
+
+bool NativeMainWindow::mutateSelectedClickMotionProfile(
+    const QString& operation,
+    const QString& name) {
+    const std::optional<ModelCatalogItem> model = selectedModel();
+    if (!model.has_value() && operation != QStringLiteral("delete")) {
+        clickMotionStatusLabel_->setText(tr("No model is selected"));
+        return false;
+    }
+    QJsonObject command {
+        {QStringLiteral("op"), operation},
+        {QStringLiteral("name"), name.trimmed()},
+    };
+    if (model.has_value()) {
+        command.insert(QStringLiteral("character"), model->character);
+        command.insert(QStringLiteral("costume"), model->costume);
+    }
+    if (!backend_.mutateClickMotionProfile(
+            projectRoot_, userModelsRoot_, configPath_, compactJson(command))) {
+        clickMotionStatusLabel_->setText(backend_.getStatus());
+        serviceStatusLabel_->setText(backend_.getStatus());
+        return false;
+    }
+    const QString status = backend_.getStatus();
+    applyBackendState();
+    if (model.has_value()) {
+        broadcastClickMotionSettings(*model);
+    }
+    clickMotionStatusLabel_->setText(status);
+    serviceStatusLabel_->setText(status);
+    return true;
+}
+
+void NativeMainWindow::applySelectedClickMotionProfile() {
+    mutateSelectedClickMotionProfile(
+        QStringLiteral("apply"),
+        clickMotionProfileComboBox_->currentData().toString());
+}
+
+void NativeMainWindow::saveCurrentClickMotionProfile() {
+    const QString name = clickMotionProfileNameEdit_->text().trimmed();
+    if (name.isEmpty()) {
+        clickMotionStatusLabel_->setText(tr("Enter a custom profile name first"));
+        return;
+    }
+    mutateSelectedClickMotionProfile(QStringLiteral("save_current"), name);
+}
+
+void NativeMainWindow::deleteSelectedClickMotionProfile() {
+    const QString name = clickMotionProfileComboBox_->currentData().toString();
+    if (name.isEmpty() || isBuiltinClickMotionProfile(name)) {
+        return;
+    }
+    if (QMessageBox::question(
+            this,
+            tr("Delete click profile"),
+            tr("Delete custom click profile “%1”? Existing model action maps are kept.").arg(name))
+        != QMessageBox::Yes) {
+        return;
+    }
+    mutateSelectedClickMotionProfile(QStringLiteral("delete"), name);
+}
+
+void NativeMainWindow::broadcastClickMotionSettings(const ModelCatalogItem& model) {
+    const QJsonObject configured = configuredPetFor(model);
+    const QString actionsJson = compactJson(
+        configured.value(QStringLiteral("click_motion_actions")).toObject());
+    for (PetLaunchSpec& spec : activeSpecs_) {
+        if (QDir::cleanPath(spec.modelPath) == QDir::cleanPath(model.path)) {
+            spec.clickMotionActions = actionsJson;
+        }
+    }
+    if (!supervisor_.isRunning()) {
+        return;
+    }
+    QJsonArray models;
+    for (const PetLaunchSpec& spec : std::as_const(activeSpecs_)) {
+        models.append(QJsonObject {
+            {QStringLiteral("character"), spec.character},
+            {QStringLiteral("path"), spec.modelPath},
+            {QStringLiteral("click_motion_actions"), parseObject(spec.clickMotionActions)},
+        });
+    }
+    supervisor_.broadcastSettings(compactJson(QJsonObject {
+        {QStringLiteral("models"), models},
+    }));
+}
+
 void NativeMainWindow::updateModelDetails() {
     const std::optional<ModelCatalogItem> model = selectedModel();
     launchSelectedButton_->setEnabled(model.has_value());
     if (!model.has_value()) {
         modelDetailsLabel_->setText(tr("No pet model was found in either model root"));
+        syncClickMotionProfileControls();
         return;
     }
     const QJsonObject configured = configuredPetFor(*model);
@@ -8095,6 +8328,7 @@ void NativeMainWindow::updateModelDetails() {
                     .arg(
                         mode == QStringLiteral("pixel") ? tr("pixel") : tr("Live2D"),
                         pixelAvailable ? tr("available") : tr("unavailable"))));
+    populateClickMotionProfiles();
 }
 
 void NativeMainWindow::populateChatCharacters() {
