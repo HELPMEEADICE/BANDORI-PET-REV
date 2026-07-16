@@ -4,6 +4,8 @@ qt_add_executable(bandori-pet-rust
     native_main_window.h
     native_autostart.cpp
     native_autostart.h
+    native_computer_input.cpp
+    native_computer_input.h
     pet_process_supervisor.cpp
     pet_process_supervisor.h
     shared_memory_line_queue.cpp
@@ -40,6 +42,11 @@ target_link_libraries(bandori-pet-rust PRIVATE
 
 if(WIN32)
     target_link_libraries(bandori-pet-rust PRIVATE advapi32 user32)
+elseif(APPLE)
+    target_link_libraries(bandori-pet-rust PRIVATE "-framework ApplicationServices")
+elseif(UNIX)
+    find_package(X11 REQUIRED COMPONENTS Xtst)
+    target_link_libraries(bandori-pet-rust PRIVATE X11::X11 X11::Xtst)
 endif()
 
 target_link_libraries(bandori-pet-renderer-rust PRIVATE

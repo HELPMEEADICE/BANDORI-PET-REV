@@ -740,6 +740,9 @@ def test_native_computer_use_is_permissioned_cancellable_and_qt_brokered():
     bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
     header = source("native/qt/native_main_window.h")
     window = source("native/qt/native_main_window.cpp")
+    input_driver = source("native/qt/native_computer_input.cpp")
+    input_header = source("native/qt/native_computer_input.h")
+    cmake = source("native/qt/CMakeLists.txt")
 
     assert "pub mod computer_tools;" in core
     assert "pub struct NativeComputerSettings" in computer
@@ -770,7 +773,20 @@ def test_native_computer_use_is_permissioned_cancellable_and_qt_brokered():
     assert "backend_.completeComputerTool" in window
     assert "QTimer::singleShot" in window
     assert "pendingComputerWaitRequests_.remove(requestId)" in window
-    assert "SendInput(" in window
+    assert '#include "native_computer_input.h"' in window
+    assert "bool nativeComputerMouseAction(" in input_header
+    assert "bool nativeComputerTypeText(" in input_header
+    assert "bool nativeComputerPressKeys(" in input_header
+    assert "SendInput(" in input_driver
+    assert "AXIsProcessTrusted()" in input_driver
+    assert "CGEventPost(kCGHIDEventTap" in input_driver
+    assert "XTestQueryExtension" in input_driver
+    assert "XTestFakeButtonEvent" in input_driver
+    assert "linux_wayland_unsupported" in input_driver
+    assert "Wayland does not permit portable global input injection" in input_driver
+    assert '"-framework ApplicationServices"' in cmake
+    assert "find_package(X11 REQUIRED COMPONENTS Xtst)" in cmake
+    assert "X11::X11 X11::Xtst" in cmake
     assert 'QStringLiteral("data:image/png;base64,")' in window
     assert "QPoint NativeMainWindow::mapNativeComputerPoint" in window
 

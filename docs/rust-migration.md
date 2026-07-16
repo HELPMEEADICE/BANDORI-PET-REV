@@ -184,10 +184,12 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   coordinates map correctly across scaled and negative-origin displays. The
   Qt-Fluent page keeps screenshot, mouse, keyboard, clipboard and wait permissions
   opt-in, while the system prompt blocks purchases, deletion, messaging,
-  publishing, login and security-setting changes. Windows has native pointer,
-  click, wheel and Unicode/shortcut injection. Non-Windows builds currently fail
-  closed for global click/keyboard injection; capture, pointer move, clipboard and
-  cancellable wait remain available there. The database layer now also starts private chat
+  publishing, login and security-setting changes. Windows uses SendInput, macOS
+  uses permission-gated Quartz events, and Linux X11 uses the XTest extension for
+  native pointer, click, wheel, text and shortcut injection. Wayland sessions fail
+  closed with an explicit unsupported-backend error because compositors do not
+  expose a portable global-input protocol; capture, clipboard and cancellable wait
+  remain available there. The database layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -426,9 +428,8 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   `--python-legacy` or `BANDORI_PET_PYTHON_FALLBACK=1`; native lookup can be
   overridden with `BANDORI_PET_NATIVE_APP_PATH`, and lookup failures never trigger
   a silent downgrade.
-- Pending: remaining native visual/driver parity, non-Windows Computer Use input
-  drivers, packaged offline ASR sidecar, release signing/notarization and
-  multi-platform package validation.
+- Pending: remaining native visual/driver parity, packaged offline ASR sidecar,
+  release signing/notarization and multi-platform package validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
