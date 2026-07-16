@@ -47,3 +47,28 @@ def test_archive_scan_cache_is_reused_and_invalidated_by_file_changes():
         ):
             ModelManager()
             assert read_archive.call_count == 1
+
+
+def test_lightweight_model_scan_reuses_archive_cache_for_character_images():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        archive = root / "kasumi.zst"
+        archive.write_bytes(b"archive")
+        result = _archive_result(archive)
+        result["image_path"] = f"{archive.resolve()}{VIRTUAL_SEP}character.png"
+
+        with (
+            patch("model_manager.model_search_dirs", return_value=[root]),
+            patch.object(ModelManager, "_read_model_archive", return_value=result),
+        ):
+            ModelManager()
+
+        with (
+            patch("model_manager.model_search_dirs", return_value=[root]),
+            patch("model_manager.list_archive_files", side_effect=AssertionError("archive was reopened")),
+        ):
+            manager = ModelManager(scan_models=False)
+
+        assert "kasumi" in manager.characters
+        with patch("model_manager.load_virtual_bytes", return_value=b"avatar"):
+            assert manager.get_character_image_data("kasumi") == b"avatar"

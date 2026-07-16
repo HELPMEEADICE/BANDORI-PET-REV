@@ -122,15 +122,20 @@ class ModelManager:
                     self._character_images[character] = image_path
                 self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=override)
 
+            archive_cache = self._load_archive_scan_cache(root)
             for entry in entries:
                 if not (entry.is_file() and entry.suffix.lower() == ".zst"):
                     continue
                 character = entry.stem
-                try:
-                    files = list_archive_files(entry)
-                    image_path = self._find_archive_character_image(entry, files, character)
-                except Exception:
-                    image_path = ""
+                cached_result = self._cached_archive_scan_result(entry, archive_cache)
+                if cached_result is not None:
+                    image_path = cached_result.get("image_path", "")
+                else:
+                    try:
+                        files = list_archive_files(entry)
+                        image_path = self._find_archive_character_image(entry, files, character)
+                    except Exception:
+                        image_path = ""
                 if image_path:
                     self._character_images[character] = image_path
                 self._merge_character_costumes(character, [{"id": "default", "path": ""}], override=True)
