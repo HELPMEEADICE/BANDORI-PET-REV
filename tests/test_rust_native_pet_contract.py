@@ -1223,6 +1223,61 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     assert "Exec=BandoriPet" in desktop
 
 
+def test_native_auto_start_is_cross_platform_and_transactional_with_config():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    auto_start_header = source("native/qt/native_autostart.h")
+    auto_start = source("native/qt/native_autostart.cpp")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    native_cmake = source("native/qt/CMakeLists.txt")
+
+    assert "pub auto_start: bool" in dashboard
+    assert "pub auto_start: Option<bool>" in dashboard
+    assert 'config.set("auto_start", Value::Bool(enabled))' in dashboard
+    assert "nativeAutoStartArguments" in auto_start_header
+    assert "Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run" in auto_start
+    assert "RegSetValueExW" in auto_start
+    assert "Library/LaunchAgents/io.github.helpeadice.bandoripet.plist" in auto_start
+    assert "QStandardPaths::ConfigLocation" in auto_start
+    assert "X-GNOME-Autostart-enabled=true" in auto_start
+    assert "QSaveFile" in auto_start
+    assert "autoStartSwitch_" in window_header
+    assert 'QStringLiteral("auto_start"), desiredAutoStart' in window
+    assert "applyNativeAutoStart(previousAutoStart" in window
+    assert "reconcileNativeAutoStart();" in window
+    assert "native_autostart.cpp" in native_cmake
+    assert "advapi32" in native_cmake
+
+
+def test_native_startup_migrates_legacy_mutable_data_before_opening_rust_state():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    migration = source("rust/crates/bandori-core/src/legacy_migration.rs")
+    ffi = source("rust/crates/bandori-core/src/config_ffi.rs")
+    ffi_header = source("native/qt/bandori_config_ffi.h")
+    main = source("native/qt/main.cpp")
+
+    assert "pub mod legacy_migration;" in core
+    assert "pub fn migrate_legacy_data(" in migration
+    assert "MAX_CONFIG_BYTES" in migration
+    assert "atomic_write" in migration
+    assert "atomic_copy" in migration
+    assert "wal_checkpoint(TRUNCATE)" in migration
+    assert "rebase_database_attachments" in migration
+    assert 'PathBuf::from("chat_attachments")' in migration
+    assert 'PathBuf::from("models")' in migration
+    assert 'Path::new(".runtime").join("chat_avatars")' in migration
+    assert "SymbolicLink" in migration
+    assert "MIGRATION_MARKER" in migration
+    assert "migration_copies_mutable_data_rebases_paths_and_is_idempotent" in migration
+    assert "bandori_config_migrate_legacy_data" in ffi
+    assert "bandori_config_migrate_legacy_data" in ffi_header
+    assert 'QStringLiteral("legacy-data-root")' in main
+    assert "discoverLegacyDataRoot" in main
+    assert "defaultPackagedDataRoot" in main
+    assert "bandori_config_migrate_legacy_data" in main
+    assert "return 3;" in main
+
+
 def test_native_loopback_integrations_are_bounded_redacted_and_pet_visible():
     core = source("rust/crates/bandori-core/src/lib.rs")
     integration = source("rust/crates/bandori-core/src/local_integration.rs")

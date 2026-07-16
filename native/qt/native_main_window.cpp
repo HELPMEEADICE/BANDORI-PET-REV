@@ -12,6 +12,8 @@
 
 #include "native_main_window.h"
 
+#include "native_autostart.h"
+
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
@@ -3371,7 +3373,13 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Apply light, dark or system appearance to Qt-Fluent-Widgets"),
         themeComboBox_);
     auto* behavior = new qfw::GroupHeaderCardWidget(tr("Application behavior"), content);
+    autoStartSwitch_ = new qfw::SwitchButton(behavior);
     birthdayNotificationsSwitch_ = new qfw::SwitchButton(behavior);
+    behavior->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Sync),
+        tr("Start with the desktop session"),
+        tr("Register this native executable for the current user on Windows, macOS or Linux"),
+        autoStartSwitch_);
     behavior->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
         tr("Birthday tray notifications"),
@@ -3664,6 +3672,7 @@ void NativeMainWindow::applyBackendState() {
             ? tr("Start %1 configured pets").arg(configured)
             : (configured == 1 ? tr("Start configured pet") : tr("No pet model available")));
     startConfiguredButton_->setEnabled(configured > 0);
+    reconcileNativeAutoStart();
 }
 
 void NativeMainWindow::populateReminderCharacters() {
@@ -7791,6 +7800,8 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true));
     mutualGazeSwitch_->setChecked(
         runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool());
+    autoStartSwitch_->setChecked(
+        runtime_.value(QStringLiteral("auto_start")).toBool(false));
     birthdayNotificationsSwitch_->setChecked(
         runtime_
             .value(QStringLiteral("birthday_tray_notifications_enabled"))
@@ -7802,15 +7813,51 @@ void NativeMainWindow::syncSettingsControls() {
     applyTheme(theme);
 }
 
+bool NativeMainWindow::applyNativeAutoStart(bool enabled, QString* error) {
+    return setNativeAutoStartEnabled(
+        enabled,
+        QCoreApplication::applicationFilePath(),
+        nativeAutoStartArguments(projectRoot_, dataRoot_, configPath_, userModelsRoot_),
+        error);
+}
+
+void NativeMainWindow::reconcileNativeAutoStart() {
+    const bool desired = runtime_.value(QStringLiteral("auto_start")).toBool(false);
+    QString error;
+    const bool alreadyEnabled = nativeAutoStartEnabled(
+        QCoreApplication::applicationFilePath(),
+        nativeAutoStartArguments(projectRoot_, dataRoot_, configPath_, userModelsRoot_),
+        &error);
+    if (desired && alreadyEnabled) {
+        return;
+    }
+    if (!applyNativeAutoStart(desired, &error)) {
+        serviceStatusLabel_->setText(
+            tr("Could not reconcile native auto-start: %1").arg(error));
+    }
+}
+
 void NativeMainWindow::saveNativeSettings() {
     const QString quality = qualityComboBox_->currentData().toString();
     const bool rendererRestartRequired =
         runtime_.value(QStringLiteral("vsync")).toBool(true) != vsyncSwitch_->isChecked()
         || runtime_.value(QStringLiteral("live2d_quality"))
                .toString(QStringLiteral("balanced")) != quality;
+    const bool desiredAutoStart = autoStartSwitch_->isChecked();
+    QString autoStartError;
+    const bool previousAutoStart = nativeAutoStartEnabled(
+        QCoreApplication::applicationFilePath(),
+        nativeAutoStartArguments(projectRoot_, dataRoot_, configPath_, userModelsRoot_),
+        &autoStartError);
+    if (!applyNativeAutoStart(desiredAutoStart, &autoStartError)) {
+        serviceStatusLabel_->setText(
+            tr("Could not update native auto-start: %1").arg(autoStartError));
+        return;
+    }
     const QJsonObject settings {
         {QStringLiteral("fps"), fpsSpinBox_->value()},
         {QStringLiteral("opacity"), opacitySpinBox_->value()},
+        {QStringLiteral("auto_start"), desiredAutoStart},
         {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
         {QStringLiteral("live2d_quality"), quality},
         {QStringLiteral("live2d_scale"), scaleSpinBox_->value()},
@@ -7826,7 +7873,13 @@ void NativeMainWindow::saveNativeSettings() {
     };
     const QString settingsJson = compactJson(settings);
     if (!backend_.saveNativeSettings(configPath_, settingsJson)) {
-        serviceStatusLabel_->setText(backend_.getStatus());
+        QString rollbackError;
+        const bool rolledBack = applyNativeAutoStart(previousAutoStart, &rollbackError);
+        serviceStatusLabel_->setText(
+            rolledBack
+                ? backend_.getStatus()
+                : tr("%1; auto-start rollback failed: %2")
+                      .arg(backend_.getStatus(), rollbackError));
         return;
     }
 

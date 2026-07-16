@@ -1,4 +1,5 @@
 use crate::config::{ConfigDocument, PetWindowState};
+use crate::legacy_migration::migrate_legacy_data;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -53,6 +54,41 @@ pub unsafe extern "C" fn bandori_config_save_pet_state(
     }
 }
 
+#[unsafe(no_mangle)]
+/// Copies a legacy Python data root into the native writable data root.
+///
+/// # Safety
+/// Both arguments must point to valid NUL-terminated UTF-8 strings for the
+/// duration of the call.
+pub unsafe extern "C" fn bandori_config_migrate_legacy_data(
+    legacy_root: *const c_char,
+    native_root: *const c_char,
+) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: pointers are checked before conversion and owned by caller.
+        let legacy_root = unsafe { required_string(legacy_root, "legacy_root") }?;
+        // SAFETY: pointers are checked before conversion and owned by caller.
+        let native_root = unsafe { required_string(native_root, "native_root") }?;
+        migrate_legacy_data(Path::new(&legacy_root), Path::new(&native_root))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }));
+    match result {
+        Ok(Ok(())) => {
+            clear_error();
+            true
+        }
+        Ok(Err(error)) => {
+            set_error(error);
+            false
+        }
+        Err(_) => {
+            set_error("panic while migrating legacy data");
+            false
+        }
+    }
+}
+
 unsafe fn required_string(value: *const c_char, label: &str) -> Result<String, String> {
     if value.is_null() {
         return Err(format!("{label} pointer is null"));
@@ -102,5 +138,33 @@ mod tests {
         assert_eq!(saved.get("window_x"), Some(&serde_json::json!(10)));
         assert_eq!(saved.get("drag_locked"), Some(&serde_json::json!(true)));
         assert_eq!(saved.get("models").unwrap()[0]["window_y"], 20);
+    }
+
+    #[test]
+    fn c_abi_migrates_legacy_data_and_reports_invalid_roots() {
+        let temp = tempdir().unwrap();
+        let legacy = temp.path().join("legacy");
+        let native = temp.path().join("native");
+        fs::create_dir(&legacy).unwrap();
+        fs::write(legacy.join("config.json"), b"{}").unwrap();
+        let legacy = CString::new(legacy.to_string_lossy().as_bytes()).unwrap();
+        let native = CString::new(native.to_string_lossy().as_bytes()).unwrap();
+        // SAFETY: both C strings remain live for the entire call.
+        assert!(unsafe { bandori_config_migrate_legacy_data(legacy.as_ptr(), native.as_ptr()) });
+        assert!(
+            Path::new(native.to_str().unwrap())
+                .join("config.json")
+                .is_file()
+        );
+
+        let missing =
+            CString::new(temp.path().join("missing").to_string_lossy().as_bytes()).unwrap();
+        // SAFETY: both C strings remain live for the entire call.
+        assert!(!unsafe { bandori_config_migrate_legacy_data(missing.as_ptr(), native.as_ptr()) });
+        // SAFETY: the error pointer remains owned by the thread-local slot.
+        let error = unsafe { CStr::from_ptr(bandori_config_last_error()) }
+            .to_str()
+            .unwrap();
+        assert!(!error.is_empty());
     }
 }

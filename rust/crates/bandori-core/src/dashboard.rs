@@ -35,6 +35,7 @@ pub struct NativeRuntimeSnapshot {
     pub pixel_window_x: i64,
     pub pixel_window_y: i64,
     pub language: String,
+    pub auto_start: bool,
     pub active_user_key: String,
     pub dark_theme: String,
     pub vsync: bool,
@@ -74,6 +75,7 @@ pub struct DashboardSnapshot {
 pub struct NativeSettingsUpdate {
     pub fps: Option<i64>,
     pub opacity: Option<f64>,
+    pub auto_start: Option<bool>,
     pub dark_theme: Option<String>,
     pub vsync: Option<bool>,
     pub live2d_quality: Option<String>,
@@ -119,6 +121,9 @@ impl NativeSettingsUpdate {
         }
         if let Some(opacity) = self.opacity {
             config.set("opacity", Value::from(opacity.clamp(0.05, 1.0)));
+        }
+        if let Some(enabled) = self.auto_start {
+            config.set("auto_start", Value::Bool(enabled));
         }
         if let Some(theme) = self.dark_theme {
             let theme = theme.trim().to_ascii_lowercase();
@@ -300,6 +305,7 @@ impl NativeRuntimeSnapshot {
             pixel_window_x: int_value(values, "pixel_window_x", -1),
             pixel_window_y: int_value(values, "pixel_window_y", -1),
             language: string_value(values, "language", ""),
+            auto_start: bool_value(values, "auto_start", false),
             active_user_key,
             dark_theme: string_value(values, "dark_theme", "follow_system"),
             vsync: bool_value(values, "vsync", true),
@@ -613,6 +619,7 @@ mod tests {
             r#"{
                 "fps": 999,
                 "opacity": 0.01,
+                "auto_start": true,
                 "dark_theme": "on",
                 "vsync": false,
                 "live2d_quality": "performance",
@@ -632,6 +639,7 @@ mod tests {
         let saved: Value = serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
         assert_eq!(runtime.fps, 240);
         assert_eq!(runtime.opacity, 0.05);
+        assert!(runtime.auto_start);
         assert_eq!(runtime.dark_theme, "on");
         assert!(!runtime.vsync);
         assert_eq!(runtime.live2d_quality, "performance");
@@ -643,6 +651,7 @@ mod tests {
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert!(!runtime.birthday_tray_notifications_enabled);
         assert_eq!(saved["llm_api_key"], "keep-me");
+        assert_eq!(saved["auto_start"], true);
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);

@@ -13,6 +13,7 @@
 #include <qtfluentwidgets.h>
 
 #include "native_main_window.h"
+#include "bandori_config_ffi.h"
 
 namespace {
 
@@ -47,6 +48,42 @@ QString discoverBandoriResourceRoot() {
 bool isPackagedResourceRoot(const QString& path) {
     return QFileInfo::exists(
         QDir(path).filePath(QStringLiteral(".bandoripet-native-package")));
+}
+
+bool hasLegacyMutableData(const QString& path) {
+    const QDir root(path);
+    return QFileInfo::exists(root.filePath(QStringLiteral("config.json")))
+        || QFileInfo::exists(root.filePath(QStringLiteral("data.db")));
+}
+
+bool equivalentPath(const QString& left, const QString& right) {
+    QString normalizedLeft = QDir::cleanPath(QFileInfo(left).absoluteFilePath());
+    QString normalizedRight = QDir::cleanPath(QFileInfo(right).absoluteFilePath());
+#ifdef Q_OS_WIN
+    normalizedLeft = normalizedLeft.toCaseFolded();
+    normalizedRight = normalizedRight.toCaseFolded();
+#endif
+    return normalizedLeft == normalizedRight;
+}
+
+QString discoverLegacyDataRoot(const QString& projectRoot, const QString& nativeDataRoot) {
+    if (hasLegacyMutableData(nativeDataRoot)) {
+        return {};
+    }
+    QStringList candidates {
+        QCoreApplication::applicationDirPath(),
+        projectRoot,
+    };
+#ifdef Q_OS_MACOS
+    candidates.append(QDir::home().filePath(
+        QStringLiteral("Library/Application Support/BandoriPet")));
+#endif
+    for (const QString& candidate : std::as_const(candidates)) {
+        if (!equivalentPath(candidate, nativeDataRoot) && hasLegacyMutableData(candidate)) {
+            return QDir(candidate).absolutePath();
+        }
+    }
+    return {};
 }
 
 }  // namespace
@@ -148,6 +185,10 @@ int main(int argc, char* argv[]) {
         QStringLiteral("user-models"),
         QStringLiteral("Writable user model directory"),
         QStringLiteral("path"));
+    QCommandLineOption legacyDataRoot(
+        QStringLiteral("legacy-data-root"),
+        QStringLiteral("Explicit legacy Python data root to migrate before native startup"),
+        QStringLiteral("path"));
     parser.addOptions(
         {petModel,
          petFormat,
@@ -169,7 +210,8 @@ int main(int argc, char* argv[]) {
          projectRoot,
          dataRoot,
          configPathOption,
-         userModels});
+         userModels,
+         legacyDataRoot});
     parser.process(app);
 
     Q_INIT_RESOURCE(resource);
@@ -178,6 +220,11 @@ int main(int argc, char* argv[]) {
     const QString resolvedProjectRoot = parser.isSet(projectRoot)
         ? QDir(parser.value(projectRoot)).absolutePath()
         : discoverBandoriResourceRoot();
+    const bool defaultPackagedDataRoot =
+        !parser.isSet(projectRoot)
+        && !parser.isSet(dataRoot)
+        && !parser.isSet(configPathOption)
+        && isPackagedResourceRoot(resolvedProjectRoot);
     QString resolvedDataRoot;
     if (parser.isSet(dataRoot)) {
         resolvedDataRoot = QDir(parser.value(dataRoot)).absolutePath();
@@ -192,6 +239,30 @@ int main(int argc, char* argv[]) {
     if (resolvedDataRoot.isEmpty() || !QDir().mkpath(resolvedDataRoot)) {
         qCritical("Could not create the BandoriPet data directory");
         return 2;
+    }
+    QString resolvedLegacyDataRoot;
+    if (parser.isSet(legacyDataRoot)) {
+        resolvedLegacyDataRoot = QDir(parser.value(legacyDataRoot)).absolutePath();
+        if (!hasLegacyMutableData(resolvedLegacyDataRoot)) {
+            qCritical().noquote()
+                << "Explicit legacy data root does not contain config.json or data.db:"
+                << resolvedLegacyDataRoot;
+            return 3;
+        }
+    } else if (defaultPackagedDataRoot) {
+        resolvedLegacyDataRoot =
+            discoverLegacyDataRoot(resolvedProjectRoot, resolvedDataRoot);
+    }
+    if (!resolvedLegacyDataRoot.isEmpty()) {
+        const QByteArray legacyPath = resolvedLegacyDataRoot.toUtf8();
+        const QByteArray nativePath = resolvedDataRoot.toUtf8();
+        if (!bandori_config_migrate_legacy_data(
+                legacyPath.constData(), nativePath.constData())) {
+            qCritical().noquote()
+                << "Could not migrate legacy BandoriPet data:"
+                << QString::fromUtf8(bandori_config_last_error());
+            return 3;
+        }
     }
     const QString configPath = parser.isSet(configPathOption)
         ? QFileInfo(parser.value(configPathOption)).absoluteFilePath()

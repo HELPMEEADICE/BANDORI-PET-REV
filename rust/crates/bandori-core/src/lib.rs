@@ -23,6 +23,7 @@ pub mod group_chat;
 pub mod history_dashboard;
 pub mod ipc;
 pub mod ipc_ffi;
+pub mod legacy_migration;
 pub mod llm_settings;
 pub mod local_integration;
 pub mod mcp_tools;

@@ -381,6 +381,17 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   source-tree and portable workflows available. Repository models are excluded by
   default to avoid an accidental 1.4 GB package and can be included deliberately
   with `-DBANDORI_PET_PACKAGE_BUNDLED_MODELS=ON`.
+  On first packaged startup, Rust detects the former Python data root and migrates
+  `config.json`, a checkpointed SQLite database, attachments, downloaded/custom
+  models and runtime chat avatars before any native repository opens. Controlled
+  paths in configuration and attachment JSON are rebased to AppData; file writes
+  are atomic, symbolic links fail closed, and a versioned marker makes the copy
+  idempotent. `--legacy-data-root` provides an explicit recovery/import source.
+  Native auto-start is also restored end to end: the Rust settings whitelist owns
+  `auto_start`, the Qt-Fluent page applies it transactionally with config saving,
+  and the platform layer uses the current-user Windows Run key, a macOS
+  LaunchAgent, or an XDG autostart desktop entry. Saved registrations include all
+  resource/data/config/model-root overrides and are repaired on native startup.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

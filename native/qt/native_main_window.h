@@ -79,6 +79,8 @@ private:
     bool reloadBackendState();
     void syncSettingsControls();
     void saveNativeSettings();
+    bool applyNativeAutoStart(bool enabled, QString* error = nullptr);
+    void reconcileNativeAutoStart();
     void applyTheme(const QString& mode);
     void applyBackendState();
     void populateModelList();
@@ -582,6 +584,7 @@ private:
     qfw::SwitchButton* moveTogetherSwitch_ = nullptr;
     qfw::SwitchButton* headTrackingSwitch_ = nullptr;
     qfw::SwitchButton* mutualGazeSwitch_ = nullptr;
+    qfw::SwitchButton* autoStartSwitch_ = nullptr;
     qfw::SwitchButton* birthdayNotificationsSwitch_ = nullptr;
     qfw::ComboBox* themeComboBox_ = nullptr;
     qfw::PrimaryPushButton* saveSettingsButton_ = nullptr;
