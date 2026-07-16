@@ -1,0 +1,245 @@
+name: Native Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      require_signing:
+        description: Fail unless Windows and macOS signing credentials are available
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  QT_VERSION: "6.8.*"
+
+jobs:
+  package:
+    name: ${{ matrix.name }} release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2025
+            platform: windows
+          - name: macOS arm64
+            os: macos-15
+            platform: macos
+          - name: Linux x64
+            os: ubuntu-24.04
+            platform: linux
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+      - name: Verify tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          if tag != version:
+              raise SystemExit(f"release tag v{tag} does not match VERSION={version}")
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgl1-mesa-dev \
+            libpulse-dev \
+            libx11-dev \
+            libxtst-dev \
+            ninja-build
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: "qtmultimedia qtwebsockets"
+          cache: true
+      - name: Configure native build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-rust -A x64
+      - name: Configure native build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build-rust -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build native application
+        run: cmake --build build-rust --config Release --parallel
+      - name: Install and smoke-test unsigned staging tree
+        run: |
+          cmake --install build-rust --config Release --prefix native-stage
+          python tools/validate_native_install.py native-stage --platform ${{ matrix.platform }}
+      - name: Package and Authenticode-sign Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SIGNING_REQUIRED: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.require_signing) && '1' || '0' }}
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -and
+            -not [string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)
+          if (-not $hasCertificate -and $env:SIGNING_REQUIRED -eq '1') {
+            throw 'Windows signing credentials are required for this release'
+          }
+          $env:BANDORI_SIGNING_REQUIRED = $env:SIGNING_REQUIRED
+          if ($hasCertificate) {
+            $certificatePath = Join-Path $env:RUNNER_TEMP 'bandoripet-signing.pfx'
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
+            )
+            $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+              -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+              Sort-Object FullName |
+              Select-Object -Last 1
+            if ($null -eq $signTool) { throw 'signtool.exe was not found' }
+            $env:PATH = "$($signTool.DirectoryName);$env:PATH"
+            $env:BANDORI_WINDOWS_CERTIFICATE_PATH = $certificatePath
+            $env:BANDORI_WINDOWS_CERTIFICATE_PASSWORD = $env:CERTIFICATE_PASSWORD
+          }
+          cmake --build build-rust --config Release --target package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($hasCertificate) {
+            Get-ChildItem build-rust -Filter 'BandoriPet-*.exe' | ForEach-Object {
+              & $signTool.FullName sign /fd SHA256 /td SHA256 `
+                /tr http://timestamp.digicert.com `
+                /f $certificatePath /p $env:CERTIFICATE_PASSWORD $_.FullName
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              & $signTool.FullName verify /pa /all $_.FullName
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
+      - name: Package, sign, notarize and staple macOS release
+        if: runner.os == 'macOS'
+        env:
+          SIGNING_REQUIRED: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.require_signing) && '1' || '0' }}
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          required=(CERTIFICATE_BASE64 CERTIFICATE_PASSWORD SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD)
+          has_credentials=1
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then has_credentials=0; fi
+          done
+          if [ "$has_credentials" -eq 0 ] && [ "$SIGNING_REQUIRED" = "1" ]; then
+            echo "macOS signing and notarization credentials are required" >&2
+            exit 1
+          fi
+          export BANDORI_SIGNING_REQUIRED="$SIGNING_REQUIRED"
+          if [ "$has_credentials" -eq 1 ]; then
+            certificate_path="$RUNNER_TEMP/bandoripet-signing.p12"
+            keychain_path="$RUNNER_TEMP/bandoripet-signing.keychain-db"
+            keychain_password="$(uuidgen)"
+            printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+            security create-keychain -p "$keychain_password" "$keychain_path"
+            security set-keychain-settings -lut 21600 "$keychain_path"
+            security unlock-keychain -p "$keychain_password" "$keychain_path"
+            security import "$certificate_path" -k "$keychain_path" \
+              -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s \
+              -k "$keychain_password" "$keychain_path"
+            security list-keychains -d user -s "$keychain_path"
+            export BANDORI_MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+            trap 'security delete-keychain "$keychain_path" || true' EXIT
+          fi
+          cmake --build build-rust --config Release --target package
+          if [ "$has_credentials" -eq 1 ]; then
+            for package in build-rust/BandoriPet-*.dmg; do
+              xcrun notarytool submit "$package" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                --wait
+              xcrun stapler staple "$package"
+              xcrun stapler validate "$package"
+            done
+          fi
+      - name: Package Linux release
+        if: runner.os == 'Linux'
+        run: cmake --build build-rust --config Release --target package
+      - name: Collect release packages and checksums
+        run: python tools/collect_native_packages.py build-rust native-packages
+      - name: Verify Windows package containers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem native-packages -Filter '*.zip' | ForEach-Object {
+            & 7z t $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Get-ChildItem native-packages -Filter '*.exe' | ForEach-Object {
+            & 7z t $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Verify macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          for package in native-packages/*.dmg; do
+            hdiutil verify "$package"
+          done
+      - name: Verify Linux package containers and checksums
+        if: runner.os == 'Linux'
+        run: |
+          cd native-packages
+          sha256sum --check SHA256SUMS
+          tar --list --gzip --file BandoriPet-*.tar.gz >/dev/null
+          dpkg-deb --info BandoriPet-*.deb >/dev/null
+      - name: Attest release provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: native-packages/BandoriPet-*
+      - name: Upload release packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-release-${{ matrix.platform }}
+          path: native-packages/
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-release-*
+          path: dist
+          merge-multiple: true
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

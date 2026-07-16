@@ -1368,6 +1368,11 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     supervisor_header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")
     desktop = source("packaging/linux/bandoripet.desktop")
+    signing = source("packaging/cmake/sign_native_payload.cmake")
+    ci = source(".github/workflows/native-ci.yml")
+    release = source(".github/workflows/native-release.yml")
+    validate_install = source("tools/validate_native_install.py")
+    collect_packages = source("tools/collect_native_packages.py")
     version = source("VERSION").strip()
 
     assert "third_party/Qt-Fluent-Widgets" in submodules
@@ -1382,6 +1387,23 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     assert 'set(CPACK_GENERATOR "ZIP;NSIS")' in cmake
     assert 'set(CPACK_GENERATOR "DragNDrop")' in cmake
     assert 'set(CPACK_GENERATOR "TGZ;DEB")' in cmake
+    assert "CPACK_PRE_BUILD_SCRIPTS" in cmake
+    assert "BANDORI_SIGNING_REQUIRED" in signing
+    assert "signtool" in signing
+    assert "--options runtime" in signing
+    assert "windows-2025" in ci
+    assert "macos-15" in ci
+    assert "ubuntu-24.04" in ci
+    assert "validate_native_install.py" in ci
+    assert "collect_native_packages.py" in ci
+    assert "WINDOWS_SIGNING_CERTIFICATE_BASE64" in release
+    assert "MACOS_SIGNING_CERTIFICATE_BASE64" in release
+    assert "notarytool submit" in release
+    assert "actions/attest@v4" in release
+    assert "gh release upload" in release
+    assert "BandoriPet Rust + Qt migration shell" in validate_install
+    assert "native install unexpectedly contains Python runtime payloads" in validate_install
+    assert 'output_root / "SHA256SUMS"' in collect_packages
     assert "qt_generate_deploy_app_script" in native_cmake
     assert "MACOSX_BUNDLE_GUI_IDENTIFIER" in native_cmake
     assert "INSTALL_RPATH" in native_cmake

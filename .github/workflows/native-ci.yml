@@ -1,0 +1,137 @@
+name: Native CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  QT_VERSION: "6.8.*"
+
+jobs:
+  contracts:
+    name: Rust and compatibility contracts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+          components: rustfmt
+      - name: Install contract-test runner
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check generated Python compatibility contracts
+        run: python tools/export_rust_contracts.py --check
+      - name: Test native static contracts
+        run: python -m pytest tests/test_rust_native_pet_contract.py -q
+      - name: Test Rust services and Live2D host
+        run: cargo test --workspace --exclude bandori-qt-bridge --locked
+
+  package:
+    name: ${{ matrix.name }} native package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2025
+            platform: windows
+          - name: macOS arm64
+            os: macos-15
+            platform: macos
+          - name: Linux x64
+            os: ubuntu-24.04
+            platform: linux
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            libgl1-mesa-dev \
+            libpulse-dev \
+            libx11-dev \
+            libxtst-dev \
+            ninja-build
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: "qtmultimedia qtwebsockets"
+          cache: true
+      - name: Configure native build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build-rust -A x64
+      - name: Configure native build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build-rust -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build native application
+        run: cmake --build build-rust --config Release --parallel
+      - name: Install native staging tree
+        run: cmake --install build-rust --config Release --prefix native-stage
+      - name: Validate installed runtime and help smoke
+        run: python tools/validate_native_install.py native-stage --platform ${{ matrix.platform }}
+      - name: Build unsigned validation packages
+        run: cmake --build build-rust --config Release --target package
+      - name: Collect packages and checksums
+        run: python tools/collect_native_packages.py build-rust native-packages
+      - name: Verify Windows package containers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem native-packages -Filter '*.zip' | ForEach-Object {
+            & 7z t $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Get-ChildItem native-packages -Filter '*.exe' | ForEach-Object {
+            & 7z t $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Verify macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          for package in native-packages/*.dmg; do
+            hdiutil verify "$package"
+          done
+      - name: Verify Linux package containers and checksums
+        if: runner.os == 'Linux'
+        run: |
+          cd native-packages
+          sha256sum --check SHA256SUMS
+          tar --list --gzip --file BandoriPet-*.tar.gz >/dev/null
+          dpkg-deb --info BandoriPet-*.deb >/dev/null
+      - name: Upload native packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.platform }}-${{ github.sha }}
+          path: native-packages/
+          if-no-files-found: error
+          retention-days: 14
