@@ -112,6 +112,20 @@ def test_successful_draw_resets_failure_count_and_failure_logs_are_throttled(mon
     assert capsys.readouterr().err.count("Live2D draw failed: intermittent renderer") == 1
 
 
+def test_first_successful_draw_compacts_transient_lua_texture_memory(monkeypatch):
+    monkeypatch.setattr(live2d_widget_base, "gl", _FakeGL())
+    compact_calls = []
+    harness = _PaintHarness([None, None])
+    harness._live2d = SimpleNamespace(compact_memory=lambda: compact_calls.append(True))
+    harness._compact_memory_after_frame = True
+
+    _paint(harness)
+    _paint(harness)
+
+    assert compact_calls == [True]
+    assert harness._compact_memory_after_frame is False
+
+
 def test_render_failure_state_can_be_reset_after_suspension():
     harness = _PaintHarness([])
     harness._render_failure_suspended = True

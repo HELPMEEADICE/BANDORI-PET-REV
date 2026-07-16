@@ -139,6 +139,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._consecutive_draw_failures = 0
         self._render_failure_suspended = False
         self._last_draw_failure_log_at = 0.0
+        self._compact_memory_after_frame = False
         self._clear_color = (0.0, 0.0, 0.0, 0.0)
         self._lip_sync_level = 0.0
         self._lip_sync_target = 0.0
@@ -296,6 +297,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._live2d = module
 
     def dispose(self):
+        self._compact_memory_after_frame = False
         if self._initialized_gl:
             self._initialized_gl = False
             self._safe_make_current()
@@ -310,6 +312,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         """Release model CPU/GPU state while keeping the widget reusable."""
 
         self._render_timer.stop()
+        self._compact_memory_after_frame = False
         if self._initialized_gl:
             self._safe_make_current()
         self._dispose_model_renderer()
@@ -336,6 +339,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
         self._model_logical_size = None
+        self._compact_memory_after_frame = False
         if self._ssaa_fbo is not None:
             self._ssaa_fbo.dispose()
             self._ssaa_fbo = None
@@ -442,6 +446,10 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._apply_physical_viewport(self._cache_w, self._cache_h)
             
             self._model_path = model_json_path
+            # MOC3 uploads textures lazily on the first draw. Run one full Lua
+            # collection immediately afterwards so decoded texture buffers and
+            # the previous renderer do not linger until an arbitrary GC cycle.
+            self._compact_memory_after_frame = True
             self._reset_render_failure_state()
             self._update_render_timer()
             self.model_loaded.emit()
@@ -449,6 +457,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             print(f"Failed to load model: {e}", file=sys.stderr)
             self._dispose_model_renderer()
             self._model_path = ""
+            self._compact_memory_after_frame = False
             if self._custom_hit_areas is not None:
                 self._custom_hit_areas.clear()
             self._update_render_timer()
@@ -883,6 +892,9 @@ class Live2DWidgetBase(QOpenGLWidget):
                         target_h,
                         self._clear_color,
                     )
+            if getattr(self, "_compact_memory_after_frame", False):
+                Live2DWidgetBase._compact_live2d_memory(self)
+                self._compact_memory_after_frame = False
         except Exception as exc:
             if using_ssaa:
                 try:
@@ -923,6 +935,15 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._perf_probe.add("paintGL", paint_elapsed)
             self._perf_probe.add("qt_gl_overhead_est", max(0.0, paint_elapsed - draw_elapsed))
             self._perf_probe.frame()
+
+    def _compact_live2d_memory(self):
+        compact = getattr(self._live2d, "compact_memory", None)
+        if not callable(compact):
+            return
+        try:
+            compact()
+        except Exception:
+            pass
 
     def _apply_lip_sync(self):
         now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0

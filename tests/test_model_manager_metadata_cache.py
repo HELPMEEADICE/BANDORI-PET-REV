@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from model_manager import ModelManager
+from model_manager import ModelManager, _MODEL_JSON_CACHE_LIMIT
 
 
 class ModelManagerMetadataCacheTest(unittest.TestCase):
@@ -18,6 +18,22 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
             self.assertEqual(["angry", "smile"], manager.get_expression_names("kasumi", "live_default"))
 
         self.assertEqual(1, load_json.call_count)
+
+    def test_model_json_cache_is_lru_bounded(self):
+        manager = ModelManager(scan_models=False)
+        paths = [f"models.zst::costume_{index}/model.json" for index in range(_MODEL_JSON_CACHE_LIMIT + 2)]
+
+        with mock.patch("model_manager.load_virtual_json", side_effect=lambda path: {"path": path}):
+            for path in paths[:_MODEL_JSON_CACHE_LIMIT]:
+                manager._read_model_json(path)
+            manager._read_model_json(paths[0])
+            manager._read_model_json(paths[_MODEL_JSON_CACHE_LIMIT])
+            manager._read_model_json(paths[_MODEL_JSON_CACHE_LIMIT + 1])
+
+        self.assertEqual(_MODEL_JSON_CACHE_LIMIT, len(manager._model_json_cache))
+        self.assertIn(paths[0], manager._model_json_cache)
+        self.assertNotIn(paths[1], manager._model_json_cache)
+        self.assertNotIn(paths[2], manager._model_json_cache)
 
     def test_scans_do_not_preflight_model_directories(self):
         manager = ModelManager.__new__(ModelManager)

@@ -621,18 +621,18 @@ class LuaLive2DRuntimeBase:
                 _safe_model_file_path(archive_path)
                 entry[b"path"] = normalized_path.encode("utf-8")
                 raw_bytes = consume_virtual_bytes(normalized_path)
-                entry[b"bytes"] = raw_bytes
             else:
                 fs_path = _safe_model_file_path(normalized_path)
                 entry[b"path"] = fs_path.as_posix().encode("utf-8")
                 if decode_textures:
                     raw_bytes = fs_path.read_bytes()
-                    entry[b"bytes"] = raw_bytes
             if decode_textures and raw_bytes is not None:
                 width, height, rgba = _decode_texture_rgba(raw_bytes)
                 entry[b"width"] = int(width)
                 entry[b"height"] = int(height)
                 entry[b"data"] = rgba
+            elif raw_bytes is not None:
+                entry[b"bytes"] = raw_bytes
             entry[b"scale"] = scale
             entry[b"mipmap"] = use_mipmap
             entry[b"bleed_passes"] = bleed_passes

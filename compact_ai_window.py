@@ -1012,6 +1012,9 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._apply_relationship_update(clean, acts)
         for action in acts:
             self.action_triggered.emit(action)
+        self._stream_text = ""
+        self._thinking_text = ""
+        self._current_response_actions = []
         self._worker = None
         self._set_busy(False)
         self._input.setFocus()

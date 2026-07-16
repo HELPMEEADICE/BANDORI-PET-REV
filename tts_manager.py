@@ -893,6 +893,9 @@ class TTSPlayer(QObject):
             playback_active = self._playback_active
             if done and level < 0.01:
                 self._playback_active = False
+                self._current_chunk = None
+                self._current_visemes = ()
+                self._current_pos = 0
         if done and level < 0.01:
             self._level_timer.stop()
             self.level_changed.emit(0.0)

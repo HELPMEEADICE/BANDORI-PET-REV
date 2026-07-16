@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import zst_model_archive
 
@@ -19,6 +20,18 @@ class ZstModelArchiveMoc3Test(unittest.TestCase):
             self.assertEqual(payload, zst_model_archive.consume_virtual_bytes(virtual_path))
             self.assertEqual(0, zst_model_archive._VIRTUAL_BYTE_CACHE_BYTES)
             self.assertNotIn(virtual_path, zst_model_archive._VIRTUAL_BYTE_CACHE)
+
+    def test_virtual_byte_cache_always_respects_byte_limit(self):
+        with (
+            mock.patch.object(zst_model_archive, "_VIRTUAL_BYTE_CACHE_MAX_BYTES", 6),
+            mock.patch.object(zst_model_archive, "_VIRTUAL_BYTE_CACHE_MAX_ITEMS", 8),
+        ):
+            zst_model_archive._store_virtual_bytes("first", b"1234")
+            zst_model_archive._store_virtual_bytes("second", b"5678")
+
+        self.assertLessEqual(zst_model_archive._VIRTUAL_BYTE_CACHE_BYTES, 6)
+        self.assertNotIn("first", zst_model_archive._VIRTUAL_BYTE_CACHE)
+        self.assertEqual(b"5678", zst_model_archive._VIRTUAL_BYTE_CACHE["second"])
 
     def test_model_resource_members_include_model3_file_references(self):
         model_json = {

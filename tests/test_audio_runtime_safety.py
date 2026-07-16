@@ -36,6 +36,21 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
         self.assertTrue(player._queue.empty())
         self.assertTrue(player.is_idle())
 
+    def test_tts_releases_completed_decoded_audio_chunk(self):
+        player = TTSPlayer()
+        player._current_chunk = np.ones((32000, 1), dtype="float32")
+        player._current_visemes = ((32000, 0.5, 0.0),)
+        player._current_pos = len(player._current_chunk)
+        player._playback_active = True
+        player._level = 0.0
+
+        player._emit_level()
+
+        self.assertIsNone(player._current_chunk)
+        self.assertEqual((), player._current_visemes)
+        self.assertEqual(0, player._current_pos)
+        self.assertTrue(player.is_idle())
+
     def test_only_protocol_rejections_cache_streaming_incompatibility(self):
         self.assertTrue(tts_manager._streaming_failure_is_incompatible(400))
         self.assertTrue(tts_manager._streaming_failure_is_incompatible(415))

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -30,6 +31,7 @@ MODEL_FORMAT_MOC = "moc"
 MODEL_FORMAT_MOC3 = "moc3"
 ARCHIVE_SCAN_CACHE_NAME = ".bandori_model_index.json"
 ARCHIVE_SCAN_CACHE_VERSION = 1
+_MODEL_JSON_CACHE_LIMIT = 32
 
 
 def models_dir_exists() -> bool:
@@ -81,7 +83,7 @@ class ModelManager:
         self._costume_names: dict[str, dict[str, str]] = {}
         self._bands: list[dict] = []
         self._advanced_roleplay_cache: dict[str, bool] | None = None
-        self._model_json_cache: dict[str, dict] = {}
+        self._model_json_cache: OrderedDict[str, dict] = OrderedDict()
         if discover_models:
             if scan_models:
                 self._scan()
@@ -100,7 +102,7 @@ class ModelManager:
         self._costume_names = {}
         self._bands = []
         self._advanced_roleplay_cache = None
-        self._model_json_cache = {}
+        self._model_json_cache = OrderedDict()
         self._scan()
         self._parse_outfit_json()
         self._parse_band_json()
@@ -568,12 +570,15 @@ class ModelManager:
     def _read_model_json(self, path: str) -> dict:
         cached = self._model_json_cache.get(path)
         if cached is not None:
+            self._model_json_cache.move_to_end(path)
             return cached
         if is_virtual_path(path):
             data = load_virtual_json(path)
         else:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         self._model_json_cache[path] = data
+        while len(self._model_json_cache) > _MODEL_JSON_CACHE_LIMIT:
+            self._model_json_cache.popitem(last=False)
         return data
 
     def get_motion_names(self, character: str, costume: str) -> list[str]:
