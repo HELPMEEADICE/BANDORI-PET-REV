@@ -38,6 +38,10 @@ if(NOT CxxQt_FOUND)
         GIT_REPOSITORY https://github.com/KDAB/cxx-qt-cmake.git
         GIT_TAG 0.9.0
         GIT_SHALLOW TRUE
+        # cxx-qt-cmake has no submodules.  Explicitly disabling the implicit
+        # update also keeps Windows builds independent from Git's POSIX helper
+        # utilities (sed/basename), which are not present in every shell.
+        GIT_SUBMODULES ""
     )
     FetchContent_MakeAvailable(CxxQt)
 endif()

@@ -2,6 +2,7 @@
 
 #include <QAudioFormat>
 #include <QByteArray>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -24,17 +25,22 @@ class QAction;
 class QAudioOutput;
 class QAudioSource;
 class QCloseEvent;
+class QEvent;
+class QFrame;
 class QGridLayout;
 class QIODevice;
 class QLabel;
+class QListWidgetItem;
 class QMediaPlayer;
+class QMouseEvent;
 class QMoveEvent;
 class QResizeEvent;
+class QScrollArea;
 class QSplitter;
 class QStackedWidget;
 class QSystemTrayIcon;
 class QTemporaryFile;
-class QTextBrowser;
+class QVBoxLayout;
 class QWebSocket;
 
 namespace bandori {
@@ -57,6 +63,7 @@ public:
         QString dataRoot,
         QString configPath,
         QWidget* parent = nullptr);
+    ~NativeMainWindow() override;
 
     void startPet(PetLaunchSpec spec);
     void startPets(QList<PetLaunchSpec> specs);
@@ -71,6 +78,7 @@ private:
     void showControlCenter();
     void enterChatSurfaceMode();
     void leaveChatSurfaceMode();
+    void setupChatWindow();
     void quitFromTray();
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
@@ -278,6 +286,18 @@ private:
     void deleteSelectedChatConversation();
     void setChatBusy(bool busy);
     void renderChatStreamPreview();
+    void clearChatTranscript();
+    void renderChatMessages(const QJsonArray& messages);
+    void appendChatMessageBubble(const QJsonObject& message, bool streaming = false);
+    void applyChatTheme();
+    void rebuildChatSessionList();
+    void activateChatSessionItem(QListWidgetItem* item, bool resetPagination = true);
+    void showChatSessionContextMenu(const QPoint& position);
+    void showNewChatMenu();
+    void chooseNewGroupChat();
+    void updateChatHeader();
+    void updateChatTitleAvatar(const QString& character = {});
+    void toggleChatWindowTopmost();
     bool isGroupChatMode() const;
     QJsonArray selectedGroupMembers() const;
     QString selectedGroupKey() const;
@@ -306,6 +326,7 @@ private:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
@@ -352,7 +373,14 @@ private:
     qfw::PushButton* clickMotionDeleteButton_ = nullptr;
     qfw::CaptionLabel* clickMotionStatusLabel_ = nullptr;
     bool updatingClickMotionControls_ = false;
+    QWidget* chatWindow_ = nullptr;
     QWidget* chatPage_ = nullptr;
+    QWidget* chatSidebarWidget_ = nullptr;
+    QFrame* chatHeader_ = nullptr;
+    QLabel* chatTitleAvatar_ = nullptr;
+    qfw::StrongBodyLabel* chatTitleLabel_ = nullptr;
+    qfw::CaptionLabel* chatSubtitleLabel_ = nullptr;
+    qfw::ListWidget* chatSessionList_ = nullptr;
     qfw::ComboBox* chatModeComboBox_ = nullptr;
     QWidget* chatPrivateSelector_ = nullptr;
     QWidget* chatGroupSelector_ = nullptr;
@@ -364,22 +392,30 @@ private:
     qfw::CaptionLabel* chatStatusLabel_ = nullptr;
     qfw::PushButton* chatLoadOlderButton_ = nullptr;
     qfw::PushButton* chatRefreshButton_ = nullptr;
-    qfw::PushButton* chatPinButton_ = nullptr;
+    qfw::TransparentToolButton* chatPinButton_ = nullptr;
     qfw::PushButton* chatRenameButton_ = nullptr;
     qfw::PushButton* chatAvatarButton_ = nullptr;
     qfw::PushButton* chatResetAvatarButton_ = nullptr;
-    qfw::PushButton* chatGroupSidebarToggleButton_ = nullptr;
+    qfw::TransparentToolButton* chatGroupSidebarToggleButton_ = nullptr;
+    qfw::TransparentToolButton* chatHeaderNewButton_ = nullptr;
+    qfw::TransparentToolButton* chatCloseButton_ = nullptr;
     qfw::PushButton* chatNewConversationButton_ = nullptr;
     qfw::PushButton* chatDeleteConversationButton_ = nullptr;
     qfw::PushButton* chatAttachButton_ = nullptr;
     qfw::PushButton* chatAsrButton_ = nullptr;
     qfw::PushButton* chatClearAttachmentsButton_ = nullptr;
     qfw::CaptionLabel* chatAttachmentLabel_ = nullptr;
-    QTextBrowser* chatTranscript_ = nullptr;
+    QScrollArea* chatTranscript_ = nullptr;
+    QWidget* chatMessagesHost_ = nullptr;
+    QVBoxLayout* chatMessagesLayout_ = nullptr;
+    QLabel* chatStreamingLabel_ = nullptr;
     qfw::PlainTextEdit* chatInput_ = nullptr;
     qfw::PrimaryPushButton* chatSendButton_ = nullptr;
     qfw::PushButton* chatCancelButton_ = nullptr;
     QString chatTranscriptBase_;
+    QJsonArray chatRenderedMessages_;
+    QHash<QString, QString> chatSessionPreviews_;
+    QHash<QString, QString> chatSessionTimes_;
     QString chatStreamText_;
     QString chatStreamReasoning_;
     QString activeChatCharacter_;
@@ -718,9 +754,10 @@ private:
     bool trayHintShown_ = false;
     bool restoringNativeWindowGeometry_ = false;
     bool chatSurfaceMode_ = false;
-    QRect settingsSurfaceGeometry_;
     QRect chatSurfaceGeometry_;
-    QWidget* settingsPageBeforeChat_ = nullptr;
+    QPoint chatDragOffset_;
+    bool chatDragging_ = false;
+    bool chatThemeDark_ = false;
 };
 
 }  // namespace bandori

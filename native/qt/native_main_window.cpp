@@ -29,7 +29,10 @@
 #include <QDate>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -51,9 +54,11 @@
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QMoveEvent>
 #include <QNetworkRequest>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -68,7 +73,6 @@
 #include <QSplitter>
 #include <QSystemTrayIcon>
 #include <QTemporaryFile>
-#include <QTextBrowser>
 #include <QTextCursor>
 #include <QTableWidget>
 #include <QTime>
@@ -107,6 +111,8 @@ constexpr int kMemoryIdRole = Qt::UserRole + 20;
 constexpr int kMemoryKindRole = Qt::UserRole + 21;
 constexpr int kMemoryContentRole = Qt::UserRole + 22;
 constexpr int kMemoryImportanceRole = Qt::UserRole + 23;
+constexpr int kChatSessionKeyRole = Qt::UserRole + 100;
+constexpr int kChatSessionModeRole = Qt::UserRole + 101;
 constexpr int kChatMessagePageSize = 200;
 constexpr int kChatMessageLimit = 1000;
 constexpr int kMaximumConcurrentNapcatReplies = 4;
@@ -154,6 +160,25 @@ QByteArray encodeWaveAudio(const QByteArray& pcm, const QAudioFormat& format) {
 
 QString currentLocalDateTime() {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss"));
+}
+
+QPixmap circularPixmap(const QPixmap& source, int size) {
+    if (source.isNull() || size <= 0) {
+        return {};
+    }
+    const QPixmap scaled = source.scaled(
+        size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    QPixmap result(size, size);
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath path;
+    path.addEllipse(QRectF(0, 0, size, size));
+    painter.setClipPath(path);
+    const int x = (scaled.width() - size) / 2;
+    const int y = (scaled.height() - size) / 2;
+    painter.drawPixmap(0, 0, scaled, x, y, size, size);
+    return result;
 }
 
 bool isBuiltinClickMotionProfile(const QString& name) {
@@ -410,7 +435,8 @@ NativeMainWindow::NativeMainWindow(
     chatLayoutSaveTimer_.setSingleShot(true);
     chatLayoutSaveTimer_.setInterval(350);
     connect(&chatLayoutSaveTimer_, &QTimer::timeout, this, [this]() {
-        if (chatGroupSplitter_ == nullptr || !isGroupChatMode()) {
+        if (chatGroupSplitter_ == nullptr || chatSidebarWidget_ == nullptr
+            || !chatSidebarWidget_->isVisible()) {
             return;
         }
         const QList<int> sizes = chatGroupSplitter_->sizes();
@@ -547,6 +573,15 @@ NativeMainWindow::NativeMainWindow(
         });
 }
 
+NativeMainWindow::~NativeMainWindow() {
+    if (chatWindow_ != nullptr) {
+        chatWindow_->hide();
+        delete chatWindow_;
+        chatWindow_ = nullptr;
+        chatPage_ = nullptr;
+    }
+}
+
 bool NativeMainWindow::needsFirstRunWizard() const {
     if (!runtime_.value(QStringLiteral("configured_pets")).toArray().isEmpty()) {
         return false;
@@ -616,6 +651,9 @@ void NativeMainWindow::setupTray() {
     const QIcon icon(iconPath);
     if (!icon.isNull()) {
         setWindowIcon(icon);
+        if (chatWindow_ != nullptr) {
+            chatWindow_->setWindowIcon(icon);
+        }
         QApplication::setWindowIcon(icon);
     }
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
@@ -626,6 +664,7 @@ void NativeMainWindow::setupTray() {
     trayIcon_->setToolTip(QStringLiteral("BandoriPet Rust + Qt"));
     auto* menu = new QMenu(this);
     QAction* openAction = menu->addAction(tr("Open control center"));
+    QAction* openChatAction = menu->addAction(QStringLiteral("打开聊天界面"));
     startTrayAction_ = menu->addAction(tr("Start configured pets"));
     stopTrayAction_ = menu->addAction(tr("Stop active pets"));
     menu->addSeparator();
@@ -634,6 +673,7 @@ void NativeMainWindow::setupTray() {
     stopTrayAction_->setEnabled(supervisor_.isRunning());
 
     connect(openAction, &QAction::triggered, this, [this]() { showControlCenter(); });
+    connect(openChatAction, &QAction::triggered, this, [this]() { openNativeChat({}); });
     connect(startTrayAction_, &QAction::triggered, this, [this]() {
         startConfiguredPets();
     });
@@ -659,77 +699,90 @@ void NativeMainWindow::setupTray() {
 
 void NativeMainWindow::showControlCenter() {
     showNormal();
-    leaveChatSurfaceMode();
     raise();
     activateWindow();
 }
 
+void NativeMainWindow::setupChatWindow() {
+    if (chatWindow_ != nullptr || chatPage_ == nullptr) {
+        return;
+    }
+    chatWindow_ = new QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint);
+    chatWindow_->setObjectName(QStringLiteral("nativeChatWindow"));
+    chatWindow_->setWindowTitle(QStringLiteral("Bandori 桌宠 - 聊天"));
+    chatWindow_->setAttribute(Qt::WA_DeleteOnClose, false);
+    chatWindow_->setAttribute(Qt::WA_TranslucentBackground, true);
+    chatWindow_->setMinimumSize(640, 520);
+    chatWindow_->resize(880, 680);
+    chatWindow_->installEventFilter(this);
+    auto* layout = new QVBoxLayout(chatWindow_);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(chatPage_);
+    chatWindow_->hide();
+    applyChatWindowPolicy();
+}
+
 void NativeMainWindow::enterChatSurfaceMode() {
-    if (!chatSurfaceMode_) {
-        settingsSurfaceGeometry_ = geometry();
-        settingsPageBeforeChat_ = stackedWidget_->currentWidget();
+    if (chatWindow_ == nullptr) {
+        return;
     }
     chatSurfaceMode_ = true;
-    navigationInterface_->hide();
-    if (quickSettingsPanel_ != nullptr) {
-        quickSettingsPanel_->hide();
-    }
-    if (titleBar() != nullptr) {
-        titleBar()->hide();
-    }
-    widgetLayout_->setContentsMargins(0, 0, 0, 0);
-    setMinimumSize(420, 620);
-    if (!isMaximized() && !isFullScreen()) {
+    if (!chatWindow_->isMaximized() && !chatWindow_->isFullScreen()) {
         if (chatSurfaceGeometry_.isValid()) {
-            setGeometry(chatSurfaceGeometry_);
-        } else {
-            resize(880, 680);
+            chatWindow_->setGeometry(chatSurfaceGeometry_);
         }
     }
-    switchTo(chatPage_);
+    chatWindow_->showNormal();
+    chatWindow_->show();
+    chatWindow_->raise();
+    chatWindow_->activateWindow();
 }
 
 void NativeMainWindow::leaveChatSurfaceMode() {
-    if (!chatSurfaceMode_) {
+    if (chatWindow_ == nullptr || !chatSurfaceMode_) {
         return;
     }
     nativeWindowGeometryTimer_.stop();
     persistNativeWindowGeometry();
-    chatSurfaceGeometry_ = geometry();
+    chatSurfaceGeometry_ = chatWindow_->geometry();
     chatSurfaceMode_ = false;
-    navigationInterface_->show();
-    if (quickSettingsPanel_ != nullptr) {
-        quickSettingsPanel_->show();
-    }
-    if (titleBar() != nullptr) {
-        titleBar()->show();
-        titleBar()->raise();
-    }
-    widgetLayout_->setContentsMargins(0, 48, 16, 16);
-    setMinimumSize(1080, 680);
-    if (settingsPageBeforeChat_ != nullptr && settingsPageBeforeChat_ != chatPage_) {
-        switchTo(settingsPageBeforeChat_);
-    } else if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
-        switchTo(models);
-    }
-    if (settingsSurfaceGeometry_.isValid() && !isMaximized() && !isFullScreen()) {
-        setGeometry(settingsSurfaceGeometry_);
-    }
-    settingsPageBeforeChat_ = nullptr;
+    chatWindow_->hide();
 }
 
 void NativeMainWindow::applyChatWindowPolicy() {
+    if (chatWindow_ == nullptr) {
+        return;
+    }
+    const bool normalWindow = runtime_
+                                  .value(QStringLiteral("chat_window_normal_window"))
+                                  .toBool(false);
     const bool alwaysOnTop = runtime_
                                  .value(QStringLiteral("chat_window_always_on_top"))
                                  .toBool(false);
-    if (windowFlags().testFlag(Qt::WindowStaysOnTopHint) == alwaysOnTop) {
+    Qt::WindowFlags flags = Qt::Window;
+    if (!normalWindow) {
+        flags |= Qt::FramelessWindowHint;
+    }
+    if (alwaysOnTop) {
+        flags |= Qt::WindowStaysOnTopHint;
+    }
+    const bool currentNormal = !chatWindow_->windowFlags().testFlag(Qt::FramelessWindowHint);
+    const bool currentTopmost = chatWindow_->windowFlags().testFlag(Qt::WindowStaysOnTopHint);
+    if (currentNormal == normalWindow && currentTopmost == alwaysOnTop) {
+        applyChatTheme();
         return;
     }
-    const bool wasVisible = isVisible();
-    setWindowFlag(Qt::WindowStaysOnTopHint, alwaysOnTop);
+    const bool wasVisible = chatWindow_->isVisible();
+    const QRect previousGeometry = chatWindow_->geometry();
+    chatWindow_->setWindowFlags(flags);
+    chatWindow_->setAttribute(Qt::WA_TranslucentBackground, !normalWindow);
+    chatWindow_->setGeometry(previousGeometry);
     if (wasVisible) {
-        showControlCenter();
+        chatWindow_->show();
+        chatWindow_->raise();
     }
+    applyChatTheme();
 }
 
 void NativeMainWindow::quitFromTray() {
@@ -739,6 +792,9 @@ void NativeMainWindow::quitFromTray() {
     exitRequested_ = true;
     nativeWindowGeometryTimer_.stop();
     persistNativeWindowGeometry();
+    if (chatWindow_ != nullptr) {
+        chatWindow_->hide();
+    }
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
@@ -783,14 +839,58 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     }
 }
 
+bool NativeMainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == chatWindow_) {
+        if (event->type() == QEvent::Move || event->type() == QEvent::Resize) {
+            scheduleNativeWindowGeometrySave();
+        } else if (event->type() == QEvent::Close) {
+            static_cast<QCloseEvent*>(event)->ignore();
+            leaveChatSurfaceMode();
+            return true;
+        }
+    }
+    const bool chatDragSurface = watched == chatHeader_
+        || watched == chatTitleAvatar_
+        || watched == chatTitleLabel_
+        || watched == chatSubtitleLabel_;
+    if (chatDragSurface && chatWindow_ != nullptr
+        && !runtime_.value(QStringLiteral("chat_window_normal_window")).toBool(false)) {
+        auto* mouse = dynamic_cast<QMouseEvent*>(event);
+        if (mouse != nullptr && event->type() == QEvent::MouseButtonDblClick
+            && mouse->button() == Qt::LeftButton) {
+            chatDragging_ = false;
+            if (chatWindow_->isMaximized()) {
+                chatWindow_->showNormal();
+            } else {
+                chatWindow_->showMaximized();
+            }
+            return true;
+        }
+        if (mouse != nullptr && event->type() == QEvent::MouseButtonPress
+            && mouse->button() == Qt::LeftButton) {
+            chatDragging_ = true;
+            chatDragOffset_ = mouse->globalPosition().toPoint() - chatWindow_->frameGeometry().topLeft();
+            return true;
+        }
+        if (mouse != nullptr && event->type() == QEvent::MouseMove && chatDragging_
+            && mouse->buttons().testFlag(Qt::LeftButton) && !chatWindow_->isMaximized()) {
+            chatWindow_->move(mouse->globalPosition().toPoint() - chatDragOffset_);
+            return true;
+        }
+        if (mouse != nullptr && event->type() == QEvent::MouseButtonRelease) {
+            chatDragging_ = false;
+            return true;
+        }
+    }
+    return qfw::FluentWindow::eventFilter(watched, event);
+}
+
 void NativeMainWindow::moveEvent(QMoveEvent* event) {
     qfw::FluentWindow::moveEvent(event);
-    scheduleNativeWindowGeometrySave();
 }
 
 void NativeMainWindow::resizeEvent(QResizeEvent* event) {
     qfw::FluentWindow::resizeEvent(event);
-    scheduleNativeWindowGeometrySave();
 }
 
 void NativeMainWindow::setupUi() {
@@ -826,7 +926,8 @@ void NativeMainWindow::setupUi() {
     QWidget* memoryAlbum = createMemoryAlbumPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
-    chatPage_->setObjectName(QStringLiteral("chatPage"));
+    chatPage_->setObjectName(QStringLiteral("nativeChatPage"));
+    setupChatWindow();
     history->setObjectName(QStringLiteral("historySearchPage"));
     statistics->setObjectName(QStringLiteral("statisticsPage"));
     dataManagement->setObjectName(QStringLiteral("dataManagementPage"));
@@ -848,17 +949,6 @@ void NativeMainWindow::setupUi() {
     addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, QStringLiteral("好感度 / 记忆"));
     addSubInterface(relationshipGuide, qfw::FluentIconEnum::QuickNote, QStringLiteral("关系教程"));
     addSubInterface(reminders, qfw::FluentIconEnum::DateTime, QStringLiteral("闹钟 / 番茄钟"));
-    auto* chatNavigationItem =
-        addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, QStringLiteral("聊天界面"));
-    connect(
-        chatNavigationItem,
-        &qfw::NavigationWidget::clicked,
-        this,
-        [this](bool triggeredByUser) {
-            if (triggeredByUser) {
-                enterChatSurfaceMode();
-            }
-        });
     addSubInterface(history, qfw::FluentIconEnum::History, QStringLiteral("聊天记录"));
     addSubInterface(memoryAlbum, qfw::FluentIconEnum::Photo, QStringLiteral("记忆相册"));
     addSubInterface(statistics, qfw::FluentIconEnum::Market, QStringLiteral("数据统计"));
@@ -984,7 +1074,7 @@ void NativeMainWindow::syncQuickSettingsPanel() {
     quickObsWindowCaptureSwitch_->setChecked(
         runtime_.value(QStringLiteral("obs_window_capture_compatible")).toBool(false));
     quickChatWindowSwitch_->setChecked(
-        runtime_.value(QStringLiteral("legacy_chat_window_normal_window")).toBool(false));
+        runtime_.value(QStringLiteral("chat_window_normal_window")).toBool(false));
     quickHideLive2dSwitch_->setChecked(
         runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false));
     quickAutoStartSwitch_->setChecked(
@@ -1925,39 +2015,50 @@ void NativeMainWindow::rebuildModelPicker() {
 
 QWidget* NativeMainWindow::createChatPage() {
     auto* page = new QWidget(this);
+    page->setObjectName(QStringLiteral("nativeChatPage"));
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    page->setStyleSheet(QStringLiteral(
-        "QWidget#nativeChatSidebar { background: #f8faff; border-right: 1px solid #e7ebf2; }"
-        "QWidget#nativeChatContent { background: #f4f7fc; }"
-        "QFrame#nativeChatHeader { background: #ffffff; border: none; }"
-        "QTextBrowser#nativeChatTranscript { background: #f4f7fc; border: none; padding: 14px; }"
-        "QFrame#nativeChatComposer { background: #ffffff; border: 1px solid #cbd7ec; "
-        "border-radius: 22px; }"));
+    page->setStyleSheet({});
 
     auto* sidebar = new QWidget(page);
+    chatSidebarWidget_ = sidebar;
     sidebar->setObjectName(QStringLiteral("nativeChatSidebar"));
-    sidebar->setMinimumWidth(205);
+    sidebar->setMinimumWidth(220);
     sidebar->setMaximumWidth(248);
     auto* sidebarLayout = new QVBoxLayout(sidebar);
-    sidebarLayout->setContentsMargins(12, 12, 10, 12);
-    sidebarLayout->setSpacing(9);
+    sidebarLayout->setContentsMargins(12, 16, 12, 12);
+    sidebarLayout->setSpacing(10);
     auto* sidebarHeader = new QHBoxLayout();
-    sidebarHeader->addWidget(new qfw::StrongBodyLabel(QStringLiteral("聊天列表"), sidebar));
+    auto* sidebarTitle = new qfw::StrongBodyLabel(QStringLiteral("聊天列表"), sidebar);
+    sidebarTitle->setObjectName(QStringLiteral("nativeChatSidebarTitle"));
+    sidebarHeader->addWidget(sidebarTitle);
     sidebarHeader->addStretch(1);
-    auto* collapseGlyph = new qfw::BodyLabel(QStringLiteral("◀"), sidebar);
-    sidebarHeader->addWidget(collapseGlyph);
+    auto* sidebarCollapseButton = new qfw::TransparentToolButton(
+        qfw::FluentIconEnum::CareLeftSolid, sidebar);
+    sidebarCollapseButton->setObjectName(QStringLiteral("nativeChatSidebarCollapse"));
+    sidebarCollapseButton->setFixedSize(30, 30);
+    sidebarCollapseButton->setToolTip(QStringLiteral("收起聊天列表"));
+    sidebarHeader->addWidget(sidebarCollapseButton);
     sidebarLayout->addLayout(sidebarHeader);
     auto* sidebarHint = new qfw::CaptionLabel(
-        QStringLiteral("快速切换私聊和群聊；可管理名称、头像和置顶。"), sidebar);
+        QStringLiteral("快速切换私聊和群聊；右键可管理名称、头像和置顶。"), sidebar);
+    sidebarHint->setObjectName(QStringLiteral("nativeChatSidebarHint"));
     sidebarHint->setWordWrap(true);
     sidebarLayout->addWidget(sidebarHint);
+
+    chatSessionList_ = new qfw::ListWidget(sidebar);
+    chatSessionList_->setObjectName(QStringLiteral("nativeChatSessionList"));
+    chatSessionList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    chatSessionList_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    chatSessionList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    chatSessionList_->setContextMenuPolicy(Qt::CustomContextMenu);
+    sidebarLayout->addWidget(chatSessionList_, 1);
 
     chatModeComboBox_ = new qfw::ComboBox(sidebar);
     chatModeComboBox_->addItem(QStringLiteral("私聊"), QVariant(), QStringLiteral("private"));
     chatModeComboBox_->addItem(QStringLiteral("群聊"), QVariant(), QStringLiteral("group"));
-    sidebarLayout->addWidget(chatModeComboBox_);
+    chatModeComboBox_->hide();
     chatPrivateSelector_ = new QWidget(sidebar);
     auto* privateSelectorLayout = new QHBoxLayout(chatPrivateSelector_);
     privateSelectorLayout->setContentsMargins(0, 0, 0, 0);
@@ -1965,7 +2066,7 @@ QWidget* NativeMainWindow::createChatPage() {
     privateSelectorLayout->addWidget(new qfw::BodyLabel(QStringLiteral("角色"), chatPrivateSelector_));
     chatCharacterComboBox_ = new qfw::ComboBox(chatPrivateSelector_);
     privateSelectorLayout->addWidget(chatCharacterComboBox_, 1);
-    sidebarLayout->addWidget(chatPrivateSelector_);
+    chatPrivateSelector_->hide();
 
     chatGroupSelector_ = new QWidget(sidebar);
     auto* groupSelectorLayout = new QVBoxLayout(chatGroupSelector_);
@@ -1979,30 +2080,25 @@ QWidget* NativeMainWindow::createChatPage() {
     chatGroupMembersList_->setSelectionMode(QAbstractItemView::MultiSelection);
     chatGroupMembersList_->setMaximumHeight(150);
     groupSelectorLayout->addWidget(chatGroupMembersList_);
-    chatGroupSelector_->setVisible(false);
-    sidebarLayout->addWidget(chatGroupSelector_);
+    chatGroupSelector_->hide();
 
-    sidebarLayout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("会话"), sidebar));
     chatConversationComboBox_ = new qfw::ComboBox(sidebar);
-    sidebarLayout->addWidget(chatConversationComboBox_);
+    chatConversationComboBox_->hide();
     chatRefreshButton_ = new qfw::PushButton(QStringLiteral("刷新"), sidebar);
-    chatPinButton_ = new qfw::PushButton(QStringLiteral("置顶"), page);
+    chatPinButton_ = new qfw::TransparentToolButton(qfw::FluentIconEnum::Pin, page);
     chatRenameButton_ = new qfw::PushButton(QStringLiteral("重命名"), page);
     chatAvatarButton_ = new qfw::PushButton(QStringLiteral("头像"), page);
     chatResetAvatarButton_ = new qfw::PushButton(QStringLiteral("恢复头像"), page);
-    chatGroupSidebarToggleButton_ = new qfw::PushButton(QStringLiteral("收起成员"), page);
+    chatGroupSidebarToggleButton_ = new qfw::TransparentToolButton(
+        qfw::FluentIconEnum::CareLeftSolid, page);
     chatNewConversationButton_ = new qfw::PushButton(
         qfw::FluentIcon(qfw::FluentIconEnum::Add), QStringLiteral("新建聊天"), sidebar);
     chatDeleteConversationButton_ = new qfw::PushButton(QStringLiteral("删除"), sidebar);
-    chatLoadOlderButton_ = new qfw::PushButton(QStringLiteral("加载更早消息"), sidebar);
+    chatLoadOlderButton_ = new qfw::PushButton(QStringLiteral("加载更早消息"), page);
     chatLoadOlderButton_->setEnabled(false);
-    auto* sideActions = new QHBoxLayout();
-    sideActions->setSpacing(6);
-    sideActions->addWidget(chatRefreshButton_);
-    sideActions->addWidget(chatDeleteConversationButton_);
-    sidebarLayout->addLayout(sideActions);
-    sidebarLayout->addWidget(chatLoadOlderButton_);
-    sidebarLayout->addStretch(1);
+    chatRefreshButton_->hide();
+    chatDeleteConversationButton_->hide();
+    chatLoadOlderButton_->hide();
     chatNewConversationButton_->setFixedHeight(38);
     sidebarLayout->addWidget(chatNewConversationButton_);
 
@@ -2011,62 +2107,96 @@ QWidget* NativeMainWindow::createChatPage() {
     auto* conversationLayout = new QVBoxLayout(conversationPane);
     conversationLayout->setContentsMargins(0, 0, 0, 0);
     conversationLayout->setSpacing(0);
-    auto* header = new QFrame(conversationPane);
-    header->setObjectName(QStringLiteral("nativeChatHeader"));
-    header->setFixedHeight(62);
-    auto* headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(14, 6, 10, 6);
-    headerLayout->setSpacing(8);
-    auto* avatar = new QLabel(QStringLiteral("AI"), header);
-    avatar->setAlignment(Qt::AlignCenter);
-    avatar->setFixedSize(36, 36);
-    avatar->setStyleSheet(QStringLiteral(
-        "QLabel { color: #ffffff; background: #e90050; border-radius: 18px; font-weight: 700; }"));
-    headerLayout->addWidget(avatar);
+    chatHeader_ = new QFrame(conversationPane);
+    chatHeader_->setObjectName(QStringLiteral("nativeChatHeader"));
+    chatHeader_->setFixedHeight(58);
+    chatHeader_->installEventFilter(this);
+    auto* headerLayout = new QHBoxLayout(chatHeader_);
+    headerLayout->setContentsMargins(14, 0, 10, 0);
+    headerLayout->setSpacing(10);
+    chatTitleAvatar_ = new QLabel(QStringLiteral("AI"), chatHeader_);
+    chatTitleAvatar_->setObjectName(QStringLiteral("nativeChatTitleAvatar"));
+    chatTitleAvatar_->setAlignment(Qt::AlignCenter);
+    chatTitleAvatar_->setFixedSize(34, 34);
+    chatTitleAvatar_->installEventFilter(this);
+    headerLayout->addWidget(chatTitleAvatar_);
     auto* titleStack = new QVBoxLayout();
+    titleStack->setContentsMargins(0, 0, 0, 0);
     titleStack->setSpacing(0);
-    titleStack->addWidget(new qfw::StrongBodyLabel(QStringLiteral("AI 聊天"), header));
-    titleStack->addWidget(new qfw::CaptionLabel(
-        QStringLiteral("回车发送，Shift+Enter 换行"), header));
+    chatTitleLabel_ = new qfw::StrongBodyLabel(QStringLiteral("AI 聊天"), chatHeader_);
+    chatTitleLabel_->setObjectName(QStringLiteral("nativeChatTitle"));
+    chatTitleLabel_->installEventFilter(this);
+    chatSubtitleLabel_ = new qfw::CaptionLabel(
+        QStringLiteral("AI 聊天 | 回车发送，Shift+Enter 换行"), chatHeader_);
+    chatSubtitleLabel_->setObjectName(QStringLiteral("nativeChatSubtitle"));
+    chatSubtitleLabel_->installEventFilter(this);
+    titleStack->addWidget(chatTitleLabel_);
+    titleStack->addWidget(chatSubtitleLabel_);
     headerLayout->addLayout(titleStack);
     headerLayout->addStretch(1);
+    chatRenameButton_->hide();
+    chatAvatarButton_->hide();
+    chatResetAvatarButton_->hide();
     for (QWidget* button : {
              static_cast<QWidget*>(chatPinButton_),
-             static_cast<QWidget*>(chatRenameButton_),
-             static_cast<QWidget*>(chatAvatarButton_),
-             static_cast<QWidget*>(chatResetAvatarButton_),
              static_cast<QWidget*>(chatGroupSidebarToggleButton_)}) {
-        button->setMaximumHeight(32);
+        button->setFixedSize(32, 32);
         headerLayout->addWidget(button);
     }
-    auto* closeChatButton = new qfw::PushButton(QStringLiteral("✕"), header);
-    closeChatButton->setFixedSize(32, 32);
-    closeChatButton->setToolTip(QStringLiteral("关闭聊天窗口"));
-    closeChatButton->setStyleSheet(QStringLiteral(
-        "QPushButton { border: none; border-radius: 16px; background: #eef2f8; }"
-        "QPushButton:hover { background: #ffdfe9; color: #e90050; }"));
-    headerLayout->addWidget(closeChatButton);
-    connect(closeChatButton, &QPushButton::clicked, this, [this]() {
-        leaveChatSurfaceMode();
-        hide();
-    });
-    conversationLayout->addWidget(header);
+    chatPinButton_->setToolTip(QStringLiteral("窗口置顶"));
+    chatGroupSidebarToggleButton_->setToolTip(QStringLiteral("收起聊天列表"));
+    chatHeaderNewButton_ = new qfw::TransparentToolButton(
+        qfw::FluentIconEnum::Add, chatHeader_);
+    chatHeaderNewButton_->setFixedSize(32, 32);
+    chatHeaderNewButton_->setToolTip(QStringLiteral("新建当前会话"));
+    headerLayout->addWidget(chatHeaderNewButton_);
+    chatCloseButton_ = new qfw::TransparentToolButton(
+        qfw::FluentIconEnum::Close, chatHeader_);
+    chatCloseButton_->setFixedSize(32, 32);
+    chatCloseButton_->setToolTip(QStringLiteral("关闭聊天窗口"));
+    headerLayout->addWidget(chatCloseButton_);
+    conversationLayout->addWidget(chatHeader_);
 
-    chatTranscript_ = new QTextBrowser(conversationPane);
+    chatTranscript_ = new QScrollArea(conversationPane);
     chatTranscript_->setObjectName(QStringLiteral("nativeChatTranscript"));
-    chatTranscript_->setOpenExternalLinks(false);
-    chatTranscript_->setReadOnly(true);
+    chatTranscript_->setWidgetResizable(true);
+    chatTranscript_->setFrameShape(QFrame::NoFrame);
+    chatTranscript_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    chatTranscript_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    chatMessagesHost_ = new QWidget(chatTranscript_);
+    chatMessagesHost_->setObjectName(QStringLiteral("nativeChatMessages"));
+    chatMessagesLayout_ = new QVBoxLayout(chatMessagesHost_);
+    chatMessagesLayout_->setContentsMargins(14, 16, 14, 18);
+    chatMessagesLayout_->setSpacing(4);
+    chatMessagesLayout_->addStretch(1);
+    chatTranscript_->setWidget(chatMessagesHost_);
     conversationLayout->addWidget(chatTranscript_, 1);
 
     auto* inputArea = new QWidget(conversationPane);
+    inputArea->setObjectName(QStringLiteral("nativeChatInputArea"));
     inputArea->setFixedHeight(112);
-    inputArea->setStyleSheet(QStringLiteral("QWidget { background: #eef4ff; }"));
     auto* inputAreaLayout = new QVBoxLayout(inputArea);
-    inputAreaLayout->setContentsMargins(20, 7, 20, 12);
+    inputAreaLayout->setContentsMargins(20, 7, 20, 13);
     inputAreaLayout->setSpacing(6);
-    chatStatusLabel_ = new qfw::CaptionLabel(QStringLiteral("●  未配置"), inputArea);
-    chatStatusLabel_->setStyleSheet(QStringLiteral("QLabel { color: #60708a; }"));
-    inputAreaLayout->addWidget(chatStatusLabel_);
+    auto* statusRow = new QHBoxLayout();
+    statusRow->setContentsMargins(6, 0, 6, 0);
+    statusRow->setSpacing(6);
+    auto* statusDot = new QLabel(inputArea);
+    statusDot->setObjectName(QStringLiteral("nativeChatStatusDot"));
+    statusDot->setFixedSize(7, 7);
+    statusRow->addWidget(statusDot);
+    chatStatusLabel_ = new qfw::CaptionLabel(QStringLiteral("未配置"), inputArea);
+    chatStatusLabel_->setObjectName(QStringLiteral("nativeChatStatus"));
+    statusRow->addWidget(chatStatusLabel_, 1);
+    chatAttachmentLabel_ = new qfw::CaptionLabel(QStringLiteral("暂无附件"), inputArea);
+    chatAttachmentLabel_->setWordWrap(false);
+    chatAttachmentLabel_->hide();
+    statusRow->addWidget(chatAttachmentLabel_);
+    chatClearAttachmentsButton_ = new qfw::PushButton(QStringLiteral("清除"), inputArea);
+    chatClearAttachmentsButton_->setFixedHeight(24);
+    chatClearAttachmentsButton_->hide();
+    statusRow->addWidget(chatClearAttachmentsButton_);
+    inputAreaLayout->addLayout(statusRow);
     auto* composerFrame = new QFrame(inputArea);
     composerFrame->setObjectName(QStringLiteral("nativeChatComposer"));
     composerFrame->setFixedHeight(66);
@@ -2075,39 +2205,32 @@ QWidget* NativeMainWindow::createChatPage() {
     composer->setSpacing(9);
     chatAttachButton_ = new qfw::PushButton(QStringLiteral("📎"), composerFrame);
     chatAsrButton_ = new qfw::PushButton(QStringLiteral("🎙"), composerFrame);
+    chatAttachButton_->setObjectName(QStringLiteral("nativeChatRoundButton"));
+    chatAsrButton_->setObjectName(QStringLiteral("nativeChatRoundButton"));
+    chatAttachButton_->setToolTip(QStringLiteral("添加附件"));
+    chatAsrButton_->setToolTip(QStringLiteral("开始语音输入"));
     for (QWidget* button : {
              static_cast<QWidget*>(chatAttachButton_),
              static_cast<QWidget*>(chatAsrButton_),
          }) {
         button->setFixedSize(46, 46);
-        button->setStyleSheet(QStringLiteral(
-            "QPushButton { border: none; border-radius: 23px; background: #edf2fa; font-size: 18px; }"
-            "QPushButton:hover { background: #e1e8f4; }"));
         composer->addWidget(button);
     }
     chatInput_ = new qfw::PlainTextEdit(composerFrame);
     chatInput_->setPlaceholderText(QStringLiteral("给你的 Bandori 桌宠发消息..."));
     chatInput_->setFixedHeight(46);
     chatInput_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    chatInput_->setStyleSheet(QStringLiteral(
-        "QPlainTextEdit { border: none; background: transparent; padding: 7px 4px; }"));
     composer->addWidget(chatInput_, 1);
     chatSendButton_ = new qfw::PrimaryPushButton(QStringLiteral("➤"), composerFrame);
+    chatSendButton_->setObjectName(QStringLiteral("nativeChatSendButton"));
     chatSendButton_->setFixedSize(46, 46);
-    chatSendButton_->setStyleSheet(QStringLiteral(
-        "QPushButton { border: none; border-radius: 23px; background: #e90050; "
-        "color: white; font-size: 20px; } QPushButton:hover { background: #ff0b61; }"));
+    chatSendButton_->setToolTip(QStringLiteral("发送消息"));
     composer->addWidget(chatSendButton_);
     inputAreaLayout->addWidget(composerFrame);
     conversationLayout->addWidget(inputArea);
 
     chatCancelButton_ = new qfw::PushButton(QStringLiteral("中断"), inputArea);
     chatCancelButton_->hide();
-    chatClearAttachmentsButton_ = new qfw::PushButton(QStringLiteral("清除附件"), inputArea);
-    chatClearAttachmentsButton_->hide();
-    chatAttachmentLabel_ = new qfw::CaptionLabel(QStringLiteral("暂无附件"), inputArea);
-    chatAttachmentLabel_->hide();
-    chatAttachmentLabel_->setWordWrap(true);
     chatSendButton_->setEnabled(false);
     chatCancelButton_->setEnabled(false);
 
@@ -2121,11 +2244,23 @@ QWidget* NativeMainWindow::createChatPage() {
     chatGroupSplitter_->setSizes({220, 620});
     layout->addWidget(chatGroupSplitter_, 1);
 
+    connect(sidebarCollapseButton, &QToolButton::clicked, this, [this]() {
+        toggleGroupChatSidebar();
+    });
+    connect(chatSessionList_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        activateChatSessionItem(item);
+    });
+    connect(
+        chatSessionList_,
+        &QListWidget::customContextMenuRequested,
+        this,
+        [this](const QPoint& position) { showChatSessionContextMenu(position); });
+
     connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
         refreshChatState(chatConversationComboBox_->currentData().toString());
     });
-    connect(chatPinButton_, &QPushButton::clicked, this, [this]() {
-        toggleCurrentChatPin();
+    connect(chatPinButton_, &QToolButton::clicked, this, [this]() {
+        toggleChatWindowTopmost();
     });
     connect(chatRenameButton_, &QPushButton::clicked, this, [this]() {
         renameCurrentPrivateChat();
@@ -2136,7 +2271,7 @@ QWidget* NativeMainWindow::createChatPage() {
     connect(chatResetAvatarButton_, &QPushButton::clicked, this, [this]() {
         resetCurrentChatAvatar();
     });
-    connect(chatGroupSidebarToggleButton_, &QPushButton::clicked, this, [this]() {
+    connect(chatGroupSidebarToggleButton_, &QToolButton::clicked, this, [this]() {
         toggleGroupChatSidebar();
     });
     connect(chatGroupSplitter_, &QSplitter::splitterMoved, this, [this](int, int) {
@@ -2146,7 +2281,13 @@ QWidget* NativeMainWindow::createChatPage() {
         chatNewConversationButton_,
         &QPushButton::clicked,
         this,
-        [this]() { startNewChatConversation(); });
+        [this]() { showNewChatMenu(); });
+    connect(chatHeaderNewButton_, &QToolButton::clicked, this, [this]() {
+        startNewChatConversation();
+    });
+    connect(chatCloseButton_, &QToolButton::clicked, this, [this]() {
+        leaveChatSurfaceMode();
+    });
     connect(
         chatDeleteConversationButton_,
         &QPushButton::clicked,
@@ -2164,8 +2305,6 @@ QWidget* NativeMainWindow::createChatPage() {
             if (updatingChatControls_) {
                 return;
             }
-            const bool group = isGroupChatMode();
-            chatPrivateSelector_->setVisible(!group);
             syncChatPresentationControls();
             refreshChatState({}, true);
         });
@@ -2242,7 +2381,552 @@ QWidget* NativeMainWindow::createChatPage() {
     connect(enterShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
     syncChatPresentationControls();
+    applyChatTheme();
     return page;
+}
+
+void NativeMainWindow::clearChatTranscript() {
+    chatRenderedMessages_ = {};
+    chatStreamingLabel_ = nullptr;
+    if (chatMessagesLayout_ == nullptr) {
+        return;
+    }
+    while (chatMessagesLayout_->count() > 0) {
+        QLayoutItem* item = chatMessagesLayout_->takeAt(0);
+        if (item->widget() != nullptr) {
+            delete item->widget();
+        }
+        delete item;
+    }
+    chatMessagesLayout_->addStretch(1);
+}
+
+void NativeMainWindow::appendChatMessageBubble(const QJsonObject& message, bool streaming) {
+    if (chatMessagesLayout_ == nullptr) {
+        return;
+    }
+    const QString role = message.value(QStringLiteral("role")).toString();
+    const bool user = role == QStringLiteral("user");
+    QString character = message.value(QStringLiteral("speaker")).toString().trimmed();
+    if (character.isEmpty()) {
+        character = message.value(QStringLiteral("character")).toString().trimmed();
+    }
+    if (character.isEmpty() && !user) {
+        character = activeChatCharacter_.isEmpty()
+            ? chatCharacterComboBox_->currentData().toString()
+            : activeChatCharacter_;
+    }
+    QString author = user ? QStringLiteral("你") : displayNameForCharacter(character);
+    if (author.isEmpty()) {
+        author = user ? QStringLiteral("你") : QStringLiteral("AI");
+    }
+    const QString createdAt = message.value(QStringLiteral("created_at")).toString();
+    QString content = message.value(QStringLiteral("content")).toString();
+    const QStringList attachments = attachmentSummaries(
+        message.value(QStringLiteral("attachments_json")).toString());
+    if (!attachments.isEmpty()) {
+        if (!content.trimmed().isEmpty()) {
+            content.append(u'\n');
+        }
+        content.append(attachments.join(u'\n'));
+    }
+    if (content.trimmed().isEmpty()) {
+        content = streaming ? QStringLiteral("…") : QStringLiteral(" ");
+    }
+
+    auto* row = new QWidget(chatMessagesHost_);
+    row->setObjectName(QStringLiteral("nativeChatMessageRow"));
+    auto* rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 6, 0, 6);
+    rowLayout->setSpacing(8);
+    auto* avatar = new QLabel(user ? QStringLiteral("你") : author.left(1), row);
+    avatar->setObjectName(user
+                              ? QStringLiteral("nativeChatUserAvatar")
+                              : QStringLiteral("nativeChatAssistantAvatar"));
+    avatar->setAlignment(Qt::AlignCenter);
+    avatar->setFixedSize(28, 28);
+    if (!user && !character.isEmpty()) {
+        QPixmap pixmap;
+        const QString avatarPath = chatAvatarPath(character);
+        if (!avatarPath.isEmpty()) {
+            pixmap.load(avatarPath);
+        }
+        if (pixmap.isNull()) {
+            const QByteArray data = backend_.modelCharacterImage(
+                projectRoot_, userModelsRoot_, character);
+            pixmap.loadFromData(data);
+        }
+        const QPixmap rounded = circularPixmap(pixmap, 28);
+        if (!rounded.isNull()) {
+            avatar->setText({});
+            avatar->setPixmap(rounded);
+        }
+    }
+
+    auto* contentWidget = new QWidget(row);
+    contentWidget->setObjectName(QStringLiteral("nativeChatBubbleColumn"));
+    contentWidget->setMaximumWidth(560);
+    auto* contentLayout = new QVBoxLayout(contentWidget);
+    contentLayout->setContentsMargins(0, 0, 0, 0);
+    contentLayout->setSpacing(3);
+    auto* meta = new QLabel(
+        createdAt.isEmpty() ? author : QStringLiteral("%1  %2").arg(author, createdAt),
+        contentWidget);
+    meta->setObjectName(QStringLiteral("nativeChatMessageMeta"));
+    meta->setAlignment(user ? Qt::AlignRight : Qt::AlignLeft);
+    contentLayout->addWidget(meta);
+    auto* bubble = new QFrame(contentWidget);
+    bubble->setObjectName(user
+                              ? QStringLiteral("nativeChatUserBubble")
+                              : QStringLiteral("nativeChatAssistantBubble"));
+    auto* bubbleLayout = new QVBoxLayout(bubble);
+    bubbleLayout->setContentsMargins(12, 8, 12, 8);
+    auto* label = new QLabel(content, bubble);
+    label->setObjectName(QStringLiteral("nativeChatBubbleText"));
+    label->setWordWrap(true);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+    bubbleLayout->addWidget(label);
+    contentLayout->addWidget(bubble, 0, user ? Qt::AlignRight : Qt::AlignLeft);
+    if (streaming) {
+        chatStreamingLabel_ = label;
+    }
+
+    if (user) {
+        rowLayout->addStretch(1);
+        rowLayout->addWidget(contentWidget, 0, Qt::AlignTop);
+        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
+    } else {
+        rowLayout->addWidget(avatar, 0, Qt::AlignTop);
+        rowLayout->addWidget(contentWidget, 0, Qt::AlignTop);
+        rowLayout->addStretch(1);
+    }
+    chatMessagesLayout_->insertWidget(
+        std::max(0, chatMessagesLayout_->count() - 1), row);
+}
+
+void NativeMainWindow::renderChatMessages(const QJsonArray& messages) {
+    clearChatTranscript();
+    chatRenderedMessages_ = messages;
+    for (const QJsonValue& value : messages) {
+        if (value.isObject()) {
+            appendChatMessageBubble(value.toObject());
+        }
+    }
+    if (messages.isEmpty() && chatMessagesLayout_ != nullptr) {
+        auto* empty = new qfw::BodyLabel(
+            QStringLiteral("还没有消息，来开始新的聊天吧。"), chatMessagesHost_);
+        empty->setObjectName(QStringLiteral("nativeChatEmptyState"));
+        empty->setAlignment(Qt::AlignCenter);
+        chatMessagesLayout_->insertWidget(0, empty, 1, Qt::AlignCenter);
+    }
+    QTimer::singleShot(0, this, [this]() {
+        if (chatTranscript_ != nullptr) {
+            chatTranscript_->verticalScrollBar()->setValue(
+                chatTranscript_->verticalScrollBar()->maximum());
+        }
+    });
+}
+
+void NativeMainWindow::applyChatTheme() {
+    if (chatPage_ == nullptr) {
+        return;
+    }
+    chatThemeDark_ = qfw::isDarkTheme();
+    const bool dark = chatThemeDark_;
+    const QString shell = dark ? QStringLiteral("#0f1117") : QStringLiteral("#f5f7fb");
+    const QString sidebar = dark ? QStringLiteral("#151923") : QStringLiteral("#f8fafd");
+    const QString header = dark ? QStringLiteral("#151923") : QStringLiteral("#ffffff");
+    const QString border = dark ? QStringLiteral("#242a37") : QStringLiteral("#e0e6f2");
+    const QString text = dark ? QStringLiteral("#f8f8fb") : QStringLiteral("#1f2328");
+    const QString muted = dark ? QStringLiteral("#a9b0c3") : QStringLiteral("#657089");
+    const QString inputArea = dark ? QStringLiteral("#131720") : QStringLiteral("#eef3fb");
+    const QString composer = dark ? QStringLiteral("#181c25") : QStringLiteral("#ffffff");
+    const QString neutralButton = dark ? QStringLiteral("#2a2f3b") : QStringLiteral("#edf2fb");
+    const QString neutralHover = dark ? QStringLiteral("#343b4d") : QStringLiteral("#e1e8f6");
+    const QString selected = dark ? QStringLiteral("#252c3d") : QStringLiteral("#ffffff");
+    const QString selectedBorder = dark ? QStringLiteral("#343d52") : QStringLiteral("#d9e3f3");
+    const QString radius = runtime_
+                                   .value(QStringLiteral("chat_window_normal_window"))
+                                   .toBool(false)
+        ? QStringLiteral("0")
+        : QStringLiteral("12");
+    chatPage_->setStyleSheet(QStringLiteral(R"(
+        QWidget#nativeChatPage { background: %1; border: 1px solid %4; border-radius: %14px; }
+        QWidget#nativeChatSidebar { background: %2; border: none; border-right: 1px solid %4; }
+        QWidget#nativeChatContent, QWidget#nativeChatMessages { background: %1; border: none; }
+        QFrame#nativeChatHeader { background: %3; border: none; border-bottom: 1px solid %4; }
+        QLabel#nativeChatTitle, QLabel#nativeChatSidebarTitle { color: %5; background: transparent; font-weight: 700; }
+        QLabel#nativeChatSubtitle, QLabel#nativeChatSidebarHint, QLabel#nativeChatStatus,
+        QLabel#nativeChatMessageMeta, QLabel#nativeChatEmptyState { color: %6; background: transparent; }
+        QLabel#nativeChatTitleAvatar, QLabel#nativeChatAssistantAvatar {
+            color: white; background: #6264a7; border-radius: 14px; font-weight: 700;
+        }
+        QLabel#nativeChatTitleAvatar { border-radius: 17px; }
+        QLabel#nativeChatUserAvatar { color: white; background: #e4004f; border-radius: 14px; font-weight: 700; }
+        QLabel#nativeChatStatusDot { background: #e4004f; border-radius: 3px; }
+        QScrollArea#nativeChatTranscript { background: %1; border: none; }
+        QFrame#nativeChatAssistantBubble { background: %7; border: 1px solid %8; border-radius: 15px; }
+        QFrame#nativeChatUserBubble { background: %9; border: 1px solid %8; border-radius: 15px; }
+        QLabel#nativeChatBubbleText { color: %5; background: transparent; font-size: 13px; }
+        QWidget#nativeChatInputArea { background: %10; border: none; border-top: 1px solid %4; }
+        QFrame#nativeChatComposer { background: %11; border: 2px solid #e4004f; border-radius: 22px; }
+        QPlainTextEdit { color: %5; background: transparent; border: none; padding: 7px 4px; selection-background-color: #6264a7; }
+        QPushButton { color: %5; }
+        QPushButton#nativeChatRoundButton { background: %12; border: none; border-radius: 23px; font-size: 18px; }
+        QPushButton#nativeChatRoundButton:hover { background: %13; }
+        QPushButton#nativeChatSendButton { color: white; background: #e4004f; border: none; border-radius: 23px; font-size: 20px; }
+        QPushButton#nativeChatSendButton:hover { background: #f02466; }
+        QListWidget#nativeChatSessionList { background: transparent; border: none; outline: none; }
+        QListWidget#nativeChatSessionList::item { color: %5; background: transparent; border: 1px solid transparent; border-radius: 8px; margin: 1px; }
+        QListWidget#nativeChatSessionList::item:hover { background: %13; }
+        QListWidget#nativeChatSessionList::item:selected { background: %15; border: 1px solid %16; }
+        QListWidget#nativeChatSessionList::item:disabled { color: %6; background: transparent; border: none; font-weight: 700; }
+        QWidget#nativeChatSessionRow, QLabel#nativeChatSessionTitle, QLabel#nativeChatSessionPreview,
+        QLabel#nativeChatSessionBadge { background: transparent; }
+        QLabel#nativeChatSessionTitle { color: %5; font-weight: 600; }
+        QLabel#nativeChatSessionPreview { color: %6; font-size: 11px; }
+        QLabel#nativeChatSessionBadge { color: %6; background: %12; border-radius: 8px; padding: 1px 5px; font-size: 10px; }
+    )")
+                                    .arg(shell)
+                                    .arg(sidebar)
+                                    .arg(header)
+                                    .arg(border)
+                                    .arg(text)
+                                    .arg(muted)
+                                    .arg(dark ? QStringLiteral("#1b1f29") : QStringLiteral("#ffffff"))
+                                    .arg(dark ? QStringLiteral("#39415a") : QStringLiteral("#e4e7ef"))
+                                    .arg(dark ? QStringLiteral("#3a1826") : QStringLiteral("#fff0f5"))
+                                    .arg(inputArea)
+                                    .arg(composer)
+                                    .arg(neutralButton)
+                                    .arg(neutralHover)
+                                    .arg(radius)
+                                    .arg(selected)
+                                    .arg(selectedBorder));
+    if (!chatRenderedMessages_.isEmpty() && activeChatRequestId_ == 0) {
+        renderChatMessages(chatRenderedMessages_);
+    }
+    rebuildChatSessionList();
+}
+
+void NativeMainWindow::rebuildChatSessionList() {
+    if (chatSessionList_ == nullptr || chatCharacterComboBox_ == nullptr) {
+        return;
+    }
+    const QString currentKey = currentChatKey();
+    const QSignalBlocker blocker(chatSessionList_);
+    chatSessionList_->clear();
+    auto addSection = [this](const QString& text) {
+        auto* item = new QListWidgetItem(text, chatSessionList_);
+        item->setFlags(Qt::NoItemFlags);
+        item->setSizeHint(QSize(0, 30));
+    };
+    auto addRow = [this, &currentKey](
+                      const QString& mode,
+                      const QString& key,
+                      const QString& title,
+                      const QString& kind) {
+        auto* item = new QListWidgetItem(chatSessionList_);
+        item->setData(kChatSessionModeRole, mode);
+        item->setData(kChatSessionKeyRole, key);
+        item->setSizeHint(QSize(0, 64));
+        auto* row = new QWidget(chatSessionList_);
+        row->setObjectName(QStringLiteral("nativeChatSessionRow"));
+        row->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(9, 7, 8, 7);
+        rowLayout->setSpacing(8);
+        auto* avatar = new QLabel(title.left(1), row);
+        avatar->setAlignment(Qt::AlignCenter);
+        avatar->setFixedSize(34, 34);
+        avatar->setStyleSheet(QStringLiteral(
+            "QLabel { color: white; background: %1; border-radius: 17px; font-weight: 700; }")
+                                  .arg(key == currentKey ? QStringLiteral("#e4004f")
+                                                        : QStringLiteral("#6264a7")));
+        if (mode == QStringLiteral("private")) {
+            QPixmap pixmap;
+            const QString path = chatAvatarPath(key);
+            if (!path.isEmpty()) {
+                pixmap.load(path);
+            }
+            if (pixmap.isNull()) {
+                pixmap.loadFromData(backend_.modelCharacterImage(projectRoot_, userModelsRoot_, key));
+            }
+            const QPixmap rounded = circularPixmap(pixmap, 34);
+            if (!rounded.isNull()) {
+                avatar->setText({});
+                avatar->setPixmap(rounded);
+            }
+        }
+        rowLayout->addWidget(avatar);
+        auto* textStack = new QVBoxLayout();
+        textStack->setContentsMargins(0, 0, 0, 0);
+        textStack->setSpacing(2);
+        auto* titleLabel = new QLabel(title, row);
+        titleLabel->setObjectName(QStringLiteral("nativeChatSessionTitle"));
+        titleLabel->setTextFormat(Qt::PlainText);
+        auto* previewLabel = new QLabel(
+            chatSessionPreviews_.value(
+                key, mode == QStringLiteral("group") ? QStringLiteral("暂无群聊消息")
+                                                      : QStringLiteral("开始私聊")),
+            row);
+        previewLabel->setObjectName(QStringLiteral("nativeChatSessionPreview"));
+        previewLabel->setTextFormat(Qt::PlainText);
+        textStack->addWidget(titleLabel);
+        textStack->addWidget(previewLabel);
+        rowLayout->addLayout(textStack, 1);
+        QString badgeText = kind;
+        for (const QJsonValue& value : runtime_.value(QStringLiteral("pinned_chat_keys")).toArray()) {
+            if (value.toString() == key) {
+                badgeText = QStringLiteral("★  ") + kind;
+                break;
+            }
+        }
+        auto* badge = new QLabel(badgeText, row);
+        badge->setObjectName(QStringLiteral("nativeChatSessionBadge"));
+        rowLayout->addWidget(badge, 0, Qt::AlignVCenter);
+        chatSessionList_->setItemWidget(item, row);
+        if (key == currentKey) {
+            chatSessionList_->setCurrentItem(item);
+        }
+    };
+
+    addSection(QStringLiteral("私聊"));
+    for (int index = 0; index < chatCharacterComboBox_->count(); ++index) {
+        addRow(
+            QStringLiteral("private"),
+            chatCharacterComboBox_->itemData(index).toString(),
+            chatCharacterComboBox_->itemText(index),
+            QStringLiteral("私聊"));
+    }
+    addSection(QStringLiteral("群聊"));
+    if (chatGroupComboBox_ == nullptr || chatGroupComboBox_->count() == 0) {
+        auto* empty = new QListWidgetItem(QStringLiteral("暂无群聊"), chatSessionList_);
+        empty->setFlags(Qt::NoItemFlags);
+        empty->setSizeHint(QSize(0, 36));
+    } else {
+        for (int index = 0; index < chatGroupComboBox_->count(); ++index) {
+            addRow(
+                QStringLiteral("group"),
+                chatGroupComboBox_->itemData(index).toString(),
+                chatGroupComboBox_->itemText(index),
+                QStringLiteral("群聊"));
+        }
+    }
+}
+
+void NativeMainWindow::activateChatSessionItem(QListWidgetItem* item, bool resetPagination) {
+    if (item == nullptr) {
+        return;
+    }
+    const QString mode = item->data(kChatSessionModeRole).toString();
+    const QString key = item->data(kChatSessionKeyRole).toString();
+    if (mode.isEmpty() || key.isEmpty()) {
+        return;
+    }
+    if ((activeChatRequestId_ != 0 || groupSequenceActive_) && key != currentChatKey()) {
+        chatStatusLabel_->setText(QStringLiteral("请先完成或中断当前回复，再切换聊天。"));
+        rebuildChatSessionList();
+        return;
+    }
+    updatingChatControls_ = true;
+    {
+        const QSignalBlocker modeBlocker(chatModeComboBox_);
+        chatModeComboBox_->setCurrentIndex(chatModeComboBox_->findData(mode));
+    }
+    if (mode == QStringLiteral("private")) {
+        const QSignalBlocker characterBlocker(chatCharacterComboBox_);
+        chatCharacterComboBox_->setCurrentIndex(chatCharacterComboBox_->findData(key));
+    } else {
+        selectGroupKeyMembers(key);
+        const QSignalBlocker groupBlocker(chatGroupComboBox_);
+        chatGroupComboBox_->setCurrentIndex(chatGroupComboBox_->findData(key));
+    }
+    updatingChatControls_ = false;
+    syncChatPresentationControls();
+    refreshChatState({}, resetPagination);
+}
+
+void NativeMainWindow::showChatSessionContextMenu(const QPoint& position) {
+    if (chatSessionList_ == nullptr) {
+        return;
+    }
+    QListWidgetItem* item = chatSessionList_->itemAt(position);
+    if (item == nullptr || item->data(kChatSessionKeyRole).toString().isEmpty()) {
+        return;
+    }
+    activateChatSessionItem(item, false);
+    QMenu menu(chatWindow_);
+    const QString key = currentChatKey();
+    bool pinned = false;
+    for (const QJsonValue& value : runtime_.value(QStringLiteral("pinned_chat_keys")).toArray()) {
+        pinned = pinned || value.toString() == key;
+    }
+    QAction* pin = menu.addAction(pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶聊天"));
+    connect(pin, &QAction::triggered, this, [this]() { toggleCurrentChatPin(); });
+    if (!isGroupChatMode()) {
+        menu.addSeparator();
+        connect(menu.addAction(QStringLiteral("修改聊天名称")), &QAction::triggered, this, [this]() {
+            renameCurrentPrivateChat();
+        });
+        connect(menu.addAction(QStringLiteral("更换头像")), &QAction::triggered, this, [this]() {
+            chooseCurrentChatAvatar();
+        });
+        if (!chatAvatarPath(key).isEmpty()) {
+            connect(menu.addAction(QStringLiteral("恢复默认头像")), &QAction::triggered, this, [this]() {
+                resetCurrentChatAvatar();
+            });
+        }
+    }
+    menu.addSeparator();
+    QAction* remove = menu.addAction(QStringLiteral("删除当前会话"));
+    remove->setEnabled(!chatConversationComboBox_->currentData().toString().isEmpty());
+    connect(remove, &QAction::triggered, this, [this]() { deleteSelectedChatConversation(); });
+    menu.exec(chatSessionList_->viewport()->mapToGlobal(position));
+}
+
+void NativeMainWindow::showNewChatMenu() {
+    QMenu menu(chatWindow_);
+    QMenu* privateMenu = menu.addMenu(QStringLiteral("开始私聊"));
+    for (int index = 0; index < chatCharacterComboBox_->count(); ++index) {
+        const QString key = chatCharacterComboBox_->itemData(index).toString();
+        QAction* action = privateMenu->addAction(chatCharacterComboBox_->itemText(index));
+        connect(action, &QAction::triggered, this, [this, key]() {
+            const QSignalBlocker modeBlocker(chatModeComboBox_);
+            const QSignalBlocker characterBlocker(chatCharacterComboBox_);
+            updatingChatControls_ = true;
+            chatModeComboBox_->setCurrentIndex(chatModeComboBox_->findData(QStringLiteral("private")));
+            chatCharacterComboBox_->setCurrentIndex(chatCharacterComboBox_->findData(key));
+            updatingChatControls_ = false;
+            refreshChatState({}, true);
+            startNewChatConversation();
+            syncChatPresentationControls();
+        });
+    }
+    menu.addSeparator();
+    connect(menu.addAction(QStringLiteral("新建群聊…")), &QAction::triggered, this, [this]() {
+        chooseNewGroupChat();
+    });
+    menu.exec(chatNewConversationButton_->mapToGlobal(
+        QPoint(0, chatNewConversationButton_->height())));
+}
+
+void NativeMainWindow::chooseNewGroupChat() {
+    QDialog dialog(chatWindow_);
+    dialog.setWindowTitle(QStringLiteral("新建群聊"));
+    dialog.resize(360, 460);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* title = new qfw::StrongBodyLabel(QStringLiteral("选择至少两名角色"), &dialog);
+    layout->addWidget(title);
+    auto* list = new qfw::ListWidget(&dialog);
+    list->setSelectionMode(QAbstractItemView::MultiSelection);
+    for (int index = 0; index < chatCharacterComboBox_->count(); ++index) {
+        auto* item = new QListWidgetItem(chatCharacterComboBox_->itemText(index), list);
+        item->setData(Qt::UserRole, chatCharacterComboBox_->itemData(index));
+    }
+    layout->addWidget(list, 1);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QList<QListWidgetItem*> selected = list->selectedItems();
+    if (selected.size() < 2) {
+        QMessageBox::information(chatWindow_, QStringLiteral("新建群聊"), QStringLiteral("请至少选择两名角色。"));
+        return;
+    }
+    QStringList keys;
+    for (const QListWidgetItem* item : selected) {
+        keys.append(item->data(Qt::UserRole).toString());
+    }
+    updatingChatControls_ = true;
+    {
+        const QSignalBlocker modeBlocker(chatModeComboBox_);
+        chatModeComboBox_->setCurrentIndex(chatModeComboBox_->findData(QStringLiteral("group")));
+    }
+    for (int row = 0; row < chatGroupMembersList_->count(); ++row) {
+        QListWidgetItem* item = chatGroupMembersList_->item(row);
+        item->setSelected(keys.contains(item->data(Qt::UserRole).toString()));
+    }
+    updatingChatControls_ = false;
+    refreshChatState({}, true);
+    startNewChatConversation();
+    syncChatPresentationControls();
+}
+
+void NativeMainWindow::updateChatTitleAvatar(const QString& requestedCharacter) {
+    if (chatTitleAvatar_ == nullptr) {
+        return;
+    }
+    QString character = requestedCharacter;
+    if (character.isEmpty()) {
+        if (isGroupChatMode()) {
+            const QJsonArray members = selectedGroupMembers();
+            if (!members.isEmpty()) {
+                character = members.first().toObject().value(QStringLiteral("key")).toString();
+            }
+        } else {
+            character = chatCharacterComboBox_->currentData().toString();
+        }
+    }
+    QPixmap pixmap;
+    const QString path = chatAvatarPath(character);
+    if (!path.isEmpty()) {
+        pixmap.load(path);
+    }
+    if (pixmap.isNull() && !character.isEmpty()) {
+        pixmap.loadFromData(backend_.modelCharacterImage(projectRoot_, userModelsRoot_, character));
+    }
+    const QPixmap rounded = circularPixmap(pixmap, 34);
+    if (!rounded.isNull()) {
+        chatTitleAvatar_->setText({});
+        chatTitleAvatar_->setPixmap(rounded);
+    } else {
+        const QString title = isGroupChatMode()
+            ? groupDisplayName(selectedGroupKey())
+            : displayNameForCharacter(character);
+        chatTitleAvatar_->setPixmap({});
+        chatTitleAvatar_->setText(title.isEmpty() ? QStringLiteral("AI") : title.left(1));
+    }
+}
+
+void NativeMainWindow::updateChatHeader() {
+    if (chatTitleLabel_ == nullptr) {
+        return;
+    }
+    const QString title = isGroupChatMode()
+        ? QStringLiteral("群聊：%1").arg(groupDisplayName(selectedGroupKey()))
+        : displayNameForCharacter(chatCharacterComboBox_->currentData().toString());
+    chatTitleLabel_->setText(title.isEmpty() ? QStringLiteral("AI 聊天") : title);
+    chatSubtitleLabel_->setText(QStringLiteral("AI 聊天 | 回车发送，Shift+Enter 换行"));
+    if (chatWindow_ != nullptr) {
+        chatWindow_->setWindowTitle(
+            title.isEmpty() ? QStringLiteral("Bandori 桌宠 - 聊天") : title);
+    }
+    updateChatTitleAvatar();
+    const bool alwaysOnTop = runtime_
+                                 .value(QStringLiteral("chat_window_always_on_top"))
+                                 .toBool(false);
+    chatPinButton_->setIcon(qfw::FluentIcon(
+        alwaysOnTop ? qfw::FluentIconEnum::Unpin : qfw::FluentIconEnum::Pin));
+    chatPinButton_->setToolTip(alwaysOnTop ? QStringLiteral("取消窗口置顶")
+                                           : QStringLiteral("窗口置顶"));
+}
+
+void NativeMainWindow::toggleChatWindowTopmost() {
+    const bool alwaysOnTop = runtime_
+                                 .value(QStringLiteral("chat_window_always_on_top"))
+                                 .toBool(false);
+    if (saveChatPresentationSettings({
+            {QStringLiteral("chat_window_always_on_top"), !alwaysOnTop},
+        })) {
+        applyChatWindowPolicy();
+        updateChatHeader();
+    }
 }
 
 QWidget* NativeMainWindow::createHistorySearchPage() {
@@ -4907,8 +5591,8 @@ void NativeMainWindow::restoreNativeWindowGeometry() {
     const QRect saved(
         xValue.toInt(),
         yValue.toInt(),
-        std::clamp(widthValue.toInt(), 420, 16'384),
-        std::clamp(heightValue.toInt(), 620, 16'384));
+        std::clamp(widthValue.toInt(), 640, 16'384),
+        std::clamp(heightValue.toInt(), 520, 16'384));
     bool visibleOnDesktop = false;
     for (const QScreen* screen : QGuiApplication::screens()) {
         if (screen != nullptr && screen->availableGeometry().intersects(saved)) {
@@ -4924,20 +5608,22 @@ void NativeMainWindow::restoreNativeWindowGeometry() {
 }
 
 void NativeMainWindow::scheduleNativeWindowGeometrySave() {
-    if (chatSurfaceMode_ && !restoringNativeWindowGeometry_
+    if (chatSurfaceMode_ && chatWindow_ != nullptr && chatWindow_->isVisible()
+        && !restoringNativeWindowGeometry_
         && runtime_.contains(QStringLiteral("chat_window_x"))) {
         nativeWindowGeometryTimer_.start();
     }
 }
 
 void NativeMainWindow::persistNativeWindowGeometry() {
-    if (!chatSurfaceMode_ || restoringNativeWindowGeometry_
+    if (!chatSurfaceMode_ || chatWindow_ == nullptr || restoringNativeWindowGeometry_
         || !runtime_.contains(QStringLiteral("chat_window_x"))) {
         return;
     }
-    const QRect current = (isMaximized() || isFullScreen()) && normalGeometry().isValid()
-        ? normalGeometry()
-        : geometry();
+    const QRect current = (chatWindow_->isMaximized() || chatWindow_->isFullScreen())
+            && chatWindow_->normalGeometry().isValid()
+        ? chatWindow_->normalGeometry()
+        : chatWindow_->geometry();
     const QJsonObject settings {
         {QStringLiteral("chat_window_x"), current.x()},
         {QStringLiteral("chat_window_y"), current.y()},
@@ -9722,7 +10408,9 @@ void NativeMainWindow::applyTheme(const QString& mode) {
     } else {
         qfw::setTheme(qfw::Theme::Auto);
     }
-    qfw::setThemeColor(QColor(QStringLiteral("#e4004f")));
+    qfw::setThemeColor(QColor(
+        qfw::isDarkTheme() ? QStringLiteral("#ff5f8f") : QStringLiteral("#e4004f")));
+    QTimer::singleShot(0, this, [this]() { applyChatTheme(); });
 }
 
 void NativeMainWindow::populateModelList() {
@@ -10097,8 +10785,8 @@ void NativeMainWindow::populateChatCharacters() {
             ++selectedCount;
         }
     }
-    const bool groupMode = isGroupChatMode();
-    chatPrivateSelector_->setVisible(!groupMode);
+    chatPrivateSelector_->hide();
+    chatGroupSelector_->hide();
     updatingChatControls_ = false;
     syncChatPresentationControls();
 }
@@ -10173,37 +10861,28 @@ void NativeMainWindow::syncChatPresentationControls() {
     if (chatGroupSelector_ == nullptr || chatPinButton_ == nullptr) {
         return;
     }
-    const bool group = isGroupChatMode();
     const bool collapsed = runtime_
                                .value(QStringLiteral("group_chat_sidebar_collapsed"))
                                .toBool(false);
-    chatGroupSelector_->setVisible(group && !collapsed);
-    chatGroupSidebarToggleButton_->setVisible(group);
-    chatGroupSidebarToggleButton_->setText(
-        collapsed ? tr("Show members") : tr("Hide members"));
-    chatRenameButton_->setVisible(!group);
-    chatAvatarButton_->setVisible(!group);
-    chatResetAvatarButton_->setVisible(!group);
-
-    const QString key = currentChatKey();
-    const QJsonArray pinned = runtime_.value(QStringLiteral("pinned_chat_keys")).toArray();
-    bool isPinned = false;
-    for (const QJsonValue& value : pinned) {
-        if (value.toString() == key) {
-            isPinned = true;
-            break;
-        }
+    chatPrivateSelector_->hide();
+    chatGroupSelector_->hide();
+    chatRenameButton_->hide();
+    chatAvatarButton_->hide();
+    chatResetAvatarButton_->hide();
+    chatPinButton_->setEnabled(chatWindow_ != nullptr);
+    if (chatGroupSidebarToggleButton_ != nullptr) {
+        chatGroupSidebarToggleButton_->setIcon(qfw::FluentIcon(
+            collapsed ? qfw::FluentIconEnum::CareRightSolid
+                      : qfw::FluentIconEnum::CareLeftSolid));
+        chatGroupSidebarToggleButton_->setToolTip(
+            collapsed ? QStringLiteral("展开聊天列表") : QStringLiteral("收起聊天列表"));
     }
-    chatPinButton_->setEnabled(!key.isEmpty());
-    chatPinButton_->setText(isPinned ? tr("Unpin chat") : tr("Pin chat"));
-    if (!group) {
-        const QString character = currentChatKey();
-        chatRenameButton_->setEnabled(!character.isEmpty());
-        chatAvatarButton_->setEnabled(!character.isEmpty());
-        chatResetAvatarButton_->setEnabled(!chatAvatarPath(character).isEmpty());
+    if (chatSidebarWidget_ != nullptr) {
+        chatSidebarWidget_->setVisible(!collapsed);
+        chatSidebarWidget_->setMinimumWidth(collapsed ? 0 : 220);
+        chatSidebarWidget_->setMaximumWidth(collapsed ? 0 : 248);
     }
-
-    if (group && !collapsed && chatGroupSplitter_ != nullptr) {
+    if (!collapsed && chatGroupSplitter_ != nullptr) {
         const double ratio = std::clamp(
             runtime_
                 .value(QStringLiteral("group_chat_sidebar_ratio"))
@@ -10216,6 +10895,8 @@ void NativeMainWindow::syncChatPresentationControls() {
             {static_cast<int>(std::round(total * ratio)),
              static_cast<int>(std::round(total * (1.0 - ratio)))});
     }
+    updateChatHeader();
+    rebuildChatSessionList();
 }
 
 bool NativeMainWindow::saveChatPresentationSettings(const QJsonObject& changes) {
@@ -10360,9 +11041,6 @@ void NativeMainWindow::resetCurrentChatAvatar() {
 }
 
 void NativeMainWindow::toggleGroupChatSidebar() {
-    if (!isGroupChatMode()) {
-        return;
-    }
     const bool collapsed = runtime_
                                .value(QStringLiteral("group_chat_sidebar_collapsed"))
                                .toBool(false);
@@ -10374,8 +11052,8 @@ void NativeMainWindow::toggleGroupChatSidebar() {
 }
 
 void NativeMainWindow::scheduleGroupChatLayoutSave() {
-    if (!updatingChatControls_ && isGroupChatMode()
-        && chatGroupSelector_ != nullptr && chatGroupSelector_->isVisible()) {
+    if (!updatingChatControls_ && chatSidebarWidget_ != nullptr
+        && chatSidebarWidget_->isVisible()) {
         chatLayoutSaveTimer_.start();
     }
 }
@@ -10452,7 +11130,7 @@ void NativeMainWindow::refreshChatState(
     if (character.isEmpty()) {
         chatConversationComboBox_->clear();
         chatTranscriptBase_.clear();
-        chatTranscript_->clear();
+        clearChatTranscript();
         chatLoadOlderButton_->setEnabled(false);
         chatStatusLabel_->setText(tr("No character is available"));
         return;
@@ -10468,7 +11146,7 @@ void NativeMainWindow::refreshChatState(
             chatMessageLimit_)) {
         chatStatusLabel_->setText(backend_.getStatus());
         chatTranscriptBase_.clear();
-        chatTranscript_->clear();
+        clearChatTranscript();
         chatLoadOlderButton_->setEnabled(false);
         return;
     }
@@ -10506,6 +11184,7 @@ void NativeMainWindow::refreshChatState(
     const QJsonArray messages = parseArray(backend_.getChatMessagesJson());
     const bool hasOlderMessages = backend_.getChatHasOlderMessages();
     chatLoadOlderButton_->setEnabled(hasOlderMessages && chatMessageLimit_ < kChatMessageLimit);
+    chatLoadOlderButton_->setVisible(chatLoadOlderButton_->isEnabled());
     QStringList transcript;
     transcript.reserve(messages.size() * 3);
     for (const QJsonValue& value : messages) {
@@ -10523,9 +11202,20 @@ void NativeMainWindow::refreshChatState(
     }
     chatTranscriptBase_ = transcript.join(u'\n');
     if (activeChatRequestId_ == 0) {
-        chatTranscript_->setPlainText(chatTranscriptBase_);
+        renderChatMessages(messages);
     } else {
+        renderChatMessages(messages);
         renderChatStreamPreview();
+    }
+    if (!messages.isEmpty()) {
+        const QJsonObject latest = messages.last().toObject();
+        QString preview = stripActionTags(latest.value(QStringLiteral("content")).toString())
+                              .simplified();
+        if (preview.size() > 28) {
+            preview = preview.left(28) + QStringLiteral("…");
+        }
+        chatSessionPreviews_.insert(character, preview);
+        chatSessionTimes_.insert(character, latest.value(QStringLiteral("created_at")).toString());
     }
     chatStatusLabel_->setText(
         conversations.isEmpty()
@@ -10534,6 +11224,7 @@ void NativeMainWindow::refreshChatState(
                   .arg(conversations.size())
                   .arg(messages.size())
                   .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
+    rebuildChatSessionList();
     setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
 }
 
@@ -10563,7 +11254,7 @@ void NativeMainWindow::refreshGroupChatState(
             chatMessageLimit_)) {
         chatStatusLabel_->setText(backend_.getStatus());
         chatTranscriptBase_.clear();
-        chatTranscript_->clear();
+        clearChatTranscript();
         chatLoadOlderButton_->setEnabled(false);
         return;
     }
@@ -10655,6 +11346,7 @@ void NativeMainWindow::refreshGroupChatState(
     const bool hasOlderMessages = backend_.getChatHasOlderMessages();
     chatLoadOlderButton_->setEnabled(
         hasOlderMessages && chatMessageLimit_ < kChatMessageLimit);
+    chatLoadOlderButton_->setVisible(chatLoadOlderButton_->isEnabled());
     QStringList transcript;
     transcript.reserve(messages.size() * 3);
     for (const QJsonValue& value : messages) {
@@ -10672,9 +11364,21 @@ void NativeMainWindow::refreshGroupChatState(
     }
     chatTranscriptBase_ = transcript.join(u'\n');
     if (activeChatRequestId_ == 0) {
-        chatTranscript_->setPlainText(chatTranscriptBase_);
+        renderChatMessages(messages);
     } else {
+        renderChatMessages(messages);
         renderChatStreamPreview();
+    }
+    if (!messages.isEmpty() && !activeGroupKey.isEmpty()) {
+        const QJsonObject latest = messages.last().toObject();
+        QString preview = stripActionTags(latest.value(QStringLiteral("content")).toString())
+                              .simplified();
+        if (preview.size() > 28) {
+            preview = preview.left(28) + QStringLiteral("…");
+        }
+        chatSessionPreviews_.insert(activeGroupKey, preview);
+        chatSessionTimes_.insert(
+            activeGroupKey, latest.value(QStringLiteral("created_at")).toString());
     }
     chatStatusLabel_->setText(
         conversations.isEmpty()
@@ -10684,6 +11388,7 @@ void NativeMainWindow::refreshGroupChatState(
                   .arg(conversations.size())
                   .arg(messages.size())
                   .arg(hasOlderMessages ? tr(" · older messages available") : QString()));
+    rebuildChatSessionList();
     setChatBusy(activeChatRequestId_ != 0 || groupSequenceActive_);
 }
 
@@ -10698,7 +11403,7 @@ void NativeMainWindow::startNewChatConversation() {
     const QSignalBlocker blocker(chatConversationComboBox_);
     chatConversationComboBox_->setCurrentIndex(-1);
     chatTranscriptBase_.clear();
-    chatTranscript_->clear();
+    clearChatTranscript();
     chatLoadOlderButton_->setEnabled(false);
     chatDeleteConversationButton_->setEnabled(false);
     chatStatusLabel_->setText(
@@ -10840,6 +11545,10 @@ void NativeMainWindow::updatePendingChatAttachments() {
                   .arg(pendingChatAttachments_.size() > names.size()
                            ? tr(" and %1 more").arg(pendingChatAttachments_.size() - names.size())
                            : QString()));
+    chatAttachmentLabel_->setVisible(!pendingChatAttachments_.isEmpty());
+    if (chatClearAttachmentsButton_ != nullptr) {
+        chatClearAttachmentsButton_->setVisible(!pendingChatAttachments_.isEmpty());
+    }
     setChatBusy(activeChatRequestId_ != 0);
 }
 
@@ -11554,41 +12263,37 @@ void NativeMainWindow::renderChatStreamPreview() {
     if (chatTranscript_ == nullptr || activeChatRequestId_ == 0) {
         return;
     }
-    QString transcript = chatTranscriptBase_.trimmed();
     const QString reasoning = stripActionTags(chatStreamReasoning_);
     const QString response = stripActionTags(chatStreamText_);
+    QString content;
     if (!reasoning.isEmpty()) {
-        if (!transcript.isEmpty()) {
-            transcript += QStringLiteral("\n\n");
-        }
-        transcript += QStringLiteral("[reasoning · streaming]\n") + reasoning;
-    }
-    if (!transcript.isEmpty()) {
-        transcript += QStringLiteral("\n\n");
+        content += QStringLiteral("思考过程\n%1\n\n").arg(reasoning);
     }
     if (activeChatPhase_ == QStringLiteral("group_plan")) {
-        transcript += QStringLiteral("[planner · scheduling]\n");
-    } else if (activeChatPhase_ == QStringLiteral("group_speaker")) {
-        transcript += QStringLiteral("[%1 · streaming]\n").arg(activeChatCharacterDisplay_);
-    } else {
-        transcript += QStringLiteral("[assistant · streaming]\n");
+        content += QStringLiteral("正在安排群聊回复…\n");
     }
-    transcript += response.isEmpty() ? QStringLiteral("…") : response;
-    chatTranscript_->setPlainText(transcript);
+    content += response.isEmpty() ? QStringLiteral("…") : response;
+    if (chatStreamingLabel_ == nullptr) {
+        appendChatMessageBubble(
+            QJsonObject {
+                {QStringLiteral("role"), QStringLiteral("assistant")},
+                {QStringLiteral("speaker"), activeChatCharacter_},
+                {QStringLiteral("content"), content},
+            },
+            true);
+    } else {
+        chatStreamingLabel_->setText(content);
+    }
     QScrollBar* scrollBar = chatTranscript_->verticalScrollBar();
     scrollBar->setValue(scrollBar->maximum());
 }
 
 void NativeMainWindow::openNativeChat(const QString& character) {
-    showNormal();
     enterChatSurfaceMode();
-    raise();
-    activateWindow();
     populateChatCharacters();
     if (activeChatRequestId_ != 0
         && !character.trimmed().isEmpty()
         && character.trimmed() != activeChatCharacter_) {
-        switchTo(chatPage_);
         chatStatusLabel_->setText(
             tr("Finish or cancel the active native response before switching characters"));
         return;
@@ -11598,7 +12303,6 @@ void NativeMainWindow::openNativeChat(const QString& character) {
         const int privateMode = chatModeComboBox_->findData(QStringLiteral("private"));
         if (privateMode >= 0) {
             chatModeComboBox_->setCurrentIndex(privateMode);
-            chatPrivateSelector_->setVisible(true);
             syncChatPresentationControls();
         }
         const QSignalBlocker blocker(chatCharacterComboBox_);
@@ -11607,8 +12311,11 @@ void NativeMainWindow::openNativeChat(const QString& character) {
             chatCharacterComboBox_->setCurrentIndex(index);
         }
     }
-    switchTo(chatPage_);
     refreshChatState({}, true);
+    if (chatWindow_ != nullptr) {
+        chatWindow_->raise();
+        chatWindow_->activateWindow();
+    }
 }
 
 std::optional<ModelCatalogItem> NativeMainWindow::selectedModel() const {
