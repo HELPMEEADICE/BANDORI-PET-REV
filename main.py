@@ -6,6 +6,14 @@ import os
 import time
 import uuid
 
+from native_launcher import dispatch_source_entrypoint
+
+
+if __name__ == "__main__":
+    _NATIVE_EXIT_CODE = dispatch_source_entrypoint()
+    if _NATIVE_EXIT_CODE is not None:
+        raise SystemExit(_NATIVE_EXIT_CODE)
+
 from process_utils import (
     app_data_dir,
     bootstrap_app,

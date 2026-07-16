@@ -88,51 +88,37 @@ BandoriPet/
 │   └── ...
 ```
 
-### 4. 创建虚拟环境 & 安装依赖
+### 4. 初始化原生依赖并编译
 
-> 💡 **强烈建议在虚拟环境中运行**，避免与系统全局 Python 包冲突。
-
-**创建虚拟环境：**
+默认应用已切换为 Rust + LuaJIT + Qt。先初始化锁定版本的原生依赖：
 
 ```bash
-python -m venv venv
+git submodule update --init --recursive
+cmake -S . -B build-rust
+cmake --build build-rust --config Release
 ```
 
-**激活虚拟环境：**
-
-| 平台 | 命令 |
-|------|------|
-| **Windows** | `venv\Scripts\activate` |
-| **Linux / macOS** | `source venv/bin/activate` |
-
-激活后终端前面会出现 `(venv)` 提示符。
-
----
-
-**Python 包：**
-
-```bash
-pip install -r requirements.txt
-```
-
-**第三方依赖（从源码编译时需要）：**
-
-```bash
-mkdir third_party
-
-# PyQt-Fluent-Widgets（必须用 PySide6 分支！）
-git clone -b PySide6 --single-branch https://github.com/zhiyiYo/PyQt-Fluent-Widgets.git third_party/PyQt-Fluent-Widgets
-pip install -e third_party/PyQt-Fluent-Widgets
-
-# Live2D-v2-Lua（自研 LuaJIT Live2D 渲染核心，无需 pip install）
-git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-Lua
-```
+需要 Qt 6.5+、CMake 3.24+、Rust 1.85+ 和 C++17 编译器；原生界面直接使用
+`third_party/Qt-Fluent-Widgets`。完整构建与打包说明见
+[`docs/rust-migration.md`](docs/rust-migration.md)。
 
 ### 5. 启动！
 
 ```bash
 python main.py
 ```
+
+该命令现在只作为轻量源码入口，默认查找并启动编译后的 `BandoriPet`；安装包会直接
+启动原生可执行文件，不依赖 Python。迁移回退窗口内如需显式运行旧版 Python +
+PySide 运行时，可先安装 `requirements.txt` 与 `third_party/PyQt-Fluent-Widgets`，
+再运行：
+
+```bash
+python main.py --python-legacy
+```
+
+也可设置 `BANDORI_PET_PYTHON_FALLBACK=1`。原生程序路径不在标准构建目录时，使用
+`BANDORI_PET_NATIVE_APP_PATH` 指定；原生文件缺失或无效时不会静默退回 Python。
 
 ---
 

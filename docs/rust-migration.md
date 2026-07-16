@@ -2,7 +2,8 @@
 
 This branch migrates BandoriPet with three fixed constraints:
 
-- Python and Rust run in parallel until each subsystem reaches behavioral parity.
+- The native Rust runtime is the default; Python remains an explicit compatibility
+  fallback during the rollback window.
 - Windows, macOS and Linux remain release targets.
 - Rust owns application state and services; a thin C++ layer owns QObject/QWidget
   composition and uses `third_party/Qt-Fluent-Widgets` directly.
@@ -383,9 +384,16 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
+- Complete: default-launcher cutover. Installed packages start `BandoriPet`
+  directly. The lightweight source command `python main.py` resolves the native
+  executable before importing PySide, forwards native arguments and fails clearly
+  when no native build exists. The old Python runtime is reachable only through
+  `--python-legacy` or `BANDORI_PET_PYTHON_FALLBACK=1`; native lookup can be
+  overridden with `BANDORI_PET_NATIVE_APP_PATH`, and lookup failures never trigger
+  a silent downgrade.
 - Pending: remaining native visual/driver parity, non-Windows Computer Use input
-  drivers, packaged offline ASR sidecar, default-launcher cutover, release
-  signing/notarization and multi-platform package validation.
+  drivers, packaged offline ASR sidecar, release signing/notarization and
+  multi-platform package validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation
@@ -413,11 +421,15 @@ Initialize the pinned native dependencies before configuring a clean checkout:
 git submodule update --init --recursive
 ```
 
-The Python supervisor keeps the Python pet as the default. To replace only the
-pet renderer during the compatibility window, set
-`BANDORI_PET_NATIVE_RENDERER=1`. Set `BANDORI_PET_NATIVE_RENDERER_PATH` when the
-native executable is outside the standard `build-rust` locations. Failure to
-find the helper logs a warning and safely falls back to the Python renderer.
+Installed packages start the native executable directly. In a source checkout,
+`python main.py` finds `BandoriPet` in the repository or standard `build-rust`
+output directories and forwards its arguments. Set `BANDORI_PET_NATIVE_APP_PATH`
+for a non-standard output path. Missing or invalid native executables fail closed;
+run `python main.py --python-legacy` (or set
+`BANDORI_PET_PYTHON_FALLBACK=1`) only when an explicit compatibility rollback is
+required. Inside that legacy supervisor, `BANDORI_PET_NATIVE_RENDERER=1` can still
+replace just the Python pet renderer and `BANDORI_PET_NATIVE_RENDERER_PATH` can
+override that renderer helper.
 
 The native build requires Qt 6.5+ with Core, Gui, Widgets, Multimedia,
 OpenGLWidgets, Svg and WebSockets,
