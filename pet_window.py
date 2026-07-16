@@ -23,18 +23,13 @@ from i18n_manager import tr as _tr, set_language
 from live2d_quality import clamp_live2d_scale, normalize_live2d_quality
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import MODEL_FORMAT_MOC3, ModelManager
-from outfit_description import (
+from outfit_description_config import (
     OUTFIT_DESCRIPTIONS_KEY,
-    OutfitDescriptionWorker,
-    image_to_data_url,
-    is_outfit_recognition_enabled,
-    make_outfit_description_entry,
-    model_fingerprint,
+    OUTFIT_RECOGNITION_ENABLED_KEY,
     normalize_outfit_descriptions,
     outfit_description_key,
 )
 from process_utils import app_base_dir, clamp_float, clamp_int, interaction_trace, ipc_server_name, process_program_and_args
-from network_worker import delete_thread_when_stopped
 from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
@@ -2013,8 +2008,14 @@ class PetWindow(QWidget):
     def _start_outfit_description(self, token: int, attempt: int = 1):
         if token != self._outfit_description_token or not self._cfg or self._pixel_mode:
             return
-        if not is_outfit_recognition_enabled(self._cfg):
+        if not bool(self._cfg.get(OUTFIT_RECOGNITION_ENABLED_KEY, False)):
             return
+        from outfit_description import (
+            OutfitDescriptionWorker,
+            image_to_data_url,
+            model_fingerprint,
+        )
+
         if self._outfit_description_worker is not None:
             return
         character = str(self._current_char or "").strip()
@@ -2098,6 +2099,8 @@ class PetWindow(QWidget):
         descriptions = normalize_outfit_descriptions(
             self._cfg.get(OUTFIT_DESCRIPTIONS_KEY, {})
         )
+        from outfit_description import make_outfit_description_entry
+
         entry = make_outfit_description_entry(
             character,
             costume,
@@ -2132,6 +2135,8 @@ class PetWindow(QWidget):
         )
 
     def _clear_outfit_description_worker(self, worker):
+        from network_worker import delete_thread_when_stopped
+
         if self._outfit_description_worker is worker:
             self._outfit_description_worker = None
         self._outfit_description_retired_workers = [

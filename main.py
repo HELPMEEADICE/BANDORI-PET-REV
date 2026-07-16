@@ -15,47 +15,32 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from startup_manager import repair_startup_command
 from app_info import APP_NAME
-from local_port_security import ensure_local_port_token
 
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 from config_manager import DEFAULTS
 APP_AUMID = APP_NAME
-try:
-    repair_startup_command()
-except OSError:
-    pass
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from live2d_widget import Live2DWidget
 from model_manager import ModelManager
-from outfit_description import (
+from outfit_description_config import (
     OUTFIT_DESCRIPTIONS_KEY,
     normalize_outfit_descriptions,
     outfit_description_key,
 )
 from i18n_manager import set_language, detect_system_language, tr as _tr
 from app_theme import apply_app_theme
-from ai_status_server import AiStatusHttpServer
-from chat_integration_server import ChatIntegrationHttpServer
-from napcat_adapter import NapcatClient
 from onebot_message import onebot_event_mentions_self
-from database_manager import DatabaseManager
 from tray_utils import keep_tray_icon_visible, load_tray_icon
-from alarm_manager import ReminderScheduler
 from gpu_acceleration import configure_qt_gpu_acceleration
-from special_event_manager import SpecialEventManager
-from event_db_manager import SpecialEvent
 from ipc_bus import (
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
     ipc_inbound_queue_key,
     ipc_reliable_inbound_queue_key,
-    is_control_ipc_line,
     is_reliable_ipc_line,
     pet_characters_without_active_peers,
 )
@@ -93,7 +78,6 @@ def main():
     set_language(lang)
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
     icon_path = os.path.join(BASE_DIR, "logo.ico")
     ensure_windows_app_user_model_shortcut(APP_AUMID, APP_NAME, icon_path)
     set_windows_app_user_model_id(APP_AUMID)
@@ -378,6 +362,8 @@ def main():
                 QTimer.singleShot(50, lambda current=generation: init_reminder_scheduler(current))
                 return
             scheduler.deleteLater()
+        from alarm_manager import ReminderScheduler
+
         reminder_ref["scheduler"] = ReminderScheduler(
             cfg,
             mgr,
@@ -398,6 +384,9 @@ def main():
         if manager is not None:
             manager.stop()
             manager.deleteLater()
+        from event_db_manager import SpecialEvent
+        from special_event_manager import SpecialEventManager
+
         manager = SpecialEventManager(parent=app)
 
         def on_special_event(event: SpecialEvent):
@@ -448,6 +437,9 @@ def main():
         stop_ai_status_server()
         if not cfg.get("ai_status_port_enabled", False):
             return
+        from ai_status_server import AiStatusHttpServer
+        from local_port_security import ensure_local_port_token
+
         port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
         token = ensure_local_port_token(cfg, "ai_status_token")
 
@@ -466,6 +458,8 @@ def main():
     def chat_integration_db():
         db = chat_integration_ref.get("db")
         if db is None:
+            from database_manager import DatabaseManager
+
             db = DatabaseManager()
             chat_integration_ref["db"] = db
         return db
@@ -538,6 +532,9 @@ def main():
         stop_chat_integration_server()
         if not cfg.get("chat_integration_enabled", False):
             return
+        from chat_integration_server import ChatIntegrationHttpServer
+        from local_port_security import ensure_local_port_token
+
         port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
         token = ensure_local_port_token(cfg, "chat_integration_token")
         try:
@@ -592,6 +589,8 @@ def main():
         stop_napcat_adapter()
         if not cfg.get("napcat_enabled", False):
             return
+        from napcat_adapter import NapcatClient
+
         ws_url = str(cfg.get("napcat_ws_url", "") or "").strip()
         if not ws_url:
             return
@@ -1314,11 +1313,12 @@ def main():
             if data.get("screen_awareness_test_requested"):
                 scheduler.trigger_screen_awareness_now()
 
-    def launch_pet(persist_config=True):
+    def launch_pet(persist_config=True, *, rescan_models=True):
         nonlocal mgr
         if persist_config:
             cfg.load()
-        mgr = ModelManager()
+        if rescan_models:
+            mgr = ModelManager()
         _sentinel = object()
         language = pet_window_ref.get("language")
         if language:
@@ -1619,11 +1619,17 @@ def main():
 
     init_tray()
     init_ipc_server()
-    init_ai_status_server()
-    init_chat_integration_server()
-    init_napcat_adapter()
-    init_reminder_scheduler()
-    init_special_event_manager()
+
+    # Start the visible UI as soon as the tray and IPC queues are ready. The
+    # manager above has already performed the authoritative startup scan, so a
+    # second scan and config rewrite only delay process creation.
+    if has_configured_models or model_valid:
+        pet_window_ref["char"] = char
+        pet_window_ref["costume"] = costume
+        pet_window_ref["vsync"] = cfg.get("vsync", True)
+        launch_pet(persist_config=False, rescan_models=False)
+    else:
+        launch_settings_process(show_launch=True)
 
     def _handle_signal(_signum, _frame):
         QTimer.singleShot(0, quit_all)
@@ -1665,7 +1671,6 @@ def main():
     attachment_cleanup_timer.setInterval(6 * 60 * 60 * 1000)
     attachment_cleanup_timer.timeout.connect(apply_chat_attachment_retention)
     attachment_cleanup_timer.start()
-    QTimer.singleShot(0, apply_chat_attachment_retention)
 
     # ── Usage session tracking ─────────────────────────────────────────
     usage_session_ref = {"db": None, "session_id": None}
@@ -1673,9 +1678,15 @@ def main():
     def usage_db():
         db = usage_session_ref.get("db")
         if db is None:
+            from database_manager import DatabaseManager
+
             db = DatabaseManager()
             usage_session_ref["db"] = db
         return db
+
+    def start_usage_session():
+        if usage_session_ref["session_id"] is None:
+            usage_session_ref["session_id"] = usage_db().start_usage_session()
 
     def close_usage_db():
         db = usage_session_ref.get("db")
@@ -1689,7 +1700,6 @@ def main():
             usage_db().end_usage_session(sid)
         close_usage_db()
 
-    usage_session_ref["session_id"] = usage_db().start_usage_session()
     usage_heartbeat = QTimer(app)
     usage_heartbeat.setInterval(300_000)
     usage_heartbeat.timeout.connect(lambda: usage_db().heartbeat_usage_session(
@@ -1709,13 +1719,25 @@ def main():
     app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=False))
     app.aboutToQuit.connect(stop_ipc_server)
 
-    if has_configured_models or model_valid:
-        pet_window_ref["char"] = char
-        pet_window_ref["costume"] = costume
-        pet_window_ref["vsync"] = cfg.get("vsync", True)
-        launch_pet()
-    else:
-        launch_settings_process(show_launch=True)
+    def repair_windows_startup_command():
+        try:
+            from startup_manager import repair_startup_command
+
+            repair_startup_command()
+        except OSError:
+            pass
+
+    # Give the pet process first access to CPU and disk caches. These services
+    # remain available shortly after launch without competing with first-frame
+    # model loading.
+    QTimer.singleShot(750, init_ai_status_server)
+    QTimer.singleShot(850, init_chat_integration_server)
+    QTimer.singleShot(950, init_napcat_adapter)
+    QTimer.singleShot(1050, init_reminder_scheduler)
+    QTimer.singleShot(1150, init_special_event_manager)
+    QTimer.singleShot(1300, start_usage_session)
+    QTimer.singleShot(1600, repair_windows_startup_command)
+    QTimer.singleShot(2500, apply_chat_attachment_retention)
 
     ret = app.exec()
     return ret

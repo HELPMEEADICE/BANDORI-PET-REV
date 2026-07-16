@@ -25,7 +25,6 @@ from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
 from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
-from mcp_bridge import close_mcp_clients
 from pet_window import PetWindow
 from gpu_acceleration import configure_qt_gpu_acceleration
 from tray_utils import load_tray_icon
@@ -175,6 +174,13 @@ def main():
         on_shutdown_requested=normal_shutdown_requested.set,
     )
 
+    def close_mcp_clients_on_shutdown():
+        # MCP networking is not used while constructing the pet. Import it only
+        # if shutdown actually needs to dispose a client created later.
+        from mcp_bridge import close_mcp_clients
+
+        close_mcp_clients()
+
     offset_x = args.index * (28 if pet._pixel_mode else 36)
     pet.restore_saved_position(offset_x=offset_x)
 
@@ -186,7 +192,7 @@ def main():
     app.aboutToQuit.connect(lambda: pet._close_radial_menu_process(force=True))
     app.aboutToQuit.connect(lambda: pet._close_chat_process())
     app.aboutToQuit.connect(lambda: pet._close_compact_ai_window())
-    app.aboutToQuit.connect(close_mcp_clients)
+    app.aboutToQuit.connect(close_mcp_clients_on_shutdown)
     app.aboutToQuit.connect(lambda: pet._close_settings_process())
     app.aboutToQuit.connect(pet._send_ipc_unregistration)
     app.aboutToQuit.connect(pet._close_ipc_bus)

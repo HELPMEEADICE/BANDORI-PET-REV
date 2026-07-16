@@ -19,13 +19,13 @@ from reminder_core import (
     normalize_proactive_care_policy,
     normalize_proactive_companion,
 )
-from screen_awareness import (
+from screen_awareness_config import (
     SCREEN_AWARENESS_MODEL_MODE_MAIN,
     clamp_screen_awareness_interval,
     clamp_screen_awareness_screenshot_width,
     normalize_screen_awareness_model_mode,
 )
-from outfit_description import (
+from outfit_description_config import (
     OUTFIT_DESCRIPTIONS_KEY,
     OUTFIT_RECOGNITION_ENABLED_KEY,
     normalize_outfit_descriptions,
