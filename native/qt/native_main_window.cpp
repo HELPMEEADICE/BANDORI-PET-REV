@@ -20,6 +20,8 @@
 #include <QAudioSource>
 #include <QBuffer>
 #include <QCloseEvent>
+#include <QClipboard>
+#include <QCursor>
 #include <QDate>
 #include <QDateTime>
 #include <QDebug>
@@ -31,7 +33,6 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonDocument>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -68,6 +69,7 @@
 #include <cmath>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -335,6 +337,199 @@ ModelCatalogItem modelFromJson(const QJsonObject& object) {
     };
 }
 
+bool nativeComputerMouseAction(
+    const QString& action,
+    const QPoint& position,
+    const QString& button,
+    int delta,
+    QString* error) {
+    if (action == QStringLiteral("move")) {
+        QCursor::setPos(position);
+        return true;
+    }
+#ifdef Q_OS_WIN
+    QCursor::setPos(position);
+    if (action == QStringLiteral("scroll")) {
+        const int boundedDelta = std::clamp(delta, -100, 100);
+        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, boundedDelta * WHEEL_DELTA, 0);
+        return true;
+    }
+    const QPair<DWORD, DWORD> flags =
+        button == QStringLiteral("right")
+        ? qMakePair<DWORD, DWORD>(MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
+        : button == QStringLiteral("middle")
+        ? qMakePair<DWORD, DWORD>(MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)
+        : qMakePair<DWORD, DWORD>(MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP);
+    const int clicks = action == QStringLiteral("double_click") ? 2 : 1;
+    for (int index = 0; index < clicks; ++index) {
+        mouse_event(flags.first, 0, 0, 0, 0);
+        mouse_event(flags.second, 0, 0, 0, 0);
+    }
+    return true;
+#else
+    if (error != nullptr) {
+        *error = QObject::tr(
+            "Global click and scroll injection is unavailable in this native build; screenshot, pointer move, clipboard and wait remain available");
+    }
+    return false;
+#endif
+}
+
+#ifdef Q_OS_WIN
+WORD nativeComputerVirtualKey(const QString& key) {
+    const QString normalized = key.trimmed().toLower();
+    if (normalized.size() == 1) {
+        const QChar character = normalized.front().toUpper();
+        if (character.isLetterOrNumber()) {
+            return static_cast<WORD>(character.unicode());
+        }
+    }
+    if (normalized == QStringLiteral("enter") || normalized == QStringLiteral("return")) {
+        return VK_RETURN;
+    }
+    if (normalized == QStringLiteral("esc") || normalized == QStringLiteral("escape")) {
+        return VK_ESCAPE;
+    }
+    if (normalized == QStringLiteral("tab")) return VK_TAB;
+    if (normalized == QStringLiteral("space")) return VK_SPACE;
+    if (normalized == QStringLiteral("backspace")) return VK_BACK;
+    if (normalized == QStringLiteral("delete") || normalized == QStringLiteral("del")) {
+        return VK_DELETE;
+    }
+    if (normalized == QStringLiteral("insert")) return VK_INSERT;
+    if (normalized == QStringLiteral("home")) return VK_HOME;
+    if (normalized == QStringLiteral("end")) return VK_END;
+    if (normalized == QStringLiteral("pageup") || normalized == QStringLiteral("pgup")) {
+        return VK_PRIOR;
+    }
+    if (normalized == QStringLiteral("pagedown") || normalized == QStringLiteral("pgdn")) {
+        return VK_NEXT;
+    }
+    if (normalized == QStringLiteral("left")) return VK_LEFT;
+    if (normalized == QStringLiteral("right")) return VK_RIGHT;
+    if (normalized == QStringLiteral("up")) return VK_UP;
+    if (normalized == QStringLiteral("down")) return VK_DOWN;
+    if (normalized.size() >= 2 && normalized.front() == QLatin1Char('f')) {
+        bool ok = false;
+        const int function = normalized.mid(1).toInt(&ok);
+        if (ok && function >= 1 && function <= 24) {
+            return static_cast<WORD>(VK_F1 + function - 1);
+        }
+    }
+    return 0;
+}
+
+INPUT nativeComputerKeyInput(WORD key, bool release, bool unicode = false) {
+    INPUT input {};
+    input.type = INPUT_KEYBOARD;
+    if (unicode) {
+        input.ki.wScan = key;
+        input.ki.dwFlags = KEYEVENTF_UNICODE | (release ? KEYEVENTF_KEYUP : 0);
+    } else {
+        input.ki.wVk = key;
+        input.ki.dwFlags = release ? KEYEVENTF_KEYUP : 0;
+    }
+    return input;
+}
+#endif
+
+bool nativeComputerTypeText(const QString& text, QString* error) {
+#ifdef Q_OS_WIN
+    const QString bounded = text.left(2'000);
+    std::vector<INPUT> inputs;
+    inputs.reserve(static_cast<size_t>(bounded.size()) * 2);
+    for (const QChar character : bounded) {
+        inputs.push_back(nativeComputerKeyInput(character.unicode(), false, true));
+        inputs.push_back(nativeComputerKeyInput(character.unicode(), true, true));
+    }
+    if (inputs.empty()) {
+        return true;
+    }
+    const UINT sent = SendInput(
+        static_cast<UINT>(inputs.size()),
+        inputs.data(),
+        sizeof(INPUT));
+    if (sent == inputs.size()) {
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QObject::tr("Windows SendInput could not type the complete text");
+    }
+    return false;
+#else
+    Q_UNUSED(text);
+    if (error != nullptr) {
+        *error = QObject::tr("Global keyboard injection is unavailable in this native build");
+    }
+    return false;
+#endif
+}
+
+bool nativeComputerPressKeys(const QString& keys, QString* error) {
+#ifdef Q_OS_WIN
+    const QStringList parts = keys.toLower().split(
+        QRegularExpression(QStringLiteral("\\s*\\+\\s*|\\s+")),
+        Qt::SkipEmptyParts);
+    std::vector<WORD> modifiers;
+    WORD mainKey = 0;
+    for (const QString& part : parts) {
+        WORD modifier = 0;
+        if (part == QStringLiteral("ctrl") || part == QStringLiteral("control")) {
+            modifier = VK_CONTROL;
+        } else if (part == QStringLiteral("shift")) {
+            modifier = VK_SHIFT;
+        } else if (part == QStringLiteral("alt")) {
+            modifier = VK_MENU;
+        } else if (part == QStringLiteral("win") || part == QStringLiteral("meta")) {
+            modifier = VK_LWIN;
+        }
+        if (modifier != 0) {
+            modifiers.push_back(modifier);
+            continue;
+        }
+        if (mainKey != 0) {
+            if (error != nullptr) {
+                *error = QObject::tr("A shortcut may contain only one non-modifier key");
+            }
+            return false;
+        }
+        mainKey = nativeComputerVirtualKey(part);
+    }
+    if (mainKey == 0) {
+        if (error != nullptr) {
+            *error = QObject::tr("The requested key or shortcut is unsupported");
+        }
+        return false;
+    }
+    std::vector<INPUT> inputs;
+    for (const WORD modifier : modifiers) {
+        inputs.push_back(nativeComputerKeyInput(modifier, false));
+    }
+    inputs.push_back(nativeComputerKeyInput(mainKey, false));
+    inputs.push_back(nativeComputerKeyInput(mainKey, true));
+    for (auto iterator = modifiers.rbegin(); iterator != modifiers.rend(); ++iterator) {
+        inputs.push_back(nativeComputerKeyInput(*iterator, true));
+    }
+    const UINT sent = SendInput(
+        static_cast<UINT>(inputs.size()),
+        inputs.data(),
+        sizeof(INPUT));
+    if (sent == inputs.size()) {
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QObject::tr("Windows SendInput could not press the complete shortcut");
+    }
+    return false;
+#else
+    Q_UNUSED(keys);
+    if (error != nullptr) {
+        *error = QObject::tr("Global keyboard injection is unavailable in this native build");
+    }
+    return false;
+#endif
+}
+
 }  // namespace
 
 NativeMainWindow::NativeMainWindow(
@@ -353,6 +548,18 @@ NativeMainWindow::NativeMainWindow(
         &Backend::chatStreamEvent,
         this,
         [this](const QString& payloadJson) { handleChatStreamEvent(payloadJson); });
+    connect(
+        &backend_,
+        &Backend::computerToolRequest,
+        this,
+        [this](qint64 requestId, const QString& toolName, const QString& argumentsJson) {
+            handleNativeComputerTool(requestId, toolName, argumentsJson);
+        });
+    connect(
+        &backend_,
+        &Backend::computerToolCancel,
+        this,
+        [this](qint64 requestId) { pendingComputerWaitRequests_.remove(requestId); });
     connect(
         &backend_,
         &Backend::chatMemoryEvent,
@@ -707,7 +914,7 @@ QWidget* NativeMainWindow::createChatPage() {
 
     auto* title = new qfw::TitleLabel(tr("Native chat"), page);
     auto* explanation = new qfw::CaptionLabel(
-        tr("Rust owns private/group prompts, safe attachments, cancellable speaker streams and transactional data.db history. Local tool parity remains staged."),
+        tr("Rust owns private/group prompts, safe attachments, cancellable speaker streams, transactional data.db history, web/MCP tools and permission-gated Computer Use."),
         page);
     explanation->setWordWrap(true);
     chatModeComboBox_ = new qfw::ComboBox(page);
@@ -2062,6 +2269,66 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         tr("Supports http, stdio and native transports; authorization and env values are stored in config.json"),
         llmMcpServersEdit_);
 
+    auto* computerUse = new qfw::GroupHeaderCardWidget(tr("Computer Use"), content);
+    computerUseEnabledSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseAutoDetectSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseSendScreenshotsSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseMaxScreenshotWidthSpinBox_ = new qfw::SpinBox(computerUse);
+    computerUseMaxScreenshotWidthSpinBox_->setRange(640, 1920);
+    computerUseMaxScreenshotWidthSpinBox_->setSingleStep(64);
+    computerUseMaxScreenshotWidthSpinBox_->setSuffix(tr(" px"));
+    computerUseMaxScreenshotWidthSpinBox_->setFixedWidth(150);
+    computerUseAllowScreenshotSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseAllowMouseSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseAllowKeyboardSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseAllowClipboardSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUseAllowWaitSwitch_ = new qfw::SwitchButton(computerUse);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Enable Computer Use"),
+        tr("Expose only the explicitly allowed desktop tools to compatible models"),
+        computerUseEnabledSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Robot),
+        tr("Automatic intent detection"),
+        tr("Allow natural screen and UI requests without requiring the words Computer Use"),
+        computerUseAutoDetectSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Photo),
+        tr("Screenshot after actions"),
+        tr("Return a fresh multimodal screenshot after mouse, keyboard or wait actions"),
+        computerUseSendScreenshotsSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Photo),
+        tr("Maximum screenshot width"),
+        tr("Screenshots are scaled before being encoded and sent to the model"),
+        computerUseMaxScreenshotWidthSpinBox_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::View),
+        tr("Allow screenshots"),
+        tr("Read-only desktop capture across all screens"),
+        computerUseAllowScreenshotSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Scroll),
+        tr("Allow mouse control"),
+        tr("Move, click, double-click and scroll using mapped screenshot coordinates"),
+        computerUseAllowMouseSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Edit),
+        tr("Allow keyboard input"),
+        tr("Type bounded text or press a supported shortcut in the focused application"),
+        computerUseAllowKeyboardSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Copy),
+        tr("Allow clipboard writes"),
+        tr("Write at most 100,000 text characters without pasting automatically"),
+        computerUseAllowClipboardSwitch_);
+    computerUse->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Sync),
+        tr("Allow wait"),
+        tr("Wait asynchronously for 0.1 to 10 seconds before continuing"),
+        computerUseAllowWaitSwitch_);
+
     auto* context = new qfw::GroupHeaderCardWidget(tr("Conversation context"), content);
     llmHistoryLimitSpinBox_ = new qfw::SpinBox(context);
     llmHistoryLimitSpinBox_->setRange(0, 100);
@@ -2119,6 +2386,7 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     layout->addWidget(auxiliary);
     layout->addWidget(webTools);
     layout->addWidget(mcpTools);
+    layout->addWidget(computerUse);
     layout->addWidget(context);
     layout->addLayout(actionRow);
     layout->addStretch(1);
@@ -2157,6 +2425,20 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         [this](bool enabled) {
             llmMcpNativeSwitch_->setEnabled(enabled);
             llmMcpServersEdit_->setEnabled(enabled);
+        });
+    connect(
+        computerUseEnabledSwitch_,
+        &qfw::SwitchButton::checkedChanged,
+        this,
+        [this](bool enabled) {
+            computerUseAutoDetectSwitch_->setEnabled(enabled);
+            computerUseSendScreenshotsSwitch_->setEnabled(enabled);
+            computerUseMaxScreenshotWidthSpinBox_->setEnabled(enabled);
+            computerUseAllowScreenshotSwitch_->setEnabled(enabled);
+            computerUseAllowMouseSwitch_->setEnabled(enabled);
+            computerUseAllowKeyboardSwitch_->setEnabled(enabled);
+            computerUseAllowClipboardSwitch_->setEnabled(enabled);
+            computerUseAllowWaitSwitch_->setEnabled(enabled);
         });
     connect(
         llmProfileComboBox_,
@@ -3734,6 +4016,37 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
     llmMcpServersEdit_->setPlainText(QString::fromUtf8(
         QJsonDocument(llmSettings_.value(QStringLiteral("mcp_servers")).toArray())
             .toJson(QJsonDocument::Indented)));
+    const bool computerUseEnabled =
+        llmSettings_.value(QStringLiteral("computer_use_enabled")).toBool(false);
+    computerUseEnabledSwitch_->setChecked(computerUseEnabled);
+    computerUseAutoDetectSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_auto_detect")).toBool(true));
+    computerUseSendScreenshotsSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_send_screenshots")).toBool(true));
+    computerUseMaxScreenshotWidthSpinBox_->setValue(
+        llmSettings_.value(QStringLiteral("computer_use_max_screenshot_width")).toInt(1280));
+    computerUseAllowScreenshotSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_allow_screenshot")).toBool(true));
+    computerUseAllowMouseSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_allow_mouse")).toBool(false));
+    computerUseAllowKeyboardSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_allow_keyboard")).toBool(false));
+    computerUseAllowClipboardSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_allow_clipboard")).toBool(false));
+    computerUseAllowWaitSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("computer_use_allow_wait")).toBool(true));
+    for (QWidget* control : {
+             static_cast<QWidget*>(computerUseAutoDetectSwitch_),
+             static_cast<QWidget*>(computerUseSendScreenshotsSwitch_),
+             static_cast<QWidget*>(computerUseMaxScreenshotWidthSpinBox_),
+             static_cast<QWidget*>(computerUseAllowScreenshotSwitch_),
+             static_cast<QWidget*>(computerUseAllowMouseSwitch_),
+             static_cast<QWidget*>(computerUseAllowKeyboardSwitch_),
+             static_cast<QWidget*>(computerUseAllowClipboardSwitch_),
+             static_cast<QWidget*>(computerUseAllowWaitSwitch_),
+         }) {
+        control->setEnabled(computerUseEnabled);
+    }
     const bool customPromptEnabled =
         llmSettings_.value(QStringLiteral("custom_system_prompt_enabled")).toBool(true);
     llmCustomPromptSwitch_->setChecked(customPromptEnabled);
@@ -3820,6 +4133,23 @@ bool NativeMainWindow::saveNativeLlmSettings() {
         {QStringLiteral("mcp_enabled"), llmMcpEnabledSwitch_->isChecked()},
         {QStringLiteral("mcp_use_native"), llmMcpNativeSwitch_->isChecked()},
         {QStringLiteral("mcp_servers"), mcpServersDocument.array()},
+        {QStringLiteral("computer_use_enabled"), computerUseEnabledSwitch_->isChecked()},
+        {QStringLiteral("computer_use_auto_detect"),
+         computerUseAutoDetectSwitch_->isChecked()},
+        {QStringLiteral("computer_use_send_screenshots"),
+         computerUseSendScreenshotsSwitch_->isChecked()},
+        {QStringLiteral("computer_use_max_screenshot_width"),
+         computerUseMaxScreenshotWidthSpinBox_->value()},
+        {QStringLiteral("computer_use_allow_screenshot"),
+         computerUseAllowScreenshotSwitch_->isChecked()},
+        {QStringLiteral("computer_use_allow_mouse"),
+         computerUseAllowMouseSwitch_->isChecked()},
+        {QStringLiteral("computer_use_allow_keyboard"),
+         computerUseAllowKeyboardSwitch_->isChecked()},
+        {QStringLiteral("computer_use_allow_clipboard"),
+         computerUseAllowClipboardSwitch_->isChecked()},
+        {QStringLiteral("computer_use_allow_wait"),
+         computerUseAllowWaitSwitch_->isChecked()},
         {QStringLiteral("custom_system_prompt_enabled"),
          llmCustomPromptSwitch_->isChecked()},
         {QStringLiteral("custom_system_prompt"),
@@ -4773,7 +5103,9 @@ QString NativeMainWindow::chooseNativeScreenAwarenessCharacter() const {
     return candidates.first().character;
 }
 
-QByteArray NativeMainWindow::captureNativeDesktop(QJsonObject* metadata) const {
+QByteArray NativeMainWindow::captureNativeDesktop(
+    QJsonObject* metadata,
+    int maximumWidth) const {
     if (metadata == nullptr) {
         return {};
     }
@@ -4815,9 +5147,11 @@ QByteArray NativeMainWindow::captureNativeDesktop(QJsonObject* metadata) const {
         return {};
     }
     const int maximum = std::clamp(
-        screenAwarenessSettings_
-            .value(QStringLiteral("max_screenshot_width"))
-            .toInt(1920),
+        maximumWidth > 0
+            ? maximumWidth
+            : screenAwarenessSettings_
+                  .value(QStringLiteral("max_screenshot_width"))
+                  .toInt(1920),
         640,
         1920);
     QImage encoded = composite;
@@ -4838,8 +5172,382 @@ QByteArray NativeMainWindow::captureNativeDesktop(QJsonObject* metadata) const {
     metadata->insert(QStringLiteral("image_height"), encoded.height());
     metadata->insert(QStringLiteral("desktop_width"), desktopGeometry.width());
     metadata->insert(QStringLiteral("desktop_height"), desktopGeometry.height());
+    metadata->insert(QStringLiteral("desktop_left"), desktopGeometry.left());
+    metadata->insert(QStringLiteral("desktop_top"), desktopGeometry.top());
     metadata->insert(QStringLiteral("desktop_state"), nativeForegroundDesktopState());
     return png;
+}
+
+void NativeMainWindow::handleNativeComputerTool(
+    qint64 requestId,
+    const QString& toolName,
+    const QString& argumentsJson) {
+    if (requestId <= 0) {
+        return;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(argumentsJson.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        finishNativeComputerTool(
+            requestId,
+            false,
+            tr("Computer tool arguments are not a valid JSON object"),
+            false);
+        return;
+    }
+    const QJsonObject arguments = document.object();
+    const bool enabled =
+        llmSettings_.value(QStringLiteral("computer_use_enabled")).toBool(false);
+    auto permission = [this](const QString& key, bool fallback) {
+        return llmSettings_.value(key).toBool(fallback);
+    };
+    if (!enabled) {
+        finishNativeComputerTool(
+            requestId,
+            false,
+            tr("Computer Use is disabled in settings"),
+            false);
+        return;
+    }
+    auto integerArgument = [&arguments](const QString& key, bool* ok) {
+        const QJsonValue value = arguments.value(key);
+        if (value.isDouble()) {
+            *ok = true;
+            return value.toInt();
+        }
+        if (value.isString()) {
+            return value.toString().toInt(ok);
+        }
+        *ok = false;
+        return 0;
+    };
+    const bool afterActionScreenshot =
+        permission(QStringLiteral("computer_use_send_screenshots"), true)
+        && permission(QStringLiteral("computer_use_allow_screenshot"), true);
+
+    if (toolName == QStringLiteral("computer_screenshot")) {
+        if (!permission(QStringLiteral("computer_use_allow_screenshot"), true)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Screenshot capture is disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        finishNativeComputerTool(
+            requestId,
+            true,
+            tr("Screenshot captured."),
+            true,
+            true);
+        return;
+    }
+    if (toolName == QStringLiteral("computer_move")
+        || toolName == QStringLiteral("computer_click")
+        || toolName == QStringLiteral("computer_double_click")
+        || toolName == QStringLiteral("computer_scroll")) {
+        if (!permission(QStringLiteral("computer_use_allow_mouse"), false)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Mouse control is disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        bool xOk = false;
+        bool yOk = false;
+        const int screenshotX = integerArgument(QStringLiteral("x"), &xOk);
+        const int screenshotY = integerArgument(QStringLiteral("y"), &yOk);
+        if (!xOk || !yOk) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Mouse tools require integer x and y coordinates"),
+                false);
+            return;
+        }
+        const QPoint desktopPoint = mapNativeComputerPoint(screenshotX, screenshotY);
+        QString action;
+        if (toolName == QStringLiteral("computer_move")) {
+            action = QStringLiteral("move");
+        } else if (toolName == QStringLiteral("computer_double_click")) {
+            action = QStringLiteral("double_click");
+        } else if (toolName == QStringLiteral("computer_scroll")) {
+            action = QStringLiteral("scroll");
+        } else {
+            action = QStringLiteral("click");
+        }
+        QString button = arguments
+                             .value(QStringLiteral("button"))
+                             .toString(QStringLiteral("left"))
+                             .trimmed()
+                             .toLower();
+        if (button != QStringLiteral("left") && button != QStringLiteral("right")
+            && button != QStringLiteral("middle")) {
+            button = QStringLiteral("left");
+        }
+        bool deltaOk = true;
+        const int delta = action == QStringLiteral("scroll")
+            ? integerArgument(QStringLiteral("delta"), &deltaOk)
+            : 0;
+        if (!deltaOk) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Scroll requires an integer delta"),
+                false);
+            return;
+        }
+        QString error;
+        if (!nativeComputerMouseAction(
+                action,
+                desktopPoint,
+                button,
+                delta,
+                &error)) {
+            finishNativeComputerTool(requestId, false, error, false);
+            return;
+        }
+        const QString verb = action == QStringLiteral("move")
+            ? tr("Mouse moved")
+            : action == QStringLiteral("double_click")
+            ? tr("Double-clicked")
+            : action == QStringLiteral("scroll")
+            ? tr("Scrolled")
+            : tr("Clicked");
+        QString content = tr("%1 at screenshot (%2, %3), mapped to desktop (%4, %5).")
+                              .arg(verb)
+                              .arg(screenshotX)
+                              .arg(screenshotY)
+                              .arg(desktopPoint.x())
+                              .arg(desktopPoint.y());
+        if (action == QStringLiteral("scroll")) {
+            content += tr(" Delta: %1.").arg(delta);
+        }
+        finishNativeComputerTool(
+            requestId,
+            true,
+            content,
+            afterActionScreenshot);
+        return;
+    }
+    if (toolName == QStringLiteral("computer_type")) {
+        if (!permission(QStringLiteral("computer_use_allow_keyboard"), false)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Keyboard input is disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        const QString rawText = arguments.value(QStringLiteral("text")).toString();
+        const QString text = rawText.left(2'000);
+        QString error;
+        if (!nativeComputerTypeText(text, &error)) {
+            finishNativeComputerTool(requestId, false, error, false);
+            return;
+        }
+        QString content = tr("Typed %1 characters.").arg(text.size());
+        if (rawText.size() > text.size()) {
+            content += tr(" Input was truncated to the safety limit.");
+        }
+        finishNativeComputerTool(
+            requestId,
+            true,
+            content,
+            afterActionScreenshot);
+        return;
+    }
+    if (toolName == QStringLiteral("computer_key")) {
+        if (!permission(QStringLiteral("computer_use_allow_keyboard"), false)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Keyboard input is disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        const QString keys =
+            arguments.value(QStringLiteral("keys")).toString().trimmed().left(100);
+        QString error;
+        if (!nativeComputerPressKeys(keys, &error)) {
+            finishNativeComputerTool(requestId, false, error, false);
+            return;
+        }
+        finishNativeComputerTool(
+            requestId,
+            true,
+            tr("Pressed key: %1.").arg(keys),
+            afterActionScreenshot);
+        return;
+    }
+    if (toolName == QStringLiteral("computer_set_clipboard")) {
+        if (!permission(QStringLiteral("computer_use_allow_clipboard"), false)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Clipboard writes are disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        const QString text =
+            arguments.value(QStringLiteral("text")).toString().left(100'000);
+        QGuiApplication::clipboard()->setText(text);
+        finishNativeComputerTool(
+            requestId,
+            true,
+            tr("Clipboard updated with %1 characters.").arg(text.size()),
+            false);
+        return;
+    }
+    if (toolName == QStringLiteral("computer_wait")) {
+        if (!permission(QStringLiteral("computer_use_allow_wait"), true)) {
+            finishNativeComputerTool(
+                requestId,
+                false,
+                tr("Wait is disabled in Computer Use settings"),
+                false);
+            return;
+        }
+        bool secondsOk = false;
+        double seconds = arguments.value(QStringLiteral("seconds")).toVariant().toDouble(&secondsOk);
+        if (!secondsOk) {
+            seconds = 2.0;
+        }
+        seconds = std::clamp(seconds, 0.1, 10.0);
+        pendingComputerWaitRequests_.insert(requestId);
+        QTimer::singleShot(
+            qRound(seconds * 1'000.0),
+            this,
+            [this, requestId, seconds, afterActionScreenshot]() {
+                if (!pendingComputerWaitRequests_.remove(requestId)) {
+                    return;
+                }
+                finishNativeComputerTool(
+                    requestId,
+                    true,
+                    tr("Waited %1 seconds.").arg(seconds, 0, 'f', 1),
+                    afterActionScreenshot);
+            });
+        return;
+    }
+    finishNativeComputerTool(
+        requestId,
+        false,
+        tr("Unsupported computer tool: %1").arg(toolName),
+        false);
+}
+
+void NativeMainWindow::finishNativeComputerTool(
+    qint64 requestId,
+    bool succeeded,
+    const QString& content,
+    bool includeScreenshot,
+    bool screenshotRequired) {
+    QString resultContent = content;
+    QJsonArray extraMessages;
+    if (includeScreenshot) {
+        QJsonObject metadata;
+        const int maximumWidth = std::clamp(
+            llmSettings_
+                .value(QStringLiteral("computer_use_max_screenshot_width"))
+                .toInt(1280),
+            640,
+            1920);
+        const QByteArray png = captureNativeDesktop(&metadata, maximumWidth);
+        if (png.isEmpty()) {
+            resultContent += tr(" Screenshot capture failed or returned no pixels.");
+            if (screenshotRequired) {
+                succeeded = false;
+            }
+        } else {
+            computerScreenshotMetrics_ = metadata;
+            const QString coordinateHint = tr(
+                "Latest screenshot image is %1x%2; real desktop coordinate space is %3x%4 at origin (%5, %6). Use screenshot image coordinates for later mouse tools; the app maps them to the real desktop.")
+                                               .arg(metadata.value(QStringLiteral("image_width")).toInt())
+                                               .arg(metadata.value(QStringLiteral("image_height")).toInt())
+                                               .arg(metadata.value(QStringLiteral("desktop_width")).toInt())
+                                               .arg(metadata.value(QStringLiteral("desktop_height")).toInt())
+                                               .arg(metadata.value(QStringLiteral("desktop_left")).toInt())
+                                               .arg(metadata.value(QStringLiteral("desktop_top")).toInt());
+            resultContent += QStringLiteral(" ") + coordinateHint;
+            const QString dataUrl = QStringLiteral("data:image/png;base64,")
+                + QString::fromLatin1(png.toBase64());
+            extraMessages.append(QJsonObject {
+                {QStringLiteral("role"), QStringLiteral("user")},
+                {QStringLiteral("content"), QJsonArray {
+                     QJsonObject {
+                         {QStringLiteral("type"), QStringLiteral("text")},
+                         {QStringLiteral("text"),
+                          tr("Computer Use screenshot after the last action. %1 Use the image to decide the next UI step; do not mention tool internals unless the user asked.")
+                              .arg(coordinateHint)},
+                     },
+                     QJsonObject {
+                         {QStringLiteral("type"), QStringLiteral("image_url")},
+                         {QStringLiteral("image_url"), QJsonObject {
+                              {QStringLiteral("url"), dataUrl},
+                          }},
+                     },
+                 }},
+            });
+        }
+    }
+    const QJsonObject result {
+        {QStringLiteral("succeeded"), succeeded},
+        {QStringLiteral("content"), resultContent},
+        {QStringLiteral("extra_messages"), extraMessages},
+    };
+    backend_.completeComputerTool(requestId, compactJson(result));
+}
+
+QPoint NativeMainWindow::mapNativeComputerPoint(
+    int screenshotX,
+    int screenshotY) const {
+    if (computerScreenshotMetrics_.isEmpty()) {
+        return {screenshotX, screenshotY};
+    }
+    const int imageWidth =
+        std::max(1, computerScreenshotMetrics_.value(QStringLiteral("image_width")).toInt(1));
+    const int imageHeight =
+        std::max(1, computerScreenshotMetrics_.value(QStringLiteral("image_height")).toInt(1));
+    const int desktopLeft =
+        computerScreenshotMetrics_.value(QStringLiteral("desktop_left")).toInt(0);
+    const int desktopTop =
+        computerScreenshotMetrics_.value(QStringLiteral("desktop_top")).toInt(0);
+    const int desktopWidth = std::max(
+        1,
+        computerScreenshotMetrics_
+            .value(QStringLiteral("desktop_width"))
+            .toInt(imageWidth));
+    const int desktopHeight = std::max(
+        1,
+        computerScreenshotMetrics_
+            .value(QStringLiteral("desktop_height"))
+            .toInt(imageHeight));
+    const bool withinImage = screenshotX >= -1 && screenshotX <= imageWidth + 1
+        && screenshotY >= -1 && screenshotY <= imageHeight + 1;
+    if (withinImage && (imageWidth != desktopWidth || imageHeight != desktopHeight)) {
+        const int clippedX = std::clamp(screenshotX, 0, imageWidth - 1);
+        const int clippedY = std::clamp(screenshotY, 0, imageHeight - 1);
+        const int mappedX = imageWidth <= 1 || desktopWidth <= 1
+            ? desktopLeft
+            : desktopLeft
+                + qRound(
+                    static_cast<double>(clippedX) * (desktopWidth - 1)
+                    / (imageWidth - 1));
+        const int mappedY = imageHeight <= 1 || desktopHeight <= 1
+            ? desktopTop
+            : desktopTop
+                + qRound(
+                    static_cast<double>(clippedY) * (desktopHeight - 1)
+                    / (imageHeight - 1));
+        return {mappedX, mappedY};
+    }
+    return {
+        std::clamp(screenshotX, desktopLeft, desktopLeft + desktopWidth - 1),
+        std::clamp(screenshotY, desktopTop, desktopTop + desktopHeight - 1),
+    };
 }
 
 QJsonObject NativeMainWindow::nativeForegroundDesktopState() const {

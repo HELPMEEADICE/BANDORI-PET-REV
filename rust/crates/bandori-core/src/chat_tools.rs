@@ -1,3 +1,4 @@
+use crate::computer_tools::{NativeComputerSettings, computer_tool_definitions};
 use crate::config::ConfigDocument;
 use crate::reminder::{
     LocalDateTime, create_alarm, create_pomodoro, normalize_alarms, normalize_pomodoros,
@@ -91,6 +92,7 @@ pub fn native_chat_tools_for_config(config: &ConfigDocument) -> Vec<Value> {
         }));
     }
     tools.extend(native_chat_tools());
+    tools.extend(computer_tool_definitions(config));
     tools
 }
 
@@ -124,6 +126,15 @@ pub fn with_native_tool_system_hint_for_config(prompt: &str, config: &ConfigDocu
         .unwrap_or(false)
     {
         prompt.push_str("\n\n【MCP 工具边界】\n可用外部能力时，优先根据用户意图谨慎调用；不要编造工具执行结果。审批设置为 always 的服务器不会执行调用，遇到阻止时不要声称已经完成操作。");
+    }
+    let computer = NativeComputerSettings::from_config(config);
+    if computer.enabled {
+        prompt.push_str(if computer.auto_detect {
+            "\n\n【Computer Use 边界】\n当用户用自然语言表达与当前屏幕、窗口、光标、按钮、输入框、复制粘贴、打开/关闭/切换窗口、移动到某处、点一下、看一下界面等相关意图时，可以自行判断是否需要使用 Computer Use。"
+        } else {
+            "\n\n【Computer Use 边界】\n只有当用户明确要求查看屏幕或操作电脑时才使用 Computer Use。"
+        });
+        prompt.push_str("使用 Computer Use 前优先截图确认界面；鼠标操作必须使用最近截图上的像素坐标，程序会映射到真实桌面。不要执行购买、支付、删除、发送消息、发布内容、登录或修改安全设置等高风险操作。");
     }
     let web = NativeWebToolSettings::from_config(config);
     if web.search_enabled {
@@ -238,6 +249,8 @@ pub struct NativeToolResult {
     pub arguments: String,
     pub content: String,
     pub succeeded: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_messages: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<NativeToolEffect>,
 }
@@ -262,6 +275,7 @@ pub fn execute_native_tool_call_with_context(
         arguments: call.arguments.clone(),
         content,
         succeeded: false,
+        extra_messages: Vec::new(),
         effect: None,
     };
     if call.arguments_truncated {
@@ -317,6 +331,7 @@ pub async fn execute_native_tool_call_with_context_async(
         arguments: call.arguments.clone(),
         content,
         succeeded: false,
+        extra_messages: Vec::new(),
         effect: None,
     };
     if call.arguments_truncated {
@@ -392,6 +407,7 @@ pub async fn execute_native_tool_call_with_context_async(
             arguments: call.arguments.clone(),
             content,
             succeeded: true,
+            extra_messages: Vec::new(),
             effect: None,
         },
         Err(error) => failure(error),
@@ -425,6 +441,7 @@ fn execute_poke_user(
         arguments: call.arguments.clone(),
         content: "已戳了戳用户。请用角色口吻自然承接，不要提到工具调用细节。".to_owned(),
         succeeded: true,
+        extra_messages: Vec::new(),
         effect: Some(NativeToolEffect::PokeUser { message }),
     }
 }
@@ -543,6 +560,7 @@ fn execute_reminder_tool(
         arguments: call.arguments.clone(),
         content,
         succeeded: true,
+        extra_messages: Vec::new(),
         effect: None,
     }
 }
@@ -587,7 +605,14 @@ pub fn chat_tool_followup_messages(
     if calls.is_empty() {
         return Vec::new();
     }
-    let mut messages = Vec::with_capacity(results.len() + 1);
+    let mut messages = Vec::with_capacity(
+        results.len()
+            + 1
+            + results
+                .iter()
+                .map(|result| result.extra_messages.len())
+                .sum::<usize>(),
+    );
     let assistant_content = assistant_content.trim();
     messages.push(json!({
         "role": "assistant",
@@ -601,13 +626,14 @@ pub fn chat_tool_followup_messages(
             .map(NativeToolCall::chat_completions_value)
             .collect::<Vec<_>>(),
     }));
-    messages.extend(results.iter().map(|result| {
-        json!({
+    for result in results {
+        messages.push(json!({
             "role": "tool",
             "tool_call_id": result.call_id,
             "content": result.content,
-        })
-    }));
+        }));
+        messages.extend(result.extra_messages.iter().cloned());
+    }
     messages
 }
 
@@ -837,7 +863,7 @@ mod tests {
             arguments: r#"{"message":"  回戳！  "}"#.to_owned(),
             ..NativeToolCall::default()
         };
-        let result = execute_native_tool_call(&call);
+        let mut result = execute_native_tool_call(&call);
         assert!(result.succeeded);
         assert_eq!(
             result.effect,
@@ -845,6 +871,10 @@ mod tests {
                 message: "回戳！".to_owned()
             })
         );
+        result.extra_messages.push(json!({
+            "role":"user",
+            "content":[{"type":"text","text":"screenshot context"}]
+        }));
         let messages = chat_tool_followup_messages(&[call], &[result], "先戳一下");
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"], "先戳一下");
@@ -854,6 +884,7 @@ mod tests {
         );
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["role"], "user");
     }
 
     #[test]

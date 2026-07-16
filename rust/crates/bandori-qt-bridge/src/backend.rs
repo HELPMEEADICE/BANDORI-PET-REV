@@ -591,6 +591,14 @@ pub mod ffi {
         #[cxx_name = "cancelChatStream"]
         fn cancel_chat_stream(self: Pin<&mut Self>, request_id: i64) -> bool;
 
+        #[qinvokable]
+        #[cxx_name = "completeComputerTool"]
+        fn complete_computer_tool(
+            self: Pin<&mut Self>,
+            request_id: i64,
+            result_json: &QString,
+        ) -> bool;
+
         #[qsignal]
         #[cxx_name = "chatStreamEvent"]
         fn chat_stream_event(self: Pin<&mut Self>, payload_json: &QString);
@@ -622,6 +630,19 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "napcatReplyEvent"]
         fn napcat_reply_event(self: Pin<&mut Self>, payload_json: &QString);
+
+        #[qsignal]
+        #[cxx_name = "computerToolRequest"]
+        fn computer_tool_request(
+            self: Pin<&mut Self>,
+            request_id: i64,
+            tool_name: &QString,
+            arguments_json: &QString,
+        );
+
+        #[qsignal]
+        #[cxx_name = "computerToolCancel"]
+        fn computer_tool_cancel(self: Pin<&mut Self>, request_id: i64);
     }
 
     impl cxx_qt::Threading for Backend {}
@@ -646,6 +667,7 @@ use bandori_core::chat_tools::{
     NativeToolCallAccumulator, NativeToolExecutionContext, NativeToolResult,
     chat_tool_followup_messages, execute_native_tool_call_with_context_async, native_tool_trace,
 };
+use bandori_core::computer_tools::{NativeComputerSettings, is_computer_tool_name};
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
     DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
@@ -709,7 +731,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 const MAX_CHAT_REQUEST_BYTES: usize = 40 * 1024 * 1024;
@@ -724,6 +749,7 @@ const MAX_HISTORY_QUERY_BYTES: usize = 64 * 1024;
 const MAX_STATISTICS_QUERY_BYTES: usize = 64 * 1024;
 const MAX_SETTINGS_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_NATIVE_TOOL_ROUNDS: usize = 3;
+const MAX_COMPUTER_TOOL_RESULT_BYTES: usize = 40 * 1024 * 1024;
 
 #[derive(Debug)]
 struct NativeToolLoopOutcome {
@@ -745,6 +771,74 @@ struct NativeToolRuntimeContext {
     config_path: String,
     now: LocalDateTime,
     active_character: String,
+}
+
+#[derive(Clone)]
+struct NativeComputerBroker {
+    qt_thread: ffi::BackendCxxQtThread,
+    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<String>>>>,
+    next_id: Arc<AtomicI64>,
+}
+
+impl NativeComputerBroker {
+    fn new(
+        qt_thread: ffi::BackendCxxQtThread,
+        pending: Arc<Mutex<HashMap<i64, oneshot::Sender<String>>>>,
+        next_id: Arc<AtomicI64>,
+    ) -> Self {
+        Self {
+            qt_thread,
+            pending,
+            next_id,
+        }
+    }
+
+    async fn execute(
+        &self,
+        tool_name: &str,
+        arguments_json: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<String, String> {
+        let request_id = self.next_id.fetch_add(1, Ordering::Relaxed).max(1);
+        let (sender, receiver) = oneshot::channel();
+        self.pending
+            .lock()
+            .map_err(|_| "Computer tool response registry is unavailable".to_owned())?
+            .insert(request_id, sender);
+        let tool_name = QString::from(tool_name);
+        let arguments_json = QString::from(arguments_json);
+        if self
+            .qt_thread
+            .queue(move |backend| {
+                backend.emit_computer_tool_request(request_id, &tool_name, &arguments_json);
+            })
+            .is_err()
+        {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&request_id);
+            }
+            return Err("Computer tool could not be queued on the Qt thread".to_owned());
+        }
+        let result = tokio::select! {
+            _ = cancellation.cancelled() => Err("Computer tool call cancelled".to_owned()),
+            result = tokio::time::timeout(Duration::from_secs(30), receiver) => match result {
+                Ok(Ok(result)) => Ok(result),
+                Ok(Err(_)) => Err("Computer tool response channel closed".to_owned()),
+                Err(_) => Err("Computer tool call timed out".to_owned()),
+            },
+        };
+        if result.is_err() {
+            self.qt_thread
+                .queue(move |backend| {
+                    backend.emit_computer_tool_cancel(request_id);
+                })
+                .ok();
+        }
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&request_id);
+        }
+        result
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -838,6 +932,8 @@ pub struct BackendRust {
     next_napcat_reply_id: i64,
     napcat_reply_cancellations: HashMap<i64, CancellationToken>,
     memory_cancellations: HashMap<i64, CancellationToken>,
+    computer_tool_pending: Arc<Mutex<HashMap<i64, oneshot::Sender<String>>>>,
+    computer_tool_next_id: Arc<AtomicI64>,
 }
 
 impl Default for BackendRust {
@@ -916,6 +1012,8 @@ impl Default for BackendRust {
             next_napcat_reply_id: 1,
             napcat_reply_cancellations: HashMap::new(),
             memory_cancellations: HashMap::new(),
+            computer_tool_pending: Arc::new(Mutex::new(HashMap::new())),
+            computer_tool_next_id: Arc::new(AtomicI64::new(1)),
         }
     }
 }
@@ -949,6 +1047,9 @@ impl Drop for BackendRust {
         }
         for cancellation in self.memory_cancellations.drain().map(|(_, token)| token) {
             cancellation.cancel();
+        }
+        if let Ok(mut pending) = self.computer_tool_pending.lock() {
+            pending.clear();
         }
     }
 }
@@ -3650,6 +3751,14 @@ impl ffi::Backend {
             active_character,
         };
         let qt_thread = self.qt_thread();
+        let computer_broker = {
+            let state = self.as_ref().get_ref().rust();
+            NativeComputerBroker::new(
+                qt_thread.clone(),
+                state.computer_tool_pending.clone(),
+                state.computer_tool_next_id.clone(),
+            )
+        };
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-llm-{request_id}"))
             .spawn(move || {
@@ -3660,6 +3769,7 @@ impl ffi::Backend {
                     request,
                     cancellation,
                     Some(tool_context),
+                    Some(computer_broker),
                 );
             })
         {
@@ -3738,7 +3848,15 @@ impl ffi::Backend {
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-group-plan-{request_id}"))
             .spawn(move || {
-                run_llm_stream(qt_thread, request_id, config, request, cancellation, None);
+                run_llm_stream(
+                    qt_thread,
+                    request_id,
+                    config,
+                    request,
+                    cancellation,
+                    None,
+                    None,
+                );
             })
         {
             let state = self.as_mut().rust_mut().get_mut();
@@ -3822,6 +3940,14 @@ impl ffi::Backend {
         self.as_mut()
             .set_status(QString::from("Native group reply request started"));
         let qt_thread = self.qt_thread();
+        let computer_broker = {
+            let state = self.as_ref().get_ref().rust();
+            NativeComputerBroker::new(
+                qt_thread.clone(),
+                state.computer_tool_pending.clone(),
+                state.computer_tool_next_id.clone(),
+            )
+        };
         if let Err(error) = std::thread::Builder::new()
             .name(format!("bandori-group-reply-{request_id}"))
             .spawn(move || {
@@ -3832,6 +3958,7 @@ impl ffi::Backend {
                     request,
                     cancellation,
                     Some(tool_context),
+                    Some(computer_broker),
                 );
             })
         {
@@ -3877,6 +4004,29 @@ impl ffi::Backend {
         self.as_mut()
             .set_status(QString::from("Native LLM cancellation requested"));
         true
+    }
+
+    pub fn complete_computer_tool(
+        mut self: Pin<&mut Self>,
+        request_id: i64,
+        result_json: &QString,
+    ) -> bool {
+        let result_json = result_json.to_string();
+        if request_id <= 0 || result_json.len() > MAX_COMPUTER_TOOL_RESULT_BYTES {
+            self.as_mut().set_status(QString::from(
+                "Rejected invalid or oversized Computer Use result",
+            ));
+            return false;
+        }
+        let sender = self
+            .as_ref()
+            .get_ref()
+            .rust()
+            .computer_tool_pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(&request_id));
+        sender.is_some_and(|sender| sender.send(result_json).is_ok())
     }
 
     fn emit_chat_stream_payload(
@@ -5152,6 +5302,7 @@ fn run_llm_stream(
     request: LlmTransportRequest,
     cancellation: CancellationToken,
     tool_context: Option<NativeToolRuntimeContext>,
+    computer_broker: Option<NativeComputerBroker>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -5184,6 +5335,7 @@ fn run_llm_stream(
         request,
         &cancellation,
         tool_context.as_ref(),
+        computer_broker.as_ref(),
         move |event| {
             queue_stream_event(&event_thread, request_id, event);
         },
@@ -5315,6 +5467,7 @@ async fn stream_with_native_tools<F>(
     mut request: LlmTransportRequest,
     cancellation: &CancellationToken,
     tool_context: Option<&NativeToolRuntimeContext>,
+    computer_broker: Option<&NativeComputerBroker>,
     mut on_event: F,
 ) -> Result<NativeToolLoopOutcome, NativeToolLoopFailure>
 where
@@ -5377,6 +5530,14 @@ where
         for call in &calls {
             let result = if mcp_runtime.handles(&call.name) {
                 execute_mcp_tool_call(&mut mcp_runtime, call, cancellation).await
+            } else if is_computer_tool_name(&call.name) {
+                execute_computer_tool_call(
+                    computer_broker,
+                    call,
+                    execution_context.as_ref(),
+                    cancellation,
+                )
+                .await
             } else {
                 execute_native_tool_call_with_context_async(
                     call,
@@ -5429,6 +5590,7 @@ async fn execute_mcp_tool_call(
         arguments: call.arguments.clone(),
         content,
         succeeded: false,
+        extra_messages: Vec::new(),
         effect: None,
     };
     if call.arguments_truncated {
@@ -5446,10 +5608,127 @@ async fn execute_mcp_tool_call(
             arguments: call.arguments.clone(),
             content,
             succeeded: true,
+            extra_messages: Vec::new(),
             effect: None,
         },
         Err(error) => failure(error),
     }
+}
+
+async fn execute_computer_tool_call(
+    broker: Option<&NativeComputerBroker>,
+    call: &bandori_core::chat_tools::NativeToolCall,
+    context: Option<&NativeToolExecutionContext<'_>>,
+    cancellation: &CancellationToken,
+) -> NativeToolResult {
+    let failure = |content: String| NativeToolResult {
+        call_id: call.call_id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        content,
+        succeeded: false,
+        extra_messages: Vec::new(),
+        effect: None,
+    };
+    if call.arguments_truncated {
+        return failure("Computer tool arguments exceeded the native safety limit".to_owned());
+    }
+    if serde_json::from_str::<serde_json::Map<String, Value>>(&call.arguments).is_err() {
+        return failure("Computer tool arguments must be a valid JSON object".to_owned());
+    }
+    let Some(context) = context else {
+        return failure("Computer Use context is unavailable".to_owned());
+    };
+    let config = match ConfigDocument::load(context.config_path) {
+        Ok(config) => config,
+        Err(error) => return failure(format!("Computer Use configuration error: {error}")),
+    };
+    let settings = NativeComputerSettings::from_config(&config);
+    if !settings.allows(&call.name) {
+        return failure(format!(
+            "Computer tool {} is disabled by its saved permission",
+            call.name
+        ));
+    }
+    let Some(broker) = broker else {
+        return failure("Computer Use Qt broker is unavailable".to_owned());
+    };
+    let response = match broker
+        .execute(&call.name, &call.arguments, cancellation)
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => return failure(error),
+    };
+    let value = match serde_json::from_str::<Value>(&response) {
+        Ok(Value::Object(value)) => value,
+        Ok(_) => return failure("Computer Use returned a non-object result".to_owned()),
+        Err(error) => return failure(format!("Computer Use returned invalid JSON: {error}")),
+    };
+    let content = value
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .chars()
+        .take(256 * 1024)
+        .collect::<String>();
+    let succeeded = value
+        .get("succeeded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let extra_messages = value
+        .get("extra_messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|message| valid_computer_extra_message(message))
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>();
+    NativeToolResult {
+        call_id: call.call_id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        content: if content.is_empty() {
+            "Computer tool completed without a textual result".to_owned()
+        } else {
+            content
+        },
+        succeeded,
+        extra_messages,
+        effect: None,
+    }
+}
+
+fn valid_computer_extra_message(message: &Value) -> bool {
+    let Some(object) = message.as_object() else {
+        return false;
+    };
+    if object.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    let Some(content) = object.get("content").and_then(Value::as_array) else {
+        return false;
+    };
+    !content.is_empty()
+        && content.len() <= 4
+        && content
+            .iter()
+            .all(|item| match item.get("type").and_then(Value::as_str) {
+                Some("text") => item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.len() <= 8 * 1024),
+                Some("image_url") => item
+                    .get("image_url")
+                    .and_then(|image| image.get("url"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| {
+                        url.starts_with("data:image/png;base64,")
+                            && url.len() <= MAX_COMPUTER_TOOL_RESULT_BYTES
+                    }),
+                _ => false,
+            })
 }
 
 fn merge_token_usage(total: &mut Option<TokenUsage>, update: Option<TokenUsage>) {

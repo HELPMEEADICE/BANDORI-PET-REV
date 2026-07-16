@@ -175,7 +175,18 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   bounded text/structured results. OpenAI Responses may instead receive
   provider-native MCP definitions when the server requires no approval;
   Chat Completions and other endpoints use the local proxy definitions.
-  Computer-use tools remain staged. The database layer now also starts private chat
+  Computer Use is native on the chat worker path as well. Rust owns dynamic tool
+  definitions, saved-permission revalidation, bounded rounds, cancellation,
+  timeout handling and result filtering; a CXX-Qt request/response broker performs
+  desktop capture and input on the Qt main thread. Screenshots return as bounded
+  PNG data URLs with virtual-desktop origin/scale metadata so follow-up mouse
+  coordinates map correctly across scaled and negative-origin displays. The
+  Qt-Fluent page keeps screenshot, mouse, keyboard, clipboard and wait permissions
+  opt-in, while the system prompt blocks purchases, deletion, messaging,
+  publishing, login and security-setting changes. Windows has native pointer,
+  click, wheel and Unicode/shortcut injection. Non-Windows builds currently fail
+  closed for global click/keyboard injection; capture, pointer move, clipboard and
+  cancellable wait remain available there. The database layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -187,9 +198,8 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   request builder verifies conversation ownership, applies the compatible
   0-or-2..100 history limit, appends relationship and Qt-formatted current-time
   context only to the latest user message, and exposes the resulting request
-  JSON through CXX-Qt without exposing the API key. Event-calendar context and
-  computer-use tools remain staged rather than being silently approximated;
-  event-calendar context, web/MCP tools, group prompts and the other
+  JSON through CXX-Qt without exposing the API key. Event-calendar context,
+  Computer Use, web/MCP tools, group prompts and the other
   supported native local tools are included in the current path. Completed
   responses are cleaned with Python-generated
   action-tag fixtures before persistence; parsed actions cross the reliable native IPC lane
@@ -361,9 +371,9 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.
-- Pending: remaining native visual/driver parity and integration services;
-  packaged offline ASR sidecar,
-  default-launcher cutover, packaging and multi-platform validation.
+- Pending: remaining native visual/driver parity, non-Windows Computer Use input
+  drivers, packaged offline ASR sidecar, default-launcher cutover, packaging and
+  multi-platform validation.
 
 The native Qt shell has not yet been compiled on the current workstation because
 no compatible Qt 6 C++ SDK/toolchain pairing is installed. Core, CXX-Qt generation

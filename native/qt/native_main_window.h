@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QPoint>
 #include <QQueue>
 #include <QSet>
 #include <QString>
@@ -133,8 +134,19 @@ private:
     void scheduleNativeScreenAwareness();
     void triggerNativeScreenAwareness(bool force = false);
     QString chooseNativeScreenAwarenessCharacter() const;
-    QByteArray captureNativeDesktop(QJsonObject* metadata) const;
+    QByteArray captureNativeDesktop(QJsonObject* metadata, int maximumWidth = -1) const;
     QJsonObject nativeForegroundDesktopState() const;
+    void handleNativeComputerTool(
+        qint64 requestId,
+        const QString& toolName,
+        const QString& argumentsJson);
+    void finishNativeComputerTool(
+        qint64 requestId,
+        bool succeeded,
+        const QString& content,
+        bool includeScreenshot,
+        bool screenshotRequired = false);
+    QPoint mapNativeComputerPoint(int screenshotX, int screenshotY) const;
     void handleNativeScreenAwarenessEvent(const QString& payloadJson);
     void stopNativeScreenAwareness();
     void loadNativeIntegrationSettings();
@@ -392,6 +404,17 @@ private:
     qfw::SwitchButton* llmMcpEnabledSwitch_ = nullptr;
     qfw::SwitchButton* llmMcpNativeSwitch_ = nullptr;
     qfw::PlainTextEdit* llmMcpServersEdit_ = nullptr;
+    qfw::SwitchButton* computerUseEnabledSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseAutoDetectSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseSendScreenshotsSwitch_ = nullptr;
+    qfw::SpinBox* computerUseMaxScreenshotWidthSpinBox_ = nullptr;
+    qfw::SwitchButton* computerUseAllowScreenshotSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseAllowMouseSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseAllowKeyboardSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseAllowClipboardSwitch_ = nullptr;
+    qfw::SwitchButton* computerUseAllowWaitSwitch_ = nullptr;
+    QJsonObject computerScreenshotMetrics_;
+    QSet<qint64> pendingComputerWaitRequests_;
     qfw::SwitchButton* llmCustomPromptSwitch_ = nullptr;
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;

@@ -125,6 +125,7 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "startGroupChatStream",
         "finishGroupChatTurn",
         "cancelChatStream",
+        "completeComputerTool",
         "chatStreamEvent",
         "chatMemoryEvent",
         "providerOperationEvent",
@@ -133,6 +134,8 @@ fn backend_bridge_generates_without_a_qt_sdk() {
         "screenAwarenessEvent",
         "integrationEvent",
         "napcatReplyEvent",
+        "computerToolRequest",
+        "computerToolCancel",
     ] {
         assert!(header.contains(symbol), "generated header missed {symbol}");
     }

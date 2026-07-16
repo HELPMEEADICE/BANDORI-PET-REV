@@ -574,6 +574,50 @@ def test_native_mcp_supports_http_stdio_responses_and_local_proxy_tools():
     assert 'QStringLiteral("mcp_servers")' in window
 
 
+def test_native_computer_use_is_permissioned_cancellable_and_qt_brokered():
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    computer = source("rust/crates/bandori-core/src/computer_tools.rs")
+    tools = source("rust/crates/bandori-core/src/chat_tools.rs")
+    settings = source("rust/crates/bandori-core/src/llm_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    bridge_test = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub mod computer_tools;" in core
+    assert "pub struct NativeComputerSettings" in computer
+    assert "pub fn computer_tool_definitions" in computer
+    assert "pub fn allows(&self, tool_name: &str)" in computer
+    assert '"computer_screenshot"' in computer
+    assert '"computer_click"' in computer
+    assert '"computer_type"' in computer
+    assert '"computer_set_clipboard"' in computer
+    assert '"computer_wait"' in computer
+    assert "【Computer Use 边界】" in tools
+    assert "pub extra_messages: Vec<Value>" in tools
+    assert "messages.extend(result.extra_messages.iter().cloned())" in tools
+    assert "computer_use_allow_mouse: bool" in settings
+    assert "computer_use_allow_keyboard: bool" in settings
+    assert "struct NativeComputerBroker" in backend
+    assert "CancellationToken" in backend
+    assert "tokio::time::timeout(Duration::from_secs(30)" in backend
+    assert "fn execute_computer_tool_call(" in backend
+    assert "fn valid_computer_extra_message(" in backend
+    assert 'url.starts_with("data:image/png;base64,")' in backend
+    assert '"completeComputerTool"' in bridge_test
+    assert '"computerToolRequest"' in bridge_test
+    assert '"computerToolCancel"' in bridge_test
+    assert "void handleNativeComputerTool(" in header
+    assert "QJsonObject computerScreenshotMetrics_" in header
+    assert "&Backend::computerToolRequest" in window
+    assert "backend_.completeComputerTool" in window
+    assert "QTimer::singleShot" in window
+    assert "pendingComputerWaitRequests_.remove(requestId)" in window
+    assert "SendInput(" in window
+    assert 'QStringLiteral("data:image/png;base64,")' in window
+    assert "QPoint NativeMainWindow::mapNativeComputerPoint" in window
+
+
 def test_native_reminder_core_is_python_contract_backed_and_qt_independent():
     reminder = source("rust/crates/bandori-core/src/reminder.rs")
     core = source("rust/crates/bandori-core/src/lib.rs")

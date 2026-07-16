@@ -68,6 +68,15 @@ pub struct NativeLlmSettingsState {
     pub mcp_enabled: bool,
     pub mcp_use_native: bool,
     pub mcp_servers: Vec<Value>,
+    pub computer_use_enabled: bool,
+    pub computer_use_auto_detect: bool,
+    pub computer_use_send_screenshots: bool,
+    pub computer_use_max_screenshot_width: i64,
+    pub computer_use_allow_screenshot: bool,
+    pub computer_use_allow_mouse: bool,
+    pub computer_use_allow_keyboard: bool,
+    pub computer_use_allow_clipboard: bool,
+    pub computer_use_allow_wait: bool,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
     pub active_api_profile: String,
@@ -104,6 +113,15 @@ pub struct NativeLlmSettingsUpdate {
     pub mcp_enabled: bool,
     pub mcp_use_native: bool,
     pub mcp_servers: Vec<Value>,
+    pub computer_use_enabled: bool,
+    pub computer_use_auto_detect: bool,
+    pub computer_use_send_screenshots: bool,
+    pub computer_use_max_screenshot_width: i64,
+    pub computer_use_allow_screenshot: bool,
+    pub computer_use_allow_mouse: bool,
+    pub computer_use_allow_keyboard: bool,
+    pub computer_use_allow_clipboard: bool,
+    pub computer_use_allow_wait: bool,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
 }
@@ -276,6 +294,31 @@ impl NativeLlmSettingsState {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
+            computer_use_enabled: config_bool(config, "computer_use_enabled", false),
+            computer_use_auto_detect: config_bool(config, "computer_use_auto_detect", true),
+            computer_use_send_screenshots: config_bool(
+                config,
+                "computer_use_send_screenshots",
+                true,
+            ),
+            computer_use_max_screenshot_width: config
+                .get("computer_use_max_screenshot_width")
+                .and_then(Value::as_i64)
+                .unwrap_or(1280)
+                .clamp(640, 1920),
+            computer_use_allow_screenshot: config_bool(
+                config,
+                "computer_use_allow_screenshot",
+                true,
+            ),
+            computer_use_allow_mouse: config_bool(config, "computer_use_allow_mouse", false),
+            computer_use_allow_keyboard: config_bool(config, "computer_use_allow_keyboard", false),
+            computer_use_allow_clipboard: config_bool(
+                config,
+                "computer_use_allow_clipboard",
+                false,
+            ),
+            computer_use_allow_wait: config_bool(config, "computer_use_allow_wait", true),
             custom_system_prompt_enabled: config_bool(
                 config,
                 "llm_custom_system_prompt_enabled",
@@ -362,6 +405,42 @@ impl NativeLlmSettingsUpdate {
         config.set("llm_mcp_enabled", Value::Bool(self.mcp_enabled));
         config.set("llm_mcp_use_native", Value::Bool(self.mcp_use_native));
         config.set("llm_mcp_servers", Value::Array(mcp_servers));
+        config.set(
+            "computer_use_enabled",
+            Value::Bool(self.computer_use_enabled),
+        );
+        config.set(
+            "computer_use_auto_detect",
+            Value::Bool(self.computer_use_auto_detect),
+        );
+        config.set(
+            "computer_use_send_screenshots",
+            Value::Bool(self.computer_use_send_screenshots),
+        );
+        config.set(
+            "computer_use_max_screenshot_width",
+            Value::from(self.computer_use_max_screenshot_width.clamp(640, 1920)),
+        );
+        config.set(
+            "computer_use_allow_screenshot",
+            Value::Bool(self.computer_use_allow_screenshot),
+        );
+        config.set(
+            "computer_use_allow_mouse",
+            Value::Bool(self.computer_use_allow_mouse),
+        );
+        config.set(
+            "computer_use_allow_keyboard",
+            Value::Bool(self.computer_use_allow_keyboard),
+        );
+        config.set(
+            "computer_use_allow_clipboard",
+            Value::Bool(self.computer_use_allow_clipboard),
+        );
+        config.set(
+            "computer_use_allow_wait",
+            Value::Bool(self.computer_use_allow_wait),
+        );
         config.set(
             "llm_custom_system_prompt_enabled",
             Value::Bool(self.custom_system_prompt_enabled),
@@ -612,6 +691,15 @@ mod tests {
                 "url":"http://127.0.0.1:8765/mcp",
                 "require_approval":"never"
             }],
+            "computer_use_enabled":true,
+            "computer_use_auto_detect":false,
+            "computer_use_send_screenshots":true,
+            "computer_use_max_screenshot_width":9999,
+            "computer_use_allow_screenshot":true,
+            "computer_use_allow_mouse":true,
+            "computer_use_allow_keyboard":false,
+            "computer_use_allow_clipboard":true,
+            "computer_use_allow_wait":true,
             "custom_system_prompt_enabled":true,
             "custom_system_prompt":"  Always stay in character.  "
         })
@@ -642,6 +730,11 @@ mod tests {
         assert!(state.mcp_enabled);
         assert!(state.mcp_use_native);
         assert_eq!(state.mcp_servers.len(), 1);
+        assert!(state.computer_use_enabled);
+        assert!(!state.computer_use_auto_detect);
+        assert_eq!(state.computer_use_max_screenshot_width, 1920);
+        assert!(state.computer_use_allow_mouse);
+        assert!(!state.computer_use_allow_keyboard);
         let serialized = serde_json::to_string(&state).unwrap();
         assert!(!serialized.contains("primary-secret"));
         assert!(!serialized.contains("aux-secret"));
