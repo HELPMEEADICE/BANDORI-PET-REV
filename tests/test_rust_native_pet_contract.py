@@ -1510,3 +1510,30 @@ def test_native_napcat_uses_qt_websocket_and_rust_policy_reply_pipeline():
     assert "kMaximumConcurrentNapcatReplies = 4" in window
     assert 'QStringLiteral("send_group_msg")' in window
     assert 'QStringLiteral("send_private_msg")' in window
+
+
+def test_native_proactive_companion_is_managed_scheduled_and_policy_aware():
+    core = source("rust/crates/bandori-core/src/reminder.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert "pub struct ProactiveCompanion" in core
+    assert "pub fn normalize_proactive_companion" in core
+    assert "pub fn compute_next_proactive_at" in core
+    assert "tick_config_reminders_with_desktop_state" in core
+    assert "evaluate_proactive_care" in core
+    assert 'config.get("proactive_companion")' in core
+    assert 'config.set("proactive_care_policy"' in core
+    assert '"update_proactive_item"' in core
+    assert "desktop_state_json: &QString" in backend
+    assert "defer_overdue_proactive: bool" in backend
+    assert "qfw::SwitchButton* proactiveEnabledSwitch_" in header
+    assert "bool deferOverdueProactiveReminders_ = true" in header
+    assert "void NativeMainWindow::saveSelectedNativeProactiveItem()" in window
+    assert "compactJson(nativeForegroundDesktopState())" in window
+    assert "codingProcesses" in window
+    assert "gameProcesses" in window
+    assert 'QStringLiteral("idle")' in window
+    assert 'QStringLiteral("proactive_companion")' in window
+    assert 'QStringLiteral("proactive_kind")' in window

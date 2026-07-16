@@ -194,5 +194,111 @@
     "character": "ran",
     "created_at": "2026-07-15T10:30:00",
     "updated_at": "2026-07-15T10:30:00"
-  }
+  },
+  "normalized_proactive_companion": {
+    "enabled": true,
+    "character": "anon",
+    "items": [
+      {
+        "id": "morning",
+        "enabled": true,
+        "kind": "morning",
+        "title": "早安问候",
+        "description": "早上问候用户，轻轻确认今天要做什么。",
+        "schedule_type": "daily",
+        "character": "",
+        "next_at": "2026-07-16T08:30:00",
+        "last_triggered_at": "",
+        "time": "08:30"
+      },
+      {
+        "id": "water",
+        "enabled": false,
+        "kind": "water",
+        "title": "喝水提醒",
+        "description": "提醒用户喝水，语气自然一点。",
+        "schedule_type": "interval",
+        "character": "",
+        "next_at": "",
+        "last_triggered_at": "",
+        "interval_minutes": 480,
+        "active_start": "09:00",
+        "active_end": "22:00"
+      },
+      {
+        "id": "sedentary",
+        "enabled": true,
+        "kind": "sedentary",
+        "title": "久坐提醒",
+        "description": "提醒用户站起来活动一下，照顾肩颈和眼睛。",
+        "schedule_type": "interval",
+        "character": "",
+        "next_at": "2026-07-15T11:30:00",
+        "last_triggered_at": "",
+        "interval_minutes": 60,
+        "active_start": "09:00",
+        "active_end": "22:00"
+      },
+      {
+        "id": "evening_review",
+        "enabled": true,
+        "kind": "evening_review",
+        "title": "计划复盘",
+        "description": "提醒用户简单复盘今天的计划、完成情况和明天要处理的事。",
+        "schedule_type": "daily",
+        "character": "",
+        "next_at": "2026-07-15T21:30:00",
+        "last_triggered_at": "",
+        "time": "21:30"
+      },
+      {
+        "id": "bedtime",
+        "enabled": true,
+        "kind": "bedtime",
+        "title": "睡前提醒",
+        "description": "提醒用户差不多该收尾休息了。",
+        "schedule_type": "daily",
+        "character": "",
+        "next_at": "2026-07-15T23:30:00",
+        "last_triggered_at": "",
+        "time": "23:30"
+      },
+      {
+        "id": "custom",
+        "enabled": true,
+        "kind": "stretch",
+        "title": "Custom",
+        "description": "",
+        "schedule_type": "daily",
+        "character": "",
+        "next_at": "2026-07-16T10:15:00",
+        "last_triggered_at": "",
+        "time": "10:15"
+      }
+    ]
+  },
+  "next_proactive": [
+    {
+      "item": {
+        "id": "water",
+        "schedule_type": "interval",
+        "interval_minutes": 90,
+        "active_start": "09:00",
+        "active_end": "22:00"
+      },
+      "after": "2026-07-16T21:30:00",
+      "expected": "2026-07-17T09:00:00"
+    },
+    {
+      "item": {
+        "id": "night",
+        "schedule_type": "interval",
+        "interval_minutes": 60,
+        "active_start": "22:00",
+        "active_end": "06:00"
+      },
+      "after": "2026-07-16T21:30:00",
+      "expected": "2026-07-16T22:30:00"
+    }
+  ]
 }

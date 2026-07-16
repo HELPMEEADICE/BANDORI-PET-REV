@@ -11,6 +11,59 @@ pub const FOCUS_SECONDS: i64 = 25 * 60;
 pub const SHORT_BREAK_SECONDS: i64 = 5 * 60;
 pub const LONG_BREAK_SECONDS: i64 = 15 * 60;
 
+#[derive(Clone, Copy)]
+struct ProactiveTemplate {
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+    schedule_type: &'static str,
+    time: Option<&'static str>,
+    interval_minutes: Option<i64>,
+}
+
+const DEFAULT_PROACTIVE_ITEMS: [ProactiveTemplate; 5] = [
+    ProactiveTemplate {
+        id: "morning",
+        title: "早安问候",
+        description: "早上问候用户，轻轻确认今天要做什么。",
+        schedule_type: "daily",
+        time: Some("08:30"),
+        interval_minutes: None,
+    },
+    ProactiveTemplate {
+        id: "water",
+        title: "喝水提醒",
+        description: "提醒用户喝水，语气自然一点。",
+        schedule_type: "interval",
+        time: None,
+        interval_minutes: Some(90),
+    },
+    ProactiveTemplate {
+        id: "sedentary",
+        title: "久坐提醒",
+        description: "提醒用户站起来活动一下，照顾肩颈和眼睛。",
+        schedule_type: "interval",
+        time: None,
+        interval_minutes: Some(60),
+    },
+    ProactiveTemplate {
+        id: "evening_review",
+        title: "计划复盘",
+        description: "提醒用户简单复盘今天的计划、完成情况和明天要处理的事。",
+        schedule_type: "daily",
+        time: Some("21:30"),
+        interval_minutes: None,
+    },
+    ProactiveTemplate {
+        id: "bedtime",
+        title: "睡前提醒",
+        description: "提醒用户差不多该收尾休息了。",
+        schedule_type: "daily",
+        time: Some("23:30"),
+        interval_minutes: None,
+    },
+];
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct LocalDateTime {
     pub year: i32,
@@ -148,6 +201,42 @@ pub struct Pomodoro {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProactiveItem {
+    pub id: String,
+    pub enabled: bool,
+    pub kind: String,
+    pub title: String,
+    pub description: String,
+    pub schedule_type: String,
+    pub character: String,
+    pub next_at: String,
+    pub last_triggered_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_minutes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_end: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProactiveCompanion {
+    pub enabled: bool,
+    pub character: String,
+    pub items: Vec<ProactiveItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct CareDecision {
+    allow: bool,
+    reason: String,
+    next_delay_minutes: Option<i64>,
+    tone_hint: String,
+}
+
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum ReminderError {
     #[error("time is required")]
@@ -161,6 +250,7 @@ pub struct NativeReminderState {
     pub display_mode: String,
     pub alarms: Vec<Alarm>,
     pub pomodoros: Vec<Pomodoro>,
+    pub proactive_companion: ProactiveCompanion,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -197,6 +287,23 @@ enum NativeReminderMutation {
     },
     SetDisplayMode {
         mode: String,
+    },
+    SetProactive {
+        enabled: bool,
+        #[serde(default)]
+        character: String,
+    },
+    UpdateProactiveItem {
+        id: String,
+        enabled: bool,
+        #[serde(default)]
+        time: String,
+        #[serde(default)]
+        interval_minutes: Option<i64>,
+        #[serde(default)]
+        active_start: String,
+        #[serde(default)]
+        active_end: String,
     },
 }
 
@@ -529,6 +636,444 @@ pub fn normalize_pomodoros(value: &Value, now: LocalDateTime) -> Vec<Pomodoro> {
         .collect()
 }
 
+pub fn compute_next_proactive_at(
+    item: &ProactiveItem,
+    after: LocalDateTime,
+) -> Option<LocalDateTime> {
+    if item.schedule_type == "daily" {
+        return compute_next_alarm_at(
+            item.time.as_deref().unwrap_or("08:30"),
+            &[0, 1, 2, 3, 4, 5, 6],
+            after,
+            "",
+        );
+    }
+    let interval = item.interval_minutes.unwrap_or(60).clamp(10, 480);
+    let active_start = item.active_start.as_deref().unwrap_or("09:00");
+    let active_end = item.active_end.as_deref().unwrap_or("22:00");
+    let candidate = after.add_seconds(interval * 60);
+    if is_in_active_window(candidate, active_start, active_end) {
+        Some(candidate)
+    } else {
+        next_active_window_start(after, active_start)
+    }
+}
+
+pub fn normalize_proactive_companion(value: &Value, now: LocalDateTime) -> ProactiveCompanion {
+    let raw = value.as_object();
+    let raw_items = raw
+        .and_then(|object| object.get("items"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for template in DEFAULT_PROACTIVE_ITEMS {
+        let raw_item = raw_items.iter().rev().find(|item| {
+            item.get("id").and_then(Value::as_str).map(str::trim) == Some(template.id)
+        });
+        if let Some(item) = normalize_proactive_item(raw_item, Some(template), now) {
+            seen.insert(item.id.clone());
+            items.push(item);
+        }
+    }
+    for raw_item in &raw_items {
+        let Some(object) = raw_item.as_object() else {
+            continue;
+        };
+        let id = object_text(object, "id").trim().to_owned();
+        let kind = nonempty_or_else(object_text(object, "kind"), || id.clone());
+        if id.is_empty() || id == "desktop_state" || kind == "desktop_state" || seen.contains(&id) {
+            continue;
+        }
+        if let Some(item) = normalize_proactive_item(Some(raw_item), None, now) {
+            seen.insert(item.id.clone());
+            items.push(item);
+        }
+    }
+    ProactiveCompanion {
+        enabled: coerce_bool(raw.and_then(|object| object.get("enabled")), false),
+        character: raw
+            .map(|object| object_text(object, "character"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+        items,
+    }
+}
+
+fn normalize_proactive_item(
+    value: Option<&Value>,
+    template: Option<ProactiveTemplate>,
+    now: LocalDateTime,
+) -> Option<ProactiveItem> {
+    let raw = value.and_then(Value::as_object);
+    let template_id = template.map(|item| item.id).unwrap_or_default();
+    let id = raw
+        .map(|object| object_text(object, "id"))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| template_id.to_owned())
+        .trim()
+        .to_owned();
+    if id.is_empty() {
+        return None;
+    }
+    let mut schedule_type = raw
+        .map(|object| object_text(object, "schedule_type"))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            template
+                .map(|item| item.schedule_type.to_owned())
+                .unwrap_or_else(|| "daily".to_owned())
+        })
+        .trim()
+        .to_lowercase();
+    if !matches!(schedule_type.as_str(), "daily" | "interval") {
+        schedule_type = "daily".to_owned();
+    }
+    let enabled = coerce_bool(raw.and_then(|object| object.get("enabled")), true);
+    let kind = raw
+        .map(|object| object_text(object, "kind"))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| id.clone())
+        .trim()
+        .to_owned();
+    let title = truncate_chars(
+        raw.map(|object| object_text(object, "title"))
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                template
+                    .map(|item| item.title.to_owned())
+                    .unwrap_or_else(|| id.clone())
+            })
+            .trim(),
+        80,
+    );
+    let description = truncate_chars(
+        raw.and_then(|object| object.get("description"))
+            .map(value_text)
+            .unwrap_or_else(|| {
+                template
+                    .map(|item| item.description.to_owned())
+                    .unwrap_or_default()
+            })
+            .trim(),
+        240,
+    );
+    let character = raw
+        .map(|object| object_text(object, "character"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let raw_next_at = raw
+        .map(|object| object_text(object, "next_at"))
+        .unwrap_or_default();
+    let last_triggered_at = raw
+        .map(|object| object_text(object, "last_triggered_at"))
+        .unwrap_or_default();
+    let (time, interval_minutes, active_start, active_end) = if schedule_type == "daily" {
+        let normalized = raw
+            .map(|object| normalize_time(&object_text(object, "time")))
+            .filter(|value| !value.is_empty())
+            .or_else(|| template.and_then(|item| item.time).map(str::to_owned))
+            .unwrap_or_else(|| "08:30".to_owned());
+        (Some(normalized), None, None, None)
+    } else {
+        let interval = raw
+            .and_then(|object| object.get("interval_minutes"))
+            .map(|value| coerce_i64(Some(value), 60))
+            .or_else(|| template.and_then(|item| item.interval_minutes))
+            .unwrap_or(60)
+            .clamp(10, 480);
+        let start = raw
+            .map(|object| normalize_time(&object_text(object, "active_start")))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "09:00".to_owned());
+        let end = raw
+            .map(|object| normalize_time(&object_text(object, "active_end")))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "22:00".to_owned());
+        (None, Some(interval), Some(start), Some(end))
+    };
+    let mut item = ProactiveItem {
+        id,
+        enabled,
+        kind,
+        title,
+        description,
+        schedule_type,
+        character,
+        next_at: String::new(),
+        last_triggered_at,
+        time,
+        interval_minutes,
+        active_start,
+        active_end,
+    };
+    if item.enabled {
+        item.next_at = LocalDateTime::parse(&raw_next_at)
+            .or_else(|| compute_next_proactive_at(&item, now))
+            .map(LocalDateTime::isoformat)
+            .unwrap_or_default();
+    }
+    Some(item)
+}
+
+fn is_in_active_window(at: LocalDateTime, active_start: &str, active_end: &str) -> bool {
+    let Some(start) = minutes_of_day(active_start) else {
+        return true;
+    };
+    let Some(end) = minutes_of_day(active_end) else {
+        return true;
+    };
+    let current = i64::from(at.hour) * 60 + i64::from(at.minute);
+    if start <= end {
+        start <= current && current <= end
+    } else {
+        current >= start || current <= end
+    }
+}
+
+fn next_active_window_start(after: LocalDateTime, active_start: &str) -> Option<LocalDateTime> {
+    let start = minutes_of_day(active_start)?;
+    for offset in 0..3 {
+        let date = after.add_days(offset);
+        let candidate = LocalDateTime::new(
+            date.year,
+            date.month,
+            date.day,
+            (start / 60) as u32,
+            (start % 60) as u32,
+            0,
+        )?;
+        if candidate > after {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn minutes_of_day(value: &str) -> Option<i64> {
+    let normalized = normalize_time(value);
+    let (hour, minute) = parse_time_parts(&normalized)?;
+    Some(i64::from(hour) * 60 + i64::from(minute))
+}
+
+fn normalize_proactive_care_policy(value: &Value) -> Value {
+    let raw = value.as_object();
+    let raw_rules = raw
+        .and_then(|object| object.get("state_rules"))
+        .and_then(Value::as_object);
+    let mut state_rules = Map::new();
+    for state in [
+        "gaming", "media", "coding", "writing", "chatting", "web", "desktop", "idle", "unknown",
+    ] {
+        let (default_mode, default_multiplier) = match state {
+            "coding" | "writing" => ("quiet", 2.0),
+            "idle" => ("encourage", 0.7),
+            _ => ("normal", 1.0),
+        };
+        let rule = raw_rules
+            .and_then(|rules| rules.get(state))
+            .and_then(Value::as_object);
+        let mode = rule
+            .map(|object| object_text(object, "mode"))
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| matches!(value.as_str(), "normal" | "quiet" | "silent" | "encourage"))
+            .unwrap_or_else(|| default_mode.to_owned());
+        state_rules.insert(
+            state.to_owned(),
+            json!({
+                "mode": mode,
+                "cooldown_multiplier": coerce_f64(
+                    rule.and_then(|object| object.get("cooldown_multiplier")),
+                    default_multiplier,
+                ).clamp(0.25, 4.0),
+                "allow_screen_awareness": coerce_bool(
+                    rule.and_then(|object| object.get("allow_screen_awareness")),
+                    true,
+                ),
+                "allow_lifestyle_reminders": coerce_bool(
+                    rule.and_then(|object| object.get("allow_lifestyle_reminders")),
+                    true,
+                ),
+            }),
+        );
+    }
+    let quiet_start = raw
+        .map(|object| normalize_time(&object_text(object, "quiet_start")))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "23:30".to_owned());
+    let quiet_end = raw
+        .map(|object| normalize_time(&object_text(object, "quiet_end")))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "08:00".to_owned());
+    json!({
+        "enabled": coerce_bool(raw.and_then(|object| object.get("enabled")), true),
+        "global_cooldown_minutes": coerce_i64(
+            raw.and_then(|object| object.get("global_cooldown_minutes")),
+            30,
+        ).clamp(5, 120),
+        "quiet_hours_enabled": coerce_bool(
+            raw.and_then(|object| object.get("quiet_hours_enabled")),
+            false,
+        ),
+        "quiet_start": quiet_start,
+        "quiet_end": quiet_end,
+        "last_care_at": raw.map(|object| object_text(object, "last_care_at")).unwrap_or_default(),
+        "last_screen_awareness_at": raw
+            .map(|object| object_text(object, "last_screen_awareness_at"))
+            .unwrap_or_default(),
+        "last_skip_reason": truncate_chars(
+            raw.map(|object| object_text(object, "last_skip_reason"))
+                .unwrap_or_default()
+                .as_str(),
+            160,
+        ),
+        "state_rules": state_rules,
+    })
+}
+
+fn evaluate_proactive_care(
+    policy: &Value,
+    proactive_kind: &str,
+    desktop_state: &Value,
+    now: LocalDateTime,
+) -> CareDecision {
+    if !policy
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+    {
+        return care_allowed("自然、简短，不要解释触发机制。");
+    }
+    let state = desktop_state
+        .get("state")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|state| {
+            matches!(
+                *state,
+                "gaming"
+                    | "media"
+                    | "coding"
+                    | "writing"
+                    | "chatting"
+                    | "web"
+                    | "desktop"
+                    | "idle"
+                    | "unknown"
+            )
+        })
+        .unwrap_or("unknown");
+    let rule = policy
+        .get("state_rules")
+        .and_then(|rules| rules.get(state))
+        .or_else(|| {
+            policy
+                .get("state_rules")
+                .and_then(|rules| rules.get("unknown"))
+        })
+        .unwrap_or(&Value::Null);
+    let mode = rule.get("mode").and_then(Value::as_str).unwrap_or("normal");
+    let cooldown = care_cooldown_minutes(policy, rule);
+    if policy
+        .get("quiet_hours_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && is_in_active_window(
+            now,
+            policy
+                .get("quiet_start")
+                .and_then(Value::as_str)
+                .unwrap_or("23:30"),
+            policy
+                .get("quiet_end")
+                .and_then(Value::as_str)
+                .unwrap_or("08:00"),
+        )
+    {
+        return care_blocked("quiet_hours", cooldown, "勿扰时段内保持安静。");
+    }
+    let important = matches!(proactive_kind, "bedtime" | "sedentary");
+    if !rule
+        .get("allow_lifestyle_reminders")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+        && !important
+    {
+        return care_blocked(&format!("{state}_blocks_lifestyle"), cooldown, "");
+    }
+    if mode == "silent" && !important {
+        return care_blocked(&format!("{state}_silent"), cooldown, "");
+    }
+    if let Some(last_at) = policy
+        .get("last_care_at")
+        .and_then(Value::as_str)
+        .and_then(LocalDateTime::parse)
+    {
+        let elapsed_seconds = now
+            .to_linear_seconds()
+            .saturating_sub(last_at.to_linear_seconds())
+            .max(0);
+        let remaining = cooldown as f64 - elapsed_seconds as f64 / 60.0;
+        if remaining > 0.0 {
+            return care_blocked("cooldown", remaining.round().max(1.0) as i64, "");
+        }
+    }
+    care_allowed(match mode {
+        "quiet" => "用户可能正在专注，语气要轻，不要要求立即回应。",
+        "silent" => "只在重要健康或睡前提醒时开口，语气要短。",
+        "encourage" => "用户可能空闲或离开过，语气可以更温和主动。",
+        _ => "自然、简短，像日常关心。",
+    })
+}
+
+fn care_cooldown_minutes(policy: &Value, rule: &Value) -> i64 {
+    let base = policy
+        .get("global_cooldown_minutes")
+        .and_then(Value::as_i64)
+        .unwrap_or(30);
+    let multiplier = rule
+        .get("cooldown_multiplier")
+        .and_then(Value::as_f64)
+        .unwrap_or(1.0);
+    (base as f64 * multiplier).round().max(1.0) as i64
+}
+
+fn care_allowed(tone_hint: &str) -> CareDecision {
+    CareDecision {
+        allow: true,
+        reason: String::new(),
+        next_delay_minutes: None,
+        tone_hint: tone_hint.to_owned(),
+    }
+}
+
+fn care_blocked(reason: &str, delay: i64, tone_hint: &str) -> CareDecision {
+    CareDecision {
+        allow: false,
+        reason: reason.to_owned(),
+        next_delay_minutes: Some(delay.max(1)),
+        tone_hint: tone_hint.to_owned(),
+    }
+}
+
+fn mark_proactive_care_result(policy: &mut Value, now: LocalDateTime, skip_reason: &str) {
+    let Some(policy) = policy.as_object_mut() else {
+        return;
+    };
+    if skip_reason.is_empty() {
+        policy.insert("last_care_at".to_owned(), Value::String(now.isoformat()));
+        policy.insert("last_skip_reason".to_owned(), Value::String(String::new()));
+    } else {
+        policy.insert(
+            "last_skip_reason".to_owned(),
+            Value::String(truncate_chars(skip_reason, 160)),
+        );
+    }
+}
+
 pub fn tick_reminders(
     alarms: &mut [Alarm],
     pomodoros: &mut [Pomodoro],
@@ -586,18 +1131,95 @@ pub fn tick_config_reminders(
     config_path: &Path,
     now: LocalDateTime,
 ) -> Result<Vec<Value>, ConfigError> {
+    tick_config_reminders_with_desktop_state(config_path, now, &Value::Null, false)
+}
+
+pub fn tick_config_reminders_with_desktop_state(
+    config_path: &Path,
+    now: LocalDateTime,
+    desktop_state: &Value,
+    defer_overdue_proactive: bool,
+) -> Result<Vec<Value>, ConfigError> {
     let mut config = ConfigDocument::load(config_path)?;
     let mut alarms = normalize_alarms(config.get("alarms").unwrap_or(&Value::Null), now);
     let mut pomodoros = normalize_pomodoros(config.get("pomodoros").unwrap_or(&Value::Null), now);
+    let mut proactive = normalize_proactive_companion(
+        config.get("proactive_companion").unwrap_or(&Value::Null),
+        now,
+    );
+    let mut care_policy = normalize_proactive_care_policy(
+        config.get("proactive_care_policy").unwrap_or(&Value::Null),
+    );
     let normalized_alarms =
         serde_json::to_value(&alarms).expect("normalized alarm serialization cannot fail");
     let normalized_pomodoros =
         serde_json::to_value(&pomodoros).expect("normalized pomodoro serialization cannot fail");
+    let normalized_proactive = serde_json::to_value(&proactive)
+        .expect("normalized proactive companion serialization cannot fail");
     let mut changed = config.get("alarms") != Some(&normalized_alarms)
-        || config.get("pomodoros") != Some(&normalized_pomodoros);
+        || config.get("pomodoros") != Some(&normalized_pomodoros)
+        || config.get("proactive_companion") != Some(&normalized_proactive)
+        || config.get("proactive_care_policy") != Some(&care_policy);
     let mut events = tick_reminders(&mut alarms, &mut pomodoros, now);
     if !events.is_empty() {
         changed = true;
+    }
+    if proactive.enabled && defer_overdue_proactive {
+        for item in &mut proactive.items {
+            if item.enabled
+                && LocalDateTime::parse(&item.next_at).is_some_and(|next_at| next_at <= now)
+            {
+                item.next_at = compute_next_proactive_at(item, now)
+                    .map(LocalDateTime::isoformat)
+                    .unwrap_or_default();
+                changed = true;
+            }
+        }
+    } else if proactive.enabled {
+        let default_proactive_character = proactive.character.clone();
+        for item in &mut proactive.items {
+            if !item.enabled {
+                continue;
+            }
+            let Some(next_at) = LocalDateTime::parse(&item.next_at) else {
+                continue;
+            };
+            if next_at > now {
+                continue;
+            }
+            let decision = evaluate_proactive_care(&care_policy, &item.kind, desktop_state, now);
+            if decision.allow {
+                events.push(json!({
+                    "kind": "proactive_companion",
+                    "proactive_kind": item.kind,
+                    "title": item.title,
+                    "notification_title": "生活节奏提醒",
+                    "character": first_nonempty(&[
+                        item.character.clone(),
+                        default_proactive_character.clone(),
+                    ]),
+                    "description": item.description,
+                    "scheduled_at": next_at.isoformat(),
+                    "triggered_at": now.isoformat(),
+                    "schedule_type": item.schedule_type,
+                    "interval_minutes": item.interval_minutes.unwrap_or_default(),
+                    "active_start": item.active_start.clone().unwrap_or_default(),
+                    "active_end": item.active_end.clone().unwrap_or_default(),
+                    "care_policy": decision,
+                }));
+                item.last_triggered_at = now.isoformat();
+                item.next_at = compute_next_proactive_at(item, now.add_seconds(30))
+                    .map(LocalDateTime::isoformat)
+                    .unwrap_or_default();
+                mark_proactive_care_result(&mut care_policy, now, "");
+            } else {
+                item.next_at = now
+                    .add_seconds(decision.next_delay_minutes.unwrap_or(1).max(1) * 60)
+                    .isoformat();
+                mark_proactive_care_result(&mut care_policy, now, &decision.reason);
+            }
+            changed = true;
+        }
     }
     let display_mode = config
         .get("reminder_display_mode")
@@ -642,6 +1264,11 @@ pub fn tick_config_reminders(
             "pomodoros",
             serde_json::to_value(pomodoros).expect("pomodoro serialization cannot fail"),
         );
+        config.set(
+            "proactive_companion",
+            serde_json::to_value(proactive).expect("proactive companion serialization cannot fail"),
+        );
+        config.set("proactive_care_policy", care_policy);
         config.save(config_path)?;
     }
     Ok(events)
@@ -754,6 +1381,62 @@ pub fn mutate_native_reminders(
             }
             state.display_mode = mode;
         }
+        NativeReminderMutation::SetProactive { enabled, character } => {
+            state.proactive_companion.enabled = enabled;
+            state.proactive_companion.character = if character.trim().is_empty() {
+                String::new()
+            } else {
+                resolve_reminder_character(&config, &character)?
+            };
+        }
+        NativeReminderMutation::UpdateProactiveItem {
+            id,
+            enabled,
+            time,
+            interval_minutes,
+            active_start,
+            active_end,
+        } => {
+            let id = required_id(&id)?;
+            let item = state
+                .proactive_companion
+                .items
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| {
+                    NativeReminderError::InvalidOperation(
+                        "selected proactive reminder does not exist".to_owned(),
+                    )
+                })?;
+            item.enabled = enabled;
+            if item.schedule_type == "interval" {
+                item.interval_minutes = Some(interval_minutes.unwrap_or(60).clamp(10, 480));
+                item.active_start = Some(nonempty_or_else(normalize_time(&active_start), || {
+                    item.active_start
+                        .clone()
+                        .unwrap_or_else(|| "09:00".to_owned())
+                }));
+                item.active_end = Some(nonempty_or_else(normalize_time(&active_end), || {
+                    item.active_end
+                        .clone()
+                        .unwrap_or_else(|| "22:00".to_owned())
+                }));
+            } else {
+                let normalized = normalize_time(&time);
+                if normalized.is_empty() {
+                    return Err(NativeReminderError::InvalidOperation(
+                        "proactive reminder time is invalid".to_owned(),
+                    ));
+                }
+                item.time = Some(normalized);
+            }
+            item.next_at.clear();
+            state.proactive_companion = normalize_proactive_companion(
+                &serde_json::to_value(&state.proactive_companion)
+                    .expect("proactive companion serialization cannot fail"),
+                now,
+            );
+        }
     }
     config.set("reminder_display_mode", json!(state.display_mode));
     config.set(
@@ -763,6 +1446,11 @@ pub fn mutate_native_reminders(
     config.set(
         "pomodoros",
         serde_json::to_value(&state.pomodoros).expect("pomodoro serialization cannot fail"),
+    );
+    config.set(
+        "proactive_companion",
+        serde_json::to_value(&state.proactive_companion)
+            .expect("proactive companion serialization cannot fail"),
     );
     config.save(config_path)?;
     Ok(state)
@@ -778,6 +1466,10 @@ fn reminder_state_from_config(config: &ConfigDocument, now: LocalDateTime) -> Na
             .to_owned(),
         alarms: normalize_alarms(config.get("alarms").unwrap_or(&Value::Null), now),
         pomodoros: normalize_pomodoros(config.get("pomodoros").unwrap_or(&Value::Null), now),
+        proactive_companion: normalize_proactive_companion(
+            config.get("proactive_companion").unwrap_or(&Value::Null),
+            now,
+        ),
     }
 }
 
@@ -986,6 +1678,16 @@ fn coerce_i64(value: Option<&Value>, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
+fn coerce_f64(value: Option<&Value>, default: f64) -> f64 {
+    value
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
+        .unwrap_or(default)
+}
+
 fn first_nonempty(values: &[String]) -> String {
     values
         .iter()
@@ -1157,6 +1859,32 @@ mod tests {
             .unwrap(),
             contract["normalized_pomodoro"]
         );
+        assert_eq!(
+            serde_json::to_value(normalize_proactive_companion(
+                &json!({
+                    "enabled":"yes",
+                    "character":"anon",
+                    "items":[
+                        {"id":"water","enabled":false,"interval_minutes":9999},
+                        {"id":"custom","kind":"stretch","title":" Custom ","time":"10点15"},
+                        {"id":"desktop_state","kind":"desktop_state","time":"12:00"}
+                    ]
+                }),
+                now,
+            ))
+            .unwrap(),
+            contract["normalized_proactive_companion"]
+        );
+        for case in contract["next_proactive"].as_array().unwrap() {
+            let after = LocalDateTime::parse(case["after"].as_str().unwrap()).unwrap();
+            let item = normalize_proactive_item(Some(&case["item"]), None, after).unwrap();
+            assert_eq!(
+                compute_next_proactive_at(&item, after)
+                    .map(LocalDateTime::isoformat)
+                    .unwrap_or_default(),
+                case["expected"].as_str().unwrap()
+            );
+        }
     }
 
     #[test]
@@ -1230,6 +1958,74 @@ mod tests {
     }
 
     #[test]
+    fn proactive_normalization_restores_defaults_and_preserves_safe_custom_items() {
+        let now = LocalDateTime::parse("2026-07-16T08:00:00").unwrap();
+        let proactive = normalize_proactive_companion(
+            &json!({
+                "enabled":"yes",
+                "character":"anon",
+                "items":[
+                    {"id":"water","enabled":false,"interval_minutes":9999},
+                    {"id":"custom","kind":"stretch","title":" Custom ","time":"10点15"},
+                    {"id":"desktop_state","kind":"desktop_state","time":"12:00"}
+                ]
+            }),
+            now,
+        );
+        assert!(proactive.enabled);
+        assert_eq!(proactive.character, "anon");
+        assert_eq!(proactive.items.len(), 6);
+        assert_eq!(proactive.items[0].id, "morning");
+        assert_eq!(proactive.items[0].next_at, "2026-07-16T08:30:00");
+        assert!(!proactive.items[1].enabled);
+        assert_eq!(proactive.items[1].interval_minutes, Some(480));
+        assert!(proactive.items[1].next_at.is_empty());
+        assert_eq!(proactive.items[5].id, "custom");
+        assert_eq!(proactive.items[5].time.as_deref(), Some("10:15"));
+    }
+
+    #[test]
+    fn proactive_interval_respects_daytime_and_cross_midnight_windows() {
+        let now = LocalDateTime::parse("2026-07-16T21:30:00").unwrap();
+        let daytime = normalize_proactive_item(
+            Some(&json!({
+                "id":"water",
+                "schedule_type":"interval",
+                "interval_minutes":90,
+                "active_start":"09:00",
+                "active_end":"22:00"
+            })),
+            None,
+            now,
+        )
+        .unwrap();
+        assert_eq!(
+            compute_next_proactive_at(&daytime, now)
+                .unwrap()
+                .isoformat(),
+            "2026-07-17T09:00:00"
+        );
+        let overnight = normalize_proactive_item(
+            Some(&json!({
+                "id":"night",
+                "schedule_type":"interval",
+                "interval_minutes":60,
+                "active_start":"22:00",
+                "active_end":"06:00"
+            })),
+            None,
+            now,
+        )
+        .unwrap();
+        assert_eq!(
+            compute_next_proactive_at(&overnight, now)
+                .unwrap()
+                .isoformat(),
+            "2026-07-16T22:30:00"
+        );
+    }
+
+    #[test]
     fn config_tick_persists_state_and_returns_display_delivery_metadata() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.json");
@@ -1263,6 +2059,153 @@ mod tests {
         let saved = ConfigDocument::load(&path).unwrap();
         assert_eq!(saved.get("alarms").unwrap()[0]["enabled"], false);
         assert_eq!(saved.get("alarms").unwrap()[0]["next_at"], "");
+    }
+
+    #[test]
+    fn proactive_tick_uses_desktop_policy_and_persists_cooldown_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let now = LocalDateTime::parse("2026-07-16T10:30:00").unwrap();
+        let mut config = ConfigDocument::default();
+        config.set("models", json!([{"character":"anon"}]));
+        config.set(
+            "proactive_companion",
+            json!({
+                "enabled":true,
+                "character":"anon",
+                "items":[{
+                    "id":"water",
+                    "enabled":true,
+                    "kind":"water",
+                    "title":"喝水提醒",
+                    "description":"喝点水",
+                    "schedule_type":"interval",
+                    "interval_minutes":90,
+                    "active_start":"09:00",
+                    "active_end":"22:00",
+                    "next_at":"2026-07-16T10:30:00"
+                }]
+            }),
+        );
+        config.set(
+            "proactive_care_policy",
+            json!({"global_cooldown_minutes":30}),
+        );
+        config.save(&path).unwrap();
+
+        let events =
+            tick_config_reminders_with_desktop_state(&path, now, &json!({"state":"coding"}), false)
+                .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["kind"], "proactive_companion");
+        assert_eq!(events[0]["proactive_kind"], "water");
+        assert_eq!(
+            events[0]["care_policy"]["tone_hint"],
+            "用户可能正在专注，语气要轻，不要要求立即回应。"
+        );
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(
+            saved.get("proactive_care_policy").unwrap()["last_care_at"],
+            now.isoformat()
+        );
+        assert_eq!(
+            saved.get("proactive_companion").unwrap()["items"][1]["next_at"],
+            "2026-07-16T12:00:30"
+        );
+    }
+
+    #[test]
+    fn proactive_quiet_hours_reschedule_without_marking_triggered() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let now = LocalDateTime::parse("2026-07-16T23:45:00").unwrap();
+        let mut config = ConfigDocument::default();
+        config.set(
+            "proactive_companion",
+            json!({
+                "enabled":true,
+                "items":[{
+                    "id":"bedtime",
+                    "enabled":true,
+                    "kind":"bedtime",
+                    "schedule_type":"daily",
+                    "time":"23:30",
+                    "next_at":"2026-07-16T23:30:00",
+                    "last_triggered_at":""
+                }]
+            }),
+        );
+        config.set(
+            "proactive_care_policy",
+            json!({
+                "quiet_hours_enabled":true,
+                "quiet_start":"23:30",
+                "quiet_end":"08:00",
+                "global_cooldown_minutes":30
+            }),
+        );
+        config.save(&path).unwrap();
+
+        let events = tick_config_reminders_with_desktop_state(
+            &path,
+            now,
+            &json!({"state":"desktop"}),
+            false,
+        )
+        .unwrap();
+        assert!(events.is_empty());
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(
+            saved.get("proactive_care_policy").unwrap()["last_skip_reason"],
+            "quiet_hours"
+        );
+        assert_eq!(
+            saved.get("proactive_companion").unwrap()["items"][4]["next_at"],
+            "2026-07-17T00:15:00"
+        );
+        assert_eq!(
+            saved.get("proactive_companion").unwrap()["items"][4]["last_triggered_at"],
+            ""
+        );
+    }
+
+    #[test]
+    fn first_native_tick_defers_overdue_proactive_items_without_delivery() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        let now = LocalDateTime::parse("2026-07-16T10:30:00").unwrap();
+        let mut config = ConfigDocument::default();
+        config.set(
+            "proactive_companion",
+            json!({
+                "enabled":true,
+                "items":[{
+                    "id":"water",
+                    "enabled":true,
+                    "schedule_type":"interval",
+                    "interval_minutes":90,
+                    "active_start":"09:00",
+                    "active_end":"22:00",
+                    "next_at":"2026-07-15T10:00:00",
+                    "last_triggered_at":""
+                }]
+            }),
+        );
+        config.save(&path).unwrap();
+
+        let events =
+            tick_config_reminders_with_desktop_state(&path, now, &json!({"state":"desktop"}), true)
+                .unwrap();
+        assert!(events.is_empty());
+        let saved = ConfigDocument::load(&path).unwrap();
+        assert_eq!(
+            saved.get("proactive_companion").unwrap()["items"][1]["next_at"],
+            "2026-07-16T12:00:00"
+        );
+        assert_eq!(
+            saved.get("proactive_companion").unwrap()["items"][1]["last_triggered_at"],
+            ""
+        );
     }
 
     #[test]
@@ -1341,6 +2284,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state.display_mode, "system");
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            r#"{"op":"set_proactive","enabled":true,"character":"ran"}"#,
+            4096,
+        )
+        .unwrap();
+        assert!(state.proactive_companion.enabled);
+        assert_eq!(state.proactive_companion.character, "ran");
+        let state = mutate_native_reminders(
+            &path,
+            now,
+            r#"{"op":"update_proactive_item","id":"water","enabled":true,"interval_minutes":5,"active_start":"08:00","active_end":"23:00"}"#,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(
+            state.proactive_companion.items[1].interval_minutes,
+            Some(10)
+        );
+        assert_eq!(
+            state.proactive_companion.items[1].active_start.as_deref(),
+            Some("08:00")
+        );
+        assert!(!state.proactive_companion.items[1].next_at.is_empty());
         assert!(
             mutate_native_reminders(
                 &path,

@@ -54,11 +54,13 @@ def rendered_contracts() -> dict[Path, str]:
     )
     from reminder_core import (
         compute_next_alarm_at,
+        compute_next_proactive_at,
         create_alarm,
         create_pomodoro,
         isoformat as reminder_isoformat,
         normalize_alarm,
         normalize_pomodoro,
+        normalize_proactive_companion,
         normalize_repeat_days,
         normalize_time,
     )
@@ -79,10 +81,12 @@ def rendered_contracts() -> dict[Path, str]:
         normalize_time,
         normalize_repeat_days,
         compute_next_alarm_at,
+        compute_next_proactive_at,
         create_alarm,
         normalize_alarm,
         create_pomodoro,
         normalize_pomodoro,
+        normalize_proactive_companion,
         reminder_isoformat,
     )
 
@@ -386,10 +390,12 @@ def _reminder_contract(
     normalize_time,
     normalize_repeat_days,
     compute_next_alarm_at,
+    compute_next_proactive_at,
     create_alarm,
     normalize_alarm,
     create_pomodoro,
     normalize_pomodoro,
+    normalize_proactive_companion,
     isoformat,
 ) -> dict:
     from datetime import datetime
@@ -470,6 +476,50 @@ def _reminder_contract(
         },
         now,
     )
+    proactive_input = {
+        "enabled": "yes",
+        "character": "anon",
+        "items": [
+            {"id": "water", "enabled": False, "interval_minutes": 9999},
+            {
+                "id": "custom",
+                "kind": "stretch",
+                "title": " Custom ",
+                "time": "10点15",
+            },
+            {"id": "desktop_state", "kind": "desktop_state", "time": "12:00"},
+        ],
+    }
+    proactive_cases = [
+        {
+            "item": {
+                "id": "water",
+                "schedule_type": "interval",
+                "interval_minutes": 90,
+                "active_start": "09:00",
+                "active_end": "22:00",
+            },
+            "after": datetime(2026, 7, 16, 21, 30, 0),
+        },
+        {
+            "item": {
+                "id": "night",
+                "schedule_type": "interval",
+                "interval_minutes": 60,
+                "active_start": "22:00",
+                "active_end": "06:00",
+            },
+            "after": datetime(2026, 7, 16, 21, 30, 0),
+        },
+    ]
+    for case in proactive_cases:
+        case["after"] = isoformat(case["after"])
+        case["expected"] = isoformat(
+            compute_next_proactive_at(
+                case["item"],
+                datetime.fromisoformat(case["after"]),
+            )
+        )
     return {
         "now": isoformat(now),
         "normalize_time": [
@@ -485,6 +535,11 @@ def _reminder_contract(
         "normalized_alarm": normalized_alarm,
         "created_pomodoro": pomodoro,
         "normalized_pomodoro": normalized_pomodoro,
+        "normalized_proactive_companion": normalize_proactive_companion(
+            proactive_input,
+            now,
+        ),
+        "next_proactive": proactive_cases,
     }
 
 

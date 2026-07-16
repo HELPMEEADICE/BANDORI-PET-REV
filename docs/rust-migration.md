@@ -255,10 +255,15 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   dispatches actions to that speaker's pet and keeps the whole sequence locked
   behind one cancelable busy state. This UI path is generation/static tested but
   still awaits a Qt 6 SDK for a native compile and interactive run.
-  Reminder ownership is now native too. Rust validates and persists alarms and
-  Pomodoro sessions, runs the reminder service, routes notification actions and
-  supports add/toggle/delete management from a Qt-Fluent settings page. Chat tool
-  calls use that same core instead of a parallel Qt implementation.
+  Reminder ownership is now native too. Rust validates and persists alarms,
+  Pomodoro sessions and the full proactive-companion rhythm set. The scheduler
+  normalizes the five built-in rhythms plus safe custom entries, handles daily,
+  interval and cross-midnight active windows, and evaluates quiet hours,
+  foreground desktop-state rules and the shared care cooldown before it delivers
+  or defers an event. Qt-Fluent exposes the global character/enable controls and
+  per-rhythm schedules; the native timer passes current foreground state into
+  Rust and routes accepted events through the same tray, pet-bubble and TTS path.
+  Alarm/Pomodoro management and chat tool calls continue to share that core.
   LLM settings and profiles now have a separate Qt-Fluent page backed by Rust.
   Provider URLs, protocol modes, history/prompt bounds and primary/auxiliary
   profile selection are validated in the core. Secret fields are write-only:

@@ -75,6 +75,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <numeric>
 #include <utility>
@@ -95,6 +96,7 @@ constexpr int kFormatRole = Qt::UserRole + 3;
 constexpr int kReminderKindRole = Qt::UserRole + 10;
 constexpr int kReminderIdRole = Qt::UserRole + 11;
 constexpr int kReminderEnabledRole = Qt::UserRole + 12;
+constexpr int kReminderPayloadRole = Qt::UserRole + 13;
 constexpr int kMemoryIdRole = Qt::UserRole + 20;
 constexpr int kMemoryKindRole = Qt::UserRole + 21;
 constexpr int kMemoryContentRole = Qt::UserRole + 22;
@@ -336,6 +338,32 @@ QString reminderFallbackText(const QJsonObject& event, QString displayName) {
             ? QStringLiteral("番茄钟")
             : QStringLiteral("“%1”").arg(description);
         return QStringLiteral("%1：%2完成了，辛苦啦。").arg(displayName, purpose);
+    }
+    if (kind == QStringLiteral("proactive_companion")) {
+        const QString proactiveKind =
+            event.value(QStringLiteral("proactive_kind")).toString();
+        if (proactiveKind == QStringLiteral("morning")) {
+            return QStringLiteral(
+                       "%1：早上好，今天也慢慢进入状态吧。要不要先想想最重要的一件事？")
+                .arg(displayName);
+        }
+        if (proactiveKind == QStringLiteral("water")) {
+            return QStringLiteral("%1：先喝点水吧，别等口渴了才想起来。")
+                .arg(displayName);
+        }
+        if (proactiveKind == QStringLiteral("sedentary")) {
+            return QStringLiteral("%1：坐了有一会儿了，起来伸展一下肩颈和手腕吧。")
+                .arg(displayName);
+        }
+        if (proactiveKind == QStringLiteral("evening_review")) {
+            return QStringLiteral("%1：今天快收尾了，要不要简单复盘一下完成了什么？")
+                .arg(displayName);
+        }
+        if (proactiveKind == QStringLiteral("bedtime")) {
+            return QStringLiteral("%1：时间不早了，差不多该把事情放一放准备休息啦。")
+                .arg(displayName);
+        }
+        return QStringLiteral("%1：来照顾一下现在的生活节奏吧。").arg(displayName);
     }
     return QStringLiteral("%1：提醒时间到了。").arg(displayName);
 }
@@ -3711,6 +3739,68 @@ QWidget* NativeMainWindow::createSettingsPage() {
     pomodoroEditorLayout->addWidget(pomodoroCharacterComboBox_);
     pomodoroEditorLayout->addWidget(addPomodoroButton_);
 
+    auto* proactiveEditor = new QWidget(reminders);
+    auto* proactiveEditorLayout = new QVBoxLayout(proactiveEditor);
+    proactiveEditorLayout->setContentsMargins(0, 0, 0, 0);
+    proactiveEditorLayout->setSpacing(8);
+    auto* proactiveGlobalRow = new QHBoxLayout();
+    proactiveGlobalRow->setContentsMargins(0, 0, 0, 0);
+    proactiveGlobalRow->setSpacing(8);
+    proactiveEnabledSwitch_ = new qfw::SwitchButton(proactiveEditor);
+    proactiveCharacterComboBox_ = new qfw::ComboBox(proactiveEditor);
+    proactiveCharacterComboBox_->setMinimumWidth(180);
+    saveProactiveSettingsButton_ =
+        new qfw::PushButton(tr("Save companion settings"), proactiveEditor);
+    proactiveGlobalRow->addWidget(new qfw::BodyLabel(tr("Enable"), proactiveEditor));
+    proactiveGlobalRow->addWidget(proactiveEnabledSwitch_);
+    proactiveGlobalRow->addWidget(proactiveCharacterComboBox_, 1);
+    proactiveGlobalRow->addWidget(saveProactiveSettingsButton_);
+    proactiveEditorLayout->addLayout(proactiveGlobalRow);
+
+    auto* proactiveItemRow = new QHBoxLayout();
+    proactiveItemRow->setContentsMargins(0, 0, 0, 0);
+    proactiveItemRow->setSpacing(8);
+    proactiveDailyEditor_ = new QWidget(proactiveEditor);
+    auto* proactiveDailyLayout = new QHBoxLayout(proactiveDailyEditor_);
+    proactiveDailyLayout->setContentsMargins(0, 0, 0, 0);
+    proactiveDailyLayout->setSpacing(6);
+    proactiveDailyLayout->addWidget(
+        new qfw::BodyLabel(tr("Daily at"), proactiveDailyEditor_));
+    proactiveTimePicker_ = new qfw::TimePicker(proactiveDailyEditor_);
+    proactiveTimePicker_->setFixedWidth(112);
+    proactiveDailyLayout->addWidget(proactiveTimePicker_);
+    proactiveItemRow->addWidget(proactiveDailyEditor_);
+
+    proactiveIntervalEditor_ = new QWidget(proactiveEditor);
+    auto* proactiveIntervalLayout = new QHBoxLayout(proactiveIntervalEditor_);
+    proactiveIntervalLayout->setContentsMargins(0, 0, 0, 0);
+    proactiveIntervalLayout->setSpacing(6);
+    proactiveIntervalSpinBox_ = new qfw::SpinBox(proactiveIntervalEditor_);
+    proactiveIntervalSpinBox_->setRange(10, 480);
+    proactiveIntervalSpinBox_->setSingleStep(10);
+    proactiveIntervalSpinBox_->setSuffix(tr(" min"));
+    proactiveIntervalSpinBox_->setFixedWidth(100);
+    proactiveActiveStartPicker_ = new qfw::TimePicker(proactiveIntervalEditor_);
+    proactiveActiveStartPicker_->setFixedWidth(112);
+    proactiveActiveEndPicker_ = new qfw::TimePicker(proactiveIntervalEditor_);
+    proactiveActiveEndPicker_->setFixedWidth(112);
+    proactiveIntervalLayout->addWidget(proactiveIntervalSpinBox_);
+    proactiveIntervalLayout->addWidget(
+        new qfw::BodyLabel(tr("active"), proactiveIntervalEditor_));
+    proactiveIntervalLayout->addWidget(proactiveActiveStartPicker_);
+    proactiveIntervalLayout->addWidget(
+        new qfw::BodyLabel(tr("to"), proactiveIntervalEditor_));
+    proactiveIntervalLayout->addWidget(proactiveActiveEndPicker_);
+    proactiveItemRow->addWidget(proactiveIntervalEditor_);
+    proactiveItemRow->addStretch(1);
+    saveProactiveItemButton_ =
+        new qfw::PrimaryPushButton(tr("Update selected rhythm"), proactiveEditor);
+    proactiveItemRow->addWidget(saveProactiveItemButton_);
+    proactiveEditorLayout->addLayout(proactiveItemRow);
+    proactiveDailyEditor_->setVisible(false);
+    proactiveIntervalEditor_->setVisible(false);
+    saveProactiveItemButton_->setEnabled(false);
+
     auto* reminderManager = new QWidget(reminders);
     auto* reminderManagerLayout = new QVBoxLayout(reminderManager);
     reminderManagerLayout->setContentsMargins(0, 0, 0, 0);
@@ -3745,6 +3835,11 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("New Pomodoro"),
         tr("Each round is 25 minutes of focus followed by a 5 minute break"),
         pomodoroEditor);
+    reminders->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Heart),
+        tr("Proactive companion"),
+        tr("Enable lifestyle rhythms and edit the selected daily or interval schedule"),
+        proactiveEditor);
     reminders->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Calendar),
         tr("Saved reminders"),
@@ -3816,6 +3911,16 @@ QWidget* NativeMainWindow::createSettingsPage() {
         &QPushButton::clicked,
         this,
         [this]() { addNativePomodoro(); });
+    connect(
+        saveProactiveSettingsButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { saveNativeProactiveSettings(); });
+    connect(
+        saveProactiveItemButton_,
+        &QPushButton::clicked,
+        this,
+        [this]() { saveSelectedNativeProactiveItem(); });
     connect(
         reminderDisplayModeComboBox_,
         &qfw::ComboBox::activated,
@@ -3981,16 +4086,21 @@ void NativeMainWindow::applyBackendState() {
 }
 
 void NativeMainWindow::populateReminderCharacters() {
-    if (alarmCharacterComboBox_ == nullptr || pomodoroCharacterComboBox_ == nullptr) {
+    if (alarmCharacterComboBox_ == nullptr || pomodoroCharacterComboBox_ == nullptr
+        || proactiveCharacterComboBox_ == nullptr) {
         return;
     }
     const QString previousAlarm = alarmCharacterComboBox_->currentData().toString();
     const QString previousPomodoro = pomodoroCharacterComboBox_->currentData().toString();
+    const QString previousProactive = proactiveCharacterComboBox_->currentData().toString();
     alarmCharacterComboBox_->clear();
     pomodoroCharacterComboBox_->clear();
+    proactiveCharacterComboBox_->clear();
     alarmCharacterComboBox_->addItem(
         tr("Default configured character"), QVariant(), QString());
     pomodoroCharacterComboBox_->addItem(
+        tr("Default configured character"), QVariant(), QString());
+    proactiveCharacterComboBox_->addItem(
         tr("Default configured character"), QVariant(), QString());
 
     QStringList added;
@@ -4004,11 +4114,15 @@ void NativeMainWindow::populateReminderCharacters() {
             : model.characterDisplay;
         alarmCharacterComboBox_->addItem(display, QVariant(), model.character);
         pomodoroCharacterComboBox_->addItem(display, QVariant(), model.character);
+        proactiveCharacterComboBox_->addItem(display, QVariant(), model.character);
     }
     const int alarmIndex = alarmCharacterComboBox_->findData(previousAlarm);
     alarmCharacterComboBox_->setCurrentIndex(alarmIndex < 0 ? 0 : alarmIndex);
     const int pomodoroIndex = pomodoroCharacterComboBox_->findData(previousPomodoro);
     pomodoroCharacterComboBox_->setCurrentIndex(pomodoroIndex < 0 ? 0 : pomodoroIndex);
+    const int proactiveIndex = proactiveCharacterComboBox_->findData(previousProactive);
+    proactiveCharacterComboBox_->setCurrentIndex(
+        proactiveIndex < 0 ? 0 : proactiveIndex);
 }
 
 void NativeMainWindow::loadNativeReminderState() {
@@ -4026,6 +4140,15 @@ void NativeMainWindow::loadNativeReminderState() {
                              .toString(QStringLiteral("floating"));
     const int modeIndex = reminderDisplayModeComboBox_->findData(mode);
     reminderDisplayModeComboBox_->setCurrentIndex(modeIndex < 0 ? 0 : modeIndex);
+    const QJsonObject proactive = reminderState_
+                                      .value(QStringLiteral("proactive_companion"))
+                                      .toObject();
+    proactiveEnabledSwitch_->setChecked(
+        proactive.value(QStringLiteral("enabled")).toBool(false));
+    const int proactiveCharacterIndex = proactiveCharacterComboBox_->findData(
+        proactive.value(QStringLiteral("character")).toString());
+    proactiveCharacterComboBox_->setCurrentIndex(
+        proactiveCharacterIndex < 0 ? 0 : proactiveCharacterIndex);
     refreshNativeReminderList();
 }
 
@@ -4116,6 +4239,62 @@ void NativeMainWindow::refreshNativeReminderList() {
             reminderList_->setCurrentItem(item);
         }
     }
+
+    const QJsonObject proactive = reminderState_
+                                      .value(QStringLiteral("proactive_companion"))
+                                      .toObject();
+    const QString proactiveCharacter =
+        proactive.value(QStringLiteral("character")).toString();
+    const bool proactiveEnabled =
+        proactive.value(QStringLiteral("enabled")).toBool(false);
+    for (const QJsonValue& value : proactive.value(QStringLiteral("items")).toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject proactiveItem = value.toObject();
+        const bool enabled = proactiveItem.value(QStringLiteral("enabled")).toBool(true);
+        const QString character = proactiveItem
+                                      .value(QStringLiteral("character"))
+                                      .toString(proactiveCharacter);
+        const QString display = character.isEmpty()
+            ? tr("default character")
+            : displayNameForCharacter(character);
+        const QString scheduleType = proactiveItem
+                                         .value(QStringLiteral("schedule_type"))
+                                         .toString(QStringLiteral("daily"));
+        const QString schedule = scheduleType == QStringLiteral("interval")
+            ? tr("every %1 min · %2-%3")
+                  .arg(proactiveItem.value(QStringLiteral("interval_minutes")).toInt(60))
+                  .arg(
+                      proactiveItem.value(QStringLiteral("active_start")).toString(),
+                      proactiveItem.value(QStringLiteral("active_end")).toString())
+            : tr("daily at %1")
+                  .arg(proactiveItem.value(QStringLiteral("time")).toString());
+        QString nextAt = proactiveItem.value(QStringLiteral("next_at")).toString();
+        const QString next = nextAt.isEmpty()
+            ? tr("not scheduled")
+            : tr("next %1").arg(nextAt.replace(QStringLiteral("T"), QStringLiteral(" ")));
+        const QString text = QStringLiteral("%1 %2 · %3\n%4 · %5")
+                                 .arg(
+                                     proactiveEnabled && enabled
+                                         ? QStringLiteral("●")
+                                         : QStringLiteral("○"),
+                                     proactiveItem.value(QStringLiteral("title")).toString(),
+                                     schedule,
+                                     display,
+                                     next);
+        auto* item = new QListWidgetItem(text, reminderList_);
+        item->setData(kReminderKindRole, QStringLiteral("proactive"));
+        item->setData(
+            kReminderIdRole,
+            proactiveItem.value(QStringLiteral("id")).toString());
+        item->setData(kReminderEnabledRole, enabled);
+        item->setData(kReminderPayloadRole, compactJson(proactiveItem));
+        if (selectedKind == QStringLiteral("proactive")
+            && selectedId == item->data(kReminderIdRole).toString()) {
+            reminderList_->setCurrentItem(item);
+        }
+    }
     updateNativeReminderActions();
 }
 
@@ -4127,20 +4306,37 @@ void NativeMainWindow::updateNativeReminderActions() {
     const bool hasSelection = selected != nullptr;
     const bool isAlarm = hasSelection
         && selected->data(kReminderKindRole).toString() == QStringLiteral("alarm");
-    const bool enabled = isAlarm && selected->data(kReminderEnabledRole).toBool();
-    toggleReminderButton_->setEnabled(isAlarm);
-    toggleReminderButton_->setText(enabled ? tr("Disable alarm") : tr("Enable alarm"));
-    deleteReminderButton_->setEnabled(hasSelection);
+    const bool isProactive = hasSelection
+        && selected->data(kReminderKindRole).toString() == QStringLiteral("proactive");
+    const bool enabled = (isAlarm || isProactive)
+        && selected->data(kReminderEnabledRole).toBool();
+    toggleReminderButton_->setEnabled(isAlarm || isProactive);
+    toggleReminderButton_->setText(
+        enabled ? tr("Disable") : tr("Enable"));
+    deleteReminderButton_->setEnabled(hasSelection && !isProactive);
     if (hasSelection) {
         reminderStatusLabel_->setText(
-            isAlarm ? tr("Alarm selected") : tr("Pomodoro selected"));
+            isAlarm
+                ? tr("Alarm selected")
+                : (isProactive ? tr("Lifestyle rhythm selected")
+                               : tr("Pomodoro selected")));
     } else {
         const int alarmCount = reminderState_.value(QStringLiteral("alarms")).toArray().size();
         const int pomodoroCount =
             reminderState_.value(QStringLiteral("pomodoros")).toArray().size();
+        const int proactiveCount = reminderState_
+                                       .value(QStringLiteral("proactive_companion"))
+                                       .toObject()
+                                       .value(QStringLiteral("items"))
+                                       .toArray()
+                                       .size();
         reminderStatusLabel_->setText(
-            tr("%1 alarm(s), %2 Pomodoro timer(s)").arg(alarmCount).arg(pomodoroCount));
+            tr("%1 alarm(s), %2 Pomodoro timer(s), %3 lifestyle rhythm(s)")
+                .arg(alarmCount)
+                .arg(pomodoroCount)
+                .arg(proactiveCount));
     }
+    syncSelectedProactiveControls();
 }
 
 bool NativeMainWindow::mutateNativeReminder(const QJsonObject& command) {
@@ -4198,15 +4394,36 @@ void NativeMainWindow::addNativePomodoro() {
 
 void NativeMainWindow::toggleSelectedNativeAlarm() {
     const QListWidgetItem* selected = reminderList_->currentItem();
-    if (selected == nullptr
-        || selected->data(kReminderKindRole).toString() != QStringLiteral("alarm")) {
+    if (selected == nullptr) {
         return;
     }
-    mutateNativeReminder({
-        {QStringLiteral("op"), QStringLiteral("toggle_alarm")},
-        {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
-        {QStringLiteral("enabled"), !selected->data(kReminderEnabledRole).toBool()},
-    });
+    const QString kind = selected->data(kReminderKindRole).toString();
+    if (kind == QStringLiteral("alarm")) {
+        mutateNativeReminder({
+            {QStringLiteral("op"), QStringLiteral("toggle_alarm")},
+            {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
+            {QStringLiteral("enabled"), !selected->data(kReminderEnabledRole).toBool()},
+        });
+        return;
+    }
+    if (kind == QStringLiteral("proactive")) {
+        const QJsonObject payload =
+            parseObject(selected->data(kReminderPayloadRole).toString());
+        QJsonObject command {
+            {QStringLiteral("op"), QStringLiteral("update_proactive_item")},
+            {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
+            {QStringLiteral("enabled"), !selected->data(kReminderEnabledRole).toBool()},
+            {QStringLiteral("time"), payload.value(QStringLiteral("time"))},
+            {QStringLiteral("active_start"), payload.value(QStringLiteral("active_start"))},
+            {QStringLiteral("active_end"), payload.value(QStringLiteral("active_end"))},
+        };
+        if (payload.contains(QStringLiteral("interval_minutes"))) {
+            command.insert(
+                QStringLiteral("interval_minutes"),
+                payload.value(QStringLiteral("interval_minutes")));
+        }
+        mutateNativeReminder(command);
+    }
 }
 
 void NativeMainWindow::deleteSelectedNativeReminder() {
@@ -4215,6 +4432,9 @@ void NativeMainWindow::deleteSelectedNativeReminder() {
         return;
     }
     const QString kind = selected->data(kReminderKindRole).toString();
+    if (kind == QStringLiteral("proactive")) {
+        return;
+    }
     mutateNativeReminder({
         {QStringLiteral("op"),
          kind == QStringLiteral("alarm")
@@ -4222,6 +4442,88 @@ void NativeMainWindow::deleteSelectedNativeReminder() {
              : QStringLiteral("delete_pomodoro")},
         {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
     });
+}
+
+void NativeMainWindow::syncSelectedProactiveControls() {
+    if (proactiveDailyEditor_ == nullptr || reminderList_ == nullptr) {
+        return;
+    }
+    const QListWidgetItem* selected = reminderList_->currentItem();
+    const bool isProactive = selected != nullptr
+        && selected->data(kReminderKindRole).toString() == QStringLiteral("proactive");
+    const QJsonObject payload = isProactive
+        ? parseObject(selected->data(kReminderPayloadRole).toString())
+        : QJsonObject();
+    const QString scheduleType =
+        payload.value(QStringLiteral("schedule_type")).toString();
+    const bool daily = isProactive && scheduleType == QStringLiteral("daily");
+    const bool interval = isProactive && scheduleType == QStringLiteral("interval");
+    proactiveDailyEditor_->setVisible(daily);
+    proactiveIntervalEditor_->setVisible(interval);
+    saveProactiveItemButton_->setEnabled(daily || interval);
+    if (daily) {
+        QTime time = QTime::fromString(
+            payload.value(QStringLiteral("time")).toString(),
+            QStringLiteral("HH:mm"));
+        proactiveTimePicker_->setTime(time.isValid() ? time : QTime(8, 30));
+    } else if (interval) {
+        proactiveIntervalSpinBox_->setValue(
+            payload.value(QStringLiteral("interval_minutes")).toInt(60));
+        QTime activeStart = QTime::fromString(
+            payload.value(QStringLiteral("active_start")).toString(),
+            QStringLiteral("HH:mm"));
+        QTime activeEnd = QTime::fromString(
+            payload.value(QStringLiteral("active_end")).toString(),
+            QStringLiteral("HH:mm"));
+        proactiveActiveStartPicker_->setTime(
+            activeStart.isValid() ? activeStart : QTime(9, 0));
+        proactiveActiveEndPicker_->setTime(
+            activeEnd.isValid() ? activeEnd : QTime(22, 0));
+    }
+}
+
+void NativeMainWindow::saveNativeProactiveSettings() {
+    if (mutateNativeReminder({
+            {QStringLiteral("op"), QStringLiteral("set_proactive")},
+            {QStringLiteral("enabled"), proactiveEnabledSwitch_->isChecked()},
+            {QStringLiteral("character"),
+             proactiveCharacterComboBox_->currentData().toString()},
+        })) {
+        reminderStatusLabel_->setText(tr("Proactive companion settings saved"));
+    }
+}
+
+void NativeMainWindow::saveSelectedNativeProactiveItem() {
+    const QListWidgetItem* selected = reminderList_->currentItem();
+    if (selected == nullptr
+        || selected->data(kReminderKindRole).toString() != QStringLiteral("proactive")) {
+        return;
+    }
+    const QJsonObject payload =
+        parseObject(selected->data(kReminderPayloadRole).toString());
+    const QString scheduleType =
+        payload.value(QStringLiteral("schedule_type")).toString();
+    QJsonObject command {
+        {QStringLiteral("op"), QStringLiteral("update_proactive_item")},
+        {QStringLiteral("id"), selected->data(kReminderIdRole).toString()},
+        {QStringLiteral("enabled"), selected->data(kReminderEnabledRole).toBool()},
+        {QStringLiteral("time"),
+         scheduleType == QStringLiteral("daily")
+             ? proactiveTimePicker_->time().toString(QStringLiteral("HH:mm"))
+             : QString()},
+        {QStringLiteral("active_start"),
+         proactiveActiveStartPicker_->time().toString(QStringLiteral("HH:mm"))},
+        {QStringLiteral("active_end"),
+         proactiveActiveEndPicker_->time().toString(QStringLiteral("HH:mm"))},
+    };
+    if (scheduleType == QStringLiteral("interval")) {
+        command.insert(
+            QStringLiteral("interval_minutes"),
+            proactiveIntervalSpinBox_->value());
+    }
+    if (mutateNativeReminder(command)) {
+        reminderStatusLabel_->setText(tr("Lifestyle rhythm updated"));
+    }
 }
 
 void NativeMainWindow::loadNativeLlmSettings() {
@@ -5870,13 +6172,14 @@ QPoint NativeMainWindow::mapNativeComputerPoint(
 
 QJsonObject NativeMainWindow::nativeForegroundDesktopState() const {
     QJsonObject state {
-        {QStringLiteral("state"), QStringLiteral("desktop")},
-        {QStringLiteral("label"), QStringLiteral("使用电脑")},
-        {QStringLiteral("confidence"), 0.5},
-        {QStringLiteral("reason"), QStringLiteral("Qt native foreground context")},
+        {QStringLiteral("state"), QStringLiteral("unknown")},
+        {QStringLiteral("label"), QStringLiteral("未知状态")},
+        {QStringLiteral("confidence"), 0.2},
+        {QStringLiteral("reason"), QStringLiteral("Unable to read foreground context")},
         {QStringLiteral("captured_at"), currentLocalDateTime()},
     };
 #ifdef Q_OS_WIN
+    bool idle = false;
     LASTINPUTINFO inputInfo {};
     inputInfo.cbSize = sizeof(inputInfo);
     if (GetLastInputInfo(&inputInfo)) {
@@ -5885,45 +6188,203 @@ QJsonObject NativeMainWindow::nativeForegroundDesktopState() const {
         state.insert(QStringLiteral("idle_seconds"), idleSeconds);
         state.insert(QStringLiteral("idle_threshold_seconds"), 180);
         if (idleSeconds >= 180) {
+            idle = true;
             state.insert(QStringLiteral("state"), QStringLiteral("idle"));
             state.insert(QStringLiteral("label"), QStringLiteral("发呆/离开"));
             state.insert(QStringLiteral("confidence"), 0.95);
             state.insert(
                 QStringLiteral("reason"),
-                QStringLiteral("Keyboard and pointer have been idle"));
+                tr("Keyboard and pointer have been idle for %1 seconds").arg(idleSeconds));
         }
     }
     const HWND window = GetForegroundWindow();
     if (window != nullptr) {
+        QString title;
+        wchar_t titleBuffer[141] = {};
+        const int titleLength = GetWindowTextW(window, titleBuffer, 141);
+        if (titleLength > 0) {
+            title = QString::fromWCharArray(titleBuffer, titleLength);
+        }
         if (screenAwarenessSettings_
                 .value(QStringLiteral("include_window_title"))
-                .toBool(false)) {
-            wchar_t title[141] = {};
-            const int length = GetWindowTextW(window, title, 141);
-            if (length > 0) {
-                state.insert(
-                    QStringLiteral("foreground_title"),
-                    QString::fromWCharArray(title, length));
+                .toBool(false)
+            && !title.isEmpty()) {
+            state.insert(QStringLiteral("foreground_title"), title);
+        }
+        QString processName;
+        QString appName;
+        DWORD processId = 0;
+        GetWindowThreadProcessId(window, &processId);
+        HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+        if (process != nullptr) {
+            wchar_t path[4096] = {};
+            DWORD length = 4096;
+            if (QueryFullProcessImageNameW(process, 0, path, &length) && length > 0) {
+                const QFileInfo info(
+                    QString::fromWCharArray(path, static_cast<int>(length)));
+                processName = info.fileName().toLower();
+                appName = info.completeBaseName();
             }
+            CloseHandle(process);
         }
         if (screenAwarenessSettings_
                 .value(QStringLiteral("include_process_name"))
-                .toBool(true)) {
-            DWORD processId = 0;
-            GetWindowThreadProcessId(window, &processId);
-            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
-            if (process != nullptr) {
-                wchar_t path[4096] = {};
-                DWORD length = 4096;
-                if (QueryFullProcessImageNameW(process, 0, path, &length) && length > 0) {
-                    const QFileInfo info(QString::fromWCharArray(path, static_cast<int>(length)));
-                    state.insert(
-                        QStringLiteral("process_name"),
-                        info.fileName().toLower());
-                    state.insert(QStringLiteral("app_name"), info.completeBaseName());
-                }
-                CloseHandle(process);
+                .toBool(true)
+            && !processName.isEmpty()) {
+            state.insert(QStringLiteral("process_name"), processName);
+            state.insert(QStringLiteral("app_name"), appName);
+        }
+        if (!idle) {
+            const QString lowerTitle = title.toLower();
+            const QSet<QString> codingProcesses {
+                QStringLiteral("code.exe"),
+                QStringLiteral("cursor.exe"),
+                QStringLiteral("windsurf.exe"),
+                QStringLiteral("pycharm.exe"),
+                QStringLiteral("pycharm64.exe"),
+                QStringLiteral("idea.exe"),
+                QStringLiteral("idea64.exe"),
+                QStringLiteral("webstorm.exe"),
+                QStringLiteral("clion.exe"),
+                QStringLiteral("rider64.exe"),
+                QStringLiteral("devenv.exe"),
+                QStringLiteral("notepad++.exe"),
+                QStringLiteral("sublime_text.exe"),
+                QStringLiteral("atom.exe"),
+                QStringLiteral("vim.exe"),
+                QStringLiteral("nvim.exe"),
+                QStringLiteral("emacs.exe"),
+            };
+            const QSet<QString> terminalProcesses {
+                QStringLiteral("windowsterminal.exe"),
+                QStringLiteral("powershell.exe"),
+                QStringLiteral("pwsh.exe"),
+                QStringLiteral("cmd.exe"),
+                QStringLiteral("wt.exe"),
+                QStringLiteral("conhost.exe"),
+            };
+            const QSet<QString> browserProcesses {
+                QStringLiteral("chrome.exe"),
+                QStringLiteral("msedge.exe"),
+                QStringLiteral("firefox.exe"),
+                QStringLiteral("brave.exe"),
+                QStringLiteral("opera.exe"),
+                QStringLiteral("vivaldi.exe"),
+                QStringLiteral("arc.exe"),
+                QStringLiteral("iexplore.exe"),
+            };
+            const QSet<QString> chatProcesses {
+                QStringLiteral("discord.exe"),
+                QStringLiteral("wechat.exe"),
+                QStringLiteral("weixin.exe"),
+                QStringLiteral("qq.exe"),
+                QStringLiteral("telegram.exe"),
+                QStringLiteral("slack.exe"),
+                QStringLiteral("teams.exe"),
+            };
+            const QSet<QString> mediaProcesses {
+                QStringLiteral("spotify.exe"),
+                QStringLiteral("music.ui.exe"),
+                QStringLiteral("vlc.exe"),
+                QStringLiteral("potplayermini64.exe"),
+                QStringLiteral("mpv.exe"),
+            };
+            const QSet<QString> writingProcesses {
+                QStringLiteral("winword.exe"),
+                QStringLiteral("excel.exe"),
+                QStringLiteral("powerpnt.exe"),
+                QStringLiteral("onenote.exe"),
+                QStringLiteral("notion.exe"),
+                QStringLiteral("obsidian.exe"),
+                QStringLiteral("typora.exe"),
+            };
+            const QSet<QString> gameProcesses {
+                QStringLiteral("steam.exe"),
+                QStringLiteral("steamwebhelper.exe"),
+                QStringLiteral("epicgameslauncher.exe"),
+                QStringLiteral("riotclientservices.exe"),
+                QStringLiteral("leagueclient.exe"),
+                QStringLiteral("league of legends.exe"),
+                QStringLiteral("valorant-win64-shipping.exe"),
+                QStringLiteral("minecraft.exe"),
+                QStringLiteral("genshinimpact.exe"),
+                QStringLiteral("yuanshen.exe"),
+                QStringLiteral("starrail.exe"),
+                QStringLiteral("zenlesszonezero.exe"),
+                QStringLiteral("osu!.exe"),
+                QStringLiteral("bandoriclient.exe"),
+                QStringLiteral("unityplayer.dll"),
+            };
+            const auto titleContains = [&lowerTitle](std::initializer_list<const char*> hints) {
+                return std::any_of(
+                    hints.begin(),
+                    hints.end(),
+                    [&lowerTitle](const char* hint) {
+                        return lowerTitle.contains(QString::fromUtf8(hint));
+                    });
+            };
+            QString classifiedState = QStringLiteral("desktop");
+            QString label = QStringLiteral("使用电脑");
+            QString reason = QStringLiteral("Foreground application is active");
+            double confidence = 0.45;
+            const bool gameTitle = titleContains({
+                "steam", "genshin", "原神", "崩坏", "star rail", "绝区零",
+                "valorant", "league of legends", "minecraft", "osu!", "bang dream",
+                "bandori"});
+            const bool codingTitle = titleContains({
+                "visual studio code", "cursor", "pycharm", "intellij", "webstorm",
+                "github", "git", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs",
+                ".go", ".java", ".cpp", ".cs", ".json", "powershell", "terminal"});
+            const bool mediaTitle = titleContains(
+                {"youtube", "bilibili", "哔哩哔哩", "netflix", "spotify", "music"});
+            if (gameProcesses.contains(processName) || gameTitle) {
+                classifiedState = QStringLiteral("gaming");
+                label = QStringLiteral("打游戏");
+                reason = QStringLiteral("Foreground application or title looks like a game");
+                confidence = 0.88;
+            } else if (codingProcesses.contains(processName)) {
+                classifiedState = QStringLiteral("coding");
+                label = QStringLiteral("写代码");
+                reason = QStringLiteral("Foreground application is a development tool");
+                confidence = 0.92;
+            } else if (
+                (terminalProcesses.contains(processName) && codingTitle) || codingTitle) {
+                classifiedState = QStringLiteral("coding");
+                label = QStringLiteral("写代码");
+                reason = QStringLiteral("Foreground title contains development hints");
+                confidence = terminalProcesses.contains(processName) ? 0.78 : 0.72;
+            } else if (browserProcesses.contains(processName)) {
+                classifiedState = mediaTitle ? QStringLiteral("media") : QStringLiteral("web");
+                label = mediaTitle ? QStringLiteral("看视频/听音乐") : QStringLiteral("看网页");
+                reason = mediaTitle
+                    ? QStringLiteral("Browser title looks like media content")
+                    : QStringLiteral("Foreground application is a browser");
+                confidence = mediaTitle ? 0.72 : 0.86;
+            } else if (chatProcesses.contains(processName)) {
+                classifiedState = QStringLiteral("chatting");
+                label = QStringLiteral("聊天");
+                reason = QStringLiteral("Foreground application is a chat client");
+                confidence = 0.82;
+            } else if (mediaProcesses.contains(processName) || mediaTitle) {
+                classifiedState = QStringLiteral("media");
+                label = QStringLiteral("看视频/听音乐");
+                reason = QStringLiteral("Foreground application or title looks like media");
+                confidence = 0.80;
+            } else if (writingProcesses.contains(processName)) {
+                classifiedState = QStringLiteral("writing");
+                label = QStringLiteral("写文档");
+                reason = QStringLiteral("Foreground application is a document or notes tool");
+                confidence = 0.82;
+            } else if (processName.isEmpty() && title.isEmpty()) {
+                classifiedState = QStringLiteral("unknown");
+                label = QStringLiteral("未知状态");
+                reason = QStringLiteral("Unable to read foreground window details");
+                confidence = 0.20;
             }
+            state.insert(QStringLiteral("state"), classifiedState);
+            state.insert(QStringLiteral("label"), label);
+            state.insert(QStringLiteral("reason"), reason);
+            state.insert(QStringLiteral("confidence"), confidence);
         }
     }
 #endif
@@ -9935,9 +10396,14 @@ double NativeMainWindow::dispatchNativeEmotionBehavior(
 
 void NativeMainWindow::pollNativeReminders() {
     const QString now = currentLocalDateTime();
-    if (!backend_.tickReminders(configPath_, now)) {
+    if (!backend_.tickReminders(
+            configPath_,
+            now,
+            compactJson(nativeForegroundDesktopState()),
+            deferOverdueProactiveReminders_)) {
         return;
     }
+    deferOverdueProactiveReminders_ = false;
     loadNativeReminderState();
     for (const QJsonValue& value : parseArray(backend_.getReminderEventsJson())) {
         if (!value.isObject()) {

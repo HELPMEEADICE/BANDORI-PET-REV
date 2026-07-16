@@ -108,6 +108,9 @@ private:
     void addNativePomodoro();
     void toggleSelectedNativeAlarm();
     void deleteSelectedNativeReminder();
+    void syncSelectedProactiveControls();
+    void saveNativeProactiveSettings();
+    void saveSelectedNativeProactiveItem();
     void pollNativeSpecialEvents();
     void scheduleNativeSpecialEventPoll(int retryMilliseconds = 0);
     void loadNativeLlmSettings();
@@ -403,6 +406,7 @@ private:
     QTimer specialEventTimer_;
     QString lastSpecialEventDate_;
     QJsonObject reminderState_;
+    bool deferOverdueProactiveReminders_ = true;
     qfw::ComboBox* reminderDisplayModeComboBox_ = nullptr;
     qfw::TimePicker* alarmTimePicker_ = nullptr;
     qfw::ComboBox* alarmRepeatComboBox_ = nullptr;
@@ -415,6 +419,16 @@ private:
     qfw::LineEdit* pomodoroDescriptionEdit_ = nullptr;
     qfw::ComboBox* pomodoroCharacterComboBox_ = nullptr;
     qfw::PrimaryPushButton* addPomodoroButton_ = nullptr;
+    qfw::SwitchButton* proactiveEnabledSwitch_ = nullptr;
+    qfw::ComboBox* proactiveCharacterComboBox_ = nullptr;
+    qfw::PushButton* saveProactiveSettingsButton_ = nullptr;
+    QWidget* proactiveDailyEditor_ = nullptr;
+    qfw::TimePicker* proactiveTimePicker_ = nullptr;
+    QWidget* proactiveIntervalEditor_ = nullptr;
+    qfw::SpinBox* proactiveIntervalSpinBox_ = nullptr;
+    qfw::TimePicker* proactiveActiveStartPicker_ = nullptr;
+    qfw::TimePicker* proactiveActiveEndPicker_ = nullptr;
+    qfw::PrimaryPushButton* saveProactiveItemButton_ = nullptr;
     qfw::ListWidget* reminderList_ = nullptr;
     qfw::PushButton* toggleReminderButton_ = nullptr;
     qfw::PushButton* deleteReminderButton_ = nullptr;

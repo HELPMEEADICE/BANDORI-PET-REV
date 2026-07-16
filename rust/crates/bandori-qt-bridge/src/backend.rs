@@ -88,6 +88,8 @@ pub mod ffi {
             self: Pin<&mut Self>,
             config_path: &QString,
             local_datetime: &QString,
+            desktop_state_json: &QString,
+            defer_overdue_proactive: bool,
         ) -> bool;
 
         #[qinvokable]
@@ -729,7 +731,8 @@ use bandori_core::relationship_analysis::{
     InteractionAnalysis, analyze_interaction, apply_interaction_analysis,
 };
 use bandori_core::reminder::{
-    LocalDateTime, load_native_reminder_state, mutate_native_reminders, tick_config_reminders,
+    LocalDateTime, load_native_reminder_state, mutate_native_reminders,
+    tick_config_reminders_with_desktop_state,
 };
 use bandori_core::screen_awareness_settings::{
     load_native_screen_awareness_settings, save_native_screen_awareness_settings,
@@ -971,7 +974,7 @@ impl Default for BackendRust {
             chat_imported_attachments_json: QString::from("{\"attachments\":[],\"errors\":[]}"),
             reminder_events_json: QString::from("[]"),
             reminder_state_json: QString::from(
-                "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[]}",
+                "{\"display_mode\":\"floating\",\"alarms\":[],\"pomodoros\":[],\"proactive_companion\":{\"enabled\":false,\"character\":\"\",\"items\":[]}}",
             ),
             llm_settings_json: QString::from("{}"),
             tts_settings_json: QString::from("{}"),
@@ -1252,6 +1255,8 @@ impl ffi::Backend {
         mut self: Pin<&mut Self>,
         config_path: &QString,
         local_datetime: &QString,
+        desktop_state_json: &QString,
+        defer_overdue_proactive: bool,
     ) -> bool {
         let Some(now) = LocalDateTime::parse(&local_datetime.to_string()) else {
             self.as_mut()
@@ -1259,7 +1264,14 @@ impl ffi::Backend {
             self.as_mut().set_reminder_events_json(QString::from("[]"));
             return false;
         };
-        match tick_config_reminders(Path::new(&config_path.to_string()), now) {
+        let desktop_state = serde_json::from_str(&desktop_state_json.to_string())
+            .unwrap_or(serde_json::Value::Null);
+        match tick_config_reminders_with_desktop_state(
+            Path::new(&config_path.to_string()),
+            now,
+            &desktop_state,
+            defer_overdue_proactive,
+        ) {
             Ok(events) => {
                 let payload = serde_json::to_string(&events)
                     .expect("native reminder event serialization cannot fail");
