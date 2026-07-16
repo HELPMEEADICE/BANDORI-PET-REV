@@ -7897,7 +7897,10 @@ void NativeMainWindow::searchNativeHistory(bool append) {
             historyList_);
         item->setToolTip(content);
         const int estimatedLines = std::clamp(
-            3 + preview.count(QLatin1Char('\n')) + preview.size() / 90, 3, 9);
+            3 + static_cast<int>(preview.count(QLatin1Char('\n')))
+                + static_cast<int>(preview.size() / 90),
+            3,
+            9);
         item->setSizeHint(QSize(0, 22 * estimatedLines));
     }
     historyOffset_ += records.size();

@@ -833,7 +833,7 @@ impl NativeComputerBroker {
         if self
             .qt_thread
             .queue(move |backend| {
-                backend.emit_computer_tool_request(request_id, &tool_name, &arguments_json);
+                backend.computer_tool_request(request_id, &tool_name, &arguments_json);
             })
             .is_err()
         {
@@ -853,7 +853,7 @@ impl NativeComputerBroker {
         if result.is_err() {
             self.qt_thread
                 .queue(move |backend| {
-                    backend.emit_computer_tool_cancel(request_id);
+                    backend.computer_tool_cancel(request_id);
                 })
                 .ok();
         }
@@ -5207,8 +5207,8 @@ async fn execute_screen_awareness(
     let payload = match collect_screen_awareness_text(job.main_config, request, &cancellation).await
     {
         Ok(text) => {
-            let parsed = parse_chat_response(&text);
-            let clean = parsed.visible_content.trim().to_owned();
+            let parsed = parse_chat_response(&text, "");
+            let clean = parsed.content.trim().to_owned();
             if clean
                 .trim_matches([' ', '。', '.', '!', '！'])
                 .eq_ignore_ascii_case("NO_SPEAK")

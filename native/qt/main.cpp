@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTextStream>
 
 #include <utility>
 
@@ -66,6 +67,19 @@ bool equivalentPath(const QString& left, const QString& right) {
     return normalizedLeft == normalizedRight;
 }
 
+bool commandLineRequestsHelp(int argc, char* argv[]) {
+    for (int index = 1; index < argc; ++index) {
+        const QString argument = QString::fromLocal8Bit(argv[index]);
+        if (argument == QStringLiteral("-h")
+            || argument == QStringLiteral("--help")
+            || argument == QStringLiteral("-?")
+            || argument == QStringLiteral("--help-all")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QString discoverLegacyDataRoot(const QString& projectRoot, const QString& nativeDataRoot) {
     if (hasLegacyMutableData(nativeDataRoot)) {
         return {};
@@ -89,6 +103,7 @@ QString discoverLegacyDataRoot(const QString& projectRoot, const QString& native
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    const bool helpRequested = commandLineRequestsHelp(argc, argv);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("BandoriPet"));
     QApplication::setOrganizationName(QStringLiteral("BandoriPet"));
@@ -96,7 +111,7 @@ int main(int argc, char* argv[]) {
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("BandoriPet Rust + Qt migration shell"));
-    parser.addHelpOption();
+    const QCommandLineOption helpOption = parser.addHelpOption();
     QCommandLineOption petModel(
         QStringLiteral("pet-model"),
         QStringLiteral("Launch the isolated Rust pet renderer with this model manifest"),
@@ -213,6 +228,12 @@ int main(int argc, char* argv[]) {
          userModels,
          legacyDataRoot});
     parser.process(app);
+    if (helpRequested || parser.isSet(helpOption)) {
+        QTextStream stream(stdout);
+        stream << parser.helpText();
+        stream.flush();
+        return 0;
+    }
 
     Q_INIT_RESOURCE(resource);
     qfw::setTheme(qfw::Theme::Auto);

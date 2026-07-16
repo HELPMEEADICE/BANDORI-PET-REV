@@ -23,7 +23,9 @@ def create_install_tree(root: Path, platform: str) -> None:
             root / "BandoriPet.exe",
             root / "bandori-pet-renderer-rust.exe",
             root / "Qt6Core.dll",
-            root / "platforms" / "qwindows.dll",
+            root / "Qt6OpenGL.dll",
+            root / "Qt6OpenGLWidgets.dll",
+            root / "plugins" / "platforms" / "qwindows.dll",
         ]
     elif platform == "macos":
         contents = root / "BandoriPet.app" / "Contents"

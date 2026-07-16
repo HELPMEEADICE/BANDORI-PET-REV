@@ -41,7 +41,7 @@ target_link_libraries(bandori-pet-rust PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(bandori-pet-rust PRIVATE advapi32 user32)
+    target_link_libraries(bandori-pet-rust PRIVATE advapi32 dwmapi user32)
 elseif(APPLE)
     target_link_libraries(bandori-pet-rust PRIVATE "-framework ApplicationServices")
 elseif(UNIX)
@@ -73,7 +73,7 @@ set_target_properties(bandori-pet-renderer-rust PROPERTIES
 )
 
 if(WIN32)
-    file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/logo.ico" BANDORI_PET_WINDOWS_ICON)
+    file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/logo.ico" BANDORI_PET_WINDOWS_ICON)
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/bandoripet.rc.in"
         "${CMAKE_CURRENT_BINARY_DIR}/bandoripet.rc"
@@ -121,3 +121,13 @@ qt_generate_deploy_app_script(
     NO_UNSUPPORTED_PLATFORM_ERROR
 )
 install(SCRIPT "${BANDORI_PET_QT_DEPLOY_SCRIPT}" COMPONENT Runtime)
+
+# The renderer is a separate executable and links Qt OpenGL modules that the
+# main settings process does not necessarily retain after linker dead stripping.
+# Scan it independently so packaged installs include its complete Qt runtime.
+qt_generate_deploy_app_script(
+    TARGET bandori-pet-renderer-rust
+    OUTPUT_SCRIPT BANDORI_PET_RENDERER_QT_DEPLOY_SCRIPT
+    NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(SCRIPT "${BANDORI_PET_RENDERER_QT_DEPLOY_SCRIPT}" COMPONENT Runtime)

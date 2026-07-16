@@ -10,6 +10,12 @@ project(BandoriPetRust VERSION "${BANDORI_PET_APP_VERSION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
+# Windows executables are installed at the package root (matching the NSIS
+# shortcuts below), so Qt runtime DLLs must be deployed beside them as well.
+if(WIN32)
+    set(CMAKE_INSTALL_BINDIR ".")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)

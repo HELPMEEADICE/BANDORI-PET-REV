@@ -22,6 +22,7 @@
 #include <QSize>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTextStream>
 #include <QTimer>
 #include <QUuid>
 #include <QVariantAnimation>
@@ -31,7 +32,9 @@
 #include <limits>
 
 #ifdef Q_OS_WIN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <cerrno>
@@ -39,6 +42,19 @@
 #endif
 
 namespace {
+
+bool commandLineRequestsHelp(int argc, char* argv[]) {
+    for (int index = 1; index < argc; ++index) {
+        const QString argument = QString::fromLocal8Bit(argv[index]);
+        if (argument == QStringLiteral("-h")
+            || argument == QStringLiteral("--help")
+            || argument == QStringLiteral("-?")
+            || argument == QStringLiteral("--help-all")) {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool isProcessAlive(qint64 processId) {
     if (processId <= 0) {
@@ -469,6 +485,7 @@ bool publishPetWindowState(
 } // namespace
 
 int main(int argc, char* argv[]) {
+    const bool helpRequested = commandLineRequestsHelp(argc, argv);
     const bool initialVsync = earlyBooleanOption(argc, argv, QStringLiteral("--vsync"), true);
     bool initialGpuAcceleration =
         earlyBooleanOption(argc, argv, QStringLiteral("--gpu-acceleration"), true);
@@ -496,7 +513,7 @@ int main(int argc, char* argv[]) {
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("Isolated Rust + LuaJIT + Qt pet renderer"));
-    parser.addHelpOption();
+    const QCommandLineOption helpOption = parser.addHelpOption();
     QCommandLineOption projectRoot(
         QStringLiteral("project-root"),
         QStringLiteral("BandoriPet installation root"),
@@ -734,6 +751,13 @@ int main(int argc, char* argv[]) {
          parentPid,
          ipcSession});
     parser.process(app);
+
+    if (helpRequested || parser.isSet(helpOption)) {
+        QTextStream stream(stdout);
+        stream << parser.helpText();
+        stream.flush();
+        return 0;
+    }
 
     if (!parser.isSet(model)) {
         parser.showHelp(2);

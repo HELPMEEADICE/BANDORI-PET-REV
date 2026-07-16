@@ -10,14 +10,16 @@ import subprocess
 import sys
 
 
-def platform_layout(root: Path, platform: str) -> tuple[Path, Path, list[Path]]:
+def platform_layout(root: Path, platform: str) -> tuple[Path, Path, Path, list[Path]]:
     if platform == "windows":
         executable = root / "BandoriPet.exe"
         renderer = root / "bandori-pet-renderer-rust.exe"
         resources = root
         platform_files = [
             root / "Qt6Core.dll",
-            root / "platforms" / "qwindows.dll",
+            root / "Qt6OpenGL.dll",
+            root / "Qt6OpenGLWidgets.dll",
+            root / "plugins" / "platforms" / "qwindows.dll",
         ]
     elif platform == "macos":
         bundle = root / "BandoriPet.app" / "Contents"
@@ -33,7 +35,7 @@ def platform_layout(root: Path, platform: str) -> tuple[Path, Path, list[Path]]:
         renderer = root / "bin" / "bandori-pet-renderer-rust"
         resources = root / "share" / "bandoripet"
         platform_files = [root / "share" / "applications" / "bandoripet.desktop"]
-    return executable, resources, [renderer, *platform_files]
+    return executable, renderer, resources, platform_files
 
 
 def validate_file(path: Path) -> None:
@@ -41,9 +43,10 @@ def validate_file(path: Path) -> None:
         raise SystemExit(f"required installed file is missing or empty: {path}")
 
 
-def validate_tree(root: Path, platform: str) -> Path:
-    executable, resources, platform_files = platform_layout(root, platform)
+def validate_tree(root: Path, platform: str) -> tuple[Path, Path]:
+    executable, renderer, resources, platform_files = platform_layout(root, platform)
     validate_file(executable)
+    validate_file(renderer)
     for path in platform_files:
         if path.suffix == ".framework":
             if not path.is_dir():
@@ -76,12 +79,15 @@ def validate_tree(root: Path, platform: str) -> Path:
     if python_payloads:
         joined = "\n".join(str(path) for path in python_payloads[:20])
         raise SystemExit(f"native install unexpectedly contains Python runtime payloads:\n{joined}")
-    return executable
+    return executable, renderer
 
 
-def smoke(executable: Path) -> None:
+def smoke(executable: Path, platform: str, expected_output: str) -> None:
     environment = os.environ.copy()
-    environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if platform == "linux":
+        environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+    else:
+        environment.pop("QT_QPA_PLATFORM", None)
     completed = subprocess.run(
         [str(executable), "--help"],
         env=environment,
@@ -95,7 +101,7 @@ def smoke(executable: Path) -> None:
         raise SystemExit(
             f"native --help smoke test failed with {completed.returncode}:\n{completed.stdout}"
         )
-    if "BandoriPet Rust + Qt migration shell" not in completed.stdout:
+    if expected_output not in completed.stdout:
         raise SystemExit(f"native --help output is incomplete:\n{completed.stdout}")
 
 
@@ -119,9 +125,18 @@ def main() -> int:
     root = arguments.root.resolve()
     if not root.is_dir():
         raise SystemExit(f"native install root does not exist: {root}")
-    executable = validate_tree(root, arguments.platform)
+    executable, renderer = validate_tree(root, arguments.platform)
     if not arguments.skip_smoke:
-        smoke(executable)
+        smoke(
+            executable,
+            arguments.platform,
+            "BandoriPet Rust + Qt migration shell",
+        )
+        smoke(
+            renderer,
+            arguments.platform,
+            "Isolated Rust + LuaJIT + Qt pet renderer",
+        )
     print(f"validated native {arguments.platform} install: {root}")
     return 0
 

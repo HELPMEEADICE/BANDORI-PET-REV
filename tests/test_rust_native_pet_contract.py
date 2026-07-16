@@ -764,6 +764,10 @@ def test_native_computer_use_is_permissioned_cancellable_and_qt_brokered():
     assert "fn execute_computer_tool_call(" in backend
     assert "fn valid_computer_extra_message(" in backend
     assert 'url.starts_with("data:image/png;base64,")' in backend
+    assert "backend.computer_tool_request(" in backend
+    assert "backend.computer_tool_cancel(" in backend
+    assert "emit_computer_tool_request" not in backend
+    assert "emit_computer_tool_cancel" not in backend
     assert '"completeComputerTool"' in bridge_test
     assert '"computerToolRequest"' in bridge_test
     assert '"computerToolCancel"' in bridge_test
@@ -1054,6 +1058,9 @@ def test_native_screen_awareness_captures_with_qt_and_analyzes_through_rust():
     assert "MAX_SCREENSHOT_BYTES" in backend
     assert "run_screen_awareness" in backend
     assert "collect_screen_awareness_text" in backend
+    assert 'parse_chat_response(&text, "")' in backend
+    assert "parsed.content.trim()" in backend
+    assert "parsed.visible_content" not in backend
     assert "getScreenAwarenessSettingsJson" in generation
     assert "startScreenAwareness" in generation
     assert "screenAwarenessEvent" in generation
@@ -1363,6 +1370,7 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     cmake = source("CMakeLists.txt")
     native_cmake = source("native/qt/CMakeLists.txt")
     main = source("native/qt/main.cpp")
+    pet_main = source("native/qt/pet_main.cpp")
     header = source("native/qt/native_main_window.h")
     window = source("native/qt/native_main_window.cpp")
     supervisor_header = source("native/qt/pet_process_supervisor.h")
@@ -1404,10 +1412,18 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     assert "BandoriPet Rust + Qt migration shell" in validate_install
     assert "native install unexpectedly contains Python runtime payloads" in validate_install
     assert 'output_root / "SHA256SUMS"' in collect_packages
+    assert 'set(CMAKE_INSTALL_BINDIR ".")' in cmake
     assert "qt_generate_deploy_app_script" in native_cmake
+    assert "TARGET bandori-pet-renderer-rust" in native_cmake
+    assert "BANDORI_PET_RENDERER_QT_DEPLOY_SCRIPT" in native_cmake
+    assert "commandLineRequestsHelp(argc, argv)" in pet_main
+    assert "helpRequested || parser.isSet(helpOption)" in pet_main
     assert "MACOSX_BUNDLE_GUI_IDENTIFIER" in native_cmake
     assert "INSTALL_RPATH" in native_cmake
     assert "discoverBandoriResourceRoot" in main
+    assert "commandLineRequestsHelp(argc, argv)" in main
+    assert "helpRequested || parser.isSet(helpOption)" in main
+    assert "parser.helpText()" in main
     assert 'QStringLiteral("data-root")' in main
     assert 'QStringLiteral("config")' in main
     assert "QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)" in main
