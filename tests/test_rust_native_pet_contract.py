@@ -1365,6 +1365,39 @@ def test_native_control_center_owns_cross_platform_tray_lifecycle():
     assert "QCoreApplication::quit()" in window
 
 
+def test_native_qt_ui_matches_python_first_run_settings_and_chat_surfaces():
+    main = source("native/qt/main.cpp")
+    cmake = source("native/qt/CMakeLists.txt")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    wizard_header = source("native/qt/native_first_run_wizard.h")
+    wizard = source("native/qt/native_first_run_wizard.cpp")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+
+    assert "native_first_run_wizard.cpp" in cmake
+    assert "class NativeFirstRunWizard final" in wizard_header
+    assert 'QStringLiteral("首次启动向导")' in wizard
+    assert 'QStringLiteral("1 模型包")' in wizard
+    assert 'QStringLiteral("2 角色/服装")' in wizard
+    assert 'QStringLiteral("3 AI/TTS")' in wizard
+    assert "window.needsFirstRunWizard()" in main
+    assert "window.runFirstRunWizard()" in main
+    assert "bool NativeMainWindow::needsFirstRunWizard() const" in window
+    assert "bool NativeMainWindow::runFirstRunWizard()" in window
+    assert "QWidget* NativeMainWindow::createQuickSettingsPanel()" in window
+    assert 'QStringLiteral("角色列表")' in window
+    assert 'QStringLiteral("角色行为")' in window
+    assert 'QStringLiteral("好感度 / 记忆")' in window
+    assert 'QStringLiteral("闹钟 / 番茄钟")' in window
+    assert 'QStringLiteral("记忆相册")' in window
+    assert "void NativeMainWindow::enterChatSurfaceMode()" in window
+    assert "void NativeMainWindow::leaveChatSurfaceMode()" in window
+    assert 'QStringLiteral("nativeChatComposer")' in window
+    assert "pub models: Option<Vec<Value>>" in dashboard
+    assert "pub language: Option<String>" in dashboard
+    assert "bool needsFirstRunWizard() const" in header
+
+
 def test_native_packaging_separates_read_only_resources_from_writable_user_data():
     submodules = source(".gitmodules")
     cmake = source("CMakeLists.txt")

@@ -102,6 +102,10 @@ pub struct DashboardSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSettingsUpdate {
+    pub character: Option<String>,
+    pub costume: Option<String>,
+    pub models: Option<Vec<Value>>,
+    pub language: Option<String>,
     pub fps: Option<i64>,
     pub opacity: Option<f64>,
     pub game_topmost: Option<bool>,
@@ -133,6 +137,8 @@ pub struct NativeSettingsUpdate {
     pub chat_attachment_auto_cleanup_enabled: Option<bool>,
     pub chat_attachment_retention_days: Option<i64>,
     pub birthday_tray_notifications_enabled: Option<bool>,
+    pub chat_window_normal_window: Option<bool>,
+    pub fluent_chat_window_enabled: Option<bool>,
 }
 
 #[derive(Debug, Error)]
@@ -160,6 +166,49 @@ pub fn save_native_settings(
 
 impl NativeSettingsUpdate {
     pub fn apply_to(self, config: &mut ConfigDocument) -> Result<(), NativeSettingsError> {
+        if let Some(character) = self.character {
+            config.set(
+                "character",
+                Value::String(character.trim().chars().take(128).collect()),
+            );
+        }
+        if let Some(costume) = self.costume {
+            config.set(
+                "costume",
+                Value::String(costume.trim().chars().take(256).collect()),
+            );
+        }
+        if let Some(models) = self.models {
+            let models = models
+                .into_iter()
+                .filter_map(|value| value.as_object().cloned())
+                .filter(|model| {
+                    model
+                        .get("character")
+                        .and_then(Value::as_str)
+                        .is_some_and(|v| !v.trim().is_empty())
+                        && model
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .is_some_and(|v| !v.trim().is_empty())
+                })
+                .take(32)
+                .map(Value::Object)
+                .collect();
+            config.set("models", Value::Array(models));
+        }
+        if let Some(language) = self.language {
+            let language = language.trim().to_ascii_lowercase();
+            config.set(
+                "language",
+                Value::String(match language.as_str() {
+                    "zh" | "zh_cn" | "zh-cn" | "chinese" => "zh_CN".to_owned(),
+                    "en" | "en_us" | "en-us" | "english" => "en_US".to_owned(),
+                    "ja" | "ja_jp" | "ja-jp" | "japanese" => "ja_JP".to_owned(),
+                    _ => String::new(),
+                }),
+            );
+        }
         if let Some(fps) = self.fps {
             config.set("fps", Value::from(fps.clamp(10, 240)));
         }
@@ -281,6 +330,12 @@ impl NativeSettingsUpdate {
         if let Some(enabled) = self.birthday_tray_notifications_enabled {
             config.set("birthday_tray_notifications_enabled", Value::Bool(enabled));
         }
+        if let Some(enabled) = self.chat_window_normal_window {
+            config.set("chat_window_normal_window", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.fluent_chat_window_enabled {
+            config.set("fluent_chat_window_enabled", Value::Bool(enabled));
+        }
         Ok(())
     }
 }
@@ -310,6 +365,22 @@ impl DashboardSnapshot {
             .collect::<std::collections::HashSet<_>>()
             .len()
     }
+}
+
+pub fn load_model_character_image(
+    project_root: impl AsRef<Path>,
+    user_models_root: impl AsRef<Path>,
+    character: &str,
+) -> Vec<u8> {
+    let character = character.trim();
+    if character.is_empty() || character.len() > 128 {
+        return Vec::new();
+    }
+    ModelManager::scan(model_paths(
+        project_root.as_ref(),
+        user_models_root.as_ref(),
+    ))
+    .character_image_data(character)
 }
 
 impl NativeRuntimeSnapshot {
@@ -914,6 +985,10 @@ mod tests {
         let runtime = save_native_settings(
             &config_path,
             r#"{
+                "character": "kasumi",
+                "costume": "casual_winter",
+                "models": [{"character":"kasumi","costume":"casual_winter","path":"models/kasumi.model3.json"}],
+                "language": "zh-cn",
                 "fps": 999,
                 "opacity": 0.01,
                 "game_topmost": true,
@@ -944,7 +1019,9 @@ mod tests {
                 "group_chat_sidebar_collapsed": true,
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 9999,
-                "birthday_tray_notifications_enabled": false
+                "birthday_tray_notifications_enabled": false,
+                "chat_window_normal_window": true,
+                "fluent_chat_window_enabled": true
             }"#,
         )
         .unwrap();
@@ -977,6 +1054,12 @@ mod tests {
         assert!(runtime.chat_attachment_auto_cleanup_enabled);
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert!(!runtime.birthday_tray_notifications_enabled);
+        assert_eq!(runtime.selected_character, "kasumi");
+        assert_eq!(runtime.selected_costume, "casual_winter");
+        assert_eq!(runtime.language, "zh_CN");
+        assert!(runtime.legacy_chat_window_normal_window);
+        assert!(runtime.legacy_fluent_chat_window_enabled);
+        assert_eq!(runtime.configured_pets.len(), 1);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["auto_start"], true);
         assert_eq!(saved["game_topmost"], true);
@@ -998,6 +1081,12 @@ mod tests {
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);
         assert_eq!(saved["birthday_tray_notifications_enabled"], false);
+        assert_eq!(saved["character"], "kasumi");
+        assert_eq!(saved["costume"], "casual_winter");
+        assert_eq!(saved["language"], "zh_CN");
+        assert_eq!(saved["chat_window_normal_window"], true);
+        assert_eq!(saved["fluent_chat_window_enabled"], true);
+        assert_eq!(saved["models"].as_array().unwrap().len(), 1);
     }
 
     #[test]

@@ -14,6 +14,7 @@
 
 #include "native_autostart.h"
 #include "native_computer_input.h"
+#include "native_first_run_wizard.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -32,6 +33,7 @@
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QHeaderView>
 #include <QHash>
 #include <QHBoxLayout>
@@ -542,6 +544,70 @@ NativeMainWindow::NativeMainWindow(
         });
 }
 
+bool NativeMainWindow::needsFirstRunWizard() const {
+    if (!runtime_.value(QStringLiteral("configured_pets")).toArray().isEmpty()) {
+        return false;
+    }
+    const QString character = runtime_.value(QStringLiteral("selected_character")).toString();
+    const QString costume = runtime_.value(QStringLiteral("selected_costume")).toString();
+    if (character.isEmpty() || costume.isEmpty()) {
+        return true;
+    }
+    return std::none_of(
+        catalog_.cbegin(), catalog_.cend(), [&character, &costume](const ModelCatalogItem& model) {
+            return model.character == character && model.costume == costume;
+        });
+}
+
+bool NativeMainWindow::runFirstRunWizard() {
+    NativeFirstRunWizard wizard(
+        projectRoot_, userModelsRoot_, parseArray(backend_.getModelCatalogJson()), runtime_);
+    wizard.setWindowIcon(windowIcon());
+    if (wizard.exec() != QDialog::Accepted) {
+        return false;
+    }
+    const QJsonObject nativeSettings = wizard.nativeSettings();
+    if (nativeSettings.isEmpty()
+        || !backend_.saveNativeSettings(configPath_, compactJson(nativeSettings))) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("首次启动配置保存失败"),
+            backend_.getStatus().isEmpty()
+                ? QStringLiteral("没有选择有效的角色和服装。")
+                : backend_.getStatus());
+        return false;
+    }
+    const QJsonObject llm = wizard.llmSettings();
+    if (!llm.isEmpty()) {
+        if (llm.contains(QStringLiteral("api_url"))) {
+            llmApiUrlEdit_->setText(llm.value(QStringLiteral("api_url")).toString());
+        }
+        if (llm.contains(QStringLiteral("api_key"))) {
+            llmApiKeyEdit_->setText(llm.value(QStringLiteral("api_key")).toString());
+        }
+        if (llm.contains(QStringLiteral("model_id"))) {
+            llmModelIdEdit_->setText(llm.value(QStringLiteral("model_id")).toString());
+        }
+        if (!saveNativeLlmSettings()) {
+            QMessageBox::warning(
+                nullptr, QStringLiteral("LLM 配置未保存"), backend_.getStatus());
+        }
+    }
+    const QJsonObject tts = wizard.ttsSettings();
+    if ((tts.value(QStringLiteral("enabled")).toBool(false)
+         || tts.contains(QStringLiteral("api_url")))) {
+        ttsEnabledSwitch_->setChecked(tts.value(QStringLiteral("enabled")).toBool(false));
+        if (tts.contains(QStringLiteral("api_url"))) {
+            ttsApiUrlEdit_->setText(tts.value(QStringLiteral("api_url")).toString());
+        }
+        if (!saveNativeTtsSettings()) {
+            QMessageBox::warning(
+                nullptr, QStringLiteral("TTS 配置未保存"), backend_.getStatus());
+        }
+    }
+    return reloadBackendState();
+}
+
 void NativeMainWindow::setupTray() {
     const QString iconPath = QDir(projectRoot_).filePath(QStringLiteral("logo.ico"));
     const QIcon icon(iconPath);
@@ -590,8 +656,63 @@ void NativeMainWindow::setupTray() {
 
 void NativeMainWindow::showControlCenter() {
     showNormal();
+    leaveChatSurfaceMode();
     raise();
     activateWindow();
+}
+
+void NativeMainWindow::enterChatSurfaceMode() {
+    if (!chatSurfaceMode_) {
+        settingsSurfaceGeometry_ = geometry();
+        settingsPageBeforeChat_ = stackedWidget_->currentWidget();
+    }
+    chatSurfaceMode_ = true;
+    navigationInterface_->hide();
+    if (quickSettingsPanel_ != nullptr) {
+        quickSettingsPanel_->hide();
+    }
+    if (titleBar() != nullptr) {
+        titleBar()->hide();
+    }
+    widgetLayout_->setContentsMargins(0, 0, 0, 0);
+    setMinimumSize(420, 620);
+    if (!isMaximized() && !isFullScreen()) {
+        if (chatSurfaceGeometry_.isValid()) {
+            setGeometry(chatSurfaceGeometry_);
+        } else {
+            resize(880, 680);
+        }
+    }
+    switchTo(chatPage_);
+}
+
+void NativeMainWindow::leaveChatSurfaceMode() {
+    if (!chatSurfaceMode_) {
+        return;
+    }
+    nativeWindowGeometryTimer_.stop();
+    persistNativeWindowGeometry();
+    chatSurfaceGeometry_ = geometry();
+    chatSurfaceMode_ = false;
+    navigationInterface_->show();
+    if (quickSettingsPanel_ != nullptr) {
+        quickSettingsPanel_->show();
+    }
+    if (titleBar() != nullptr) {
+        titleBar()->show();
+        titleBar()->raise();
+    }
+    widgetLayout_->setContentsMargins(0, 48, 16, 16);
+    setMinimumSize(1080, 680);
+    if (settingsPageBeforeChat_ != nullptr && settingsPageBeforeChat_ != chatPage_) {
+        switchTo(settingsPageBeforeChat_);
+    } else if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
+        switchTo(models);
+    }
+    if (settingsSurfaceGeometry_.isValid() && !isMaximized() && !isFullScreen()) {
+        setGeometry(settingsSurfaceGeometry_);
+    }
+    settingsPageBeforeChat_ = nullptr;
 }
 
 void NativeMainWindow::applyChatWindowPolicy() {
@@ -670,9 +791,15 @@ void NativeMainWindow::resizeEvent(QResizeEvent* event) {
 }
 
 void NativeMainWindow::setupUi() {
-    setWindowTitle(QStringLiteral("BandoriPet Rust + Qt"));
-    resize(920, 640);
-    setMinimumSize(760, 520);
+    setWindowTitle(QStringLiteral("Bandori 桌宠 - 设置"));
+    resize(1180, 710);
+    setMinimumSize(1080, 680);
+    navigationInterface_->setExpandWidth(210);
+    navigationInterface_->setMinimumExpandWidth(0);
+    navigationInterface_->setCollapsible(false);
+    navigationInterface_->setAcrylicEnabled(false);
+    widgetLayout_->setContentsMargins(0, 48, 16, 16);
+    widgetLayout_->setSpacing(16);
 
     QWidget* dashboard = createDashboardPage();
     QWidget* models = createModelsPage();
@@ -689,6 +816,11 @@ void NativeMainWindow::setupUi() {
     QWidget* screenAwareness = createScreenAwarenessPage();
     QWidget* integrations = createIntegrationPage();
     QWidget* settings = createSettingsPage();
+    QWidget* relationshipGuide = createRelationshipGuidePage();
+    QWidget* behavior = createBehaviorPage();
+    QWidget* reminders = createReminderPage(
+        settings->findChild<QWidget*>(QStringLiteral("nativeReminderEditor")));
+    QWidget* memoryAlbum = createMemoryAlbumPage();
     dashboard->setObjectName(QStringLiteral("dashboardPage"));
     models->setObjectName(QStringLiteral("modelsPage"));
     chatPage_->setObjectName(QStringLiteral("chatPage"));
@@ -704,40 +836,394 @@ void NativeMainWindow::setupUi() {
     screenAwareness->setObjectName(QStringLiteral("screenAwarenessPage"));
     integrations->setObjectName(QStringLiteral("integrationsPage"));
     settings->setObjectName(QStringLiteral("settingsPage"));
-    addSubInterface(dashboard, qfw::FluentIconEnum::Home, tr("Overview"));
-    addSubInterface(models, qfw::FluentIconEnum::People, tr("Models"));
-    addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, tr("Chat history"));
-    addSubInterface(history, qfw::FluentIconEnum::Search, tr("History search"));
-    addSubInterface(statistics, qfw::FluentIconEnum::Market, tr("Statistics"));
-    addSubInterface(dataManagement, qfw::FluentIconEnum::Folder, tr("Data management"));
-    addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, tr("Memory"));
-    addSubInterface(userProfiles, qfw::FluentIconEnum::Person, tr("User profiles"));
-    addSubInterface(personas, qfw::FluentIconEnum::Heart, tr("Personas"));
-    addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, tr("LLM settings"));
-    addSubInterface(ttsSettings, qfw::FluentIconEnum::Volume, tr("TTS settings"));
-    addSubInterface(asrSettings, qfw::FluentIconEnum::Microphone, tr("ASR voice input"));
-    addSubInterface(
-        screenAwareness,
-        qfw::FluentIconEnum::View,
-        tr("Screen awareness"));
+    relationshipGuide->setObjectName(QStringLiteral("relationshipGuidePage"));
+    behavior->setObjectName(QStringLiteral("behaviorPage"));
+    reminders->setObjectName(QStringLiteral("remindersPage"));
+    memoryAlbum->setObjectName(QStringLiteral("memoryAlbumPage"));
+    addSubInterface(models, qfw::FluentIconEnum::People, QStringLiteral("角色列表"));
+    addSubInterface(behavior, qfw::FluentIconEnum::Game, QStringLiteral("角色行为"));
+    addSubInterface(memory, qfw::FluentIconEnum::LibraryFill, QStringLiteral("好感度 / 记忆"));
+    addSubInterface(relationshipGuide, qfw::FluentIconEnum::QuickNote, QStringLiteral("关系教程"));
+    addSubInterface(reminders, qfw::FluentIconEnum::DateTime, QStringLiteral("闹钟 / 番茄钟"));
+    auto* chatNavigationItem =
+        addSubInterface(chatPage_, qfw::FluentIconEnum::Chat, QStringLiteral("聊天界面"));
+    connect(
+        chatNavigationItem,
+        &qfw::NavigationWidget::clicked,
+        this,
+        [this](bool triggeredByUser) {
+            if (triggeredByUser) {
+                enterChatSurfaceMode();
+            }
+        });
+    addSubInterface(history, qfw::FluentIconEnum::History, QStringLiteral("聊天记录"));
+    addSubInterface(memoryAlbum, qfw::FluentIconEnum::Photo, QStringLiteral("记忆相册"));
+    addSubInterface(statistics, qfw::FluentIconEnum::Market, QStringLiteral("数据统计"));
+    addSubInterface(llmSettings, qfw::FluentIconEnum::Robot, QStringLiteral("LLM 配置"));
     addSubInterface(
         integrations,
         qfw::FluentIconEnum::Code,
-        tr("Local integrations"));
+        QStringLiteral("悬浮窗设置 / 聊天接入"));
+    addSubInterface(settings, qfw::FluentIconEnum::Setting, QStringLiteral("显示设置"));
     addSubInterface(
-        settings,
-        qfw::FluentIconEnum::Setting,
-        tr("Settings"),
-        qfw::NavigationItemPosition::Bottom);
+        screenAwareness,
+        qfw::FluentIconEnum::View,
+        QStringLiteral("屏幕感知与工具控制"));
+    addSubInterface(ttsSettings, qfw::FluentIconEnum::Volume, QStringLiteral("TTS 配置"));
+    addSubInterface(asrSettings, qfw::FluentIconEnum::Microphone, QStringLiteral("语音识别"));
+    addSubInterface(userProfiles, qfw::FluentIconEnum::Person, QStringLiteral("POV / 用户资料"));
+    addSubInterface(personas, qfw::FluentIconEnum::Heart, QStringLiteral("角色人格"));
+    addSubInterface(dataManagement, qfw::FluentIconEnum::Folder, QStringLiteral("数据管理"));
+    addSubInterface(dashboard, qfw::FluentIconEnum::Info, QStringLiteral("关于"),
+                    qfw::NavigationItemPosition::Bottom);
+
+    quickSettingsPanel_ = createQuickSettingsPanel();
+    widgetLayout_->addWidget(quickSettingsPanel_);
+}
+
+QWidget* NativeMainWindow::createQuickSettingsPanel() {
+    auto* panel = new QFrame(this);
+    panel->setObjectName(QStringLiteral("quickSettingsPanel"));
+    panel->setFixedWidth(260);
+    panel->setStyleSheet(QStringLiteral(
+        "QFrame#quickSettingsPanel { background: #fff8fb; border: 1px solid #f3d2df; "
+        "border-radius: 18px; }"));
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(10);
+    auto* title = new qfw::StrongBodyLabel(QStringLiteral("设置"), panel);
+    layout->addWidget(title);
+
+    auto addSwitchRow = [panel, layout](const QString& text, qfw::SwitchButton** target) {
+        auto* row = new QWidget(panel);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(8);
+        rowLayout->addWidget(new qfw::BodyLabel(text, row), 1);
+        *target = new qfw::SwitchButton(row);
+        rowLayout->addWidget(*target);
+        layout->addWidget(row);
+    };
+    addSwitchRow(QStringLiteral("游戏置顶兼容"), &quickGameTopmostSwitch_);
+    addSwitchRow(QStringLiteral("OBS 窗口采集兼容"), &quickObsWindowCaptureSwitch_);
+    addSwitchRow(QStringLiteral("聊天窗口化"), &quickChatWindowSwitch_);
+    addSwitchRow(QStringLiteral("隐藏 Live2D 形象"), &quickHideLive2dSwitch_);
+    addSwitchRow(QStringLiteral("开机自启动"), &quickAutoStartSwitch_);
+
+    auto* languageRow = new QWidget(panel);
+    auto* languageLayout = new QHBoxLayout(languageRow);
+    languageLayout->setContentsMargins(0, 0, 0, 0);
+    languageLayout->setSpacing(8);
+    languageLayout->addWidget(new qfw::BodyLabel(QStringLiteral("语言"), languageRow));
+    languageLayout->addStretch(1);
+    quickLanguageComboBox_ = new qfw::ComboBox(languageRow);
+    quickLanguageComboBox_->addItem(QStringLiteral("中文"), QVariant(), QStringLiteral("zh_CN"));
+    quickLanguageComboBox_->addItem(QStringLiteral("English"), QVariant(), QStringLiteral("en_US"));
+    quickLanguageComboBox_->addItem(QStringLiteral("日本語"), QVariant(), QStringLiteral("ja_JP"));
+    quickLanguageComboBox_->setFixedWidth(120);
+    languageLayout->addWidget(quickLanguageComboBox_);
+    layout->addWidget(languageRow);
+
+    quickApplyButton_ = new qfw::PrimaryPushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Accept), QStringLiteral("应用"), panel);
+    quickApplyButton_->setFixedHeight(36);
+    layout->addWidget(quickApplyButton_);
+    layout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("Live2D 模型列表"), panel));
+    quickModelList_ = new qfw::ListWidget(panel);
+    quickModelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    quickModelList_->setMinimumHeight(84);
+    quickModelList_->setMaximumHeight(150);
+    layout->addWidget(quickModelList_);
+    auto* addModelButton = new qfw::PushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Add), QStringLiteral("添加 Live2D 模型"), panel);
+    addModelButton->setFixedHeight(38);
+    addModelButton->setStyleSheet(QStringLiteral(
+        "QPushButton { color: #e90050; border: 1px dashed #e90050; border-radius: 8px; "
+        "background: transparent; } QPushButton:hover { background: #ffeaf2; }"));
+    layout->addWidget(addModelButton);
+    layout->addStretch(1);
+    connect(quickApplyButton_, &QPushButton::clicked, this, [this]() {
+        saveQuickSettingsPanel();
+    });
+    connect(addModelButton, &QPushButton::clicked, this, [this]() {
+        if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
+            switchTo(models);
+        }
+    });
+    connect(quickModelList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+        if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
+            switchTo(models);
+        }
+    });
+    return panel;
+}
+
+void NativeMainWindow::syncQuickSettingsPanel() {
+    if (quickSettingsPanel_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker topmostBlocker(quickGameTopmostSwitch_);
+    const QSignalBlocker obsBlocker(quickObsWindowCaptureSwitch_);
+    const QSignalBlocker chatBlocker(quickChatWindowSwitch_);
+    const QSignalBlocker hiddenBlocker(quickHideLive2dSwitch_);
+    const QSignalBlocker autoStartBlocker(quickAutoStartSwitch_);
+    const QSignalBlocker languageBlocker(quickLanguageComboBox_);
+    quickGameTopmostSwitch_->setChecked(
+        runtime_.value(QStringLiteral("game_topmost")).toBool(false));
+    quickObsWindowCaptureSwitch_->setChecked(
+        runtime_.value(QStringLiteral("obs_window_capture_compatible")).toBool(false));
+    quickChatWindowSwitch_->setChecked(
+        runtime_.value(QStringLiteral("legacy_chat_window_normal_window")).toBool(false));
+    quickHideLive2dSwitch_->setChecked(
+        runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false));
+    quickAutoStartSwitch_->setChecked(
+        runtime_.value(QStringLiteral("auto_start")).toBool(false));
+    int languageIndex = quickLanguageComboBox_->findData(
+        runtime_.value(QStringLiteral("language")).toString());
+    quickLanguageComboBox_->setCurrentIndex(languageIndex < 0 ? 0 : languageIndex);
+
+    quickModelList_->clear();
+    const QJsonArray configured = runtime_.value(QStringLiteral("configured_pets")).toArray();
+    for (const QJsonValue& value : configured) {
+        const QJsonObject pet = value.toObject();
+        const QString character = pet.value(QStringLiteral("character")).toString();
+        const QString costume = pet.value(QStringLiteral("costume")).toString();
+        const auto found = std::find_if(
+            catalog_.cbegin(), catalog_.cend(), [&pet](const ModelCatalogItem& model) {
+                return model.path == pet.value(QStringLiteral("path")).toString()
+                    || (model.character == pet.value(QStringLiteral("character")).toString()
+                        && model.costume == pet.value(QStringLiteral("costume")).toString());
+            });
+        quickModelList_->addItem(
+            found == catalog_.cend()
+                ? QStringLiteral("%1\n%2").arg(character, costume)
+                : QStringLiteral("%1\n%2").arg(
+                      found->characterDisplay.isEmpty() ? found->character : found->characterDisplay,
+                      found->costumeDisplay.isEmpty() ? found->costume : found->costumeDisplay));
+    }
+    if (quickModelList_->count() == 0) {
+        quickModelList_->addItem(QStringLiteral("尚未添加模型"));
+    }
+}
+
+void NativeMainWindow::saveQuickSettingsPanel() {
+    const QJsonObject extras {
+        {QStringLiteral("language"), quickLanguageComboBox_->currentData().toString()},
+        {QStringLiteral("chat_window_normal_window"), quickChatWindowSwitch_->isChecked()},
+        {QStringLiteral("fluent_chat_window_enabled"), true},
+    };
+    if (!backend_.saveNativeSettings(configPath_, compactJson(extras))) {
+        QMessageBox::warning(this, QStringLiteral("设置保存失败"), backend_.getStatus());
+        return;
+    }
+    gameTopmostSwitch_->setChecked(quickGameTopmostSwitch_->isChecked());
+    obsWindowCaptureSwitch_->setChecked(quickObsWindowCaptureSwitch_->isChecked());
+    hideLive2dModelSwitch_->setChecked(quickHideLive2dSwitch_->isChecked());
+    autoStartSwitch_->setChecked(quickAutoStartSwitch_->isChecked());
+    saveNativeSettings();
+    quickApplyButton_->setText(QStringLiteral("已应用"));
+    QTimer::singleShot(1200, this, [this]() {
+        if (quickApplyButton_ != nullptr) {
+            quickApplyButton_->setText(QStringLiteral("应用"));
+        }
+    });
+}
+
+QWidget* NativeMainWindow::createRelationshipGuidePage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(16, 16, 14, 16);
+    layout->setSpacing(14);
+    layout->addWidget(new qfw::TitleLabel(QStringLiteral("长期关系说明"), content));
+    auto* subtitle = new qfw::SubtitleLabel(
+        QStringLiteral("这些数值会记录角色和当前互动对象相处时的长期印象，用来调整语气、距离感和记忆使用方式。"),
+        content);
+    subtitle->setWordWrap(true);
+    layout->addWidget(subtitle);
+    const QList<QPair<QString, QString>> sections {
+        {QStringLiteral("好感度"), QStringLiteral("表示角色愿意靠近你的程度。数值越高，回复会更放松，也更愿意表达关心，同时仍保留角色自己的边界。")},
+        {QStringLiteral("信任"), QStringLiteral("表示角色对你说的话有多愿意相信、托付和认真回应。感谢、道歉、坦诚求助与持续支持通常会提升信任。")},
+        {QStringLiteral("熟悉度"), QStringLiteral("记录相处时间和互动经验。日常聊天、共同经历与反复提到的习惯会慢慢累积。")},
+        {QStringLiteral("当前心情"), QStringLiteral("表示最近互动留下的短期情绪，会影响接下来几句回复的语气和反应速度，并随时间变化。")},
+        {QStringLiteral("长期记忆"), QStringLiteral("保存角色需要记住的用户资料、偏好、关系注释和手动记录；可以在好感度 / 记忆页查看、编辑和删除。")},
+    };
+    for (const auto& section : sections) {
+        auto* frame = new QFrame(content);
+        frame->setStyleSheet(QStringLiteral(
+            "QFrame { border: 1px solid #ecd9e1; border-radius: 10px; background: #fff; }"));
+        auto* frameLayout = new QVBoxLayout(frame);
+        frameLayout->setContentsMargins(16, 12, 16, 12);
+        frameLayout->setSpacing(6);
+        frameLayout->addWidget(new qfw::StrongBodyLabel(section.first, frame));
+        auto* text = new qfw::BodyLabel(section.second, frame);
+        text->setWordWrap(true);
+        frameLayout->addWidget(text);
+        layout->addWidget(frame);
+    }
+    layout->addStretch(1);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setFrameShape(QFrame::NoFrame);
+    return page;
+}
+
+QWidget* NativeMainWindow::createBehaviorPage() {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(16, 16, 14, 16);
+    layout->setSpacing(12);
+    layout->addWidget(new qfw::TitleLabel(QStringLiteral("角色行为"), content));
+    auto* subtitle = new qfw::SubtitleLabel(
+        QStringLiteral("设置角色的待机动作、视线跟随和多角色互动行为。"), content);
+    subtitle->setWordWrap(true);
+    layout->addWidget(subtitle);
+    layout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("Live2D 行为"), content));
+
+    auto addSwitch = [content, layout](
+                         const QString& title,
+                         const QString& detail,
+                         qfw::SwitchButton** target) {
+        auto* row = new QWidget(content);
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 6, 0, 6);
+        rowLayout->setSpacing(12);
+        auto* labels = new QVBoxLayout();
+        labels->setSpacing(3);
+        labels->addWidget(new qfw::StrongBodyLabel(title, row));
+        auto* description = new qfw::BodyLabel(detail, row);
+        description->setWordWrap(true);
+        labels->addWidget(description);
+        rowLayout->addLayout(labels, 1);
+        *target = new qfw::SwitchButton(row);
+        rowLayout->addWidget(*target, 0, Qt::AlignTop);
+        layout->addWidget(row);
+    };
+    addSwitch(
+        QStringLiteral("角色待机动作"),
+        QStringLiteral("桌面上有多个 Live2D 形象时，统一启用或关闭待机动作。"),
+        &behaviorIdleSwitch_);
+    addSwitch(
+        QStringLiteral("启用随机动作"),
+        QStringLiteral("角色会在空闲、靠近鼠标等场景随机触发动作。"),
+        &behaviorRandomSwitch_);
+    addSwitch(
+        QStringLiteral("看向鼠标"),
+        QStringLiteral("关闭后角色不再跟随鼠标移动视线。"),
+        &behaviorHeadTrackingSwitch_);
+    addSwitch(
+        QStringLiteral("角色对视"),
+        QStringLiteral("开启后，角色会看向最近的其他角色。"),
+        &behaviorMutualGazeSwitch_);
+    addSwitch(
+        QStringLiteral("LLM 回复情绪联动"),
+        QStringLiteral("聊天回复中的情绪会联动表情、动作、TTS 语速和窗口轻微动作。"),
+        &behaviorEmotionSwitch_);
+    addSwitch(
+        QStringLiteral("拖动时所有角色一起移动"),
+        QStringLiteral("拖动任意角色时，桌面上的其他角色会按相同距离同步移动。"),
+        &behaviorMoveTogetherSwitch_);
+    auto* save = new qfw::PrimaryPushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Save), QStringLiteral("保存并应用"), content);
+    save->setFixedHeight(36);
+    auto* actions = new QHBoxLayout();
+    actions->addStretch(1);
+    actions->addWidget(save);
+    layout->addLayout(actions);
+    layout->addStretch(1);
+    connect(save, &QPushButton::clicked, this, [this]() {
+        idleActionsSwitch_->setChecked(behaviorIdleSwitch_->isChecked());
+        randomActionsSwitch_->setChecked(behaviorRandomSwitch_->isChecked());
+        headTrackingSwitch_->setChecked(behaviorHeadTrackingSwitch_->isChecked());
+        mutualGazeSwitch_->setChecked(behaviorMutualGazeSwitch_->isChecked());
+        emotionBehaviorSwitch_->setChecked(behaviorEmotionSwitch_->isChecked());
+        moveTogetherSwitch_->setChecked(behaviorMoveTogetherSwitch_->isChecked());
+        saveNativeSettings();
+    });
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setFrameShape(QFrame::NoFrame);
+    return page;
+}
+
+void NativeMainWindow::syncBehaviorPage() {
+    if (behaviorIdleSwitch_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker idleBlocker(behaviorIdleSwitch_);
+    const QSignalBlocker randomBlocker(behaviorRandomSwitch_);
+    const QSignalBlocker headBlocker(behaviorHeadTrackingSwitch_);
+    const QSignalBlocker gazeBlocker(behaviorMutualGazeSwitch_);
+    const QSignalBlocker emotionBlocker(behaviorEmotionSwitch_);
+    const QSignalBlocker moveBlocker(behaviorMoveTogetherSwitch_);
+    behaviorIdleSwitch_->setChecked(runtime_.value(QStringLiteral("idle_actions_enabled")).toBool(true));
+    behaviorRandomSwitch_->setChecked(runtime_.value(QStringLiteral("random_actions_enabled")).toBool(true));
+    behaviorHeadTrackingSwitch_->setChecked(runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true));
+    behaviorMutualGazeSwitch_->setChecked(runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool(false));
+    behaviorEmotionSwitch_->setChecked(runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true));
+    behaviorMoveTogetherSwitch_->setChecked(runtime_.value(QStringLiteral("move_all_roles_together")).toBool(false));
+}
+
+QWidget* NativeMainWindow::createReminderPage(QWidget* reminderEditor) {
+    auto* page = new qfw::ScrollArea(this);
+    auto* content = new QWidget(page);
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(16, 16, 14, 16);
+    layout->setSpacing(12);
+    layout->addWidget(new qfw::TitleLabel(QStringLiteral("闹钟 / 番茄钟"), content));
+    auto* subtitle = new qfw::SubtitleLabel(
+        QStringLiteral("配置定时提醒、番茄钟和日常主动陪伴。角色会结合当前上下文、好感度与长期记忆生成自然回应。"),
+        content);
+    subtitle->setWordWrap(true);
+    layout->addWidget(subtitle);
+    if (reminderEditor != nullptr) {
+        reminderEditor->setParent(content);
+        layout->addWidget(reminderEditor);
+    } else {
+        layout->addWidget(new qfw::BodyLabel(QStringLiteral("提醒编辑器暂不可用。"), content));
+    }
+    layout->addStretch(1);
+    page->setWidget(content);
+    page->setWidgetResizable(true);
+    page->setFrameShape(QFrame::NoFrame);
+    return page;
+}
+
+QWidget* NativeMainWindow::createMemoryAlbumPage() {
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(16, 16, 14, 16);
+    layout->setSpacing(14);
+    layout->addWidget(new qfw::TitleLabel(QStringLiteral("记忆相册"), page));
+    auto* subtitle = new qfw::SubtitleLabel(QStringLiteral("浏览对话历史、收藏和时间线。"), page);
+    layout->addWidget(subtitle);
+    for (const QPair<QString, QString>& section : QList<QPair<QString, QString>> {
+             {QStringLiteral("最近对话"), QStringLiteral("暂无最近对话")},
+             {QStringLiteral("收藏消息"), QStringLiteral("暂无收藏消息")},
+             {QStringLiteral("对话链"), QStringLiteral("暂无对话链")},
+             {QStringLiteral("时间线"), QStringLiteral("暂无时间线")}}) {
+        auto* frame = new QFrame(page);
+        frame->setMinimumHeight(80);
+        frame->setStyleSheet(QStringLiteral(
+            "QFrame { background: #fff; border: 1px solid #ecd9e1; border-radius: 10px; }"));
+        auto* frameLayout = new QVBoxLayout(frame);
+        frameLayout->setContentsMargins(16, 12, 16, 12);
+        frameLayout->addWidget(new qfw::SubtitleLabel(section.first, frame));
+        frameLayout->addWidget(new qfw::BodyLabel(section.second, frame));
+        layout->addWidget(frame);
+    }
+    layout->addStretch(1);
+    return page;
 }
 
 QWidget* NativeMainWindow::createDashboardPage() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 52, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(14);
 
-    auto* title = new qfw::TitleLabel(QStringLiteral("BandoriPet Rust + Qt"), page);
+    auto* title = new qfw::TitleLabel(QStringLiteral("关于 Bandori 桌宠"), page);
     serviceStatusLabel_ = new qfw::BodyLabel(QStringLiteral("Loading Rust services…"), page);
     configSummaryLabel_ = new qfw::CaptionLabel(page);
     rendererStatusLabel_ =
@@ -782,24 +1268,31 @@ QWidget* NativeMainWindow::createDashboardPage() {
 QWidget* NativeMainWindow::createModelsPage() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 52, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(12);
 
-    auto* title = new qfw::TitleLabel(tr("Available pet models"), page);
+    auto* title = new qfw::TitleLabel(QStringLiteral("Live2D 模型详情"), page);
     modelCountLabel_ = new qfw::CaptionLabel(page);
     modelList_ = new qfw::ListWidget(page);
     modelList_->setSelectionMode(QAbstractItemView::SingleSelection);
     modelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    modelDetailsLabel_ = new qfw::BodyLabel(tr("Select a costume to inspect it"), page);
+    modelPreviewLabel_ = new QLabel(page);
+    modelPreviewLabel_->setAlignment(Qt::AlignCenter);
+    modelPreviewLabel_->setFixedSize(230, 280);
+    modelPreviewLabel_->setText(QStringLiteral("Live2D"));
+    modelPreviewLabel_->setStyleSheet(QStringLiteral(
+        "QLabel { color: #e90050; background: #fff7fa; border-radius: 10px; "
+        "font-size: 22px; font-weight: 700; }"));
+    modelDetailsLabel_ = new qfw::BodyLabel(QStringLiteral("选择角色或服装查看详情"), page);
     modelDetailsLabel_->setWordWrap(true);
-    auto* clickProfiles = new qfw::GroupHeaderCardWidget(tr("Click behavior profile"), page);
+    auto* clickProfiles = new qfw::GroupHeaderCardWidget(QStringLiteral("点击动作反馈"), page);
     auto* profileSelector = new QWidget(clickProfiles);
     auto* profileSelectorLayout = new QHBoxLayout(profileSelector);
     profileSelectorLayout->setContentsMargins(0, 0, 0, 0);
     profileSelectorLayout->setSpacing(8);
     clickMotionProfileComboBox_ = new qfw::ComboBox(profileSelector);
     clickMotionProfileComboBox_->setMinimumWidth(220);
-    clickMotionApplyButton_ = new qfw::PushButton(tr("Apply to selected costume"), profileSelector);
+    clickMotionApplyButton_ = new qfw::PushButton(QStringLiteral("应用"), profileSelector);
     profileSelectorLayout->addWidget(clickMotionProfileComboBox_, 1);
     profileSelectorLayout->addWidget(clickMotionApplyButton_);
 
@@ -808,10 +1301,10 @@ QWidget* NativeMainWindow::createModelsPage() {
     customProfileLayout->setContentsMargins(0, 0, 0, 0);
     customProfileLayout->setSpacing(8);
     clickMotionProfileNameEdit_ = new qfw::LineEdit(customProfileEditor);
-    clickMotionProfileNameEdit_->setPlaceholderText(tr("Custom profile name"));
+    clickMotionProfileNameEdit_->setPlaceholderText(QStringLiteral("自定义配置名称"));
     clickMotionProfileNameEdit_->setMaxLength(80);
-    clickMotionSaveButton_ = new qfw::PushButton(tr("Save current"), customProfileEditor);
-    clickMotionDeleteButton_ = new qfw::PushButton(tr("Delete custom"), customProfileEditor);
+    clickMotionSaveButton_ = new qfw::PushButton(QStringLiteral("保存当前"), customProfileEditor);
+    clickMotionDeleteButton_ = new qfw::PushButton(QStringLiteral("删除"), customProfileEditor);
     customProfileLayout->addWidget(clickMotionProfileNameEdit_, 1);
     customProfileLayout->addWidget(clickMotionSaveButton_);
     customProfileLayout->addWidget(clickMotionDeleteButton_);
@@ -833,8 +1326,8 @@ QWidget* NativeMainWindow::createModelsPage() {
         tr("Profile status"),
         tr("Running pets receive the updated map through the shared Rust IPC session"),
         clickMotionStatusLabel_);
-    launchSelectedButton_ = new qfw::PrimaryPushButton(tr("Start selected model"), page);
-    auto* reloadButton = new qfw::PushButton(tr("Rescan models"), page);
+    launchSelectedButton_ = new qfw::PrimaryPushButton(QStringLiteral("切换角色/服装"), page);
+    auto* reloadButton = new qfw::PushButton(QStringLiteral("重新扫描模型"), page);
 
     auto* buttons = new QHBoxLayout();
     buttons->setSpacing(10);
@@ -842,11 +1335,32 @@ QWidget* NativeMainWindow::createModelsPage() {
     buttons->addWidget(reloadButton);
     buttons->addStretch(1);
 
+    auto* body = new QHBoxLayout();
+    body->setSpacing(12);
+    auto* previewCard = new QFrame(page);
+    previewCard->setFixedWidth(280);
+    previewCard->setStyleSheet(QStringLiteral(
+        "QFrame { background: #ffffff; border: 1px solid #e6e8ed; border-radius: 10px; }"));
+    auto* previewLayout = new QVBoxLayout(previewCard);
+    previewLayout->setContentsMargins(24, 18, 24, 18);
+    previewLayout->setSpacing(10);
+    previewLayout->addWidget(modelPreviewLabel_, 0, Qt::AlignHCenter);
+    previewLayout->addWidget(modelDetailsLabel_);
+    previewLayout->addStretch(1);
+    auto* modelControls = new QWidget(page);
+    auto* modelControlsLayout = new QVBoxLayout(modelControls);
+    modelControlsLayout->setContentsMargins(0, 0, 0, 0);
+    modelControlsLayout->setSpacing(10);
+    modelControlsLayout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("选择角色和服装"), modelControls));
+    modelControlsLayout->addWidget(modelCountLabel_);
+    modelList_->setMinimumHeight(150);
+    modelControlsLayout->addWidget(modelList_, 1);
+    modelControlsLayout->addWidget(clickProfiles);
+    body->addWidget(previewCard);
+    body->addWidget(modelControls, 1);
+
     layout->addWidget(title);
-    layout->addWidget(modelCountLabel_);
-    layout->addWidget(modelList_, 1);
-    layout->addWidget(modelDetailsLabel_);
-    layout->addWidget(clickProfiles);
+    layout->addLayout(body, 1);
     layout->addLayout(buttons);
 
     launchSelectedButton_->setEnabled(false);
@@ -877,131 +1391,199 @@ QWidget* NativeMainWindow::createModelsPage() {
 QWidget* NativeMainWindow::createChatPage() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 42, 40, 40);
-    layout->setSpacing(12);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    page->setStyleSheet(QStringLiteral(
+        "QWidget#nativeChatSidebar { background: #f8faff; border-right: 1px solid #e7ebf2; }"
+        "QWidget#nativeChatContent { background: #f4f7fc; }"
+        "QFrame#nativeChatHeader { background: #ffffff; border: none; }"
+        "QTextBrowser#nativeChatTranscript { background: #f4f7fc; border: none; padding: 14px; }"
+        "QFrame#nativeChatComposer { background: #ffffff; border: 1px solid #cbd7ec; "
+        "border-radius: 22px; }"));
 
-    auto* title = new qfw::TitleLabel(tr("Native chat"), page);
-    auto* explanation = new qfw::CaptionLabel(
-        tr("Rust owns private/group prompts, safe attachments, cancellable speaker streams, transactional data.db history, web/MCP tools and permission-gated Computer Use."),
-        page);
-    explanation->setWordWrap(true);
-    chatModeComboBox_ = new qfw::ComboBox(page);
-    chatModeComboBox_->addItem(tr("Private"), QVariant(), QStringLiteral("private"));
-    chatModeComboBox_->addItem(tr("Group"), QVariant(), QStringLiteral("group"));
-    chatPrivateSelector_ = new QWidget(page);
+    auto* sidebar = new QWidget(page);
+    sidebar->setObjectName(QStringLiteral("nativeChatSidebar"));
+    sidebar->setMinimumWidth(205);
+    sidebar->setMaximumWidth(248);
+    auto* sidebarLayout = new QVBoxLayout(sidebar);
+    sidebarLayout->setContentsMargins(12, 12, 10, 12);
+    sidebarLayout->setSpacing(9);
+    auto* sidebarHeader = new QHBoxLayout();
+    sidebarHeader->addWidget(new qfw::StrongBodyLabel(QStringLiteral("聊天列表"), sidebar));
+    sidebarHeader->addStretch(1);
+    auto* collapseGlyph = new qfw::BodyLabel(QStringLiteral("◀"), sidebar);
+    sidebarHeader->addWidget(collapseGlyph);
+    sidebarLayout->addLayout(sidebarHeader);
+    auto* sidebarHint = new qfw::CaptionLabel(
+        QStringLiteral("快速切换私聊和群聊；可管理名称、头像和置顶。"), sidebar);
+    sidebarHint->setWordWrap(true);
+    sidebarLayout->addWidget(sidebarHint);
+
+    chatModeComboBox_ = new qfw::ComboBox(sidebar);
+    chatModeComboBox_->addItem(QStringLiteral("私聊"), QVariant(), QStringLiteral("private"));
+    chatModeComboBox_->addItem(QStringLiteral("群聊"), QVariant(), QStringLiteral("group"));
+    sidebarLayout->addWidget(chatModeComboBox_);
+    chatPrivateSelector_ = new QWidget(sidebar);
     auto* privateSelectorLayout = new QHBoxLayout(chatPrivateSelector_);
     privateSelectorLayout->setContentsMargins(0, 0, 0, 0);
-    privateSelectorLayout->setSpacing(8);
-    privateSelectorLayout->addWidget(new qfw::BodyLabel(tr("Character"), chatPrivateSelector_));
+    privateSelectorLayout->setSpacing(6);
+    privateSelectorLayout->addWidget(new qfw::BodyLabel(QStringLiteral("角色"), chatPrivateSelector_));
     chatCharacterComboBox_ = new qfw::ComboBox(chatPrivateSelector_);
-    chatCharacterComboBox_->setMinimumWidth(160);
-    privateSelectorLayout->addWidget(chatCharacterComboBox_);
+    privateSelectorLayout->addWidget(chatCharacterComboBox_, 1);
+    sidebarLayout->addWidget(chatPrivateSelector_);
 
-    chatGroupSelector_ = new QWidget(page);
-    chatGroupSelector_->setMinimumWidth(180);
-    chatGroupSelector_->setMaximumWidth(460);
+    chatGroupSelector_ = new QWidget(sidebar);
     auto* groupSelectorLayout = new QVBoxLayout(chatGroupSelector_);
     groupSelectorLayout->setContentsMargins(0, 0, 0, 0);
     groupSelectorLayout->setSpacing(6);
-    auto* savedGroupRow = new QHBoxLayout();
-    savedGroupRow->setSpacing(8);
-    savedGroupRow->addWidget(new qfw::BodyLabel(tr("Saved group"), chatGroupSelector_));
     chatGroupComboBox_ = new qfw::ComboBox(chatGroupSelector_);
-    chatGroupComboBox_->setMinimumWidth(260);
-    savedGroupRow->addWidget(chatGroupComboBox_, 1);
-    groupSelectorLayout->addLayout(savedGroupRow);
     groupSelectorLayout->addWidget(new qfw::CaptionLabel(
-        tr("Members · select at least two characters"), chatGroupSelector_));
+        QStringLiteral("群聊成员（至少选择两名）"), chatGroupSelector_));
+    groupSelectorLayout->addWidget(chatGroupComboBox_);
     chatGroupMembersList_ = new qfw::ListWidget(chatGroupSelector_);
     chatGroupMembersList_->setSelectionMode(QAbstractItemView::MultiSelection);
-    chatGroupMembersList_->setMaximumHeight(112);
+    chatGroupMembersList_->setMaximumHeight(150);
     groupSelectorLayout->addWidget(chatGroupMembersList_);
     chatGroupSelector_->setVisible(false);
+    sidebarLayout->addWidget(chatGroupSelector_);
 
-    chatConversationComboBox_ = new qfw::ComboBox(page);
-    chatConversationComboBox_->setMinimumWidth(280);
-    chatRefreshButton_ = new qfw::PushButton(tr("Refresh"), page);
-    chatPinButton_ = new qfw::PushButton(tr("Pin chat"), page);
-    chatRenameButton_ = new qfw::PushButton(tr("Rename"), page);
-    chatAvatarButton_ = new qfw::PushButton(tr("Avatar"), page);
-    chatResetAvatarButton_ = new qfw::PushButton(tr("Reset avatar"), page);
-    chatGroupSidebarToggleButton_ = new qfw::PushButton(tr("Hide members"), page);
-    chatNewConversationButton_ = new qfw::PushButton(tr("New"), page);
-    chatDeleteConversationButton_ = new qfw::PushButton(tr("Delete"), page);
-    chatLoadOlderButton_ = new qfw::PushButton(tr("Load older"), page);
+    sidebarLayout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("会话"), sidebar));
+    chatConversationComboBox_ = new qfw::ComboBox(sidebar);
+    sidebarLayout->addWidget(chatConversationComboBox_);
+    chatRefreshButton_ = new qfw::PushButton(QStringLiteral("刷新"), sidebar);
+    chatPinButton_ = new qfw::PushButton(QStringLiteral("置顶"), page);
+    chatRenameButton_ = new qfw::PushButton(QStringLiteral("重命名"), page);
+    chatAvatarButton_ = new qfw::PushButton(QStringLiteral("头像"), page);
+    chatResetAvatarButton_ = new qfw::PushButton(QStringLiteral("恢复头像"), page);
+    chatGroupSidebarToggleButton_ = new qfw::PushButton(QStringLiteral("收起成员"), page);
+    chatNewConversationButton_ = new qfw::PushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Add), QStringLiteral("新建聊天"), sidebar);
+    chatDeleteConversationButton_ = new qfw::PushButton(QStringLiteral("删除"), sidebar);
+    chatLoadOlderButton_ = new qfw::PushButton(QStringLiteral("加载更早消息"), sidebar);
     chatLoadOlderButton_->setEnabled(false);
-    auto* controls = new QHBoxLayout();
-    controls->addWidget(new qfw::BodyLabel(tr("Mode"), page));
-    controls->addWidget(chatModeComboBox_);
-    controls->addWidget(chatPrivateSelector_);
-    controls->addSpacing(8);
-    controls->addWidget(new qfw::BodyLabel(tr("Conversation"), page));
-    controls->addWidget(chatConversationComboBox_, 1);
-    controls->addWidget(chatLoadOlderButton_);
-    controls->addWidget(chatNewConversationButton_);
-    controls->addWidget(chatDeleteConversationButton_);
-    controls->addWidget(chatRefreshButton_);
-    auto* presentationControls = new QHBoxLayout();
-    presentationControls->setSpacing(8);
-    presentationControls->addWidget(chatPinButton_);
-    presentationControls->addWidget(chatRenameButton_);
-    presentationControls->addWidget(chatAvatarButton_);
-    presentationControls->addWidget(chatResetAvatarButton_);
-    presentationControls->addWidget(chatGroupSidebarToggleButton_);
-    presentationControls->addStretch(1);
+    auto* sideActions = new QHBoxLayout();
+    sideActions->setSpacing(6);
+    sideActions->addWidget(chatRefreshButton_);
+    sideActions->addWidget(chatDeleteConversationButton_);
+    sidebarLayout->addLayout(sideActions);
+    sidebarLayout->addWidget(chatLoadOlderButton_);
+    sidebarLayout->addStretch(1);
+    chatNewConversationButton_->setFixedHeight(38);
+    sidebarLayout->addWidget(chatNewConversationButton_);
 
-    chatStatusLabel_ = new qfw::CaptionLabel(tr("Choose a character to load chat history"), page);
-    chatTranscript_ = new QTextBrowser(page);
+    auto* conversationPane = new QWidget(page);
+    conversationPane->setObjectName(QStringLiteral("nativeChatContent"));
+    auto* conversationLayout = new QVBoxLayout(conversationPane);
+    conversationLayout->setContentsMargins(0, 0, 0, 0);
+    conversationLayout->setSpacing(0);
+    auto* header = new QFrame(conversationPane);
+    header->setObjectName(QStringLiteral("nativeChatHeader"));
+    header->setFixedHeight(62);
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(14, 6, 10, 6);
+    headerLayout->setSpacing(8);
+    auto* avatar = new QLabel(QStringLiteral("AI"), header);
+    avatar->setAlignment(Qt::AlignCenter);
+    avatar->setFixedSize(36, 36);
+    avatar->setStyleSheet(QStringLiteral(
+        "QLabel { color: #ffffff; background: #e90050; border-radius: 18px; font-weight: 700; }"));
+    headerLayout->addWidget(avatar);
+    auto* titleStack = new QVBoxLayout();
+    titleStack->setSpacing(0);
+    titleStack->addWidget(new qfw::StrongBodyLabel(QStringLiteral("AI 聊天"), header));
+    titleStack->addWidget(new qfw::CaptionLabel(
+        QStringLiteral("回车发送，Shift+Enter 换行"), header));
+    headerLayout->addLayout(titleStack);
+    headerLayout->addStretch(1);
+    for (QWidget* button : {
+             static_cast<QWidget*>(chatPinButton_),
+             static_cast<QWidget*>(chatRenameButton_),
+             static_cast<QWidget*>(chatAvatarButton_),
+             static_cast<QWidget*>(chatResetAvatarButton_),
+             static_cast<QWidget*>(chatGroupSidebarToggleButton_)}) {
+        button->setMaximumHeight(32);
+        headerLayout->addWidget(button);
+    }
+    auto* closeChatButton = new qfw::PushButton(QStringLiteral("✕"), header);
+    closeChatButton->setFixedSize(32, 32);
+    closeChatButton->setToolTip(QStringLiteral("关闭聊天窗口"));
+    closeChatButton->setStyleSheet(QStringLiteral(
+        "QPushButton { border: none; border-radius: 16px; background: #eef2f8; }"
+        "QPushButton:hover { background: #ffdfe9; color: #e90050; }"));
+    headerLayout->addWidget(closeChatButton);
+    connect(closeChatButton, &QPushButton::clicked, this, [this]() {
+        leaveChatSurfaceMode();
+        hide();
+    });
+    conversationLayout->addWidget(header);
+
+    chatTranscript_ = new QTextBrowser(conversationPane);
+    chatTranscript_->setObjectName(QStringLiteral("nativeChatTranscript"));
     chatTranscript_->setOpenExternalLinks(false);
     chatTranscript_->setReadOnly(true);
-    chatInput_ = new qfw::PlainTextEdit(page);
-    chatInput_->setPlaceholderText(tr("Write a message · Ctrl+Enter to send"));
-    chatInput_->setMinimumHeight(72);
-    chatInput_->setMaximumHeight(120);
-    chatSendButton_ = new qfw::PrimaryPushButton(tr("Send"), page);
-    chatCancelButton_ = new qfw::PushButton(tr("Cancel"), page);
-    chatAttachButton_ = new qfw::PushButton(tr("Attach"), page);
-    chatAsrButton_ = new qfw::PushButton(tr("Voice"), page);
-    chatClearAttachmentsButton_ = new qfw::PushButton(tr("Clear attachments"), page);
-    chatAttachmentLabel_ = new qfw::CaptionLabel(tr("No pending attachments"), page);
+    conversationLayout->addWidget(chatTranscript_, 1);
+
+    auto* inputArea = new QWidget(conversationPane);
+    inputArea->setFixedHeight(112);
+    inputArea->setStyleSheet(QStringLiteral("QWidget { background: #eef4ff; }"));
+    auto* inputAreaLayout = new QVBoxLayout(inputArea);
+    inputAreaLayout->setContentsMargins(20, 7, 20, 12);
+    inputAreaLayout->setSpacing(6);
+    chatStatusLabel_ = new qfw::CaptionLabel(QStringLiteral("●  未配置"), inputArea);
+    chatStatusLabel_->setStyleSheet(QStringLiteral("QLabel { color: #60708a; }"));
+    inputAreaLayout->addWidget(chatStatusLabel_);
+    auto* composerFrame = new QFrame(inputArea);
+    composerFrame->setObjectName(QStringLiteral("nativeChatComposer"));
+    composerFrame->setFixedHeight(66);
+    auto* composer = new QHBoxLayout(composerFrame);
+    composer->setContentsMargins(10, 8, 10, 8);
+    composer->setSpacing(9);
+    chatAttachButton_ = new qfw::PushButton(QStringLiteral("📎"), composerFrame);
+    chatAsrButton_ = new qfw::PushButton(QStringLiteral("🎙"), composerFrame);
+    for (QWidget* button : {
+             static_cast<QWidget*>(chatAttachButton_),
+             static_cast<QWidget*>(chatAsrButton_),
+         }) {
+        button->setFixedSize(46, 46);
+        button->setStyleSheet(QStringLiteral(
+            "QPushButton { border: none; border-radius: 23px; background: #edf2fa; font-size: 18px; }"
+            "QPushButton:hover { background: #e1e8f4; }"));
+        composer->addWidget(button);
+    }
+    chatInput_ = new qfw::PlainTextEdit(composerFrame);
+    chatInput_->setPlaceholderText(QStringLiteral("给你的 Bandori 桌宠发消息..."));
+    chatInput_->setFixedHeight(46);
+    chatInput_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    chatInput_->setStyleSheet(QStringLiteral(
+        "QPlainTextEdit { border: none; background: transparent; padding: 7px 4px; }"));
+    composer->addWidget(chatInput_, 1);
+    chatSendButton_ = new qfw::PrimaryPushButton(QStringLiteral("➤"), composerFrame);
+    chatSendButton_->setFixedSize(46, 46);
+    chatSendButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { border: none; border-radius: 23px; background: #e90050; "
+        "color: white; font-size: 20px; } QPushButton:hover { background: #ff0b61; }"));
+    composer->addWidget(chatSendButton_);
+    inputAreaLayout->addWidget(composerFrame);
+    conversationLayout->addWidget(inputArea);
+
+    chatCancelButton_ = new qfw::PushButton(QStringLiteral("中断"), inputArea);
+    chatCancelButton_->hide();
+    chatClearAttachmentsButton_ = new qfw::PushButton(QStringLiteral("清除附件"), inputArea);
+    chatClearAttachmentsButton_->hide();
+    chatAttachmentLabel_ = new qfw::CaptionLabel(QStringLiteral("暂无附件"), inputArea);
+    chatAttachmentLabel_->hide();
     chatAttachmentLabel_->setWordWrap(true);
     chatSendButton_->setEnabled(false);
     chatCancelButton_->setEnabled(false);
-    auto* composerButtons = new QVBoxLayout();
-    composerButtons->setSpacing(8);
-    composerButtons->addWidget(chatSendButton_);
-    composerButtons->addWidget(chatCancelButton_);
-    composerButtons->addStretch(1);
-    auto* attachmentControls = new QHBoxLayout();
-    attachmentControls->setSpacing(8);
-    attachmentControls->addWidget(chatAsrButton_);
-    attachmentControls->addWidget(chatAttachButton_);
-    attachmentControls->addWidget(chatClearAttachmentsButton_);
-    attachmentControls->addWidget(chatAttachmentLabel_, 1);
-    auto* composer = new QHBoxLayout();
-    composer->setSpacing(10);
-    composer->addWidget(chatInput_, 1);
-    composer->addLayout(composerButtons);
 
-    auto* conversationPane = new QWidget(page);
-    auto* conversationLayout = new QVBoxLayout(conversationPane);
-    conversationLayout->setContentsMargins(0, 0, 0, 0);
-    conversationLayout->setSpacing(10);
-    conversationLayout->addWidget(chatStatusLabel_);
-    conversationLayout->addWidget(chatTranscript_, 1);
-    conversationLayout->addLayout(attachmentControls);
-    conversationLayout->addLayout(composer);
     chatGroupSplitter_ = new QSplitter(Qt::Horizontal, page);
     chatGroupSplitter_->setChildrenCollapsible(false);
-    chatGroupSplitter_->addWidget(chatGroupSelector_);
+    chatGroupSplitter_->setHandleWidth(1);
+    chatGroupSplitter_->addWidget(sidebar);
     chatGroupSplitter_->addWidget(conversationPane);
     chatGroupSplitter_->setStretchFactor(0, 0);
     chatGroupSplitter_->setStretchFactor(1, 1);
-
-    layout->addWidget(title);
-    layout->addWidget(explanation);
-    layout->addLayout(controls);
-    layout->addLayout(presentationControls);
+    chatGroupSplitter_->setSizes({220, 620});
     layout->addWidget(chatGroupSplitter_, 1);
 
     connect(chatRefreshButton_, &QPushButton::clicked, this, [this]() {
@@ -1098,7 +1680,13 @@ QWidget* NativeMainWindow::createChatPage() {
     connect(chatInput_, &QPlainTextEdit::textChanged, this, [this]() {
         setChatBusy(activeChatRequestId_ != 0);
     });
-    connect(chatSendButton_, &QPushButton::clicked, this, [this]() { sendNativeChat(); });
+    connect(chatSendButton_, &QPushButton::clicked, this, [this]() {
+        if (activeChatRequestId_ != 0 || groupSequenceActive_) {
+            cancelNativeChat();
+        } else {
+            sendNativeChat();
+        }
+    });
     connect(chatCancelButton_, &QPushButton::clicked, this, [this]() { cancelNativeChat(); });
     connect(chatAttachButton_, &QPushButton::clicked, this, [this]() { chooseChatAttachments(); });
     connect(chatAsrButton_, &QPushButton::clicked, this, [this]() {
@@ -1111,6 +1699,12 @@ QWidget* NativeMainWindow::createChatPage() {
         [this]() { clearPendingChatAttachments(); });
     auto* sendShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Return")), chatInput_);
     connect(sendShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
+    auto* returnShortcut = new QShortcut(QKeySequence(Qt::Key_Return), chatInput_);
+    returnShortcut->setContext(Qt::WidgetShortcut);
+    connect(returnShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
+    auto* enterShortcut = new QShortcut(QKeySequence(Qt::Key_Enter), chatInput_);
+    enterShortcut->setContext(Qt::WidgetShortcut);
+    connect(enterShortcut, &QShortcut::activated, this, [this]() { sendNativeChat(); });
     updatePendingChatAttachments();
     syncChatPresentationControls();
     return page;
@@ -1119,10 +1713,10 @@ QWidget* NativeMainWindow::createChatPage() {
 QWidget* NativeMainWindow::createHistorySearchPage() {
     auto* page = new QWidget(this);
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(16);
 
-    auto* title = new qfw::TitleLabel(tr("Search all chat history"), page);
+    auto* title = new qfw::TitleLabel(QStringLiteral("聊天记录"), page);
     auto* subtitle = new qfw::BodyLabel(
         tr("Search private and group messages through one Rust-owned query with bounded filters and pagination."),
         page);
@@ -1237,10 +1831,10 @@ QWidget* NativeMainWindow::createStatisticsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native statistics"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("数据统计"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Relationship trends and message activity are scoped to the selected user partition; overview usage remains application-wide."),
         content);
@@ -1391,10 +1985,10 @@ QWidget* NativeMainWindow::createDataManagementPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native data management"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("数据管理"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Move whitelisted settings and relationship memory between installations, or create and restore a complete chat database backup."),
         content);
@@ -1557,10 +2151,10 @@ QWidget* NativeMainWindow::createMemoryPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Relationship and long-term memory"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("好感度 / 记忆"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Every operation stays inside the selected character and active user profile."),
         content);
@@ -1716,10 +2310,10 @@ QWidget* NativeMainWindow::createUserProfilesPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("User profiles"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("POV 设置"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Each profile owns a separate private chat, group chat, relationship, and memory partition."),
         content);
@@ -1832,10 +2426,10 @@ QWidget* NativeMainWindow::createPersonaPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("POV and character personas"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("角色人格"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Rust owns preset normalization, activation and atomic persistence. Character personas replace the default characters-directory dossier."),
         content);
@@ -2037,10 +2631,10 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native LLM settings"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("LLM 配置"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("API keys are write-only in this page. Leave a password field blank to keep its saved value."),
         content);
@@ -2528,10 +3122,10 @@ QWidget* NativeMainWindow::createTtsSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native text-to-speech"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("聊天与提醒 TTS"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Rust sends bounded GPT-SoVITS/Qwen-compatible requests; Qt Multimedia owns playback and forwards lip-sync poses to the matching pet process."),
         content);
@@ -2704,10 +3298,10 @@ QWidget* NativeMainWindow::createAsrSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native ASR voice input"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("语音识别（ASR）"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Record through Qt Multimedia and send bounded WAV audio to an OpenAI-compatible transcription endpoint through Rust."),
         content);
@@ -2856,10 +3450,10 @@ QWidget* NativeMainWindow::createScreenAwarenessPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native screen awareness"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("屏幕感知与工具控制"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Capture a bounded composite of all displays with Qt, analyze it through Rust, and let a configured character decide whether a short proactive message is appropriate."),
         content);
@@ -2986,10 +3580,10 @@ QWidget* NativeMainWindow::createIntegrationPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native local integrations"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("聊天接入与悬浮窗设置"), content);
     auto* subtitle = new qfw::BodyLabel(
         tr("Expose bounded webhook endpoints on 127.0.0.1 only. Rust authenticates, parses and stores each request before Qt forwards display events to isolated pets."),
         content);
@@ -3323,10 +3917,10 @@ QWidget* NativeMainWindow::createSettingsPage() {
     auto* page = new qfw::ScrollArea(this);
     auto* content = new QWidget(page);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(40, 34, 40, 40);
+    layout->setContentsMargins(16, 16, 14, 16);
     layout->setSpacing(24);
 
-    auto* title = new qfw::TitleLabel(tr("Native application state"), content);
+    auto* title = new qfw::TitleLabel(QStringLiteral("显示设置与角色行为"), content);
     auto* live2d = new qfw::GroupHeaderCardWidget(tr("Live2D runtime"), content);
     fpsSpinBox_ = new qfw::SpinBox(live2d);
     fpsSpinBox_->setRange(10, 240);
@@ -3470,6 +4064,7 @@ QWidget* NativeMainWindow::createSettingsPage() {
     saveSettingsButton_ = new qfw::PrimaryPushButton(tr("Save and apply"), content);
 
     auto* reminders = new qfw::GroupHeaderCardWidget(tr("Reminders"), content);
+    reminders->setObjectName(QStringLiteral("nativeReminderEditor"));
     reminderDisplayModeComboBox_ = new qfw::ComboBox(reminders);
     reminderDisplayModeComboBox_->addItem(
         tr("Floating pet bubble"), QVariant(), QStringLiteral("floating"));
@@ -3777,8 +4372,8 @@ void NativeMainWindow::restoreNativeWindowGeometry() {
     const QRect saved(
         xValue.toInt(),
         yValue.toInt(),
-        std::clamp(widthValue.toInt(), minimumWidth(), 16'384),
-        std::clamp(heightValue.toInt(), minimumHeight(), 16'384));
+        std::clamp(widthValue.toInt(), 420, 16'384),
+        std::clamp(heightValue.toInt(), 620, 16'384));
     bool visibleOnDesktop = false;
     for (const QScreen* screen : QGuiApplication::screens()) {
         if (screen != nullptr && screen->availableGeometry().intersects(saved)) {
@@ -3790,20 +4385,18 @@ void NativeMainWindow::restoreNativeWindowGeometry() {
         return;
     }
 
-    restoringNativeWindowGeometry_ = true;
-    setGeometry(saved);
-    restoringNativeWindowGeometry_ = false;
+    chatSurfaceGeometry_ = saved;
 }
 
 void NativeMainWindow::scheduleNativeWindowGeometrySave() {
-    if (!restoringNativeWindowGeometry_
+    if (chatSurfaceMode_ && !restoringNativeWindowGeometry_
         && runtime_.contains(QStringLiteral("chat_window_x"))) {
         nativeWindowGeometryTimer_.start();
     }
 }
 
 void NativeMainWindow::persistNativeWindowGeometry() {
-    if (restoringNativeWindowGeometry_
+    if (!chatSurfaceMode_ || restoringNativeWindowGeometry_
         || !runtime_.contains(QStringLiteral("chat_window_x"))) {
         return;
     }
@@ -3865,6 +4458,8 @@ void NativeMainWindow::applyBackendState() {
             catalog_.append(std::move(item));
         }
     }
+    syncQuickSettingsPanel();
+    syncBehaviorPage();
     populateModelList();
     populateClickMotionProfiles();
     loadNativeUserProfiles();
@@ -8817,6 +9412,8 @@ void NativeMainWindow::updateModelDetails() {
     launchSelectedButton_->setEnabled(model.has_value());
     if (!model.has_value()) {
         modelDetailsLabel_->setText(tr("No pet model was found in either model root"));
+        modelPreviewLabel_->setPixmap({});
+        modelPreviewLabel_->setText(QStringLiteral("Live2D"));
         syncClickMotionProfileControls();
         return;
     }
@@ -8826,13 +9423,26 @@ void NativeMainWindow::updateModelDetails() {
     const bool pixelAvailable = QFileInfo::exists(
         QDir(projectRoot_)
             .filePath(QStringLiteral("pixels/%1.webp").arg(model->character)));
+    const QByteArray image = backend_.modelCharacterImage(
+        projectRoot_, userModelsRoot_, model->character);
+    QPixmap preview;
+    if (!image.isEmpty() && preview.loadFromData(image)) {
+        modelPreviewLabel_->setText({});
+        modelPreviewLabel_->setPixmap(preview.scaled(
+            modelPreviewLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        modelPreviewLabel_->setPixmap({});
+        modelPreviewLabel_->setText(
+            model->characterDisplay.isEmpty()
+                ? model->character.left(2).toUpper()
+                : model->characterDisplay.left(2));
+    }
     modelDetailsLabel_->setText(
-        QStringLiteral("%1\n%2 · %3\n%4\n%5")
+        QStringLiteral("%1\n服装：%2\n格式：%3\n%4")
             .arg(
-                modelTitle(*model),
-                model->character,
-                model->costume,
-                model->path,
+                model->characterDisplay.isEmpty() ? model->character : model->characterDisplay,
+                model->costumeDisplay.isEmpty() ? model->costume : model->costumeDisplay,
+                model->format.toUpper(),
                 tr("Configured mode: %1 · pixel assets: %2")
                     .arg(
                         mode == QStringLiteral("pixel") ? tr("pixel") : tr("Live2D"),
@@ -10382,10 +10992,12 @@ void NativeMainWindow::setChatBusy(bool busy) {
             && asrSettings_.value(QStringLiteral("enabled")).toBool()));
     chatClearAttachmentsButton_->setEnabled(!busy && !pendingChatAttachments_.isEmpty());
     chatSendButton_->setEnabled(
-        !busy
-        && (!chatInput_->toPlainText().trimmed().isEmpty()
-            || !pendingChatAttachments_.isEmpty())
-        && hasTarget);
+        chatBusy
+        || (!busy
+            && (!chatInput_->toPlainText().trimmed().isEmpty()
+                || !pendingChatAttachments_.isEmpty())
+            && hasTarget));
+    chatSendButton_->setText(chatBusy ? QStringLiteral("■") : QStringLiteral("➤"));
     chatCancelButton_->setEnabled(chatBusy);
 }
 
@@ -10419,7 +11031,10 @@ void NativeMainWindow::renderChatStreamPreview() {
 }
 
 void NativeMainWindow::openNativeChat(const QString& character) {
-    showControlCenter();
+    showNormal();
+    enterChatSurfaceMode();
+    raise();
+    activateWindow();
     populateChatCharacters();
     if (activeChatRequestId_ != 0
         && !character.trimmed().isEmpty()

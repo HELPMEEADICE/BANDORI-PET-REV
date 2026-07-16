@@ -7,6 +7,7 @@
 #include <QList>
 #include <QPoint>
 #include <QQueue>
+#include <QRect>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -24,6 +25,7 @@ class QAudioOutput;
 class QAudioSource;
 class QCloseEvent;
 class QIODevice;
+class QLabel;
 class QMediaPlayer;
 class QMoveEvent;
 class QResizeEvent;
@@ -58,11 +60,15 @@ public:
     void startPets(QList<PetLaunchSpec> specs);
     bool startConfiguredPet();
     bool startConfiguredPets();
+    bool needsFirstRunWizard() const;
+    bool runFirstRunWizard();
 
 private:
     void setupUi();
     void setupTray();
     void showControlCenter();
+    void enterChatSurfaceMode();
+    void leaveChatSurfaceMode();
     void quitFromTray();
     QWidget* createDashboardPage();
     QWidget* createModelsPage();
@@ -79,6 +85,14 @@ private:
     QWidget* createScreenAwarenessPage();
     QWidget* createIntegrationPage();
     QWidget* createSettingsPage();
+    QWidget* createQuickSettingsPanel();
+    QWidget* createRelationshipGuidePage();
+    QWidget* createBehaviorPage();
+    QWidget* createReminderPage(QWidget* reminderEditor);
+    QWidget* createMemoryAlbumPage();
+    void syncQuickSettingsPanel();
+    void syncBehaviorPage();
+    void saveQuickSettingsPanel();
     bool reloadBackendState();
     void syncSettingsControls();
     void saveNativeSettings();
@@ -305,6 +319,7 @@ private:
     qfw::ListWidget* modelList_ = nullptr;
     qfw::CaptionLabel* modelCountLabel_ = nullptr;
     qfw::BodyLabel* modelDetailsLabel_ = nullptr;
+    QLabel* modelPreviewLabel_ = nullptr;
     qfw::PrimaryPushButton* launchSelectedButton_ = nullptr;
     qfw::ComboBox* clickMotionProfileComboBox_ = nullptr;
     qfw::LineEdit* clickMotionProfileNameEdit_ = nullptr;
@@ -657,12 +672,31 @@ private:
     qfw::SwitchButton* birthdayNotificationsSwitch_ = nullptr;
     qfw::ComboBox* themeComboBox_ = nullptr;
     qfw::PrimaryPushButton* saveSettingsButton_ = nullptr;
+    QWidget* quickSettingsPanel_ = nullptr;
+    qfw::SwitchButton* quickGameTopmostSwitch_ = nullptr;
+    qfw::SwitchButton* quickObsWindowCaptureSwitch_ = nullptr;
+    qfw::SwitchButton* quickChatWindowSwitch_ = nullptr;
+    qfw::SwitchButton* quickHideLive2dSwitch_ = nullptr;
+    qfw::SwitchButton* quickAutoStartSwitch_ = nullptr;
+    qfw::ComboBox* quickLanguageComboBox_ = nullptr;
+    qfw::ListWidget* quickModelList_ = nullptr;
+    qfw::PrimaryPushButton* quickApplyButton_ = nullptr;
+    qfw::SwitchButton* behaviorIdleSwitch_ = nullptr;
+    qfw::SwitchButton* behaviorRandomSwitch_ = nullptr;
+    qfw::SwitchButton* behaviorHeadTrackingSwitch_ = nullptr;
+    qfw::SwitchButton* behaviorMutualGazeSwitch_ = nullptr;
+    qfw::SwitchButton* behaviorEmotionSwitch_ = nullptr;
+    qfw::SwitchButton* behaviorMoveTogetherSwitch_ = nullptr;
     QSystemTrayIcon* trayIcon_ = nullptr;
     QAction* startTrayAction_ = nullptr;
     QAction* stopTrayAction_ = nullptr;
     bool exitRequested_ = false;
     bool trayHintShown_ = false;
     bool restoringNativeWindowGeometry_ = false;
+    bool chatSurfaceMode_ = false;
+    QRect settingsSurfaceGeometry_;
+    QRect chatSurfaceGeometry_;
+    QWidget* settingsPageBeforeChat_ = nullptr;
 };
 
 }  // namespace bandori

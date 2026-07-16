@@ -2,6 +2,8 @@ qt_add_executable(bandori-pet-rust
     main.cpp
     native_main_window.cpp
     native_main_window.h
+    native_first_run_wizard.cpp
+    native_first_run_wizard.h
     native_autostart.cpp
     native_autostart.h
     native_computer_input.cpp

@@ -321,6 +321,11 @@ int main(int argc, char* argv[]) {
         resolvedUserModels,
         resolvedDataRoot,
         configPath);
+    if (petSpec.modelPath.isEmpty()
+        && window.needsFirstRunWizard()
+        && !window.runFirstRunWizard()) {
+        return 0;
+    }
     window.show();
     if (!petSpec.modelPath.isEmpty()) {
         window.startPet(petSpec);

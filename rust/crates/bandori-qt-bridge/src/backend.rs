@@ -57,6 +57,15 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "modelCharacterImage"]
+        fn model_character_image(
+            self: Pin<&mut Self>,
+            project_root: &QString,
+            user_models_root: &QString,
+            character: &QString,
+        ) -> QByteArray;
+
+        #[qinvokable]
         #[cxx_name = "saveNativeSettings"]
         fn save_native_settings(
             self: Pin<&mut Self>,
@@ -691,7 +700,8 @@ use bandori_core::click_motion_profiles::mutate_click_motion_profiles;
 use bandori_core::computer_tools::{NativeComputerSettings, is_computer_tool_name};
 use bandori_core::config::ConfigDocument;
 use bandori_core::dashboard::{
-    DashboardSnapshot, NativeRuntimeSnapshot, save_native_settings as persist_native_settings,
+    DashboardSnapshot, NativeRuntimeSnapshot, load_model_character_image,
+    save_native_settings as persist_native_settings,
 };
 use bandori_core::data_management::{
     export_chat_database as export_native_chat_database,
@@ -1154,6 +1164,23 @@ impl ffi::Backend {
                 false
             }
         }
+    }
+
+    pub fn model_character_image(
+        self: Pin<&mut Self>,
+        project_root: &QString,
+        user_models_root: &QString,
+        character: &QString,
+    ) -> QByteArray {
+        let project_root = project_root.to_string();
+        let user_models_root = user_models_root.to_string();
+        let character = character.to_string();
+        let image = load_model_character_image(
+            Path::new(&project_root),
+            Path::new(&user_models_root),
+            &character,
+        );
+        QByteArray::from(image.as_slice())
     }
 
     pub fn save_native_settings(
