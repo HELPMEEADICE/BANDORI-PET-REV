@@ -240,6 +240,28 @@ def test_native_main_window_consumes_safe_rust_dashboard_state():
     assert "supervisor_.startAll(activeSpecs_)" in window
 
 
+def test_native_control_center_restores_and_debounces_legacy_chat_geometry():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    for key in (
+        "chat_window_x",
+        "chat_window_y",
+        "chat_window_width",
+        "chat_window_height",
+    ):
+        assert key in dashboard
+        assert f'QStringLiteral("{key}")' in window
+    assert "restoreNativeWindowGeometry" in window
+    assert "QGuiApplication::screens()" in window
+    assert "availableGeometry().intersects(saved)" in window
+    assert "persistNativeWindowGeometry" in window
+    assert "nativeWindowGeometryTimer_.setInterval(350)" in window
+    assert "void moveEvent(QMoveEvent* event) override" in window_header
+    assert "void resizeEvent(QResizeEvent* event) override" in window_header
+
+
 def test_native_chat_history_reads_existing_database_through_rust():
     core = source("rust/crates/bandori-core/src/chat_dashboard.rs")
     backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")

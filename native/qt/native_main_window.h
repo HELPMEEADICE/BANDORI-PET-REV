@@ -25,6 +25,8 @@ class QAudioSource;
 class QCloseEvent;
 class QIODevice;
 class QMediaPlayer;
+class QMoveEvent;
+class QResizeEvent;
 class QSystemTrayIcon;
 class QTemporaryFile;
 class QTextBrowser;
@@ -79,6 +81,9 @@ private:
     bool reloadBackendState();
     void syncSettingsControls();
     void saveNativeSettings();
+    void restoreNativeWindowGeometry();
+    void scheduleNativeWindowGeometrySave();
+    void persistNativeWindowGeometry();
     bool applyNativeAutoStart(bool enabled, QString* error = nullptr);
     void reconcileNativeAutoStart();
     void applyTheme(const QString& mode);
@@ -255,6 +260,8 @@ private:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     QString projectRoot_;
@@ -359,6 +366,7 @@ private:
     qfw::BodyLabel* attachmentStatsLabel_ = nullptr;
     bool attachmentStartupCleanupRan_ = false;
     QTimer reminderTimer_;
+    QTimer nativeWindowGeometryTimer_;
     QTimer specialEventTimer_;
     QString lastSpecialEventDate_;
     QJsonObject reminderState_;
@@ -598,6 +606,7 @@ private:
     QAction* stopTrayAction_ = nullptr;
     bool exitRequested_ = false;
     bool trayHintShown_ = false;
+    bool restoringNativeWindowGeometry_ = false;
 };
 
 }  // namespace bandori

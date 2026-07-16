@@ -44,11 +44,13 @@
 #include <QMediaPlayer>
 #include <QMediaDevices>
 #include <QMessageBox>
+#include <QMoveEvent>
 #include <QNetworkRequest>
 #include <QPainter>
 #include <QPixmap>
 #include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScreen>
@@ -546,6 +548,13 @@ NativeMainWindow::NativeMainWindow(
       dataRoot_(QDir(std::move(dataRoot)).absolutePath()),
       configPath_(QDir::cleanPath(std::move(configPath))),
       supervisor_(this) {
+    nativeWindowGeometryTimer_.setSingleShot(true);
+    nativeWindowGeometryTimer_.setInterval(350);
+    connect(
+        &nativeWindowGeometryTimer_,
+        &QTimer::timeout,
+        this,
+        [this]() { persistNativeWindowGeometry(); });
     setupUi();
     connect(
         &backend_,
@@ -619,6 +628,7 @@ NativeMainWindow::NativeMainWindow(
         pollNativeSpecialEvents();
     });
     reloadBackendState();
+    restoreNativeWindowGeometry();
     setupTray();
     QTimer::singleShot(0, this, [this]() { pollNativeSpecialEvents(); });
     reminderTimer_.setInterval(15'000);
@@ -719,6 +729,8 @@ void NativeMainWindow::quitFromTray() {
         return;
     }
     exitRequested_ = true;
+    nativeWindowGeometryTimer_.stop();
+    persistNativeWindowGeometry();
     stopNativeTts();
     stopNativeAsr();
     stopNativeScreenAwareness();
@@ -736,6 +748,8 @@ void NativeMainWindow::quitFromTray() {
 }
 
 void NativeMainWindow::closeEvent(QCloseEvent* event) {
+    nativeWindowGeometryTimer_.stop();
+    persistNativeWindowGeometry();
     if (!exitRequested_ && trayIcon_ != nullptr && trayIcon_->isVisible()) {
         event->ignore();
         hide();
@@ -759,6 +773,16 @@ void NativeMainWindow::closeEvent(QCloseEvent* event) {
     if (trayIcon_ == nullptr) {
         QCoreApplication::quit();
     }
+}
+
+void NativeMainWindow::moveEvent(QMoveEvent* event) {
+    qfw::FluentWindow::moveEvent(event);
+    scheduleNativeWindowGeometrySave();
+}
+
+void NativeMainWindow::resizeEvent(QResizeEvent* event) {
+    qfw::FluentWindow::resizeEvent(event);
+    scheduleNativeWindowGeometrySave();
 }
 
 void NativeMainWindow::setupUi() {
@@ -3609,6 +3633,63 @@ bool NativeMainWindow::reloadBackendState() {
     const bool loaded = backend_.reloadState(projectRoot_, userModelsRoot_, configPath_);
     applyBackendState();
     return loaded;
+}
+
+void NativeMainWindow::restoreNativeWindowGeometry() {
+    const QJsonValue xValue = runtime_.value(QStringLiteral("chat_window_x"));
+    const QJsonValue yValue = runtime_.value(QStringLiteral("chat_window_y"));
+    const QJsonValue widthValue = runtime_.value(QStringLiteral("chat_window_width"));
+    const QJsonValue heightValue = runtime_.value(QStringLiteral("chat_window_height"));
+    if (!xValue.isDouble() || !yValue.isDouble()
+        || !widthValue.isDouble() || !heightValue.isDouble()) {
+        return;
+    }
+
+    const QRect saved(
+        xValue.toInt(),
+        yValue.toInt(),
+        std::clamp(widthValue.toInt(), minimumWidth(), 16'384),
+        std::clamp(heightValue.toInt(), minimumHeight(), 16'384));
+    bool visibleOnDesktop = false;
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        if (screen != nullptr && screen->availableGeometry().intersects(saved)) {
+            visibleOnDesktop = true;
+            break;
+        }
+    }
+    if (!visibleOnDesktop) {
+        return;
+    }
+
+    restoringNativeWindowGeometry_ = true;
+    setGeometry(saved);
+    restoringNativeWindowGeometry_ = false;
+}
+
+void NativeMainWindow::scheduleNativeWindowGeometrySave() {
+    if (!restoringNativeWindowGeometry_
+        && runtime_.contains(QStringLiteral("chat_window_x"))) {
+        nativeWindowGeometryTimer_.start();
+    }
+}
+
+void NativeMainWindow::persistNativeWindowGeometry() {
+    if (restoringNativeWindowGeometry_
+        || !runtime_.contains(QStringLiteral("chat_window_x"))) {
+        return;
+    }
+    const QRect current = (isMaximized() || isFullScreen()) && normalGeometry().isValid()
+        ? normalGeometry()
+        : geometry();
+    const QJsonObject settings {
+        {QStringLiteral("chat_window_x"), current.x()},
+        {QStringLiteral("chat_window_y"), current.y()},
+        {QStringLiteral("chat_window_width"), current.width()},
+        {QStringLiteral("chat_window_height"), current.height()},
+    };
+    if (backend_.saveNativeSettings(configPath_, compactJson(settings))) {
+        runtime_ = parseObject(backend_.getRuntimeConfigJson());
+    }
 }
 
 QString NativeMainWindow::nativeDatabasePath() const {

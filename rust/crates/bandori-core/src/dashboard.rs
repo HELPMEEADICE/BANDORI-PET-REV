@@ -34,6 +34,10 @@ pub struct NativeRuntimeSnapshot {
     pub window_height: i64,
     pub pixel_window_x: i64,
     pub pixel_window_y: i64,
+    pub chat_window_x: Option<i64>,
+    pub chat_window_y: Option<i64>,
+    pub chat_window_width: Option<i64>,
+    pub chat_window_height: Option<i64>,
     pub language: String,
     pub auto_start: bool,
     pub active_user_key: String,
@@ -88,6 +92,10 @@ pub struct NativeSettingsUpdate {
     pub live2d_head_tracking_enabled: Option<bool>,
     pub live2d_mutual_gaze_enabled: Option<bool>,
     pub emotion_behavior_enabled: Option<bool>,
+    pub chat_window_x: Option<i64>,
+    pub chat_window_y: Option<i64>,
+    pub chat_window_width: Option<i64>,
+    pub chat_window_height: Option<i64>,
     pub chat_attachment_auto_cleanup_enabled: Option<bool>,
     pub chat_attachment_retention_days: Option<i64>,
     pub birthday_tray_notifications_enabled: Option<bool>,
@@ -172,6 +180,18 @@ impl NativeSettingsUpdate {
         }
         if let Some(enabled) = self.emotion_behavior_enabled {
             config.set("emotion_behavior_enabled", Value::Bool(enabled));
+        }
+        if let Some(value) = self.chat_window_x {
+            config.set("chat_window_x", Value::from(value.clamp(-100_000, 100_000)));
+        }
+        if let Some(value) = self.chat_window_y {
+            config.set("chat_window_y", Value::from(value.clamp(-100_000, 100_000)));
+        }
+        if let Some(value) = self.chat_window_width {
+            config.set("chat_window_width", Value::from(value.clamp(760, 16_384)));
+        }
+        if let Some(value) = self.chat_window_height {
+            config.set("chat_window_height", Value::from(value.clamp(520, 16_384)));
         }
         if let Some(enabled) = self.chat_attachment_auto_cleanup_enabled {
             config.set("chat_attachment_auto_cleanup_enabled", Value::Bool(enabled));
@@ -309,6 +329,10 @@ impl NativeRuntimeSnapshot {
             window_height: global_height,
             pixel_window_x: int_value(values, "pixel_window_x", -1),
             pixel_window_y: int_value(values, "pixel_window_y", -1),
+            chat_window_x: optional_int_value(values, "chat_window_x"),
+            chat_window_y: optional_int_value(values, "chat_window_y"),
+            chat_window_width: optional_int_value(values, "chat_window_width"),
+            chat_window_height: optional_int_value(values, "chat_window_height"),
             language: string_value(values, "language", ""),
             auto_start: bool_value(values, "auto_start", false),
             active_user_key,
@@ -396,6 +420,14 @@ fn string_value(values: &Map<String, Value>, key: &str, fallback: &str) -> Strin
 
 fn int_value(values: &Map<String, Value>, key: &str, fallback: i64) -> i64 {
     values.get(key).and_then(Value::as_i64).unwrap_or(fallback)
+}
+
+fn optional_int_value(values: &Map<String, Value>, key: &str) -> Option<i64> {
+    values.get(key).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|number| number.round() as i64))
+    })
 }
 
 fn float_value(values: &Map<String, Value>, key: &str, fallback: f64) -> f64 {
@@ -493,6 +525,10 @@ mod tests {
                 "pet_mode": "pixel",
                 "pixel_window_x": 77,
                 "pixel_window_y": 88,
+                "chat_window_x": 101,
+                "chat_window_y": 202,
+                "chat_window_width": 900,
+                "chat_window_height": 700,
                 "active_user_profile": "alice",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
@@ -529,6 +565,10 @@ mod tests {
         assert_eq!(snapshot.pet_mode, "pixel");
         assert_eq!(snapshot.pixel_window_x, 77);
         assert_eq!(snapshot.pixel_window_y, 88);
+        assert_eq!(snapshot.chat_window_x, Some(101));
+        assert_eq!(snapshot.chat_window_y, Some(202));
+        assert_eq!(snapshot.chat_window_width, Some(900));
+        assert_eq!(snapshot.chat_window_height, Some(700));
         assert_eq!(snapshot.configured_pets[0].window_x, 42);
         assert!(snapshot.configured_pets[0].drag_locked);
         assert_eq!(snapshot.configured_pets[0].default_motion, "Idle");
@@ -637,6 +677,10 @@ mod tests {
                 "live2d_head_tracking_enabled": false,
                 "live2d_mutual_gaze_enabled": true,
                 "emotion_behavior_enabled": false,
+                "chat_window_x": -999999,
+                "chat_window_y": 999999,
+                "chat_window_width": 1,
+                "chat_window_height": 999999,
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 9999,
                 "birthday_tray_notifications_enabled": false
@@ -655,6 +699,10 @@ mod tests {
         assert!(!runtime.random_actions_enabled);
         assert!(runtime.drag_locked);
         assert!(!runtime.emotion_behavior_enabled);
+        assert_eq!(runtime.chat_window_x, Some(-100_000));
+        assert_eq!(runtime.chat_window_y, Some(100_000));
+        assert_eq!(runtime.chat_window_width, Some(760));
+        assert_eq!(runtime.chat_window_height, Some(16_384));
         assert!(runtime.chat_attachment_auto_cleanup_enabled);
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert!(!runtime.birthday_tray_notifications_enabled);
@@ -662,6 +710,10 @@ mod tests {
         assert_eq!(saved["auto_start"], true);
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
         assert_eq!(saved["emotion_behavior_enabled"], false);
+        assert_eq!(saved["chat_window_x"], -100_000);
+        assert_eq!(saved["chat_window_y"], 100_000);
+        assert_eq!(saved["chat_window_width"], 760);
+        assert_eq!(saved["chat_window_height"], 16_384);
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);
         assert_eq!(saved["birthday_tray_notifications_enabled"], false);
