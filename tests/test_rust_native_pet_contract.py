@@ -1352,10 +1352,14 @@ def test_native_packaging_separates_read_only_resources_from_writable_user_data(
     supervisor_header = source("native/qt/pet_process_supervisor.h")
     supervisor = source("native/qt/pet_process_supervisor.cpp")
     desktop = source("packaging/linux/bandoripet.desktop")
+    version = source("VERSION").strip()
 
     assert "third_party/Qt-Fluent-Widgets" in submodules
     assert "third_party/Live2D-v2-Lua" in submodules
     assert "APP_VERSION" in cmake
+    assert 'file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION"' in cmake
+    assert "app_info.py" not in cmake
+    assert version == "3.1.4"
     assert "BANDORI_PET_RESOURCE_DESTINATION" in cmake
     assert "BANDORI_PET_PACKAGE_BUNDLED_MODELS" in cmake
     assert "third_party/Live2D-v2-Lua/live2d" in cmake

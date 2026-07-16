@@ -1,17 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app_info.py" BANDORI_PET_APP_INFO)
-string(
-    REGEX MATCH
-    "APP_VERSION[ \t]*=[ \t]*\"([0-9]+\\.[0-9]+\\.[0-9]+)\""
-    BANDORI_PET_VERSION_MATCH
-    "${BANDORI_PET_APP_INFO}"
-)
-if(NOT CMAKE_MATCH_1)
-    message(FATAL_ERROR "Could not read APP_VERSION from app_info.py")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" BANDORI_PET_APP_VERSION LIMIT_COUNT 1)
+string(STRIP "${BANDORI_PET_APP_VERSION}" BANDORI_PET_APP_VERSION)
+if(NOT BANDORI_PET_APP_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION must contain a semantic version such as 3.1.4")
 endif()
 
-project(BandoriPetRust VERSION "${CMAKE_MATCH_1}" LANGUAGES CXX)
+project(BandoriPetRust VERSION "${BANDORI_PET_APP_VERSION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
