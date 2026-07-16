@@ -34,6 +34,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHash>
 #include <QHBoxLayout>
@@ -57,11 +58,13 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QResizeEvent>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScreen>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QSplitter>
 #include <QSystemTrayIcon>
 #include <QTemporaryFile>
@@ -933,6 +936,12 @@ QWidget* NativeMainWindow::createQuickSettingsPanel() {
     quickModelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     quickModelList_->setMinimumHeight(84);
     quickModelList_->setMaximumHeight(150);
+    quickModelList_->setStyleSheet(QStringLiteral(
+        "QListWidget { background: transparent; border: none; outline: none; }"
+        "QListWidget::item { padding: 7px 8px; margin: 2px 0; border-radius: 8px; }"
+        "QListWidget::item:hover { background: #ffe2ec; }"
+        "QListWidget::item:selected { color: #2b2228; background: #fff0f5; "
+        "border: 1px solid #f3d2df; }"));
     layout->addWidget(quickModelList_);
     auto* addModelButton = new qfw::PushButton(
         qfw::FluentIcon(qfw::FluentIconEnum::Add), QStringLiteral("添加 Live2D 模型"), panel);
@@ -948,11 +957,13 @@ QWidget* NativeMainWindow::createQuickSettingsPanel() {
     connect(addModelButton, &QPushButton::clicked, this, [this]() {
         if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
             switchTo(models);
+            showModelPicker();
         }
     });
     connect(quickModelList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
         if (QWidget* models = findChild<QWidget*>(QStringLiteral("modelsPage"))) {
             switchTo(models);
+            showModelPicker();
         }
     });
     return panel;
@@ -1267,101 +1278,221 @@ QWidget* NativeMainWindow::createDashboardPage() {
 
 QWidget* NativeMainWindow::createModelsPage() {
     auto* page = new QWidget(this);
+    page->setObjectName(QStringLiteral("nativeModelsPage"));
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(16, 16, 14, 16);
-    layout->setSpacing(12);
+    layout->setSpacing(0);
 
-    auto* title = new qfw::TitleLabel(QStringLiteral("Live2D 模型详情"), page);
-    modelCountLabel_ = new qfw::CaptionLabel(page);
+    // Keep the catalog list as the canonical selection model used by the Rust
+    // launcher, but present the same band -> character -> costume flow as the
+    // Python settings window.
     modelList_ = new qfw::ListWidget(page);
     modelList_->setSelectionMode(QAbstractItemView::SingleSelection);
     modelList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    modelPreviewLabel_ = new QLabel(page);
+    modelList_->hide();
+    modelCountLabel_ = new qfw::CaptionLabel(page);
+    modelCountLabel_->hide();
+
+    modelPageStack_ = new QStackedWidget(page);
+    modelPageStack_->setObjectName(QStringLiteral("nativeModelPageStack"));
+    layout->addWidget(modelPageStack_, 1);
+
+    modelDetailPage_ = new QWidget(modelPageStack_);
+    auto* detailLayout = new QVBoxLayout(modelDetailPage_);
+    detailLayout->setContentsMargins(0, 0, 0, 0);
+    detailLayout->setSpacing(10);
+
+    auto* title = new qfw::TitleLabel(QStringLiteral("Live2D 模型详情"), modelDetailPage_);
+    title->setAlignment(Qt::AlignCenter);
+    detailLayout->addWidget(title);
+    auto* subtitle = new qfw::SubtitleLabel(
+        QStringLiteral("从右侧列表选择已有模型，或点击切换按钮修改角色/服装。"),
+        modelDetailPage_);
+    subtitle->setAlignment(Qt::AlignCenter);
+    subtitle->setWordWrap(true);
+    detailLayout->addWidget(subtitle);
+
+    auto* body = new QHBoxLayout();
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(12);
+
+    auto* previewCard = new QFrame(modelDetailPage_);
+    previewCard->setObjectName(QStringLiteral("nativeModelPreviewCard"));
+    previewCard->setMinimumWidth(270);
+    previewCard->setMaximumWidth(290);
+    previewCard->setMinimumHeight(420);
+    previewCard->setStyleSheet(QStringLiteral(
+        "QFrame#nativeModelPreviewCard { background: #ffffff; border: 1px solid #e6e8ed; "
+        "border-radius: 12px; }"));
+    auto* previewLayout = new QVBoxLayout(previewCard);
+    previewLayout->setContentsMargins(20, 16, 20, 18);
+    previewLayout->setSpacing(8);
+    modelPreviewLabel_ = new QLabel(previewCard);
     modelPreviewLabel_->setAlignment(Qt::AlignCenter);
-    modelPreviewLabel_->setFixedSize(230, 280);
+    modelPreviewLabel_->setMinimumSize(220, 250);
+    modelPreviewLabel_->setMaximumHeight(280);
+    modelPreviewLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     modelPreviewLabel_->setText(QStringLiteral("Live2D"));
     modelPreviewLabel_->setStyleSheet(QStringLiteral(
-        "QLabel { color: #e90050; background: #fff7fa; border-radius: 10px; "
+        "QLabel { color: #e4004f; background: transparent; border: none; "
         "font-size: 22px; font-weight: 700; }"));
-    modelDetailsLabel_ = new qfw::BodyLabel(QStringLiteral("选择角色或服装查看详情"), page);
+    previewLayout->addWidget(modelPreviewLabel_, 1, Qt::AlignHCenter);
+    modelNameLabel_ = new qfw::TitleLabel(QStringLiteral("尚未选择角色"), previewCard);
+    modelNameLabel_->setAlignment(Qt::AlignCenter);
+    modelNameLabel_->setWordWrap(true);
+    previewLayout->addWidget(modelNameLabel_);
+    modelCostumeLabel_ = new qfw::StrongBodyLabel(QStringLiteral("服装：-"), previewCard);
+    modelCostumeLabel_->setAlignment(Qt::AlignCenter);
+    modelCostumeLabel_->setWordWrap(true);
+    previewLayout->addWidget(modelCostumeLabel_);
+    modelBandLabel_ = new qfw::BodyLabel(QStringLiteral("乐队：-"), previewCard);
+    modelBandLabel_->setAlignment(Qt::AlignCenter);
+    modelBandLabel_->setWordWrap(true);
+    previewLayout->addWidget(modelBandLabel_);
+    modelDetailsLabel_ = new qfw::BodyLabel(QStringLiteral("选择角色或服装查看详情"), previewCard);
     modelDetailsLabel_->setWordWrap(true);
-    auto* clickProfiles = new qfw::GroupHeaderCardWidget(QStringLiteral("点击动作反馈"), page);
-    auto* profileSelector = new QWidget(clickProfiles);
+    modelDetailsLabel_->setAlignment(Qt::AlignCenter);
+    modelDetailsLabel_->setStyleSheet(QStringLiteral("QLabel { color: #687385; }"));
+    previewLayout->addWidget(modelDetailsLabel_);
+
+    auto* actionCard = new QFrame(modelDetailPage_);
+    actionCard->setObjectName(QStringLiteral("nativeModelActionCard"));
+    actionCard->setMinimumWidth(290);
+    actionCard->setMinimumHeight(420);
+    actionCard->setStyleSheet(QStringLiteral(
+        "QFrame#nativeModelActionCard { background: #ffffff; border: 1px solid #e6e8ed; "
+        "border-radius: 18px; }"));
+    auto* actionLayout = new QVBoxLayout(actionCard);
+    actionLayout->setContentsMargins(12, 12, 12, 12);
+    actionLayout->setSpacing(7);
+
+    auto* switchButton = new QPushButton(QStringLiteral("切换\n角色/服装"), actionCard);
+    switchButton->setObjectName(QStringLiteral("nativeModelSwitchButton"));
+    switchButton->setCursor(Qt::PointingHandCursor);
+    switchButton->setFixedSize(132, 132);
+    switchButton->setStyleSheet(QStringLiteral(
+        "QPushButton#nativeModelSwitchButton { color: white; background: #e4004f; "
+        "border: none; border-radius: 66px; font-size: 18px; font-weight: 700; }"
+        "QPushButton#nativeModelSwitchButton:hover { background: #f02466; }"
+        "QPushButton#nativeModelSwitchButton:pressed { background: #b8003f; }"));
+    actionLayout->addWidget(switchButton, 0, Qt::AlignHCenter);
+    auto* switchHint = new qfw::CaptionLabel(QStringLiteral("选择新的角色或服装"), actionCard);
+    switchHint->setAlignment(Qt::AlignCenter);
+    switchHint->setStyleSheet(QStringLiteral("QLabel { color: #687385; }"));
+    actionLayout->addWidget(switchHint);
+
+    auto* profileTitle = new qfw::StrongBodyLabel(QStringLiteral("默认动作"), actionCard);
+    profileTitle->setAlignment(Qt::AlignCenter);
+    actionLayout->addWidget(profileTitle);
+    auto* profileSelector = new QWidget(actionCard);
     auto* profileSelectorLayout = new QHBoxLayout(profileSelector);
     profileSelectorLayout->setContentsMargins(0, 0, 0, 0);
     profileSelectorLayout->setSpacing(8);
     clickMotionProfileComboBox_ = new qfw::ComboBox(profileSelector);
-    clickMotionProfileComboBox_->setMinimumWidth(220);
-    clickMotionApplyButton_ = new qfw::PushButton(QStringLiteral("应用"), profileSelector);
+    clickMotionProfileComboBox_->setMinimumWidth(150);
+    clickMotionApplyButton_ = new qfw::PushButton(QStringLiteral("默认"), profileSelector);
     profileSelectorLayout->addWidget(clickMotionProfileComboBox_, 1);
     profileSelectorLayout->addWidget(clickMotionApplyButton_);
+    actionLayout->addWidget(profileSelector);
 
-    auto* customProfileEditor = new QWidget(clickProfiles);
+    auto* feedbackTitle = new qfw::StrongBodyLabel(QStringLiteral("点击动作反馈"), actionCard);
+    feedbackTitle->setAlignment(Qt::AlignCenter);
+    actionLayout->addWidget(feedbackTitle);
+    auto* customProfileEditor = new QWidget(actionCard);
     auto* customProfileLayout = new QHBoxLayout(customProfileEditor);
     customProfileLayout->setContentsMargins(0, 0, 0, 0);
     customProfileLayout->setSpacing(8);
     clickMotionProfileNameEdit_ = new qfw::LineEdit(customProfileEditor);
     clickMotionProfileNameEdit_->setPlaceholderText(QStringLiteral("自定义配置名称"));
     clickMotionProfileNameEdit_->setMaxLength(80);
-    clickMotionSaveButton_ = new qfw::PushButton(QStringLiteral("保存当前"), customProfileEditor);
+    clickMotionSaveButton_ = new qfw::PushButton(QStringLiteral("保存"), customProfileEditor);
     clickMotionDeleteButton_ = new qfw::PushButton(QStringLiteral("删除"), customProfileEditor);
     customProfileLayout->addWidget(clickMotionProfileNameEdit_, 1);
     customProfileLayout->addWidget(clickMotionSaveButton_);
     customProfileLayout->addWidget(clickMotionDeleteButton_);
+    actionLayout->addWidget(customProfileEditor);
     clickMotionStatusLabel_ = new qfw::CaptionLabel(
-        tr("Choose a configured costume to manage click feedback"), clickProfiles);
+        QStringLiteral("为每块点击位置分别设置动作和表情；修改后会同步到运行中的模型。"),
+        actionCard);
     clickMotionStatusLabel_->setWordWrap(true);
-    clickProfiles->addGroup(
-        qfw::FluentIcon(qfw::FluentIconEnum::Play),
-        tr("Active profile"),
-        tr("Built-in presets are resolved against this model's motions and expressions in Rust"),
-        profileSelector);
-    clickProfiles->addGroup(
-        qfw::FluentIcon(qfw::FluentIconEnum::Save),
-        tr("Custom profiles"),
-        tr("Save the selected costume's current click map or remove a custom profile"),
-        customProfileEditor);
-    clickProfiles->addGroup(
-        qfw::FluentIcon(qfw::FluentIconEnum::Info),
-        tr("Profile status"),
-        tr("Running pets receive the updated map through the shared Rust IPC session"),
-        clickMotionStatusLabel_);
-    launchSelectedButton_ = new qfw::PrimaryPushButton(QStringLiteral("切换角色/服装"), page);
-    auto* reloadButton = new qfw::PushButton(QStringLiteral("重新扫描模型"), page);
+    clickMotionStatusLabel_->setAlignment(Qt::AlignCenter);
+    clickMotionStatusLabel_->setStyleSheet(QStringLiteral("QLabel { color: #687385; }"));
+    actionLayout->addWidget(clickMotionStatusLabel_);
+    actionLayout->addStretch(1);
+    launchSelectedButton_ = new qfw::PrimaryPushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Play), QStringLiteral("启动所选模型"), actionCard);
+    launchSelectedButton_->setFixedHeight(36);
+    actionLayout->addWidget(launchSelectedButton_);
 
-    auto* buttons = new QHBoxLayout();
-    buttons->setSpacing(10);
-    buttons->addWidget(launchSelectedButton_);
-    buttons->addWidget(reloadButton);
-    buttons->addStretch(1);
+    body->addWidget(previewCard, 1);
+    body->addWidget(actionCard, 1);
+    detailLayout->addLayout(body, 1);
 
-    auto* body = new QHBoxLayout();
-    body->setSpacing(12);
-    auto* previewCard = new QFrame(page);
-    previewCard->setFixedWidth(280);
-    previewCard->setStyleSheet(QStringLiteral(
-        "QFrame { background: #ffffff; border: 1px solid #e6e8ed; border-radius: 10px; }"));
-    auto* previewLayout = new QVBoxLayout(previewCard);
-    previewLayout->setContentsMargins(24, 18, 24, 18);
-    previewLayout->setSpacing(10);
-    previewLayout->addWidget(modelPreviewLabel_, 0, Qt::AlignHCenter);
-    previewLayout->addWidget(modelDetailsLabel_);
-    previewLayout->addStretch(1);
-    auto* modelControls = new QWidget(page);
-    auto* modelControlsLayout = new QVBoxLayout(modelControls);
-    modelControlsLayout->setContentsMargins(0, 0, 0, 0);
-    modelControlsLayout->setSpacing(10);
-    modelControlsLayout->addWidget(new qfw::StrongBodyLabel(QStringLiteral("选择角色和服装"), modelControls));
-    modelControlsLayout->addWidget(modelCountLabel_);
-    modelList_->setMinimumHeight(150);
-    modelControlsLayout->addWidget(modelList_, 1);
-    modelControlsLayout->addWidget(clickProfiles);
-    body->addWidget(previewCard);
-    body->addWidget(modelControls, 1);
+    modelPickerPage_ = new QWidget(modelPageStack_);
+    auto* pickerLayout = new QVBoxLayout(modelPickerPage_);
+    pickerLayout->setContentsMargins(0, 0, 0, 0);
+    pickerLayout->setSpacing(10);
+    auto* pickerHeader = new QHBoxLayout();
+    pickerHeader->setContentsMargins(0, 0, 0, 0);
+    modelBackButton_ = new qfw::PushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::LeftArrow), QStringLiteral("返回"), modelPickerPage_);
+    modelBackButton_->setFixedWidth(100);
+    pickerHeader->addWidget(modelBackButton_);
+    pickerHeader->addStretch(1);
+    modelPickerTitle_ = new qfw::TitleLabel(QStringLiteral("选择乐队"), modelPickerPage_);
+    modelPickerTitle_->setAlignment(Qt::AlignCenter);
+    pickerHeader->addWidget(modelPickerTitle_);
+    pickerHeader->addStretch(1);
+    auto* headerBalance = new QWidget(modelPickerPage_);
+    headerBalance->setFixedWidth(100);
+    pickerHeader->addWidget(headerBalance);
+    pickerLayout->addLayout(pickerHeader);
+    modelPickerSubtitle_ = new qfw::SubtitleLabel(
+        QStringLiteral("请先选择乐队，再选择角色"), modelPickerPage_);
+    modelPickerSubtitle_->setAlignment(Qt::AlignCenter);
+    modelPickerSubtitle_->setWordWrap(true);
+    pickerLayout->addWidget(modelPickerSubtitle_);
 
-    layout->addWidget(title);
-    layout->addLayout(body, 1);
-    layout->addLayout(buttons);
+    auto* tools = new QHBoxLayout();
+    tools->setSpacing(10);
+    modelSearchEdit_ = new qfw::LineEdit(modelPickerPage_);
+    modelSearchEdit_->setPlaceholderText(QStringLiteral("搜索角色 / 乐队 / key"));
+    modelSearchEdit_->setClearButtonEnabled(true);
+    modelFilterComboBox_ = new qfw::ComboBox(modelPickerPage_);
+    modelFilterComboBox_->addItem(QStringLiteral("全部"), QVariant(), QStringLiteral("all"));
+    modelFilterComboBox_->addItem(QStringLiteral("Cubism 3"), QVariant(), QStringLiteral("moc3"));
+    modelFilterComboBox_->addItem(QStringLiteral("Cubism 2"), QVariant(), QStringLiteral("moc"));
+    modelFilterComboBox_->setFixedWidth(140);
+    auto* importButton = new qfw::PushButton(
+        qfw::FluentIcon(qfw::FluentIconEnum::Add),
+        QStringLiteral("导入自定义模型"),
+        modelPickerPage_);
+    importButton->setFixedWidth(150);
+    tools->addWidget(modelSearchEdit_, 1);
+    tools->addWidget(modelFilterComboBox_);
+    tools->addWidget(importButton);
+    pickerLayout->addLayout(tools);
+
+    auto* pickerScroll = new QScrollArea(modelPickerPage_);
+    pickerScroll->setWidgetResizable(true);
+    pickerScroll->setFrameShape(QFrame::NoFrame);
+    pickerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    pickerScroll->setStyleSheet(QStringLiteral(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollArea > QWidget > QWidget { background: transparent; }"));
+    auto* pickerGridWidget = new QWidget(pickerScroll);
+    pickerGridWidget->setObjectName(QStringLiteral("nativeModelPickerGrid"));
+    modelPickerGridLayout_ = new QGridLayout(pickerGridWidget);
+    modelPickerGridLayout_->setContentsMargins(4, 4, 4, 18);
+    modelPickerGridLayout_->setHorizontalSpacing(12);
+    modelPickerGridLayout_->setVerticalSpacing(12);
+    modelPickerGridLayout_->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+    pickerScroll->setWidget(pickerGridWidget);
+    pickerLayout->addWidget(pickerScroll, 1);
+
+    modelPageStack_->addWidget(modelDetailPage_);
+    modelPageStack_->addWidget(modelPickerPage_);
+    modelPageStack_->setCurrentWidget(modelDetailPage_);
 
     launchSelectedButton_->setEnabled(false);
     connect(
@@ -1384,8 +1515,412 @@ QWidget* NativeMainWindow::createModelsPage() {
     connect(clickMotionDeleteButton_, &QPushButton::clicked, this, [this]() {
         deleteSelectedClickMotionProfile();
     });
-    connect(reloadButton, &QPushButton::clicked, this, [this]() { reloadBackendState(); });
+    connect(switchButton, &QPushButton::clicked, this, [this]() { showModelPicker(); });
+    connect(modelBackButton_, &QPushButton::clicked, this, [this]() {
+        if (!modelPickerCharacter_.isEmpty()) {
+            modelPickerCharacter_.clear();
+            rebuildModelPicker();
+        } else if (!modelPickerBand_.isEmpty()) {
+            modelPickerBand_.clear();
+            rebuildModelPicker();
+        } else {
+            showModelDetail();
+        }
+    });
+    connect(modelSearchEdit_, &QLineEdit::textChanged, this, [this](const QString&) {
+        rebuildModelPicker();
+    });
+    connect(modelFilterComboBox_, &qfw::ComboBox::currentIndexChanged, this, [this](int) {
+        rebuildModelPicker();
+    });
+    connect(importButton, &QPushButton::clicked, this, [this]() {
+        QMessageBox::information(
+            this,
+            QStringLiteral("导入自定义模型"),
+            QStringLiteral("请将自定义模型目录放入：\n%1\n\n放置完成后会重新扫描模型。")
+                .arg(userModelsRoot_));
+        reloadBackendState();
+    });
     return page;
+}
+
+QJsonArray NativeMainWindow::modelBands() const {
+    QJsonArray bands;
+    QSet<QString> assignedCharacters;
+    QFile file(QDir(projectRoot_).filePath(QStringLiteral("band.json")));
+    if (file.open(QIODevice::ReadOnly)) {
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+        for (const QJsonValue& value : document.object().value(QStringLiteral("bands")).toArray()) {
+            if (!value.isObject()) {
+                continue;
+            }
+            const QJsonObject band = value.toObject();
+            for (const QJsonValue& character : band.value(QStringLiteral("characters")).toArray()) {
+                const QString key = character.toString().trimmed();
+                if (!key.isEmpty()) {
+                    assignedCharacters.insert(key);
+                }
+            }
+            bands.append(band);
+        }
+    }
+
+    QJsonArray customCharacters;
+    QSet<QString> customKeys;
+    for (const ModelCatalogItem& model : catalog_) {
+        if (!assignedCharacters.contains(model.character)
+            && !customKeys.contains(model.character)) {
+            customKeys.insert(model.character);
+            customCharacters.append(model.character);
+        }
+    }
+    if (!customCharacters.isEmpty()) {
+        bands.append(QJsonObject {
+            {QStringLiteral("id"), QStringLiteral("__custom_models__")},
+            {QStringLiteral("display"), QStringLiteral("自定义模型")},
+            {QStringLiteral("characters"), customCharacters},
+        });
+    }
+    return bands;
+}
+
+QString NativeMainWindow::modelBandDisplay(const QString& character) const {
+    for (const QJsonValue& value : modelBands()) {
+        const QJsonObject band = value.toObject();
+        for (const QJsonValue& item : band.value(QStringLiteral("characters")).toArray()) {
+            if (item.toString() == character) {
+                return band.value(QStringLiteral("display")).toString(
+                    band.value(QStringLiteral("id")).toString());
+            }
+        }
+    }
+    return QStringLiteral("其他角色");
+}
+
+void NativeMainWindow::showModelPicker() {
+    if (modelPageStack_ == nullptr || modelPickerPage_ == nullptr) {
+        return;
+    }
+    modelPickerBand_.clear();
+    modelPickerCharacter_.clear();
+    if (modelSearchEdit_ != nullptr) {
+        const QSignalBlocker blocker(modelSearchEdit_);
+        modelSearchEdit_->clear();
+    }
+    if (modelFilterComboBox_ != nullptr) {
+        const QSignalBlocker blocker(modelFilterComboBox_);
+        modelFilterComboBox_->setCurrentIndex(0);
+    }
+    modelPageStack_->setCurrentWidget(modelPickerPage_);
+    rebuildModelPicker();
+}
+
+void NativeMainWindow::showModelDetail() {
+    if (modelPageStack_ != nullptr && modelDetailPage_ != nullptr) {
+        modelPageStack_->setCurrentWidget(modelDetailPage_);
+    }
+}
+
+void NativeMainWindow::selectModelBand(const QString& bandId) {
+    modelPickerBand_ = bandId;
+    modelPickerCharacter_.clear();
+    rebuildModelPicker();
+}
+
+void NativeMainWindow::selectModelCharacter(const QString& character) {
+    modelPickerCharacter_ = character;
+    rebuildModelPicker();
+}
+
+void NativeMainWindow::selectModelPath(const QString& path) {
+    if (modelList_ == nullptr) {
+        return;
+    }
+    for (int row = 0; row < modelList_->count(); ++row) {
+        QListWidgetItem* item = modelList_->item(row);
+        if (item != nullptr && item->data(kPathRole).toString() == path) {
+            modelList_->setCurrentRow(row);
+            updateModelDetails();
+            showModelDetail();
+            return;
+        }
+    }
+}
+
+void NativeMainWindow::rebuildModelPicker() {
+    if (modelPickerGridLayout_ == nullptr || modelPickerTitle_ == nullptr
+        || modelPickerSubtitle_ == nullptr || modelBackButton_ == nullptr) {
+        return;
+    }
+    while (QLayoutItem* item = modelPickerGridLayout_->takeAt(0)) {
+        if (QWidget* widget = item->widget()) {
+            widget->deleteLater();
+        }
+        delete item;
+    }
+    for (int column = 0; column < 3; ++column) {
+        modelPickerGridLayout_->setColumnStretch(column, 1);
+    }
+
+    const QString query = modelSearchEdit_ == nullptr
+        ? QString()
+        : modelSearchEdit_->text().trimmed().toLower();
+    const QString formatFilter = modelFilterComboBox_ == nullptr
+        ? QStringLiteral("all")
+        : modelFilterComboBox_->currentData().toString();
+    auto formatMatches = [&formatFilter](const ModelCatalogItem& model) {
+        return formatFilter == QStringLiteral("all")
+            || model.format.compare(formatFilter, Qt::CaseInsensitive) == 0;
+    };
+    auto displayName = [this](const QString& character) {
+        for (const ModelCatalogItem& model : catalog_) {
+            if (model.character == character) {
+                return model.characterDisplay.isEmpty() ? character : model.characterDisplay;
+            }
+        }
+        return character;
+    };
+    auto makeCard = [](QWidget* parent, int height) {
+        auto* card = new QPushButton(parent);
+        card->setObjectName(QStringLiteral("nativeModelPickerCard"));
+        card->setCursor(Qt::PointingHandCursor);
+        card->setFixedSize(180, height);
+        card->setStyleSheet(QStringLiteral(
+            "QPushButton#nativeModelPickerCard { text-align: left; background: #ffffff; "
+            "border: 1px solid #ececf0; border-radius: 8px; }"
+            "QPushButton#nativeModelPickerCard:hover { background: #fff7fa; "
+            "border-color: #e4004f; }"
+            "QPushButton#nativeModelPickerCard:pressed { background: #ffe2ec; "
+            "border-color: #b8003f; }"));
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(14, 10, 14, 10);
+        cardLayout->setSpacing(4);
+        return qMakePair(card, cardLayout);
+    };
+    auto makeStatusDot = [](QWidget* parent) {
+        auto* dot = new QLabel(parent);
+        dot->setFixedSize(11, 11);
+        dot->setStyleSheet(QStringLiteral(
+            "QLabel { background: #2ecc71; border: 1px solid #d8f6e5; border-radius: 5px; }"));
+        dot->setAttribute(Qt::WA_TransparentForMouseEvents);
+        return dot;
+    };
+    auto addEmptyState = [this](const QString& text) {
+        auto* label = new qfw::BodyLabel(text, modelPickerGridLayout_->parentWidget());
+        label->setAlignment(Qt::AlignCenter);
+        label->setStyleSheet(QStringLiteral("QLabel { color: #687385; padding: 40px; }"));
+        modelPickerGridLayout_->addWidget(label, 0, 0, 1, 3);
+    };
+
+    int row = 0;
+    int column = 0;
+    int cardCount = 0;
+    auto addCard = [&](QWidget* card) {
+        modelPickerGridLayout_->addWidget(card, row, column, Qt::AlignTop | Qt::AlignHCenter);
+        ++cardCount;
+        if (++column >= 3) {
+            column = 0;
+            ++row;
+        }
+    };
+
+    const QJsonArray bands = modelBands();
+    if (modelPickerBand_.isEmpty()) {
+        modelBackButton_->hide();
+        modelPickerTitle_->setText(QStringLiteral("选择乐队"));
+        modelPickerSubtitle_->setText(QStringLiteral("请先选择乐队，再选择角色"));
+        for (const QJsonValue& value : bands) {
+            const QJsonObject band = value.toObject();
+            const QString bandId = band.value(QStringLiteral("id")).toString();
+            const QString bandName = band.value(QStringLiteral("display")).toString(bandId);
+            QStringList characters;
+            bool textMatches = query.isEmpty()
+                || bandId.toLower().contains(query)
+                || bandName.toLower().contains(query);
+            for (const QJsonValue& characterValue :
+                 band.value(QStringLiteral("characters")).toArray()) {
+                const QString character = characterValue.toString();
+                bool available = false;
+                for (const ModelCatalogItem& model : catalog_) {
+                    if (model.character == character && formatMatches(model)) {
+                        available = true;
+                        break;
+                    }
+                }
+                if (!available) {
+                    continue;
+                }
+                characters.append(character);
+                textMatches = textMatches
+                    || character.toLower().contains(query)
+                    || displayName(character).toLower().contains(query);
+            }
+            if (characters.isEmpty() || !textMatches) {
+                continue;
+            }
+            const auto cardParts = makeCard(modelPickerGridLayout_->parentWidget(), 120);
+            QPushButton* card = cardParts.first;
+            QVBoxLayout* cardLayout = cardParts.second;
+            auto* top = new QHBoxLayout();
+            top->setContentsMargins(0, 0, 0, 0);
+            auto* name = new qfw::StrongBodyLabel(bandName, card);
+            name->setAttribute(Qt::WA_TransparentForMouseEvents);
+            top->addWidget(name, 1);
+            top->addWidget(makeStatusDot(card));
+            cardLayout->addLayout(top);
+            auto* count = new qfw::CaptionLabel(
+                QStringLiteral("%1名角色").arg(characters.size()), card);
+            count->setStyleSheet(QStringLiteral("QLabel { color: #888888; }"));
+            count->setAttribute(Qt::WA_TransparentForMouseEvents);
+            cardLayout->addWidget(count);
+            const QString logoPath = band.value(QStringLiteral("logo")).toString();
+            if (!logoPath.isEmpty()) {
+                QPixmap logo(QDir(projectRoot_).filePath(logoPath));
+                if (!logo.isNull()) {
+                    auto* logoLabel = new QLabel(card);
+                    logoLabel->setAlignment(Qt::AlignCenter);
+                    logoLabel->setPixmap(logo.scaled(
+                        142, 42, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    logoLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+                    cardLayout->addWidget(logoLabel, 1);
+                }
+            }
+            cardLayout->addStretch(1);
+            connect(card, &QPushButton::clicked, this, [this, bandId]() {
+                selectModelBand(bandId);
+            });
+            addCard(card);
+        }
+        if (cardCount == 0) {
+            addEmptyState(QStringLiteral("没有找到匹配的乐队或角色"));
+        }
+        return;
+    }
+
+    QJsonObject selectedBand;
+    for (const QJsonValue& value : bands) {
+        if (value.toObject().value(QStringLiteral("id")).toString() == modelPickerBand_) {
+            selectedBand = value.toObject();
+            break;
+        }
+    }
+    const QString selectedBandName = selectedBand.value(QStringLiteral("display")).toString(
+        modelPickerBand_);
+
+    if (modelPickerCharacter_.isEmpty()) {
+        modelBackButton_->show();
+        modelBackButton_->setText(QStringLiteral("返回乐队"));
+        modelPickerTitle_->setText(QStringLiteral("选择角色"));
+        modelPickerSubtitle_->setText(
+            QStringLiteral("已选择 %1，请继续选择角色").arg(selectedBandName));
+        for (const QJsonValue& value :
+             selectedBand.value(QStringLiteral("characters")).toArray()) {
+            const QString character = value.toString();
+            QList<ModelCatalogItem> costumes;
+            for (const ModelCatalogItem& model : catalog_) {
+                if (model.character == character && formatMatches(model)) {
+                    costumes.append(model);
+                }
+            }
+            const QString characterName = displayName(character);
+            if (costumes.isEmpty()
+                || (!query.isEmpty()
+                    && !character.toLower().contains(query)
+                    && !characterName.toLower().contains(query)
+                    && !selectedBandName.toLower().contains(query))) {
+                continue;
+            }
+            const auto cardParts = makeCard(modelPickerGridLayout_->parentWidget(), 265);
+            QPushButton* card = cardParts.first;
+            QVBoxLayout* cardLayout = cardParts.second;
+            auto* top = new QHBoxLayout();
+            top->setContentsMargins(0, 0, 0, 0);
+            auto* name = new qfw::StrongBodyLabel(characterName, card);
+            name->setWordWrap(true);
+            name->setAttribute(Qt::WA_TransparentForMouseEvents);
+            top->addWidget(name, 1);
+            top->addWidget(makeStatusDot(card));
+            cardLayout->addLayout(top);
+            auto* count = new qfw::CaptionLabel(
+                QStringLiteral("%1套服装").arg(costumes.size()), card);
+            count->setStyleSheet(QStringLiteral("QLabel { color: #888888; }"));
+            count->setAttribute(Qt::WA_TransparentForMouseEvents);
+            cardLayout->addWidget(count);
+            const QByteArray image = backend_.modelCharacterImage(
+                projectRoot_, userModelsRoot_, character);
+            QPixmap preview;
+            if (!image.isEmpty() && preview.loadFromData(image)) {
+                auto* previewLabel = new QLabel(card);
+                previewLabel->setAlignment(Qt::AlignCenter);
+                previewLabel->setPixmap(preview.scaled(
+                    152, 190, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                previewLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+                cardLayout->addWidget(previewLabel, 1);
+            } else {
+                auto* fallback = new qfw::TitleLabel(characterName.left(2), card);
+                fallback->setAlignment(Qt::AlignCenter);
+                fallback->setStyleSheet(QStringLiteral("QLabel { color: #e4004f; }"));
+                fallback->setAttribute(Qt::WA_TransparentForMouseEvents);
+                cardLayout->addWidget(fallback, 1);
+            }
+            connect(card, &QPushButton::clicked, this, [this, character]() {
+                selectModelCharacter(character);
+            });
+            addCard(card);
+        }
+        if (cardCount == 0) {
+            addEmptyState(QStringLiteral("这个乐队中没有匹配的可用角色"));
+        }
+        return;
+    }
+
+    const QString characterName = displayName(modelPickerCharacter_);
+    modelBackButton_->show();
+    modelBackButton_->setText(QStringLiteral("返回角色"));
+    modelPickerTitle_->setText(QStringLiteral("选择服装"));
+    modelPickerSubtitle_->setText(
+        QStringLiteral("已选择 %1，请选择要使用的服装").arg(characterName));
+    for (const ModelCatalogItem& model : catalog_) {
+        if (model.character != modelPickerCharacter_ || !formatMatches(model)) {
+            continue;
+        }
+        const QString costumeName = model.costumeDisplay.isEmpty()
+            ? model.costume
+            : model.costumeDisplay;
+        if (!query.isEmpty()
+            && !costumeName.toLower().contains(query)
+            && !model.costume.toLower().contains(query)
+            && !model.path.toLower().contains(query)) {
+            continue;
+        }
+        const auto cardParts = makeCard(modelPickerGridLayout_->parentWidget(), 120);
+        QPushButton* card = cardParts.first;
+        QVBoxLayout* cardLayout = cardParts.second;
+        auto* top = new QHBoxLayout();
+        top->setContentsMargins(0, 0, 0, 0);
+        auto* name = new qfw::StrongBodyLabel(costumeName, card);
+        name->setWordWrap(true);
+        name->setAttribute(Qt::WA_TransparentForMouseEvents);
+        top->addWidget(name, 1);
+        top->addWidget(makeStatusDot(card));
+        cardLayout->addLayout(top);
+        auto* format = new qfw::BodyLabel(model.format.toUpper(), card);
+        format->setStyleSheet(QStringLiteral("QLabel { color: #e4004f; font-weight: 700; }"));
+        format->setAttribute(Qt::WA_TransparentForMouseEvents);
+        cardLayout->addWidget(format);
+        auto* file = new qfw::CaptionLabel(QFileInfo(model.path).fileName(), card);
+        file->setStyleSheet(QStringLiteral("QLabel { color: #888888; }"));
+        file->setAttribute(Qt::WA_TransparentForMouseEvents);
+        cardLayout->addWidget(file);
+        cardLayout->addStretch(1);
+        connect(card, &QPushButton::clicked, this, [this, path = model.path]() {
+            selectModelPath(path);
+        });
+        addCard(card);
+    }
+    if (cardCount == 0) {
+        addEmptyState(QStringLiteral("没有找到匹配的服装"));
+    }
 }
 
 QWidget* NativeMainWindow::createChatPage() {
@@ -9187,6 +9722,7 @@ void NativeMainWindow::applyTheme(const QString& mode) {
     } else {
         qfw::setTheme(qfw::Theme::Auto);
     }
+    qfw::setThemeColor(QColor(QStringLiteral("#e4004f")));
 }
 
 void NativeMainWindow::populateModelList() {
@@ -9243,6 +9779,9 @@ void NativeMainWindow::populateModelList() {
         modelList_->setCurrentRow(selectedRow);
     } else {
         updateModelDetails();
+    }
+    if (modelPageStack_ != nullptr && modelPageStack_->currentWidget() == modelPickerPage_) {
+        rebuildModelPicker();
     }
 }
 
@@ -9412,6 +9951,9 @@ void NativeMainWindow::updateModelDetails() {
     launchSelectedButton_->setEnabled(model.has_value());
     if (!model.has_value()) {
         modelDetailsLabel_->setText(tr("No pet model was found in either model root"));
+        modelNameLabel_->setText(QStringLiteral("尚未选择角色"));
+        modelCostumeLabel_->setText(QStringLiteral("服装：-"));
+        modelBandLabel_->setText(QStringLiteral("乐队：-"));
         modelPreviewLabel_->setPixmap({});
         modelPreviewLabel_->setText(QStringLiteral("Live2D"));
         syncClickMotionProfileControls();
@@ -9437,11 +9979,18 @@ void NativeMainWindow::updateModelDetails() {
                 ? model->character.left(2).toUpper()
                 : model->characterDisplay.left(2));
     }
+    const QString characterName = model->characterDisplay.isEmpty()
+        ? model->character
+        : model->characterDisplay;
+    const QString costumeName = model->costumeDisplay.isEmpty()
+        ? model->costume
+        : model->costumeDisplay;
+    modelNameLabel_->setText(characterName);
+    modelCostumeLabel_->setText(QStringLiteral("服装：%1").arg(costumeName));
+    modelBandLabel_->setText(QStringLiteral("乐队：%1").arg(modelBandDisplay(model->character)));
     modelDetailsLabel_->setText(
-        QStringLiteral("%1\n服装：%2\n格式：%3\n%4")
+        QStringLiteral("格式：%1 · %2")
             .arg(
-                model->characterDisplay.isEmpty() ? model->character : model->characterDisplay,
-                model->costumeDisplay.isEmpty() ? model->costume : model->costumeDisplay,
                 model->format.toUpper(),
                 tr("Configured mode: %1 · pixel assets: %2")
                     .arg(

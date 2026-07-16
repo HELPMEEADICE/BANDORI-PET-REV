@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
@@ -237,6 +238,7 @@ int main(int argc, char* argv[]) {
 
     Q_INIT_RESOURCE(resource);
     qfw::setTheme(qfw::Theme::Auto);
+    qfw::setThemeColor(QColor(QStringLiteral("#e4004f")));
 
     const QString resolvedProjectRoot = parser.isSet(projectRoot)
         ? QDir(parser.value(projectRoot)).absolutePath()
