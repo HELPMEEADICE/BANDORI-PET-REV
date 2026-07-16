@@ -392,6 +392,15 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   and the platform layer uses the current-user Windows Run key, a macOS
   LaunchAgent, or an XDG autostart desktop entry. Saved registrations include all
   resource/data/config/model-root overrides and are repaired on native startup.
+  The remaining desktop-pet behavior settings now cross the same native boundary.
+  Rust owns editable built-in/custom click-motion profiles, startup motion and
+  expression selection, emotion feedback, per-pet geometry and the compatibility
+  flags for game topmost, OBS window capture and model visibility. Qt applies
+  these settings live to isolated pets without restarting their LuaJIT state.
+  Compact chat, reminder and AI bubbles also preserve the legacy opacity, font,
+  background and foreground controls; Rust clamps numeric ranges and validates
+  colors before Qt builds the stylesheet. A blank legacy background still follows
+  the active user-avatar color.
   Headless runtime/contract tests pass; native GL/Qt shared-memory comparison
   still awaits a workstation or CI runner with Qt 6 and a display-capable GL
   context.

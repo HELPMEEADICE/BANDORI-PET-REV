@@ -53,6 +53,10 @@ pub enum IntegrationError {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NativeIntegrationSettings {
     pub compact_ai_window_enabled: bool,
+    pub compact_ai_window_opacity: i64,
+    pub compact_ai_window_font_size: i64,
+    pub compact_ai_window_background_color: String,
+    pub compact_ai_window_text_color: String,
     pub ai_event_overlay_enabled: bool,
     pub ai_status_enabled: bool,
     pub ai_status_port: u16,
@@ -69,6 +73,14 @@ pub struct NativeIntegrationSettings {
 struct NativeIntegrationSettingsInput {
     #[serde(default)]
     compact_ai_window_enabled: Option<bool>,
+    #[serde(default)]
+    compact_ai_window_opacity: Option<i64>,
+    #[serde(default)]
+    compact_ai_window_font_size: Option<i64>,
+    #[serde(default)]
+    compact_ai_window_background_color: Option<String>,
+    #[serde(default)]
+    compact_ai_window_text_color: Option<String>,
     #[serde(default)]
     ai_event_overlay_enabled: Option<bool>,
     #[serde(default)]
@@ -96,6 +108,10 @@ struct NativeIntegrationSettingsInput {
 #[derive(Clone, Debug)]
 struct RuntimeSettings {
     compact_ai_window_enabled: bool,
+    compact_ai_window_opacity: i64,
+    compact_ai_window_font_size: i64,
+    compact_ai_window_background_color: String,
+    compact_ai_window_text_color: String,
     ai_event_overlay_enabled: bool,
     ai_status_enabled: bool,
     ai_status_port: u16,
@@ -111,6 +127,10 @@ impl RuntimeSettings {
     fn view(&self) -> NativeIntegrationSettings {
         NativeIntegrationSettings {
             compact_ai_window_enabled: self.compact_ai_window_enabled,
+            compact_ai_window_opacity: self.compact_ai_window_opacity,
+            compact_ai_window_font_size: self.compact_ai_window_font_size,
+            compact_ai_window_background_color: self.compact_ai_window_background_color.clone(),
+            compact_ai_window_text_color: self.compact_ai_window_text_color.clone(),
             ai_event_overlay_enabled: self.ai_event_overlay_enabled,
             ai_status_enabled: self.ai_status_enabled,
             ai_status_port: self.ai_status_port,
@@ -156,6 +176,30 @@ pub fn save_native_integration_settings(
     let mut config = ConfigDocument::load(config_path)?;
     if let Some(value) = input.compact_ai_window_enabled {
         config.set("compact_ai_window_enabled", Value::Bool(value));
+    }
+    if let Some(value) = input.compact_ai_window_opacity {
+        config.set(
+            "compact_ai_window_opacity",
+            Value::from(value.clamp(10, 100)),
+        );
+    }
+    if let Some(value) = input.compact_ai_window_font_size {
+        config.set(
+            "compact_ai_window_font_size",
+            Value::from(value.clamp(8, 36)),
+        );
+    }
+    if let Some(value) = input.compact_ai_window_background_color {
+        config.set(
+            "compact_ai_window_background_color",
+            Value::String(normalized_overlay_color(&value, "")),
+        );
+    }
+    if let Some(value) = input.compact_ai_window_text_color {
+        config.set(
+            "compact_ai_window_text_color",
+            Value::String(normalized_overlay_color(&value, "#24242a")),
+        );
     }
     if let Some(value) = input.ai_event_overlay_enabled {
         config.set("ai_event_overlay_enabled", Value::Bool(value));
@@ -1121,6 +1165,20 @@ fn write_json(stream: &mut TcpStream, status: u16, payload: &Value) -> io::Resul
 fn runtime_settings(config: &ConfigDocument) -> RuntimeSettings {
     RuntimeSettings {
         compact_ai_window_enabled: config_bool(config, "compact_ai_window_enabled", false),
+        compact_ai_window_opacity: config_i64(config, "compact_ai_window_opacity", 44)
+            .clamp(10, 100),
+        compact_ai_window_font_size: config_i64(config, "compact_ai_window_font_size", 12)
+            .clamp(8, 36),
+        compact_ai_window_background_color: {
+            let configured = config_string(config, "compact_ai_window_background_color");
+            let fallback =
+                normalized_overlay_color(&config_string(config, "user_avatar_color"), "#fb7299");
+            normalized_overlay_color(&configured, &fallback)
+        },
+        compact_ai_window_text_color: normalized_overlay_color(
+            &config_string(config, "compact_ai_window_text_color"),
+            "#24242a",
+        ),
         ai_event_overlay_enabled: config_bool(config, "ai_event_overlay_enabled", false),
         ai_status_enabled: config_bool(config, "ai_status_port_enabled", false),
         ai_status_port: config_port(config, "ai_status_port", 38_472),
@@ -1155,6 +1213,30 @@ fn generate_token() -> Result<String, IntegrationError> {
 
 fn config_bool(config: &ConfigDocument, key: &str, fallback: bool) -> bool {
     config.get(key).and_then(Value::as_bool).unwrap_or(fallback)
+}
+
+fn config_i64(config: &ConfigDocument, key: &str, fallback: i64) -> i64 {
+    config
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_f64().map(|number| number.round() as i64))
+                .or_else(|| value.as_str().and_then(|text| text.parse::<i64>().ok()))
+        })
+        .unwrap_or(fallback)
+}
+
+fn normalized_overlay_color(value: &str, fallback: &str) -> String {
+    let value = value.trim();
+    let valid = matches!(value.len(), 4 | 7 | 9)
+        && value.starts_with('#')
+        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit());
+    if valid {
+        value.to_ascii_lowercase()
+    } else {
+        fallback.to_owned()
+    }
 }
 
 fn config_port(config: &ConfigDocument, key: &str, fallback: u16) -> u16 {
@@ -1268,18 +1350,26 @@ mod tests {
         let path = directory.path().join("config.json");
         let view = save_native_integration_settings(
             &path,
-            r#"{
+            r##"{
                 "chat_enabled":true,
                 "chat_port":70000,
                 "ai_status_enabled":true,
-                "ai_status_port":-4
-            }"#,
+                "ai_status_port":-4,
+                "compact_ai_window_opacity":500,
+                "compact_ai_window_font_size":2,
+                "compact_ai_window_background_color":"#ABCDEF",
+                "compact_ai_window_text_color":"not-css"
+            }"##,
         )
         .unwrap();
         assert!(view.chat_token_configured);
         assert!(view.ai_status_token_configured);
         assert_eq!(view.chat_port, 65_535);
         assert_eq!(view.ai_status_port, 1024);
+        assert_eq!(view.compact_ai_window_opacity, 100);
+        assert_eq!(view.compact_ai_window_font_size, 8);
+        assert_eq!(view.compact_ai_window_background_color, "#abcdef");
+        assert_eq!(view.compact_ai_window_text_color, "#24242a");
         let source = std::fs::read_to_string(path).unwrap();
         let saved: Value = serde_json::from_str(&source).unwrap();
         assert!(saved["chat_integration_token"].as_str().unwrap().len() >= 24);

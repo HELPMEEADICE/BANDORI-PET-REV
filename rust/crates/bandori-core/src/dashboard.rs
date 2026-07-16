@@ -52,6 +52,9 @@ pub struct NativeRuntimeSnapshot {
     pub live2d_scale: i64,
     pub fps: i64,
     pub opacity: f64,
+    pub game_topmost: bool,
+    pub obs_window_capture_compatible: bool,
+    pub hide_live2d_model: bool,
     pub lip_sync_max_open: f64,
     pub hit_alpha_threshold: i64,
     pub idle_actions_enabled: bool,
@@ -69,6 +72,10 @@ pub struct NativeRuntimeSnapshot {
     pub chat_attachment_retention_days: i64,
     pub birthday_tray_notifications_enabled: bool,
     pub compact_ai_window_enabled: bool,
+    pub compact_ai_window_opacity: i64,
+    pub compact_ai_window_font_size: i64,
+    pub compact_ai_window_background_color: String,
+    pub compact_ai_window_text_color: String,
     pub ai_event_overlay_enabled: bool,
     pub chat_integration_overlay_enabled: bool,
     pub configured_pets: Vec<ConfiguredPetSnapshot>,
@@ -87,6 +94,9 @@ pub struct DashboardSnapshot {
 pub struct NativeSettingsUpdate {
     pub fps: Option<i64>,
     pub opacity: Option<f64>,
+    pub game_topmost: Option<bool>,
+    pub obs_window_capture_compatible: Option<bool>,
+    pub hide_live2d_model: Option<bool>,
     pub auto_start: Option<bool>,
     pub dark_theme: Option<String>,
     pub vsync: Option<bool>,
@@ -138,6 +148,15 @@ impl NativeSettingsUpdate {
         }
         if let Some(opacity) = self.opacity {
             config.set("opacity", Value::from(opacity.clamp(0.05, 1.0)));
+        }
+        if let Some(enabled) = self.game_topmost {
+            config.set("game_topmost", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.obs_window_capture_compatible {
+            config.set("obs_window_capture_compatible", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.hide_live2d_model {
+            config.set("hide_live2d_model", Value::Bool(enabled));
         }
         if let Some(enabled) = self.auto_start {
             config.set("auto_start", Value::Bool(enabled));
@@ -356,6 +375,13 @@ impl NativeRuntimeSnapshot {
             live2d_scale: normalized_live2d_scale(values),
             fps: int_value(values, "fps", 120).clamp(1, 1000),
             opacity: float_value(values, "opacity", 1.0).clamp(0.05, 1.0),
+            game_topmost: bool_value(values, "game_topmost", false),
+            obs_window_capture_compatible: bool_value(
+                values,
+                "obs_window_capture_compatible",
+                false,
+            ),
+            hide_live2d_model: bool_value(values, "hide_live2d_model", false),
             lip_sync_max_open: float_value(values, "live2d_lip_sync_max_open", 0.55)
                 .clamp(0.0, 1.0),
             hit_alpha_threshold: int_value(values, "live2d_hit_alpha_threshold", 8).clamp(0, 255),
@@ -383,6 +409,23 @@ impl NativeRuntimeSnapshot {
                 true,
             ),
             compact_ai_window_enabled: bool_value(values, "compact_ai_window_enabled", false),
+            compact_ai_window_opacity: int_value(values, "compact_ai_window_opacity", 44)
+                .clamp(10, 100),
+            compact_ai_window_font_size: int_value(values, "compact_ai_window_font_size", 12)
+                .clamp(8, 36),
+            compact_ai_window_background_color: {
+                let configured = string_value(values, "compact_ai_window_background_color", "");
+                if configured.trim().is_empty() {
+                    string_value(values, "user_avatar_color", "#fb7299")
+                } else {
+                    configured
+                }
+            },
+            compact_ai_window_text_color: string_value(
+                values,
+                "compact_ai_window_text_color",
+                "#24242a",
+            ),
             ai_event_overlay_enabled: bool_value(values, "ai_event_overlay_enabled", false),
             chat_integration_overlay_enabled: bool_value(
                 values,
@@ -529,6 +572,9 @@ mod tests {
             json!({
                 "fps": 240,
                 "opacity": 0.7,
+                "game_topmost": true,
+                "obs_window_capture_compatible": true,
+                "hide_live2d_model": true,
                 "vsync": false,
                 "live2d_quality": "performance",
                 "live2d_scale": 250,
@@ -546,6 +592,10 @@ mod tests {
                 "chat_window_width": 900,
                 "chat_window_height": 700,
                 "active_user_profile": "alice",
+                "compact_ai_window_opacity": 63,
+                "compact_ai_window_font_size": 17,
+                "compact_ai_window_background_color": "#123456",
+                "compact_ai_window_text_color": "#abcdef",
                 "llm_api_key": "must-not-leak",
                 "model_action_settings": {
                     "tomorin\tlive_01": {
@@ -570,6 +620,13 @@ mod tests {
         let snapshot = NativeRuntimeSnapshot::from_config(&config);
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.fps, 240);
+        assert!(snapshot.game_topmost);
+        assert!(snapshot.obs_window_capture_compatible);
+        assert!(snapshot.hide_live2d_model);
+        assert_eq!(snapshot.compact_ai_window_opacity, 63);
+        assert_eq!(snapshot.compact_ai_window_font_size, 17);
+        assert_eq!(snapshot.compact_ai_window_background_color, "#123456");
+        assert_eq!(snapshot.compact_ai_window_text_color, "#abcdef");
         assert_eq!(snapshot.active_user_key, "alice");
         assert!(!snapshot.vsync);
         assert_eq!(snapshot.live2d_quality, "performance");
@@ -688,6 +745,9 @@ mod tests {
             r#"{
                 "fps": 999,
                 "opacity": 0.01,
+                "game_topmost": true,
+                "obs_window_capture_compatible": true,
+                "hide_live2d_model": true,
                 "auto_start": true,
                 "dark_theme": "on",
                 "vsync": false,
@@ -713,6 +773,9 @@ mod tests {
         let saved: Value = serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
         assert_eq!(runtime.fps, 240);
         assert_eq!(runtime.opacity, 0.05);
+        assert!(runtime.game_topmost);
+        assert!(runtime.obs_window_capture_compatible);
+        assert!(runtime.hide_live2d_model);
         assert!(runtime.auto_start);
         assert_eq!(runtime.dark_theme, "on");
         assert!(!runtime.vsync);
@@ -731,6 +794,9 @@ mod tests {
         assert!(!runtime.birthday_tray_notifications_enabled);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["auto_start"], true);
+        assert_eq!(saved["game_topmost"], true);
+        assert_eq!(saved["obs_window_capture_compatible"], true);
+        assert_eq!(saved["hide_live2d_model"], true);
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
         assert_eq!(saved["emotion_behavior_enabled"], false);
         assert_eq!(saved["chat_window_x"], -100_000);

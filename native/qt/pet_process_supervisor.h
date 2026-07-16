@@ -27,6 +27,9 @@ struct PetLaunchSpec {
     int y = -1;
     int fps = 120;
     double opacity = 1.0;
+    bool gameTopmost = false;
+    bool obsWindowCaptureCompatible = false;
+    bool hideLive2dModel = false;
     bool vsync = true;
     QString live2dQuality = QStringLiteral("balanced");
     int live2dScale = 100;
@@ -45,6 +48,10 @@ struct PetLaunchSpec {
     bool mutualGazeEnabled = false;
     bool emotionBehaviorEnabled = true;
     bool compactAiWindowEnabled = false;
+    int compactAiWindowOpacity = 44;
+    int compactAiWindowFontSize = 12;
+    QString compactAiWindowBackgroundColor = QStringLiteral("#fb7299");
+    QString compactAiWindowTextColor = QStringLiteral("#24242a");
     bool aiEventOverlayEnabled = false;
     bool chatIntegrationOverlayEnabled = true;
 };

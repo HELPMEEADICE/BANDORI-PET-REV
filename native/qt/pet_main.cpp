@@ -3,6 +3,7 @@
 #include "pet_ipc_client.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCursor>
@@ -68,6 +69,90 @@ bool optionBool(const QString& value, bool fallback = false) {
         return false;
     }
     return fallback;
+}
+
+QString normalizedOverlayColor(const QString& value, const QString& fallback) {
+    const QString normalized = value.trimmed().toLower();
+    if (!normalized.startsWith(u'#')
+        || (normalized.size() != 4 && normalized.size() != 7 && normalized.size() != 9)) {
+        return fallback;
+    }
+    for (qsizetype index = 1; index < normalized.size(); ++index) {
+        const QChar character = normalized.at(index);
+        const bool asciiDigit = character >= u'0' && character <= u'9';
+        const bool asciiHex = character >= u'a' && character <= u'f';
+        if (!asciiDigit && !asciiHex) {
+            return fallback;
+        }
+    }
+    return normalized;
+}
+
+QString compactOverlayStyle(
+    int opacityPercent,
+    int fontSize,
+    const QString& background,
+    const QString& foreground) {
+    QColor backgroundColor(
+        normalizedOverlayColor(background, QStringLiteral("#fb7299")));
+    backgroundColor.setAlphaF(std::clamp(opacityPercent, 10, 100) / 100.0);
+    const QString textColor =
+        normalizedOverlayColor(foreground, QStringLiteral("#24242a"));
+    return QStringLiteral(
+               "QLabel { color: %1; background: rgba(%2, %3, %4, %5); "
+               "border: 1px solid rgba(255, 255, 255, 72); border-radius: 12px; "
+               "font-size: %6px; }")
+        .arg(textColor)
+        .arg(backgroundColor.red())
+        .arg(backgroundColor.green())
+        .arg(backgroundColor.blue())
+        .arg(backgroundColor.alpha())
+        .arg(std::clamp(fontSize, 8, 36));
+}
+
+void applyObsWindowCaptureStyle(QWidget& widget, bool enabled) {
+#ifdef Q_OS_WIN
+    const HWND handle = reinterpret_cast<HWND>(widget.winId());
+    if (handle == nullptr) {
+        return;
+    }
+    const LONG_PTR current = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+    const LONG_PTR next = enabled
+        ? ((current & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW)
+        : ((current & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW);
+    if (next != current) {
+        SetWindowLongPtrW(handle, GWL_EXSTYLE, next);
+        SetWindowPos(
+            handle,
+            nullptr,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+#else
+    Q_UNUSED(widget);
+    Q_UNUSED(enabled);
+#endif
+}
+
+void enforceGameTopmost(QWidget& widget, bool enabled) {
+    if (!enabled || !widget.isVisible()) {
+        return;
+    }
+#ifdef Q_OS_WIN
+    SetWindowPos(
+        reinterpret_cast<HWND>(widget.winId()),
+        HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+#else
+    widget.raise();
+#endif
 }
 
 bool earlyBooleanOption(
@@ -442,6 +527,21 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Window opacity"),
         QStringLiteral("opacity"),
         QStringLiteral("1.0"));
+    QCommandLineOption gameTopmost(
+        QStringLiteral("game-topmost"),
+        QStringLiteral("Continuously restore the pet above games and full-screen windows"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
+    QCommandLineOption obsWindowCaptureCompatible(
+        QStringLiteral("obs-window-capture-compatible"),
+        QStringLiteral("Expose the native pet as an application window for OBS capture"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
+    QCommandLineOption hideLive2dModel(
+        QStringLiteral("hide-live2d-model"),
+        QStringLiteral("Keep the pet process active without showing its model window"),
+        QStringLiteral("bool"),
+        QStringLiteral("false"));
     QCommandLineOption vsync(
         QStringLiteral("vsync"),
         QStringLiteral("Enable the OpenGL swap interval before QApplication starts"),
@@ -528,6 +628,26 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Show compact native event bubbles"),
         QStringLiteral("bool"),
         QStringLiteral("false"));
+    QCommandLineOption compactAiWindowOpacity(
+        QStringLiteral("compact-ai-window-opacity"),
+        QStringLiteral("Compact event bubble background opacity (10-100)"),
+        QStringLiteral("percent"),
+        QStringLiteral("44"));
+    QCommandLineOption compactAiWindowFontSize(
+        QStringLiteral("compact-ai-window-font-size"),
+        QStringLiteral("Compact event bubble font size (8-36)"),
+        QStringLiteral("pixels"),
+        QStringLiteral("12"));
+    QCommandLineOption compactAiWindowBackgroundColor(
+        QStringLiteral("compact-ai-window-background-color"),
+        QStringLiteral("Compact event bubble background color"),
+        QStringLiteral("color"),
+        QStringLiteral("#fb7299"));
+    QCommandLineOption compactAiWindowTextColor(
+        QStringLiteral("compact-ai-window-text-color"),
+        QStringLiteral("Compact event bubble text color"),
+        QStringLiteral("color"),
+        QStringLiteral("#24242a"));
     QCommandLineOption aiEventOverlayEnabled(
         QStringLiteral("ai-event-overlay-enabled"),
         QStringLiteral("Accept AI status overlay events"),
@@ -561,6 +681,9 @@ int main(int argc, char* argv[]) {
          positionY,
          fps,
          opacity,
+         gameTopmost,
+         obsWindowCaptureCompatible,
+         hideLive2dModel,
          vsync,
          quality,
          live2dScale,
@@ -579,6 +702,10 @@ int main(int argc, char* argv[]) {
          mutualGazeEnabled,
          emotionBehaviorEnabled,
          compactAiWindowEnabled,
+         compactAiWindowOpacity,
+         compactAiWindowFontSize,
+         compactAiWindowBackgroundColor,
+         compactAiWindowTextColor,
          aiEventOverlayEnabled,
          chatIntegrationOverlayEnabled,
          parentPid,
@@ -611,6 +738,17 @@ int main(int argc, char* argv[]) {
     bool mutualGaze = optionBool(parser.value(mutualGazeEnabled));
     bool emotionBehavior = optionBool(parser.value(emotionBehaviorEnabled), true);
     bool compactAiWindow = optionBool(parser.value(compactAiWindowEnabled));
+    int compactOverlayOpacity =
+        std::clamp(parser.value(compactAiWindowOpacity).toInt(), 10, 100);
+    int compactOverlayFontSize =
+        std::clamp(parser.value(compactAiWindowFontSize).toInt(), 8, 36);
+    QString compactOverlayBackground = normalizedOverlayColor(
+        parser.value(compactAiWindowBackgroundColor), QStringLiteral("#fb7299"));
+    QString compactOverlayForeground = normalizedOverlayColor(
+        parser.value(compactAiWindowTextColor), QStringLiteral("#24242a"));
+    bool gameTopmostEnabled = optionBool(parser.value(gameTopmost));
+    bool obsCaptureCompatible = optionBool(parser.value(obsWindowCaptureCompatible));
+    bool modelHidden = optionBool(parser.value(hideLive2dModel));
     bool aiEventOverlay = optionBool(parser.value(aiEventOverlayEnabled));
     bool chatIntegrationOverlay =
         optionBool(parser.value(chatIntegrationOverlayEnabled), true);
@@ -657,12 +795,19 @@ int main(int argc, char* argv[]) {
     reminderBubble.setAlignment(Qt::AlignCenter);
     reminderBubble.setWordWrap(true);
     reminderBubble.setMargin(10);
-    reminderBubble.setStyleSheet(QStringLiteral(
-        "QLabel { color: white; background: rgba(28, 28, 32, 220); "
-        "border: 1px solid rgba(255, 255, 255, 72); border-radius: 12px; "
-        "font-size: 13px; }"));
+    reminderBubble.setStyleSheet(compactOverlayStyle(
+        compactOverlayOpacity,
+        compactOverlayFontSize,
+        compactOverlayBackground,
+        compactOverlayForeground));
     reminderBubble.hide();
     int reminderBubbleGeneration = 0;
+    QTimer gameTopmostTimer;
+    gameTopmostTimer.setInterval(750);
+    QObject::connect(&gameTopmostTimer, &QTimer::timeout, &widget, [&widget, &gameTopmostEnabled]() {
+        enforceGameTopmost(widget, gameTopmostEnabled);
+    });
+    gameTopmostTimer.start();
     bandori::NativeRadialMenu radialMenu;
     radialMenu.setLocked(widget.dragLocked());
     radialMenu.setLanguage(parser.value(language));
@@ -977,6 +1122,13 @@ int main(int argc, char* argv[]) {
          &reminderBubble,
          &reminderBubbleGeneration,
          &compactAiWindow,
+         &compactOverlayOpacity,
+         &compactOverlayFontSize,
+         &compactOverlayBackground,
+         &compactOverlayForeground,
+         &gameTopmostEnabled,
+         &obsCaptureCompatible,
+         &modelHidden,
          &aiEventOverlay,
          &chatIntegrationOverlay,
          &radialMenu,
@@ -1306,6 +1458,32 @@ int main(int argc, char* argv[]) {
                 widget.setWindowOpacity(std::clamp(
                     settings.value(QStringLiteral("opacity")).toDouble(1.0), 0.05, 1.0));
             }
+            if (settings.contains(QStringLiteral("game_topmost"))) {
+                gameTopmostEnabled =
+                    settings.value(QStringLiteral("game_topmost")).toBool(false);
+                enforceGameTopmost(widget, gameTopmostEnabled);
+            }
+            if (settings.contains(QStringLiteral("obs_window_capture_compatible"))) {
+                obsCaptureCompatible = settings
+                                           .value(QStringLiteral(
+                                               "obs_window_capture_compatible"))
+                                           .toBool(false);
+                applyObsWindowCaptureStyle(widget, obsCaptureCompatible);
+            }
+            if (settings.contains(QStringLiteral("hide_live2d_model"))) {
+                modelHidden =
+                    settings.value(QStringLiteral("hide_live2d_model")).toBool(false);
+                if (modelHidden) {
+                    ++reminderBubbleGeneration;
+                    reminderBubble.hide();
+                    radialMenu.hide();
+                    widget.hide();
+                } else if (!widget.isVisible()) {
+                    widget.show();
+                    applyObsWindowCaptureStyle(widget, obsCaptureCompatible);
+                    enforceGameTopmost(widget, gameTopmostEnabled);
+                }
+            }
             if (settings.contains(QStringLiteral("live2d_lip_sync_max_open"))) {
                 widget.setLipSyncMaxOpen(
                     settings.value(QStringLiteral("live2d_lip_sync_max_open")).toDouble(0.55));
@@ -1361,6 +1539,50 @@ int main(int argc, char* argv[]) {
                 if (!compactAiWindow) {
                     ++reminderBubbleGeneration;
                     reminderBubble.hide();
+                }
+            }
+            bool compactStyleChanged = false;
+            if (settings.contains(QStringLiteral("compact_ai_window_opacity"))) {
+                compactOverlayOpacity = std::clamp(
+                    settings.value(QStringLiteral("compact_ai_window_opacity")).toInt(44),
+                    10,
+                    100);
+                compactStyleChanged = true;
+            }
+            if (settings.contains(QStringLiteral("compact_ai_window_font_size"))) {
+                compactOverlayFontSize = std::clamp(
+                    settings.value(QStringLiteral("compact_ai_window_font_size")).toInt(12),
+                    8,
+                    36);
+                compactStyleChanged = true;
+            }
+            if (settings.contains(QStringLiteral("compact_ai_window_background_color"))) {
+                compactOverlayBackground = normalizedOverlayColor(
+                    settings
+                        .value(QStringLiteral("compact_ai_window_background_color"))
+                        .toString(),
+                    QStringLiteral("#fb7299"));
+                compactStyleChanged = true;
+            }
+            if (settings.contains(QStringLiteral("compact_ai_window_text_color"))) {
+                compactOverlayForeground = normalizedOverlayColor(
+                    settings
+                        .value(QStringLiteral("compact_ai_window_text_color"))
+                        .toString(),
+                    QStringLiteral("#24242a"));
+                compactStyleChanged = true;
+            }
+            if (compactStyleChanged) {
+                reminderBubble.setStyleSheet(compactOverlayStyle(
+                    compactOverlayOpacity,
+                    compactOverlayFontSize,
+                    compactOverlayBackground,
+                    compactOverlayForeground));
+                if (reminderBubble.isVisible()) {
+                    reminderBubble.adjustSize();
+                    reminderBubble.move(
+                        std::max(8, (widget.width() - reminderBubble.width()) / 2),
+                        16);
                 }
             }
             if (settings.contains(QStringLiteral("ai_event_overlay_enabled"))) {
@@ -1453,6 +1675,10 @@ int main(int argc, char* argv[]) {
         });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, ipcClient, &bandori::PetIpcClient::stop);
     ipcClient->start();
-    widget.show();
+    if (!modelHidden) {
+        widget.show();
+        applyObsWindowCaptureStyle(widget, obsCaptureCompatible);
+        enforceGameTopmost(widget, gameTopmostEnabled);
+    }
     return app.exec();
 }

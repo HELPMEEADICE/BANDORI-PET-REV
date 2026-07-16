@@ -288,6 +288,39 @@ def test_native_click_motion_profiles_are_rust_owned_editable_and_hot_applied():
     assert 'QStringLiteral("click_motion_actions")' in pet
 
 
+def test_native_pet_window_compatibility_and_compact_style_apply_live():
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    integrations = source("rust/crates/bandori-core/src/local_integration.rs")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    window = source("native/qt/native_main_window.cpp")
+    pet = source("native/qt/pet_main.cpp")
+
+    for key in (
+        "game_topmost",
+        "obs_window_capture_compatible",
+        "hide_live2d_model",
+        "compact_ai_window_opacity",
+        "compact_ai_window_font_size",
+        "compact_ai_window_background_color",
+        "compact_ai_window_text_color",
+    ):
+        assert key in dashboard
+        assert f'QStringLiteral("{key}")' in window
+        assert f'QStringLiteral("{key}")' in pet
+    assert "normalized_overlay_color" in integrations
+    assert "bool gameTopmost = false" in supervisor_header
+    assert "bool obsWindowCaptureCompatible = false" in supervisor_header
+    assert "bool hideLive2dModel = false" in supervisor_header
+    assert 'QStringLiteral("--game-topmost")' in supervisor
+    assert 'QStringLiteral("--obs-window-capture-compatible")' in supervisor
+    assert 'QStringLiteral("--hide-live2d-model")' in supervisor
+    assert "applyObsWindowCaptureStyle" in pet
+    assert "enforceGameTopmost" in pet
+    assert "compactOverlayStyle" in pet
+    assert "if (!modelHidden)" in pet
+
+
 def test_native_chat_history_reads_existing_database_through_rust():
     core = source("rust/crates/bandori-core/src/chat_dashboard.rs")
     backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")

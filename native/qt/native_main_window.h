@@ -522,6 +522,10 @@ private:
     qfw::CheckBox* chatIntegrationClearTokenCheckBox_ = nullptr;
     qfw::SwitchButton* aiStatusEnabledSwitch_ = nullptr;
     qfw::SwitchButton* compactAiWindowSwitch_ = nullptr;
+    qfw::SpinBox* compactAiWindowOpacitySpinBox_ = nullptr;
+    qfw::SpinBox* compactAiWindowFontSizeSpinBox_ = nullptr;
+    qfw::LineEdit* compactAiWindowBackgroundEdit_ = nullptr;
+    qfw::LineEdit* compactAiWindowTextEdit_ = nullptr;
     qfw::SwitchButton* aiEventOverlaySwitch_ = nullptr;
     qfw::SpinBox* aiStatusPortSpinBox_ = nullptr;
     qfw::LineEdit* aiStatusTokenEdit_ = nullptr;
@@ -601,6 +605,9 @@ private:
     qfw::SettingCard* runtimeCard_ = nullptr;
     qfw::SpinBox* fpsSpinBox_ = nullptr;
     qfw::DoubleSpinBox* opacitySpinBox_ = nullptr;
+    qfw::SwitchButton* gameTopmostSwitch_ = nullptr;
+    qfw::SwitchButton* obsWindowCaptureSwitch_ = nullptr;
+    qfw::SwitchButton* hideLive2dModelSwitch_ = nullptr;
     qfw::SwitchButton* vsyncSwitch_ = nullptr;
     qfw::ComboBox* qualityComboBox_ = nullptr;
     qfw::SpinBox* scaleSpinBox_ = nullptr;

@@ -3126,6 +3126,22 @@ QWidget* NativeMainWindow::createIntegrationPage() {
     auto* aiStatus = new qfw::GroupHeaderCardWidget(tr("AI status webhook"), content);
     aiStatusEnabledSwitch_ = new qfw::SwitchButton(aiStatus);
     compactAiWindowSwitch_ = new qfw::SwitchButton(aiStatus);
+    compactAiWindowOpacitySpinBox_ = new qfw::SpinBox(aiStatus);
+    compactAiWindowOpacitySpinBox_->setRange(10, 100);
+    compactAiWindowOpacitySpinBox_->setSuffix(QStringLiteral(" %"));
+    compactAiWindowOpacitySpinBox_->setFixedWidth(112);
+    compactAiWindowFontSizeSpinBox_ = new qfw::SpinBox(aiStatus);
+    compactAiWindowFontSizeSpinBox_->setRange(8, 36);
+    compactAiWindowFontSizeSpinBox_->setSuffix(QStringLiteral(" px"));
+    compactAiWindowFontSizeSpinBox_->setFixedWidth(112);
+    compactAiWindowBackgroundEdit_ = new qfw::LineEdit(aiStatus);
+    compactAiWindowBackgroundEdit_->setMaxLength(9);
+    compactAiWindowBackgroundEdit_->setPlaceholderText(QStringLiteral("#fb7299"));
+    compactAiWindowBackgroundEdit_->setFixedWidth(128);
+    compactAiWindowTextEdit_ = new qfw::LineEdit(aiStatus);
+    compactAiWindowTextEdit_->setMaxLength(9);
+    compactAiWindowTextEdit_->setPlaceholderText(QStringLiteral("#24242a"));
+    compactAiWindowTextEdit_->setFixedWidth(128);
     aiEventOverlaySwitch_ = new qfw::SwitchButton(aiStatus);
     aiStatusPortSpinBox_ = new qfw::SpinBox(aiStatus);
     aiStatusPortSpinBox_->setRange(1024, 65535);
@@ -3151,6 +3167,26 @@ QWidget* NativeMainWindow::createIntegrationPage() {
         tr("Compact native event bubbles"),
         tr("Allow chat, reminder and AI event text to appear beside native pets"),
         compactAiWindowSwitch_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Transparent),
+        tr("Bubble opacity"),
+        tr("Adjust only the compact bubble background without changing pet opacity"),
+        compactAiWindowOpacitySpinBox_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Font),
+        tr("Bubble font size"),
+        tr("Use an 8-36 pixel font for compact event text"),
+        compactAiWindowFontSizeSpinBox_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Palette),
+        tr("Bubble background color"),
+        tr("Hex color; legacy blank values resolve to the active user avatar color"),
+        compactAiWindowBackgroundEdit_);
+    aiStatus->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Font),
+        tr("Bubble text color"),
+        tr("Hex color used for compact chat, reminder and AI event text"),
+        compactAiWindowTextEdit_);
     aiStatus->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::View),
         tr("Show AI status events"),
@@ -3385,6 +3421,9 @@ QWidget* NativeMainWindow::createSettingsPage() {
     opacitySpinBox_->setSingleStep(0.05);
     opacitySpinBox_->setDecimals(2);
     opacitySpinBox_->setFixedWidth(112);
+    gameTopmostSwitch_ = new qfw::SwitchButton(live2d);
+    obsWindowCaptureSwitch_ = new qfw::SwitchButton(live2d);
+    hideLive2dModelSwitch_ = new qfw::SwitchButton(live2d);
     vsyncSwitch_ = new qfw::SwitchButton(live2d);
     qualityComboBox_ = new qfw::ComboBox(live2d);
     qualityComboBox_->addItem(tr("Performance"), QVariant(), QStringLiteral("performance"));
@@ -3417,6 +3456,21 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Opacity"),
         tr("Window opacity shared by Live2D pets"),
         opacitySpinBox_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Up),
+        tr("Stay above games"),
+        tr("Continuously restore native pets to the topmost layer while games are active"),
+        gameTopmostSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Video),
+        tr("OBS window capture compatibility"),
+        tr("Expose each Windows pet as an application window instead of a tool window"),
+        obsWindowCaptureSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Hide),
+        tr("Hide pet models"),
+        tr("Keep each pet process and IPC session alive while hiding every pet window"),
+        hideLive2dModelSwitch_);
     live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::SpeedHigh),
         tr("Vertical synchronization"),
@@ -5946,6 +6000,8 @@ void NativeMainWindow::syncNativeIntegrationControls() {
     const QSignalBlocker chatContextBlocker(chatIntegrationContextSwitch_);
     const QSignalBlocker aiEnabledBlocker(aiStatusEnabledSwitch_);
     const QSignalBlocker compactBlocker(compactAiWindowSwitch_);
+    const QSignalBlocker compactOpacityBlocker(compactAiWindowOpacitySpinBox_);
+    const QSignalBlocker compactFontBlocker(compactAiWindowFontSizeSpinBox_);
     const QSignalBlocker aiOverlayBlocker(aiEventOverlaySwitch_);
     const QSignalBlocker aiPortBlocker(aiStatusPortSpinBox_);
     const QSignalBlocker napcatEnabledBlocker(napcatEnabledSwitch_);
@@ -5973,6 +6029,18 @@ void NativeMainWindow::syncNativeIntegrationControls() {
         integrationSettings_
             .value(QStringLiteral("compact_ai_window_enabled"))
             .toBool(false));
+    compactAiWindowOpacitySpinBox_->setValue(
+        integrationSettings_.value(QStringLiteral("compact_ai_window_opacity")).toInt(44));
+    compactAiWindowFontSizeSpinBox_->setValue(
+        integrationSettings_.value(QStringLiteral("compact_ai_window_font_size")).toInt(12));
+    compactAiWindowBackgroundEdit_->setText(
+        integrationSettings_
+            .value(QStringLiteral("compact_ai_window_background_color"))
+            .toString(QStringLiteral("#fb7299")));
+    compactAiWindowTextEdit_->setText(
+        integrationSettings_
+            .value(QStringLiteral("compact_ai_window_text_color"))
+            .toString(QStringLiteral("#24242a")));
     aiEventOverlaySwitch_->setChecked(
         integrationSettings_
             .value(QStringLiteral("ai_event_overlay_enabled"))
@@ -6068,6 +6136,14 @@ bool NativeMainWindow::saveNativeIntegrationSettings() {
          chatIntegrationClearTokenCheckBox_->isChecked()},
         {QStringLiteral("compact_ai_window_enabled"),
          compactAiWindowSwitch_->isChecked()},
+        {QStringLiteral("compact_ai_window_opacity"),
+         compactAiWindowOpacitySpinBox_->value()},
+        {QStringLiteral("compact_ai_window_font_size"),
+         compactAiWindowFontSizeSpinBox_->value()},
+        {QStringLiteral("compact_ai_window_background_color"),
+         compactAiWindowBackgroundEdit_->text().trimmed()},
+        {QStringLiteral("compact_ai_window_text_color"),
+         compactAiWindowTextEdit_->text().trimmed()},
         {QStringLiteral("ai_event_overlay_enabled"),
          aiEventOverlaySwitch_->isChecked()},
         {QStringLiteral("ai_status_enabled"), aiStatusEnabledSwitch_->isChecked()},
@@ -6126,17 +6202,62 @@ bool NativeMainWindow::saveNativeIntegrationSettings() {
     runtime_.insert(
         QStringLiteral("compact_ai_window_enabled"),
         integrationSettings_.value(QStringLiteral("compact_ai_window_enabled")));
+    for (const QString& key : {
+             QStringLiteral("compact_ai_window_opacity"),
+             QStringLiteral("compact_ai_window_font_size"),
+             QStringLiteral("compact_ai_window_background_color"),
+             QStringLiteral("compact_ai_window_text_color")}) {
+        runtime_.insert(key, integrationSettings_.value(key));
+    }
     runtime_.insert(
         QStringLiteral("ai_event_overlay_enabled"),
         integrationSettings_.value(QStringLiteral("ai_event_overlay_enabled")));
     runtime_.insert(
         QStringLiteral("chat_integration_overlay_enabled"),
         integrationSettings_.value(QStringLiteral("chat_overlay_enabled")));
+    for (PetLaunchSpec& spec : activeSpecs_) {
+        spec.compactAiWindowEnabled = integrationSettings_
+                                          .value(QStringLiteral("compact_ai_window_enabled"))
+                                          .toBool(false);
+        spec.compactAiWindowOpacity = integrationSettings_
+                                          .value(QStringLiteral("compact_ai_window_opacity"))
+                                          .toInt(44);
+        spec.compactAiWindowFontSize = integrationSettings_
+                                           .value(QStringLiteral("compact_ai_window_font_size"))
+                                           .toInt(12);
+        spec.compactAiWindowBackgroundColor = integrationSettings_
+                                                   .value(QStringLiteral(
+                                                       "compact_ai_window_background_color"))
+                                                   .toString(QStringLiteral("#fb7299"));
+        spec.compactAiWindowTextColor = integrationSettings_
+                                             .value(QStringLiteral(
+                                                 "compact_ai_window_text_color"))
+                                             .toString(QStringLiteral("#24242a"));
+        spec.aiEventOverlayEnabled = integrationSettings_
+                                         .value(QStringLiteral("ai_event_overlay_enabled"))
+                                         .toBool(false);
+        spec.chatIntegrationOverlayEnabled = integrationSettings_
+                                                  .value(QStringLiteral(
+                                                      "chat_overlay_enabled"))
+                                                  .toBool(true);
+    }
     if (supervisor_.isRunning()) {
         supervisor_.broadcastSettings(compactJson({
             {QStringLiteral("compact_ai_window_enabled"),
              integrationSettings_
                  .value(QStringLiteral("compact_ai_window_enabled"))},
+            {QStringLiteral("compact_ai_window_opacity"),
+             integrationSettings_
+                 .value(QStringLiteral("compact_ai_window_opacity"))},
+            {QStringLiteral("compact_ai_window_font_size"),
+             integrationSettings_
+                 .value(QStringLiteral("compact_ai_window_font_size"))},
+            {QStringLiteral("compact_ai_window_background_color"),
+             integrationSettings_
+                 .value(QStringLiteral("compact_ai_window_background_color"))},
+            {QStringLiteral("compact_ai_window_text_color"),
+             integrationSettings_
+                 .value(QStringLiteral("compact_ai_window_text_color"))},
             {QStringLiteral("ai_event_overlay_enabled"),
              integrationSettings_
                  .value(QStringLiteral("ai_event_overlay_enabled"))},
@@ -7942,6 +8063,12 @@ void NativeMainWindow::syncSettingsControls() {
     }
     fpsSpinBox_->setValue(runtime_.value(QStringLiteral("fps")).toInt(120));
     opacitySpinBox_->setValue(runtime_.value(QStringLiteral("opacity")).toDouble(1.0));
+    gameTopmostSwitch_->setChecked(
+        runtime_.value(QStringLiteral("game_topmost")).toBool(false));
+    obsWindowCaptureSwitch_->setChecked(
+        runtime_.value(QStringLiteral("obs_window_capture_compatible")).toBool(false));
+    hideLive2dModelSwitch_->setChecked(
+        runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false));
     vsyncSwitch_->setChecked(runtime_.value(QStringLiteral("vsync")).toBool(true));
     const QString quality =
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
@@ -8018,6 +8145,10 @@ void NativeMainWindow::saveNativeSettings() {
     const QJsonObject settings {
         {QStringLiteral("fps"), fpsSpinBox_->value()},
         {QStringLiteral("opacity"), opacitySpinBox_->value()},
+        {QStringLiteral("game_topmost"), gameTopmostSwitch_->isChecked()},
+        {QStringLiteral("obs_window_capture_compatible"),
+         obsWindowCaptureSwitch_->isChecked()},
+        {QStringLiteral("hide_live2d_model"), hideLive2dModelSwitch_->isChecked()},
         {QStringLiteral("auto_start"), desiredAutoStart},
         {QStringLiteral("vsync"), vsyncSwitch_->isChecked()},
         {QStringLiteral("live2d_quality"), quality},
@@ -8048,6 +8179,9 @@ void NativeMainWindow::saveNativeSettings() {
     for (PetLaunchSpec& spec : activeSpecs_) {
         spec.fps = fpsSpinBox_->value();
         spec.opacity = opacitySpinBox_->value();
+        spec.gameTopmost = gameTopmostSwitch_->isChecked();
+        spec.obsWindowCaptureCompatible = obsWindowCaptureSwitch_->isChecked();
+        spec.hideLive2dModel = hideLive2dModelSwitch_->isChecked();
         spec.vsync = vsyncSwitch_->isChecked();
         spec.live2dQuality = quality;
         spec.live2dScale = scaleSpinBox_->value();
@@ -9752,6 +9886,11 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
                : runtime_.value(QStringLiteral("window_y")).toInt(-1));
     spec.fps = runtime_.value(QStringLiteral("fps")).toInt(120);
     spec.opacity = runtime_.value(QStringLiteral("opacity")).toDouble(1.0);
+    spec.gameTopmost = runtime_.value(QStringLiteral("game_topmost")).toBool(false);
+    spec.obsWindowCaptureCompatible =
+        runtime_.value(QStringLiteral("obs_window_capture_compatible")).toBool(false);
+    spec.hideLive2dModel =
+        runtime_.value(QStringLiteral("hide_live2d_model")).toBool(false);
     spec.vsync = runtime_.value(QStringLiteral("vsync")).toBool(true);
     spec.live2dQuality =
         runtime_.value(QStringLiteral("live2d_quality")).toString(QStringLiteral("balanced"));
@@ -9783,6 +9922,17 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
         runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true);
     spec.compactAiWindowEnabled =
         runtime_.value(QStringLiteral("compact_ai_window_enabled")).toBool(false);
+    spec.compactAiWindowOpacity =
+        runtime_.value(QStringLiteral("compact_ai_window_opacity")).toInt(44);
+    spec.compactAiWindowFontSize =
+        runtime_.value(QStringLiteral("compact_ai_window_font_size")).toInt(12);
+    spec.compactAiWindowBackgroundColor = runtime_
+                                              .value(QStringLiteral(
+                                                  "compact_ai_window_background_color"))
+                                              .toString(QStringLiteral("#fb7299"));
+    spec.compactAiWindowTextColor = runtime_
+                                        .value(QStringLiteral("compact_ai_window_text_color"))
+                                        .toString(QStringLiteral("#24242a"));
     spec.aiEventOverlayEnabled =
         runtime_.value(QStringLiteral("ai_event_overlay_enabled")).toBool(false);
     spec.chatIntegrationOverlayEnabled =
