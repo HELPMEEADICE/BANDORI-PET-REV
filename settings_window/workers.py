@@ -210,6 +210,28 @@ class ModelPackageDownloadWorker(QThread):
         })
 
 
+class ModelDetailImageWorker(QThread):
+    finished = Signal(dict)
+
+    def __init__(self, model_manager, character: str, parent=None):
+        super().__init__(parent)
+        self._model_manager = model_manager
+        self._character = str(character or "")
+
+    def run(self):
+        path = self._model_manager.get_character_image_path(self._character)
+        if self.isInterruptionRequested():
+            return
+        data = self._model_manager.get_character_image_data(self._character)
+        if self.isInterruptionRequested():
+            return
+        self.finished.emit({
+            "character": self._character,
+            "path": path,
+            "data": data,
+        })
+
+
 class ModelDetailMetadataWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)

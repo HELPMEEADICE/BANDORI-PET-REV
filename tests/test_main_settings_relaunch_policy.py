@@ -29,3 +29,13 @@ def test_vsync_change_relaunches_active_pets_to_recreate_the_gl_surface():
     assert 'old_vsync = bool(cfg.get("vsync", True))' in settings_block
     assert 'vsync_changed = "vsync" in data and requested_vsync != old_vsync' in settings_block
     assert "or vsync_changed" in settings_block
+
+
+def test_opening_settings_does_not_rescan_models_in_the_main_process():
+    source = _main_source()
+    launch_block = source.split("    def launch_settings_process(", 1)[1].split(
+        "    model_valid = bool(", 1
+    )[0]
+
+    assert "mgr = ModelManager()" not in launch_block
+    assert "first_run_wizard = bool(show_launch)" in launch_block

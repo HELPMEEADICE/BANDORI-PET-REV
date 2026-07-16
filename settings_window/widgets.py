@@ -5,9 +5,29 @@ import warnings
 from PySide6.QtGui import QAction, QOpenGLContext
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
-from qt_gl import gl
 from settings_window.constants import *
-from live2d_widget import Live2DWidget, render_pipeline_for_model
+
+
+class _LazyPreviewGL:
+    """Load PyOpenGL only when the user opens a Live2D preview."""
+
+    _instance = None
+
+    def __getattr__(self, name):
+        if self._instance is None:
+            from qt_gl import gl as preview_gl
+
+            self._instance = preview_gl
+        return getattr(self._instance, name)
+
+
+gl = _LazyPreviewGL()
+
+
+def _render_pipeline_for_model(model):
+    from live2d_widget import render_pipeline_for_model
+
+    return render_pipeline_for_model(model)
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -45,7 +65,9 @@ def connect_theme_changed_weak(widget, method_name: str):
 
 
 def configure_live2d_preview_surface_format():
-    Live2DWidget.configure_default_surface_format()
+    from live2d_surface_format import configure_live2d_surface_format
+
+    configure_live2d_surface_format()
 
 
 class Live2DPreviewRenderWidget(QOpenGLWidget):
@@ -61,7 +83,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._static_render_done = False
         self._render_w = 1
         self._render_h = 1
-        self._render_pipeline = render_pipeline_for_model(None)
+        self._render_pipeline = _render_pipeline_for_model(None)
         self._renderer_target_size = None
         self._ssaa_fbo = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
@@ -134,7 +156,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
                 if virtual:
                     clear_virtual_byte_cache()
             self._model = model
-            self._render_pipeline = render_pipeline_for_model(model)
+            self._render_pipeline = _render_pipeline_for_model(model)
             self._render_pipeline.prepare_model(model)
             if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
@@ -201,7 +223,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
     def _dispose_model(self):
         model = self._model
         self._model = None
-        self._render_pipeline = render_pipeline_for_model(None)
+        self._render_pipeline = _render_pipeline_for_model(None)
         self._renderer_target_size = None
         if self._ssaa_fbo is not None:
             self._ssaa_fbo.dispose()

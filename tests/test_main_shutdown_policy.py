@@ -54,7 +54,12 @@ def test_settings_cleanup_never_force_terminates_workers():
 def test_settings_process_handles_shutdown_ipc():
     source = Path("settings_process.py").read_text(encoding="utf-8")
     assert 'elif line == "SHUTDOWN":' in source
-    assert "QTimer.singleShot(0, window.close)" in source
+    shutdown = source.split('            elif line == "SHUTDOWN":', 1)[1].split(
+        "    def send_ipc_heartbeat", 1
+    )[0]
+    assert "window._keep_alive_on_close = False" in shutdown
+    assert "window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)" in shutdown
+    assert "QTimer.singleShot(0, close_for_shutdown)" in shutdown
 
 
 def test_chat_process_uses_immediate_shutdown_path():

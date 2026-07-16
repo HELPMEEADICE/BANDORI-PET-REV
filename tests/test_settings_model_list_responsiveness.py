@@ -9,6 +9,9 @@ from settings_window.settings_window import SettingsWindow
 
 
 class _FakeWidget:
+    def clear(self):
+        pass
+
     def show(self):
         pass
 
@@ -106,7 +109,12 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
         window._set_model_detail_metadata_loading = lambda: None
 
         queued = []
+        image_queued = []
         window._queue_model_detail_metadata_load = lambda item: queued.append(dict(item))
+        window._queue_model_detail_image_load = lambda character: image_queued.append(character)
+        window._load_detail_character_pixmap = lambda _character: self.fail(
+            "character image must not be decoded synchronously while opening settings"
+        )
         window._populate_default_motion_combo = lambda item: window._model_manager.get_motion_names(item["character"], item["costume"])
         window._populate_default_expression_combo = lambda _item: None
         window._populate_click_motion_combos = lambda _item: None
@@ -116,6 +124,7 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
         window._show_model_detail()
 
         self.assertEqual([{"character": "kasumi", "costume": "live_default"}], queued)
+        self.assertEqual(["kasumi"], image_queued)
 
     def test_rapid_metadata_requests_start_only_latest_load(self):
         class FakeTimer:

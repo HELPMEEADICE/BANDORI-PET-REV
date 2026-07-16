@@ -22,7 +22,7 @@ from model_manager import ModelManager
 from settings_window import SettingsWindow
 from app_theme import apply_app_theme
 from app_info import APP_NAME
-from live2d_widget import Live2DWidget
+from live2d_surface_format import configure_live2d_surface_format
 from gpu_acceleration import configure_qt_gpu_acceleration
 from ipc_bus import (
     attach_main_ipc_queues,
@@ -63,13 +63,14 @@ def main():
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
-    Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
+    configure_live2d_surface_format(cfg.get("vsync", True))
 
     app_user_model_id = f"{APP_NAME}.Settings"
     if not ensure_taskbar_icon_identity(app_user_model_id, "BandoriPet Settings", BASE_DIR):
         app_user_model_id = APP_NAME
     set_windows_app_user_model_id(app_user_model_id)
 
+    keep_alive = args.show_launch == "0"
     app = QApplication(sys.argv)
     install_parent_death_watch(app)
 
@@ -77,7 +78,7 @@ def main():
     macos_patch.hide_dock_icon_if_needed()
     app.setApplicationName(f"{APP_NAME}Settings")
     app.setOrganizationName(APP_NAME)
-    app.setQuitOnLastWindowClosed(True)
+    app.setQuitOnLastWindowClosed(not keep_alive)
     _apply_app_icon(app)
 
     apply_app_theme(cfg.get("dark_theme", False))
@@ -124,6 +125,7 @@ def main():
         config_manager=cfg,
         vsync=args.vsync == "1",
         live2d_module=None,
+        keep_alive_on_close=keep_alive,
     )
     window.connect_ipc_output(send_ipc_line)
 
@@ -158,14 +160,21 @@ def main():
             elif line == "FOCUS_SETTINGS":
                 bring_window_to_front()
             elif line == "SHUTDOWN":
-                QTimer.singleShot(0, window.close)
+                def close_for_shutdown():
+                    window._keep_alive_on_close = False
+                    window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+                    window.destroyed.connect(lambda *_: app.quit())
+                    window.close()
+
+                QTimer.singleShot(0, close_for_shutdown)
 
     def send_ipc_heartbeat():
         send_ipc_line("REGISTER\tSETTINGS")
 
     start_ipc_heartbeat(app, send_ipc_heartbeat, poll_ipc_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
-    window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    if not keep_alive:
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
     screen = app.primaryScreen()
     if screen:

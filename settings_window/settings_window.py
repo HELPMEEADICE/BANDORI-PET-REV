@@ -63,7 +63,8 @@ class SettingsWindow(
     def __init__(self, model_manager, current_char="", current_costume="",
                  current_fps=120, current_opacity=1.0, show_launch=True,
                  start_on_costumes=False, first_run_wizard=False,
-                 config_manager=None, vsync=True, live2d_module=None):
+                 config_manager=None, vsync=True, live2d_module=None,
+                 keep_alive_on_close=False):
         super().__init__()
         self._model_manager = model_manager
         self._live2d = live2d_module
@@ -107,6 +108,8 @@ class SettingsWindow(
         self._wizard_step = 0
         self._wizard_step_labels: list[BodyLabel] = []
         self._model_download_worker = None
+        self._model_detail_image_worker = None
+        self._model_detail_image_request_id = 0
         self._model_detail_metadata_worker = None
         self._model_detail_metadata_request_id = 0
         self._pending_model_detail_metadata_item = None
@@ -202,6 +205,7 @@ class SettingsWindow(
         self._compact_window_reset_position_pending = False
         self._pet_positions_reset_pending = False
         self._defer_config_save = False
+        self._keep_alive_on_close = bool(keep_alive_on_close)
 
         icon_path = _app_icon_path()
         if icon_path:
@@ -474,6 +478,12 @@ class SettingsWindow(
             return True
 
     def closeEvent(self, event):
+        if self._keep_alive_on_close:
+            self._hide_costume_preview()
+            self._launched = False
+            event.ignore()
+            self.hide()
+            return
         if self._close_waiting_for_workers:
             event.ignore()
             return
@@ -638,7 +648,8 @@ class SettingsWindow(
             '_test_worker', '_fetch_worker', '_mcp_test_worker',
             '_update_check_worker', '_update_apply_worker', '_tts_test_worker',
             '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker',
-            '_model_download_worker', '_model_detail_metadata_worker',
+            '_model_download_worker', '_model_detail_image_worker',
+            '_model_detail_metadata_worker',
             '_history_worker', '_history_filter_worker',
         )
         workers = list(self._retired_settings_workers)
@@ -753,8 +764,6 @@ class SettingsWindow(
         self._reserve_overlay_scrollbar(page_scroll, horizontal=True)
 
         side_panel = self._build_side_panel()
-
-        self._ensure_page("quality")
 
         right_layout.addWidget(page_scroll, 1)
         right_layout.addWidget(side_panel, 0)
@@ -2217,15 +2226,9 @@ class SettingsWindow(
         self._set_model_detail_metadata_loading()
         self._queue_model_detail_metadata_load(item)
 
-        pixmap = self._load_detail_character_pixmap(character)
-        if pixmap is not None and not pixmap.isNull():
-            self._detail_image.setPixmap(pixmap.scaled(
-                self._detail_image.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            ))
-        else:
-            self._detail_image.setText(display)
+        self._detail_image.clear()
+        self._detail_image.setText(display)
+        self._queue_model_detail_image_load(character)
 
     def _load_detail_character_pixmap(self, character: str):
         cache = getattr(self, "_detail_image_pixmap_cache", None)
@@ -2242,6 +2245,60 @@ class SettingsWindow(
         result = pixmap if not pixmap.isNull() else None
         cache[character] = result
         return result
+
+    def _queue_model_detail_image_load(self, character: str):
+        cache = getattr(self, "_detail_image_pixmap_cache", {})
+        if character in cache:
+            self._show_model_detail_pixmap(character, cache[character])
+            return
+
+        self._model_detail_image_request_id = getattr(self, "_model_detail_image_request_id", 0) + 1
+        request_id = self._model_detail_image_request_id
+        previous_worker = getattr(self, "_model_detail_image_worker", None)
+        if previous_worker is not None:
+            self._retire_settings_worker(previous_worker)
+
+        worker = ModelDetailImageWorker(self._model_manager, character, parent=self)
+        self._model_detail_image_worker = worker
+        worker.finished.connect(
+            lambda result, rid=request_id, w=worker: self._on_model_detail_image_loaded(rid, w, result)
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_model_detail_image_loaded(self, request_id: int, worker, result: dict):
+        self._retired_settings_workers = [
+            item for item in self._retired_settings_workers if item is not worker
+        ]
+        if getattr(self, "_model_detail_image_worker", None) is worker:
+            self._model_detail_image_worker = None
+        if request_id != getattr(self, "_model_detail_image_request_id", 0):
+            return
+        character = str(result.get("character", "") or "")
+        item = self._selected_model_item()
+        if not item or item.get("character") != character:
+            return
+
+        pixmap = QPixmap(str(result.get("path", "") or ""))
+        image_data = result.get("data", b"")
+        if pixmap.isNull() and image_data:
+            pixmap.loadFromData(image_data)
+        pixmap = pixmap if not pixmap.isNull() else None
+        self._detail_image_pixmap_cache[character] = pixmap
+        self._show_model_detail_pixmap(character, pixmap)
+
+    def _show_model_detail_pixmap(self, character: str, pixmap):
+        item = self._selected_model_item()
+        if not item or item.get("character") != character:
+            return
+        if pixmap is not None and not pixmap.isNull():
+            self._detail_image.setPixmap(pixmap.scaled(
+                self._detail_image.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        else:
+            self._detail_image.setText(self._model_manager.get_display_name(character))
 
     def _set_model_detail_metadata_loading(self):
         loading_text = _tr("SettingsWindow.loading", default="加载中...")

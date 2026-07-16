@@ -1566,7 +1566,6 @@ def main():
         )
 
     def launch_settings_process(show_launch=True, start_on_costumes=False, costume_character=""):
-        nonlocal mgr
         existing = settings_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
             if start_on_costumes:
@@ -1575,15 +1574,12 @@ def main():
                 broadcast_ipc_line("FOCUS_SETTINGS")
             return
         cfg.load()
-        mgr = ModelManager()
         current_char = costume_character if start_on_costumes and costume_character else cfg.get("character", char)
         current_costume = cfg.get("costume", costume)
-        current_model_valid = bool(
-            current_char and current_costume
-            and current_char in mgr.characters
-            and mgr.get_model_json_path(current_char, current_costume)
-        )
-        first_run_wizard = not (configured_models() or current_model_valid)
+        # ``show_launch`` is used only by the startup no-model path. Avoid a
+        # second synchronous model scan here; the settings process performs its
+        # own authoritative scan before constructing the model UI.
+        first_run_wizard = bool(show_launch)
         process = QProcess(app)
         program, arguments = process_program_and_args(BASE_DIR, "settings_process.py", [
             "--character", current_char,

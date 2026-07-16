@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +28,8 @@ CHARACTERS_DIR = BASE_DIR / "characters"
 MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
 MODEL_FORMAT_MOC = "moc"
 MODEL_FORMAT_MOC3 = "moc3"
+ARCHIVE_SCAN_CACHE_NAME = ".bandori_model_index.json"
+ARCHIVE_SCAN_CACHE_VERSION = 1
 
 
 def models_dir_exists() -> bool:
@@ -159,11 +162,106 @@ class ModelManager:
                 if entry.is_dir():
                     self._scan_model_dir(entry, override=override)
 
+            archive_cache = self._load_archive_scan_cache(root)
+            next_archive_cache = {}
             for entry in entries:
                 if entry.is_file() and entry.suffix.lower() == ".zst":
-                    result = self._read_model_archive(entry)
+                    result = self._cached_archive_scan_result(entry, archive_cache)
+                    if result is None:
+                        result = self._read_model_archive(entry)
                     if result is not None:
                         self._apply_archive_scan_result(result)
+                        next_archive_cache[str(entry.resolve())] = self._archive_scan_cache_record(entry, result)
+            if next_archive_cache != archive_cache:
+                self._save_archive_scan_cache(root, next_archive_cache)
+
+    @staticmethod
+    def _load_archive_scan_cache(root: Path) -> dict:
+        cache_path = root / ARCHIVE_SCAN_CACHE_NAME
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return {}
+        if not isinstance(data, dict) or data.get("version") != ARCHIVE_SCAN_CACHE_VERSION:
+            return {}
+        entries = data.get("archives", {})
+        return entries if isinstance(entries, dict) else {}
+
+    @staticmethod
+    def _save_archive_scan_cache(root: Path, archives: dict) -> None:
+        cache_path = root / ARCHIVE_SCAN_CACHE_NAME
+        temp_path = root / f"{ARCHIVE_SCAN_CACHE_NAME}.{os.getpid()}.tmp"
+        payload = {
+            "version": ARCHIVE_SCAN_CACHE_VERSION,
+            "archives": archives,
+        }
+        try:
+            temp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temp_path.replace(cache_path)
+        except OSError:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _archive_scan_cache_record(archive_path: Path, result: dict) -> dict:
+        stat = archive_path.stat()
+        cached_result = {
+            "character": result.get("character", ""),
+            "costumes": result.get("costumes", []),
+            "image_path": result.get("image_path", ""),
+            "model_paths": [list(item) for item in result.get("model_paths", [])],
+        }
+        return {
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "result": cached_result,
+        }
+
+    @staticmethod
+    def _cached_archive_scan_result(archive_path: Path, cache: dict):
+        resolved = str(archive_path.resolve())
+        record = cache.get(resolved)
+        if not isinstance(record, dict):
+            return None
+        try:
+            stat = archive_path.stat()
+        except OSError:
+            return None
+        if record.get("size") != stat.st_size or record.get("mtime_ns") != stat.st_mtime_ns:
+            return None
+        result = record.get("result")
+        if not isinstance(result, dict) or result.get("character") != archive_path.stem:
+            return None
+
+        prefix = f"{resolved}{VIRTUAL_SEP}"
+        costumes = result.get("costumes")
+        model_paths = result.get("model_paths")
+        image_path = result.get("image_path", "")
+        if not isinstance(costumes, list) or not isinstance(model_paths, list):
+            return None
+        if image_path and (not isinstance(image_path, str) or not image_path.startswith(prefix)):
+            return None
+        normalized_paths = []
+        for item in model_paths:
+            if not isinstance(item, (list, tuple)) or len(item) != 3:
+                return None
+            character, costume, model_path = item
+            if character != archive_path.stem or not isinstance(costume, str):
+                return None
+            if not isinstance(model_path, str) or not model_path.startswith(prefix):
+                return None
+            normalized_paths.append((character, costume, model_path))
+        return {
+            "character": archive_path.stem,
+            "costumes": costumes,
+            "image_path": image_path,
+            "model_paths": normalized_paths,
+        }
 
     def _merge_character_costumes(self, character: str, costumes: list[dict], override: bool = False):
         existing = self._characters.setdefault(character, {})
@@ -447,6 +545,9 @@ class ModelManager:
         return ""
 
     def get_model_format(self, character: str, costume: str) -> str:
+        for item in self.get_costumes(character):
+            if item.get("id") == costume and item.get("format") in {MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3}:
+                return item["format"]
         path = self.get_model_json_path(character, costume)
         if not path:
             return ""
