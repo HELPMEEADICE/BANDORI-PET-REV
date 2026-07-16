@@ -144,6 +144,7 @@ class SettingsWindow(
         self._mcp_computer_page = None
         self._data_management_page = None
         self._download_management_page = None
+        self._download_manager_scan_worker = None
         self._download_manager_workers: dict[str, QThread] = {}
         self._retired_settings_workers: list[QThread] = []
         self._close_waiting_for_workers = False
@@ -654,6 +655,7 @@ class SettingsWindow(
             '_asr_test_worker', '_asr_test_request_worker', '_asr_install_worker',
             '_model_download_worker', '_model_detail_image_worker',
             '_model_detail_metadata_worker',
+            '_download_manager_scan_worker',
             '_history_worker', '_history_filter_worker',
         )
         workers = list(self._retired_settings_workers)

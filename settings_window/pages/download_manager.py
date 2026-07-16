@@ -5,21 +5,29 @@ from settings_window.workers import ModelPackageDownloadWorker
 from model_manager import BAND_JSON, OUTFIT_JSON, model_lookup_dirs
 
 
-def discover_download_model_sources(search_dirs=None) -> dict[str, dict[str, list[Path]]]:
+def discover_download_model_sources(
+    search_dirs=None,
+    *,
+    cancelled=None,
+) -> dict[str, dict[str, list[Path]]]:
     """Return direct model package entries, retaining both archive and folder sources."""
     sources: dict[str, dict[str, list[Path]]] = {}
     for root in search_dirs if search_dirs is not None else model_lookup_dirs():
+        if cancelled is not None and cancelled():
+            break
         try:
             entries = sorted(Path(root).iterdir())
         except OSError:
             continue
         for entry in entries:
+            if cancelled is not None and cancelled():
+                return sources
             if entry.name.startswith(('.', '_')):
                 continue
             if entry.is_file() and entry.suffix.lower() == '.zst':
                 kind = 'archives'
                 character = entry.stem
-            elif entry.is_dir() and _contains_model_manifest(entry):
+            elif entry.is_dir() and _contains_model_manifest(entry, cancelled=cancelled):
                 kind = 'folders'
                 character = entry.name
             else:
@@ -33,28 +41,66 @@ def discover_download_model_sources(search_dirs=None) -> dict[str, dict[str, lis
     return sources
 
 
-def _contains_model_manifest(path: Path) -> bool:
+def _contains_model_manifest(path: Path, *, cancelled=None) -> bool:
     try:
-        return any(path.rglob('model.json')) or any(path.rglob('*.model3.json'))
+        for pattern in ('model.json', '*.model3.json'):
+            for _candidate in path.rglob(pattern):
+                if cancelled is not None and cancelled():
+                    return False
+                return True
     except OSError:
         return False
+    return False
 
 
-def _path_size(paths: list[Path]) -> int:
+def _path_size(paths: list[Path], *, cancelled=None) -> int:
     total = 0
     for path in paths:
+        if cancelled is not None and cancelled():
+            break
         try:
             if path.is_file():
                 total += path.stat().st_size
             elif path.is_dir():
-                total += sum(
-                    child.stat().st_size
-                    for child in path.rglob('*')
-                    if child.is_file()
-                )
+                for child in path.rglob('*'):
+                    if cancelled is not None and cancelled():
+                        return total
+                    try:
+                        if child.is_file():
+                            total += child.stat().st_size
+                    except OSError:
+                        continue
         except OSError:
             continue
     return total
+
+
+def scan_download_model_sources(search_dirs=None, *, cancelled=None) -> dict[str, dict]:
+    """Discover local model sources and calculate sizes away from the UI thread."""
+    sources = discover_download_model_sources(search_dirs, cancelled=cancelled)
+    for source in sources.values():
+        if cancelled is not None and cancelled():
+            return {}
+        source['archive_size'] = _path_size(source['archives'], cancelled=cancelled)
+        source['folder_size'] = _path_size(source['folders'], cancelled=cancelled)
+    return sources
+
+
+class DownloadManagerScanWorker(QThread):
+    """Build a filesystem snapshot without blocking settings navigation."""
+
+    def __init__(self, search_dirs=None, parent=None):
+        super().__init__(parent)
+        self._search_dirs = tuple(search_dirs) if search_dirs is not None else None
+        self.sources = None
+
+    def run(self):
+        sources = scan_download_model_sources(
+            self._search_dirs,
+            cancelled=self.isInterruptionRequested,
+        )
+        if not self.isInterruptionRequested():
+            self.sources = sources
 
 
 def _format_file_size(size: int) -> str:
@@ -100,7 +146,7 @@ class DownloadManagementPageMixin:
         )
         self._download_manager_refresh_btn.setFixedHeight(36)
         self._download_manager_refresh_btn.clicked.connect(
-            self._refresh_download_management_page
+            lambda _checked=False: self._refresh_download_management_page(force=True)
         )
         toolbar.addWidget(self._download_manager_refresh_btn)
         open_folder_btn = PushButton(
@@ -122,8 +168,13 @@ class DownloadManagementPageMixin:
 
         self._download_manager_action_buttons = {}
         self._download_manager_rows = {}
-        self._refresh_download_management_page()
-        self._connect_theme_changed(self._refresh_download_management_page)
+        self._download_manager_loaded = False
+        self._download_manager_render_generation = 0
+        self._download_manager_render_queue = []
+        self._download_manager_summary.setText(
+            f"{_tr('SettingsWindow.download_management_refresh', default='刷新')}…"
+        )
+        self._connect_theme_changed(self._restyle_download_manager_badges)
         return page
 
     def _download_manager_catalog(self) -> dict[str, dict]:
@@ -163,9 +214,8 @@ class DownloadManagementPageMixin:
             bands = []
         return [band for band in bands if isinstance(band, dict)]
 
-    def _download_manager_entries(self) -> list[dict]:
+    def _download_manager_entries(self, sources: dict[str, dict]) -> list[dict]:
         catalog = self._download_manager_catalog()
-        sources = discover_download_model_sources()
         for character in sources:
             catalog.setdefault(character, {
                 'character': character,
@@ -179,6 +229,8 @@ class DownloadManagementPageMixin:
                 **metadata,
                 'archives': source['archives'],
                 'folders': source['folders'],
+                'archive_size': int(source.get('archive_size') or 0),
+                'folder_size': int(source.get('folder_size') or 0),
             })
         return entries
 
@@ -206,11 +258,47 @@ class DownloadManagementPageMixin:
             ))
         return grouped
 
-    def _refresh_download_management_page(self):
+    def _refresh_download_management_page(self, force: bool = False):
         if not hasattr(self, '_download_manager_list_layout'):
             return
         if getattr(self, '_download_manager_workers', {}):
             return
+        if getattr(self, '_download_manager_loaded', False) and not force:
+            return
+        scan_worker = getattr(self, '_download_manager_scan_worker', None)
+        if scan_worker is not None:
+            return
+
+        self._download_manager_refresh_btn.setEnabled(False)
+        if not getattr(self, '_download_manager_loaded', False):
+            self._download_manager_summary.setText(
+                f"{_tr('SettingsWindow.download_management_refresh', default='刷新')}…"
+            )
+        worker = DownloadManagerScanWorker(parent=self)
+        self._download_manager_scan_worker = worker
+        worker.finished.connect(
+            lambda worker=worker: self._on_download_manager_scan_finished(worker)
+        )
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_download_manager_scan_finished(self, worker):
+        if worker is not getattr(self, '_download_manager_scan_worker', None):
+            return
+        self._download_manager_scan_worker = None
+        sources = worker.sources
+        if sources is None:
+            if not getattr(self, '_download_manager_workers', {}):
+                self._download_manager_refresh_btn.setEnabled(True)
+            return
+        self._download_manager_loaded = True
+        self._populate_download_management_page(
+            self._download_manager_entries(sources)
+        )
+
+    def _populate_download_management_page(self, entries: list[dict]):
+        self._download_manager_render_generation += 1
+        generation = self._download_manager_render_generation
         while self._download_manager_list_layout.count():
             item = self._download_manager_list_layout.takeAt(0)
             widget = item.widget()
@@ -219,7 +307,6 @@ class DownloadManagementPageMixin:
         self._download_manager_action_buttons = {}
         self._download_manager_rows = {}
 
-        entries = self._download_manager_entries()
         downloaded = sum(bool(entry['archives'] or entry['folders']) for entry in entries)
         self._download_manager_summary.setText(_tr(
             'SettingsWindow.download_management_summary',
@@ -227,13 +314,47 @@ class DownloadManagementPageMixin:
             downloaded=downloaded,
             total=len(entries),
         ))
+        render_queue = []
         for band_name, band_entries in self._group_download_manager_entries(entries):
-            band_label = SubtitleLabel(band_name, self._download_manager_list)
-            self._download_manager_list_layout.addWidget(band_label)
+            render_queue.append(('band', band_name))
             for entry in band_entries:
+                render_queue.append(('entry', entry))
+        self._download_manager_render_queue = render_queue
+        QTimer.singleShot(
+            0,
+            lambda generation=generation: self._render_download_manager_batch(generation),
+        )
+
+    def _render_download_manager_batch(self, generation: int):
+        if generation != getattr(self, '_download_manager_render_generation', 0):
+            return
+        queue = self._download_manager_render_queue
+        batch = queue[:6]
+        del queue[:6]
+        for kind, value in batch:
+            if kind == 'band':
                 self._download_manager_list_layout.addWidget(
-                    self._create_download_manager_card(entry)
+                    SubtitleLabel(value, self._download_manager_list)
                 )
+            else:
+                self._download_manager_list_layout.addWidget(
+                    self._create_download_manager_card(value)
+                )
+        if queue:
+            QTimer.singleShot(
+                0,
+                lambda generation=generation: self._render_download_manager_batch(generation),
+            )
+            return
+        if (
+            getattr(self, '_download_manager_scan_worker', None) is None
+            and not getattr(self, '_download_manager_workers', {})
+        ):
+            self._download_manager_refresh_btn.setEnabled(True)
+
+    def _restyle_download_manager_badges(self):
+        for row in getattr(self, '_download_manager_rows', {}).values():
+            self._style_download_manager_badge(row['badge'], row['entry'])
 
     def _create_download_manager_card(self, entry: dict) -> QWidget:
         card = CardWidget(self._download_manager_list)
@@ -311,13 +432,13 @@ class DownloadManagementPageMixin:
             descriptions.append(_tr(
                 'SettingsWindow.download_management_archive_detail',
                 default='ZST 包 {size}',
-                size=_format_file_size(_path_size(entry['archives'])),
+                size=_format_file_size(entry.get('archive_size', 0)),
             ))
         if entry['folders']:
             descriptions.append(_tr(
                 'SettingsWindow.download_management_folder_detail',
                 default='文件夹 {size}',
-                size=_format_file_size(_path_size(entry['folders'])),
+                size=_format_file_size(entry.get('folder_size', 0)),
             ))
         if not descriptions:
             descriptions.append(_tr(
@@ -507,6 +628,11 @@ class DownloadManagementPageMixin:
         entry = row['entry']
         archive = MODELS_DIR / f'{character}.zst'
         entry['archives'] = [archive] if archive.exists() else entry['archives']
+        if archive.exists():
+            try:
+                entry['archive_size'] = archive.stat().st_size
+            except OSError:
+                pass
         entry['catalogued'] = True
         row['detail'].setText(self._download_manager_entry_detail(entry))
         row['badge'].setText(self._download_manager_source_label(entry))

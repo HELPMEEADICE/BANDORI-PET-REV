@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from settings_window.pages.download_manager import (
     DownloadManagementPageMixin,
     discover_download_model_sources,
+    scan_download_model_sources,
 )
 from settings_window.settings_window import SettingsWindow
 from settings_window.workers import ModelPackageDownloadWorker
@@ -126,6 +127,33 @@ class DownloadManagementTests(unittest.TestCase):
 
         self.assertEqual(["kasumi.zst"], [path.name for path in sources["kasumi"]["archives"]])
         self.assertEqual(["custom"], [path.name for path in sources["custom"]["folders"]])
+
+    def test_scans_source_sizes_before_rendering(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "kasumi.zst").write_bytes(b"archive")
+            model_json = root / "custom" / "default" / "model.json"
+            model_json.parent.mkdir(parents=True)
+            model_json.write_text("{}", encoding="utf-8")
+
+            sources = scan_download_model_sources([root])
+
+        self.assertEqual(7, sources["kasumi"]["archive_size"])
+        self.assertEqual(2, sources["custom"]["folder_size"])
+
+    def test_cached_download_page_does_not_start_another_scan(self):
+        page = _DownloadPage()
+        page._download_manager_list_layout = object()
+        page._download_manager_workers = {}
+        page._download_manager_loaded = True
+        page._download_manager_scan_worker = None
+
+        with patch(
+            "settings_window.pages.download_manager.DownloadManagerScanWorker"
+        ) as scan_worker:
+            page._refresh_download_management_page()
+
+        scan_worker.assert_not_called()
 
     def test_overwrite_download_replaces_existing_zst_package(self):
         with tempfile.TemporaryDirectory() as temp_dir:
