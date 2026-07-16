@@ -76,6 +76,24 @@ class ModelManagerMoc3Test(unittest.TestCase):
 
             self.assertEqual("moc3", manager.get_model_format("anon", "live_01"))
 
+    def test_single_model_manager_uses_controller_format_without_catalog_scan(self):
+        from pet_process import SingleModelManager
+
+        manager = SingleModelManager("anon", "live_01", "model.json", "moc3")
+        with patch("pet_process.ModelManager", side_effect=AssertionError("catalog scan")):
+            self.assertEqual("moc3", manager.get_model_format("anon", "live_01"))
+        self.assertIsNone(manager._metadata_manager)
+
+    def test_model_manager_can_load_names_without_model_discovery(self):
+        with (
+            patch.object(ModelManager, "_scan", side_effect=AssertionError("full scan")),
+            patch.object(ModelManager, "_scan_model_keys", side_effect=AssertionError("key scan")),
+        ):
+            manager = ModelManager(discover_models=False)
+
+        self.assertEqual("仓田真白", manager.get_display_name("mashiro"))
+        self.assertEqual({}, manager._model_paths)
+
     def test_archive_scan_detects_model3_json_members(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

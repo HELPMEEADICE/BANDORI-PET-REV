@@ -1,5 +1,8 @@
 import time
 
+
+_DETAIL_IMAGE_PIXMAP_CACHE_LIMIT = 8
+
 from process_utils import app_data_dir, clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
@@ -479,7 +482,8 @@ class SettingsWindow(
 
     def closeEvent(self, event):
         if self._keep_alive_on_close:
-            self._hide_costume_preview()
+            self._dispose_live2d_preview()
+            self._detail_image_pixmap_cache.clear()
             self._launched = False
             event.ignore()
             self.hide()
@@ -2236,20 +2240,31 @@ class SettingsWindow(
             cache = {}
             self._detail_image_pixmap_cache = cache
         if character in cache:
-            return cache[character]
+            pixmap = cache.pop(character)
+            cache[character] = pixmap
+            return pixmap
 
         pixmap = QPixmap(self._model_manager.get_character_image_path(character))
         image_data = self._model_manager.get_character_image_data(character)
         if pixmap.isNull() and image_data:
             pixmap.loadFromData(image_data)
         result = pixmap if not pixmap.isNull() else None
-        cache[character] = result
+        self._cache_detail_character_pixmap(character, result)
         return result
+
+    def _cache_detail_character_pixmap(self, character: str, pixmap):
+        cache = self._detail_image_pixmap_cache
+        cache.pop(character, None)
+        cache[character] = pixmap
+        while len(cache) > _DETAIL_IMAGE_PIXMAP_CACHE_LIMIT:
+            cache.pop(next(iter(cache)))
 
     def _queue_model_detail_image_load(self, character: str):
         cache = getattr(self, "_detail_image_pixmap_cache", {})
         if character in cache:
-            self._show_model_detail_pixmap(character, cache[character])
+            pixmap = cache.pop(character)
+            cache[character] = pixmap
+            self._show_model_detail_pixmap(character, pixmap)
             return
 
         self._model_detail_image_request_id = getattr(self, "_model_detail_image_request_id", 0) + 1
@@ -2284,7 +2299,7 @@ class SettingsWindow(
         if pixmap.isNull() and image_data:
             pixmap.loadFromData(image_data)
         pixmap = pixmap if not pixmap.isNull() else None
-        self._detail_image_pixmap_cache[character] = pixmap
+        self._cache_detail_character_pixmap(character, pixmap)
         self._show_model_detail_pixmap(character, pixmap)
 
     def _show_model_detail_pixmap(self, character: str, pixmap):

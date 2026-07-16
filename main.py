@@ -92,7 +92,7 @@ def main():
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
-    apply_app_theme(cfg.get("dark_theme", False))
+    apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)
 
     mgr = ModelManager()
     pet_window_ref = {"processes": [], "closing_processes": []}
@@ -1326,7 +1326,7 @@ def main():
             cfg.set("language", language)
         dark = pet_window_ref.get("dark")
         if dark is not None:
-            apply_app_theme(dark)
+            apply_app_theme(dark, include_fluent=False)
             cfg.set("dark_theme", dark)
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "obs_window_capture_compatible",
@@ -1373,10 +1373,14 @@ def main():
         pet_window_ref["processes"] = []
         for idx, model in enumerate(models):
             process = QProcess(app)
+            model_format = mgr.get_model_format(
+                model["character"], model["costume"]
+            )
             program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
                 "--character", model["character"],
                 "--costume", model["costume"],
                 "--model-path", model["path"],
+                "--model-format", model_format,
                 "--index", str(idx),
                 "--group-characters", group_characters_arg,
             ])

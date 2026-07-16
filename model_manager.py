@@ -68,7 +68,13 @@ def prompt_download_model_resources(parent=None) -> None:
 
 
 class ModelManager:
-    def __init__(self, scan_models: bool = True):
+    def __init__(self, scan_models: bool = True, *, discover_models: bool = True):
+        """Load model metadata, optionally without discovering model files.
+
+        ``discover_models=False`` is for single-model child processes that
+        already received an exact model path from the controller and only need
+        display names from the small JSON metadata files.
+        """
         self._model_paths: dict[tuple[str, str], str] = {}
         self._character_images: dict[str, str] = {}
         self._characters: dict[str, dict] = {}
@@ -76,10 +82,11 @@ class ModelManager:
         self._bands: list[dict] = []
         self._advanced_roleplay_cache: dict[str, bool] | None = None
         self._model_json_cache: dict[str, dict] = {}
-        if scan_models:
-            self._scan()
-        else:
-            self._scan_model_keys()
+        if discover_models:
+            if scan_models:
+                self._scan()
+            else:
+                self._scan_model_keys()
         self._parse_outfit_json()
         self._parse_band_json()
 

@@ -2598,7 +2598,10 @@ class PetWindow(QWidget):
         if "opacity" in data:
             self.set_opacity(data["opacity"])
         if "dark_theme" in data:
-            apply_app_theme(data["dark_theme"])
+            apply_app_theme(
+                data["dark_theme"],
+                include_fluent=self._compact_ai_window is not None,
+            )
         if "vsync" in data:
             self._vsync = data["vsync"]
             self._live2d_widget.set_vsync(data["vsync"])
@@ -2730,12 +2733,12 @@ class PetWindow(QWidget):
             self._open_settings()
 
     def _update_tooltip(self):
+        if self._tray_icon is None:
+            return
         display = self._model_manager.get_display_name(self._current_char)
         costume_name = self._model_manager.get_costume_display_name(
             self._current_char, self._current_costume
         )
-        if self._tray_icon is None:
-            return
         self._tray_icon.setToolTip(
             _tr("PetWindow.tray_tooltip_with_model", display=display, costume=costume_name)
         )
@@ -3789,6 +3792,7 @@ class PetWindow(QWidget):
     def _ensure_compact_ai_window(self):
         if self._compact_ai_window is None:
             compact_ai_window_class = _compact_ai_window_class()
+            apply_app_theme(self._cfg.get("dark_theme", False))
             self._compact_ai_window = compact_ai_window_class(
                 self._current_char,
                 self._model_manager,

@@ -117,19 +117,29 @@ def accent_color(dark: bool = False) -> str:
     return BANDORI_PRIMARY_DARK if dark else BANDORI_PRIMARY
 
 
-def apply_app_theme(theme_value):
+def apply_app_theme(theme_value, *, include_fluent: bool = True):
+    """Apply the shared Qt font and, when needed, the Fluent widget theme.
+
+    The tray controller and Live2D pet use custom Qt widgets only. Importing
+    the complete Fluent widget package in those processes keeps a sizeable UI
+    module graph resident for no visual benefit, so callers can explicitly
+    skip that part while still receiving the application font.
+    """
     dark = resolve_theme_dark(theme_value)
-    qfluent = import_qfluentwidgets(lambda: __import__(
-        "qfluentwidgets", fromlist=["Theme", "setTheme", "setThemeColor"]
-    ))
-    assert_pyside6_fluent_widgets()
-    if hasattr(qfluent, "setFontFamilies"):
-        qfluent.setFontFamilies(platform_ui_font_families(), save=False)
     try:
         from PySide6.QtWidgets import QApplication
 
         apply_application_font(QApplication.instance())
     except Exception:
         pass
+    if not include_fluent:
+        return
+
+    qfluent = import_qfluentwidgets(lambda: __import__(
+        "qfluentwidgets", fromlist=["Theme", "setTheme", "setThemeColor"]
+    ))
+    assert_pyside6_fluent_widgets()
+    if hasattr(qfluent, "setFontFamilies"):
+        qfluent.setFontFamilies(platform_ui_font_families(), save=False)
     qfluent.setTheme(qfluent.Theme.DARK if dark else qfluent.Theme.LIGHT)
     qfluent.setThemeColor(accent_color(dark))

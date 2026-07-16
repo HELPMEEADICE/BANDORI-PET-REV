@@ -24,7 +24,13 @@ from app_info import APP_NAME
 from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d
-from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from model_manager import (
+    MODEL_FORMAT_MOC,
+    MODEL_FORMAT_MOC3,
+    ModelManager,
+    models_dir_exists,
+    prompt_download_model_resources,
+)
 from pet_window import PetWindow
 from gpu_acceleration import configure_qt_gpu_acceleration
 from tray_utils import load_tray_icon
@@ -35,6 +41,7 @@ def _parse_args():
     parser.add_argument("--character", required=True)
     parser.add_argument("--costume", required=True)
     parser.add_argument("--model-path", default="")
+    parser.add_argument("--model-format", choices=(MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3), default="")
     parser.add_argument("--index", type=int, default=0)
     parser.add_argument("--group-characters", default="")
     return parser.parse_args()
@@ -85,11 +92,18 @@ def _make_main_relauncher(index: int, normal_shutdown_requested: threading.Event
 
 
 class SingleModelManager:
-    def __init__(self, character: str, costume: str, model_path: str):
+    def __init__(self, character: str, costume: str, model_path: str, model_format: str = ""):
         self._character = character
         self._costume = costume
         self._model_path = model_path
+        self._model_format = model_format if model_format in {MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3} else ""
+        self._metadata_manager = None
         self._fallback_manager = None
+
+    def _get_metadata_manager(self):
+        if self._metadata_manager is None:
+            self._metadata_manager = ModelManager(scan_models=False, discover_models=False)
+        return self._metadata_manager
 
     @property
     def characters(self) -> list[str]:
@@ -109,19 +123,15 @@ class SingleModelManager:
         path = self.get_model_json_path(character, costume)
         if not path:
             return ""
-        if self._fallback_manager is None:
-            self._fallback_manager = ModelManager(scan_models=False)
-        return self._fallback_manager._model_format_from_path(path)
+        if character == self._character and costume == self._costume and self._model_format:
+            return self._model_format
+        return self._get_metadata_manager()._model_format_from_path(path)
 
     def get_display_name(self, character: str) -> str:
-        if self._fallback_manager is None:
-            self._fallback_manager = ModelManager()
-        return self._fallback_manager.get_display_name(character)
+        return self._get_metadata_manager().get_display_name(character)
 
     def get_costume_display_name(self, character: str, costume_id: str) -> str:
-        if self._fallback_manager is None:
-            self._fallback_manager = ModelManager()
-        return self._fallback_manager.get_costume_display_name(character, costume_id)
+        return self._get_metadata_manager().get_costume_display_name(character, costume_id)
 
 
 def main():
@@ -149,13 +159,22 @@ def main():
     app.setApplicationName(f"{APP_NAME}-{args.character}")
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
-    apply_app_theme(cfg.get("dark_theme", False))
+    apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)
 
     if not args.model_path and not models_dir_exists():
         prompt_download_model_resources()
         return 0
 
-    mgr = SingleModelManager(args.character, args.costume, args.model_path) if args.model_path else ModelManager()
+    mgr = (
+        SingleModelManager(
+            args.character,
+            args.costume,
+            args.model_path,
+            args.model_format,
+        )
+        if args.model_path
+        else ModelManager()
+    )
     group_characters = (
         _parse_group_characters(args.group_characters)
         if args.group_characters

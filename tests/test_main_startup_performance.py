@@ -50,3 +50,18 @@ def test_pet_process_defers_mcp_network_import_until_shutdown():
 
     assert "from mcp_bridge import close_mcp_clients" not in eager_imports
     assert "def close_mcp_clients_on_shutdown():" in source
+
+
+def test_non_fluent_processes_skip_the_fluent_theme_graph():
+    main_source = _source("main.py")
+    pet_source = _source("pet_process.py")
+
+    assert 'apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)' in main_source
+    assert 'apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)' in pet_source
+
+
+def test_controller_passes_the_known_model_format_to_pet_processes():
+    source = _source("main.py")
+
+    assert 'model_format = mgr.get_model_format(' in source
+    assert '"--model-format", model_format' in source

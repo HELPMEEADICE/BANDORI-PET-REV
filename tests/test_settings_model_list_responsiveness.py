@@ -213,6 +213,19 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
         self.assertEqual(1, manager.path_reads)
         self.assertEqual(1, manager.data_reads)
 
+    def test_detail_character_image_cache_is_bounded(self):
+        window = SettingsWindow.__new__(SettingsWindow)
+        window._detail_image_pixmap_cache = {}
+
+        for index in range(12):
+            window._cache_detail_character_pixmap(f"character-{index}", object())
+
+        self.assertEqual(8, len(window._detail_image_pixmap_cache))
+        self.assertEqual(
+            [f"character-{index}" for index in range(4, 12)],
+            list(window._detail_image_pixmap_cache),
+        )
+
     def test_apply_emits_model_selection_as_final_fallback(self):
         window = SettingsWindow.__new__(SettingsWindow)
         window._current_char = "kasumi"
