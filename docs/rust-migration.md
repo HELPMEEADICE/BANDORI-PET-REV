@@ -168,8 +168,14 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   reliable native IPC lane. The web tools are configured from the redacted
   Qt-Fluent LLM page and execute asynchronously in Rust with cancellation,
   public-DNS validation, per-redirect revalidation, DNS pinning, proxy bypass,
-  textual-content checks and bounded response bodies. Generic MCP and
-  computer-use tools remain staged. The database layer now also starts private chat
+  textual-content checks and bounded response bodies. Generic MCP orchestration
+  is native too: HTTP JSON-RPC and stdio servers initialize on the LLM worker,
+  discover bounded tool schemas, preserve session/protocol headers, enforce
+  allowed-tool and approval policies, propagate cancellation, and return
+  bounded text/structured results. OpenAI Responses may instead receive
+  provider-native MCP definitions when the server requires no approval;
+  Chat Completions and other endpoints use the local proxy definitions.
+  Computer-use tools remain staged. The database layer now also starts private chat
   turns transactionally, validates that a selected conversation belongs to the
   active character/user pair, and binds a successful streamed request back to
   that conversation before the Qt bridge may save its assistant response and
@@ -182,8 +188,8 @@ provided by the Lupa adapters; MOC and MOC3 never share a runtime or renderer.
   0-or-2..100 history limit, appends relationship and Qt-formatted current-time
   context only to the latest user message, and exposes the resulting request
   JSON through CXX-Qt without exposing the API key. Event-calendar context and
-  generic MCP/computer-use tools remain staged rather than being silently
-  approximated; event-calendar context, web tools, group prompts and the other
+  computer-use tools remain staged rather than being silently approximated;
+  event-calendar context, web/MCP tools, group prompts and the other
   supported native local tools are included in the current path. Completed
   responses are cleaned with Python-generated
   action-tag fixtures before persistence; parsed actions cross the reliable native IPC lane

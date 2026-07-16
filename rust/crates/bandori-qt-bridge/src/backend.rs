@@ -669,6 +669,7 @@ use bandori_core::llm_settings::{
 use bandori_core::local_integration::{
     NativeIntegrationServer, load_native_integration_settings, save_native_integration_settings,
 };
+use bandori_core::mcp_tools::NativeMcpRuntime;
 use bandori_core::memory_dashboard::{load_native_memory_snapshot, mutate_native_memories};
 use bandori_core::memory_extraction::{
     GLOBAL_MEMORY_CHARACTER, apply_model_relationship_analysis, apply_relationship_analysis,
@@ -5321,6 +5322,20 @@ where
 {
     let mut usage = None;
     let mut tool_results = Vec::new();
+    let mut mcp_runtime = if let Some(context) = tool_context {
+        NativeMcpRuntime::prepare_from_path(
+            Path::new(&context.config_path),
+            transport.effective_mode(),
+            cancellation,
+        )
+        .await
+        .unwrap_or_default()
+    } else {
+        NativeMcpRuntime::default()
+    };
+    request
+        .tools
+        .extend(mcp_runtime.tool_definitions().iter().cloned());
     for round in 0..MAX_NATIVE_TOOL_ROUNDS {
         let mut tool_calls = NativeToolCallAccumulator::default();
         let mut assistant_content = String::new();
@@ -5360,14 +5375,17 @@ where
         });
         let mut round_results = Vec::with_capacity(calls.len());
         for call in &calls {
-            round_results.push(
+            let result = if mcp_runtime.handles(&call.name) {
+                execute_mcp_tool_call(&mut mcp_runtime, call, cancellation).await
+            } else {
                 execute_native_tool_call_with_context_async(
                     call,
                     execution_context.as_ref(),
                     cancellation,
                 )
-                .await,
-            );
+                .await
+            };
+            round_results.push(result);
         }
         tool_results.extend(round_results.iter().cloned());
         if round + 1 >= MAX_NATIVE_TOOL_ROUNDS {
@@ -5398,6 +5416,40 @@ where
         }
     }
     unreachable!("the bounded native tool loop always returns")
+}
+
+async fn execute_mcp_tool_call(
+    runtime: &mut NativeMcpRuntime,
+    call: &bandori_core::chat_tools::NativeToolCall,
+    cancellation: &CancellationToken,
+) -> NativeToolResult {
+    let failure = |content: String| NativeToolResult {
+        call_id: call.call_id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        content,
+        succeeded: false,
+        effect: None,
+    };
+    if call.arguments_truncated {
+        return failure("MCP tool arguments exceeded the native safety limit".to_owned());
+    }
+    let arguments = match serde_json::from_str::<Value>(&call.arguments) {
+        Ok(Value::Object(arguments)) => arguments,
+        Ok(_) => return failure("MCP tool arguments must be a JSON object".to_owned()),
+        Err(error) => return failure(format!("MCP tool arguments are invalid JSON: {error}")),
+    };
+    match runtime.execute(&call.name, &arguments, cancellation).await {
+        Ok(content) => NativeToolResult {
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            content,
+            succeeded: true,
+            effect: None,
+        },
+        Err(error) => failure(error),
+    }
 }
 
 fn merge_token_usage(total: &mut Option<TokenUsage>, update: Option<TokenUsage>) {

@@ -2038,6 +2038,30 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         tr("Blocks credentials, private addresses and unsafe redirects; response bodies are bounded"),
         llmWebFetchSwitch_);
 
+    auto* mcpTools = new qfw::GroupHeaderCardWidget(tr("MCP tools"), content);
+    llmMcpEnabledSwitch_ = new qfw::SwitchButton(mcpTools);
+    llmMcpNativeSwitch_ = new qfw::SwitchButton(mcpTools);
+    llmMcpServersEdit_ = new qfw::PlainTextEdit(mcpTools);
+    llmMcpServersEdit_->setPlaceholderText(QStringLiteral(
+        "[{\n  \"enabled\": true,\n  \"label\": \"filesystem\",\n  \"transport\": \"stdio\",\n  \"command\": \"npx\",\n  \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \".\"],\n  \"require_approval\": \"always\"\n}]"));
+    llmMcpServersEdit_->setMinimumHeight(180);
+    llmMcpServersEdit_->setMaximumHeight(280);
+    mcpTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Code),
+        tr("Enable MCP"),
+        tr("Discover tools on enabled HTTP or stdio servers before the first model request"),
+        llmMcpEnabledSwitch_);
+    mcpTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::CloudDownload),
+        tr("Responses native MCP"),
+        tr("Use provider-native MCP only for Responses servers with approval set to never"),
+        llmMcpNativeSwitch_);
+    mcpTools->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Document),
+        tr("MCP server JSON"),
+        tr("Supports http, stdio and native transports; authorization and env values are stored in config.json"),
+        llmMcpServersEdit_);
+
     auto* context = new qfw::GroupHeaderCardWidget(tr("Conversation context"), content);
     llmHistoryLimitSpinBox_ = new qfw::SpinBox(context);
     llmHistoryLimitSpinBox_->setRange(0, 100);
@@ -2094,6 +2118,7 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
     layout->addWidget(primary);
     layout->addWidget(auxiliary);
     layout->addWidget(webTools);
+    layout->addWidget(mcpTools);
     layout->addWidget(context);
     layout->addLayout(actionRow);
     layout->addStretch(1);
@@ -2124,6 +2149,14 @@ QWidget* NativeMainWindow::createLlmSettingsPage() {
         [this](bool enabled) {
             llmWebSearchEngineComboBox_->setEnabled(enabled);
             llmWebSearchSourcesSwitch_->setEnabled(enabled);
+        });
+    connect(
+        llmMcpEnabledSwitch_,
+        &qfw::SwitchButton::checkedChanged,
+        this,
+        [this](bool enabled) {
+            llmMcpNativeSwitch_->setEnabled(enabled);
+            llmMcpServersEdit_->setEnabled(enabled);
         });
     connect(
         llmProfileComboBox_,
@@ -3691,6 +3724,16 @@ void NativeMainWindow::syncNativeLlmSettingsControls() {
     llmWebSearchSourcesSwitch_->setEnabled(webSearchEnabled);
     llmWebFetchSwitch_->setChecked(
         llmSettings_.value(QStringLiteral("web_fetch_enabled")).toBool(false));
+    const bool mcpEnabled =
+        llmSettings_.value(QStringLiteral("mcp_enabled")).toBool(false);
+    llmMcpEnabledSwitch_->setChecked(mcpEnabled);
+    llmMcpNativeSwitch_->setChecked(
+        llmSettings_.value(QStringLiteral("mcp_use_native")).toBool(true));
+    llmMcpNativeSwitch_->setEnabled(mcpEnabled);
+    llmMcpServersEdit_->setEnabled(mcpEnabled);
+    llmMcpServersEdit_->setPlainText(QString::fromUtf8(
+        QJsonDocument(llmSettings_.value(QStringLiteral("mcp_servers")).toArray())
+            .toJson(QJsonDocument::Indented)));
     const bool customPromptEnabled =
         llmSettings_.value(QStringLiteral("custom_system_prompt_enabled")).toBool(true);
     llmCustomPromptSwitch_->setChecked(customPromptEnabled);
@@ -3734,6 +3777,20 @@ bool NativeMainWindow::saveNativeLlmSettings() {
         }
         return QJsonValue(QJsonValue::Null);
     };
+    const QByteArray mcpServersSource =
+        llmMcpServersEdit_->toPlainText().trimmed().isEmpty()
+        ? QByteArrayLiteral("[]")
+        : llmMcpServersEdit_->toPlainText().trimmed().toUtf8();
+    QJsonParseError mcpParseError;
+    const QJsonDocument mcpServersDocument =
+        QJsonDocument::fromJson(mcpServersSource, &mcpParseError);
+    if (mcpParseError.error != QJsonParseError::NoError
+        || !mcpServersDocument.isArray()) {
+        llmSettingsStatusLabel_->setText(
+            tr("MCP server JSON must be a valid array: %1")
+                .arg(mcpParseError.errorString()));
+        return false;
+    }
     QJsonObject settings {
         {QStringLiteral("api_url"), llmApiUrlEdit_->text().trimmed()},
         {QStringLiteral("clear_api_key"), llmClearApiKeyCheckBox_->isChecked()},
@@ -3760,6 +3817,9 @@ bool NativeMainWindow::saveNativeLlmSettings() {
         {QStringLiteral("web_search_show_sources"),
          llmWebSearchSourcesSwitch_->isChecked()},
         {QStringLiteral("web_fetch_enabled"), llmWebFetchSwitch_->isChecked()},
+        {QStringLiteral("mcp_enabled"), llmMcpEnabledSwitch_->isChecked()},
+        {QStringLiteral("mcp_use_native"), llmMcpNativeSwitch_->isChecked()},
+        {QStringLiteral("mcp_servers"), mcpServersDocument.array()},
         {QStringLiteral("custom_system_prompt_enabled"),
          llmCustomPromptSwitch_->isChecked()},
         {QStringLiteral("custom_system_prompt"),

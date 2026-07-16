@@ -801,7 +801,15 @@ mod tests {
             ]}),
             json!({"role": "tool", "tool_call_id": "call_1", "content": "done"}),
         ];
-        let tools = vec![json!({"type": "function", "function": {"name": "search"}})];
+        let tools = vec![
+            json!({"type": "function", "function": {"name": "search"}}),
+            json!({
+                "type":"mcp",
+                "server_label":"fixture",
+                "server_url":"https://example.test/mcp",
+                "require_approval":"never"
+            }),
+        ];
         let chat = build_chat_completions_body(
             "https://api.openai.com/v1/chat/completions",
             "gpt-test",
@@ -840,6 +848,12 @@ mod tests {
         assert_eq!(responses["tools"][0]["type"], "function");
         assert_eq!(responses["tools"][0]["name"], "search");
         assert!(responses["tools"][0].get("function").is_none());
+        assert_eq!(responses["tools"][1]["type"], "mcp");
+        assert_eq!(responses["tools"][1]["server_label"], "fixture");
+        assert_eq!(
+            responses["tools"][1]["server_url"],
+            "https://example.test/mcp"
+        );
     }
 
     #[test]

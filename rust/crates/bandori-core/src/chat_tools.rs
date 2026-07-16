@@ -111,6 +111,20 @@ pub fn with_native_tool_system_hint(prompt: &str) -> String {
 
 pub fn with_native_tool_system_hint_for_config(prompt: &str, config: &ConfigDocument) -> String {
     let mut prompt = with_native_tool_system_hint(prompt);
+    if config
+        .get("llm_hide_tool_call_details")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+    {
+        prompt.push_str("\n\n最终回复请保持角色口吻，不要主动提到 MCP、tool_calls、function calling、Computer Use、工具调用或 JSON schema 等实现细节；如果工具失败，也用自然语言简短说明做不到或信息不足。");
+    }
+    if config
+        .get("llm_mcp_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        prompt.push_str("\n\n【MCP 工具边界】\n可用外部能力时，优先根据用户意图谨慎调用；不要编造工具执行结果。审批设置为 always 的服务器不会执行调用，遇到阻止时不要声称已经完成操作。");
+    }
     let web = NativeWebToolSettings::from_config(config);
     if web.search_enabled {
         let source_rule = if web.show_sources {

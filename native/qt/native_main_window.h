@@ -389,6 +389,9 @@ private:
     qfw::ComboBox* llmWebSearchEngineComboBox_ = nullptr;
     qfw::SwitchButton* llmWebSearchSourcesSwitch_ = nullptr;
     qfw::SwitchButton* llmWebFetchSwitch_ = nullptr;
+    qfw::SwitchButton* llmMcpEnabledSwitch_ = nullptr;
+    qfw::SwitchButton* llmMcpNativeSwitch_ = nullptr;
+    qfw::PlainTextEdit* llmMcpServersEdit_ = nullptr;
     qfw::SwitchButton* llmCustomPromptSwitch_ = nullptr;
     qfw::PlainTextEdit* llmCustomPromptEdit_ = nullptr;
     qfw::PrimaryPushButton* llmSaveButton_ = nullptr;

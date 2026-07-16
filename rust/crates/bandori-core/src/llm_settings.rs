@@ -1,4 +1,5 @@
 use crate::config::{ConfigDocument, ConfigError};
+use crate::mcp_tools::normalize_mcp_servers;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -64,6 +65,9 @@ pub struct NativeLlmSettingsState {
     pub web_search_engine: String,
     pub web_search_show_sources: bool,
     pub web_fetch_enabled: bool,
+    pub mcp_enabled: bool,
+    pub mcp_use_native: bool,
+    pub mcp_servers: Vec<Value>,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
     pub active_api_profile: String,
@@ -97,6 +101,9 @@ pub struct NativeLlmSettingsUpdate {
     pub web_search_engine: String,
     pub web_search_show_sources: bool,
     pub web_fetch_enabled: bool,
+    pub mcp_enabled: bool,
+    pub mcp_use_native: bool,
+    pub mcp_servers: Vec<Value>,
     pub custom_system_prompt_enabled: bool,
     pub custom_system_prompt: String,
 }
@@ -262,6 +269,13 @@ impl NativeLlmSettingsState {
             )),
             web_search_show_sources: config_bool(config, "llm_web_search_show_sources", true),
             web_fetch_enabled: config_bool(config, "llm_web_fetch_enabled", false),
+            mcp_enabled: config_bool(config, "llm_mcp_enabled", false),
+            mcp_use_native: config_bool(config, "llm_mcp_use_native", true),
+            mcp_servers: config
+                .get("llm_mcp_servers")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
             custom_system_prompt_enabled: config_bool(
                 config,
                 "llm_custom_system_prompt_enabled",
@@ -282,6 +296,8 @@ impl NativeLlmSettingsUpdate {
         let aux_model_id = checked_text(&self.aux_model_id, MAX_MODEL_BYTES, "auxiliary model ID")?;
         let api_mode = normalized_api_mode_checked(&self.api_mode)?;
         let web_search_engine = normalized_web_search_engine_checked(&self.web_search_engine)?;
+        let mcp_servers = normalize_mcp_servers(&Value::Array(self.mcp_servers))
+            .map_err(NativeLlmSettingsError::Invalid)?;
         let custom_system_prompt = checked_prompt(&self.custom_system_prompt)?;
 
         config.set("llm_api_url", Value::String(api_url));
@@ -343,6 +359,9 @@ impl NativeLlmSettingsUpdate {
             Value::Bool(self.web_search_show_sources),
         );
         config.set("llm_web_fetch_enabled", Value::Bool(self.web_fetch_enabled));
+        config.set("llm_mcp_enabled", Value::Bool(self.mcp_enabled));
+        config.set("llm_mcp_use_native", Value::Bool(self.mcp_use_native));
+        config.set("llm_mcp_servers", Value::Array(mcp_servers));
         config.set(
             "llm_custom_system_prompt_enabled",
             Value::Bool(self.custom_system_prompt_enabled),
@@ -584,6 +603,15 @@ mod tests {
             "web_search_engine":"duckduckgo",
             "web_search_show_sources":false,
             "web_fetch_enabled":true,
+            "mcp_enabled":true,
+            "mcp_use_native":true,
+            "mcp_servers":[{
+                "enabled":true,
+                "label":"fixture",
+                "transport":"http",
+                "url":"http://127.0.0.1:8765/mcp",
+                "require_approval":"never"
+            }],
             "custom_system_prompt_enabled":true,
             "custom_system_prompt":"  Always stay in character.  "
         })
@@ -611,6 +639,9 @@ mod tests {
         assert_eq!(state.web_search_engine, "duckduckgo");
         assert!(!state.web_search_show_sources);
         assert!(state.web_fetch_enabled);
+        assert!(state.mcp_enabled);
+        assert!(state.mcp_use_native);
+        assert_eq!(state.mcp_servers.len(), 1);
         let serialized = serde_json::to_string(&state).unwrap();
         assert!(!serialized.contains("primary-secret"));
         assert!(!serialized.contains("aux-secret"));

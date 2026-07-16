@@ -540,6 +540,40 @@ def test_native_web_tools_are_configured_bounded_and_executed_in_rust():
     assert 'QStringLiteral("web_fetch_enabled")' in window
 
 
+def test_native_mcp_supports_http_stdio_responses_and_local_proxy_tools():
+    workspace = source("Cargo.toml")
+    core = source("rust/crates/bandori-core/src/lib.rs")
+    mcp = source("rust/crates/bandori-core/src/mcp_tools.rs")
+    tools = source("rust/crates/bandori-core/src/chat_tools.rs")
+    settings = source("rust/crates/bandori-core/src/llm_settings.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+
+    assert '"io-util"' in workspace
+    assert '"process"' in workspace
+    assert "pub mod mcp_tools;" in core
+    assert "pub struct NativeMcpRuntime" in mcp
+    assert "struct HttpMcpClient" in mcp
+    assert "struct StdioMcpClient" in mcp
+    assert 'const MCP_PROTOCOL_VERSION: &str = "2025-06-18"' in mcp
+    assert "notifications/initialized" in mcp
+    assert '"tools/list"' in mcp
+    assert '"tools/call"' in mcp
+    assert "extract_stdio_message" in mcp
+    assert "MAX_MCP_MESSAGE_BYTES" in mcp
+    assert "MCP tool blocked by approval setting" in mcp
+    assert "fn native_tool_definition" in mcp
+    assert "【MCP 工具边界】" in tools
+    assert "mcp_enabled: bool" in settings
+    assert "mcp_servers: Vec<Value>" in settings
+    assert "NativeMcpRuntime::prepare_from_path" in backend
+    assert "execute_mcp_tool_call" in backend
+    assert "qfw::SwitchButton* llmMcpEnabledSwitch_" in header
+    assert "qfw::PlainTextEdit* llmMcpServersEdit_" in header
+    assert 'QStringLiteral("mcp_servers")' in window
+
+
 def test_native_reminder_core_is_python_contract_backed_and_qt_independent():
     reminder = source("rust/crates/bandori-core/src/reminder.rs")
     core = source("rust/crates/bandori-core/src/lib.rs")
