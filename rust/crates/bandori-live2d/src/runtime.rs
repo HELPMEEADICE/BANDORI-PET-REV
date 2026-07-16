@@ -400,6 +400,53 @@ impl Live2dRuntime {
         Ok(triggered)
     }
 
+    pub fn trigger_expression_tag(
+        &self,
+        action: &str,
+        character: &str,
+    ) -> Result<bool, Live2dError> {
+        let info = self.model_info()?;
+        let normalized = action
+            .trim()
+            .trim_matches(|value: char| matches!(value, '[' | ']' | ' ' | '\t' | '\r' | '\n'))
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        let Some(expression) = find_expression(&info.expressions, &normalized, character) else {
+            return Ok(false);
+        };
+        self.set_expression(expression)?;
+        Ok(true)
+    }
+
+    pub fn trigger_motion_tag(&self, action: &str, character: &str) -> Result<bool, Live2dError> {
+        let info = self.model_info()?;
+        let normalized = action
+            .trim()
+            .trim_matches(|value: char| matches!(value, '[' | ']' | ' ' | '\t' | '\r' | '\n'))
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        if normalized.is_empty() {
+            return Ok(false);
+        }
+        let candidates = if normalized == "thinking" {
+            vec!["thinking", "nf", "nnf", "eeto", "odoodo"]
+        } else {
+            vec![normalized.as_str()]
+        };
+        let Some(motion) = find_motion(&info.motion_names, &candidates, &character.to_lowercase())
+        else {
+            return Ok(false);
+        };
+        self.start_motion(motion, 0, MotionPriority::Force, false)?;
+        Ok(true)
+    }
+
     pub fn apply_default_state(
         &self,
         configured_motion: &str,
@@ -1005,6 +1052,10 @@ return M
                 .unwrap(),
             "smile"
         );
+        assert!(runtime.trigger_expression_tag("smile", "aya").unwrap());
+        assert!(!runtime.trigger_expression_tag("Idle", "aya").unwrap());
+        assert!(runtime.trigger_motion_tag("Idle", "aya").unwrap());
+        assert!(!runtime.trigger_motion_tag("smile", "aya").unwrap());
     }
 
     #[test]

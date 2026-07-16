@@ -296,6 +296,47 @@ def test_native_chat_composer_streams_persists_and_dispatches_actions_through_ru
     assert 'QStringLiteral("__default__")' in window
 
 
+def test_native_emotion_behavior_matches_python_rules_and_reaches_qt_pet_and_tts():
+    emotion = source("rust/crates/bandori-core/src/emotion_behavior.rs")
+    dashboard = source("rust/crates/bandori-core/src/dashboard.rs")
+    backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
+    generation = source("rust/crates/bandori-core/tests/qt_bridge_generation.rs")
+    supervisor_header = source("native/qt/pet_process_supervisor.h")
+    supervisor = source("native/qt/pet_process_supervisor.cpp")
+    live2d_ffi = source("rust/crates/bandori-live2d/src/ffi.rs")
+    live2d_runtime = source("rust/crates/bandori-live2d/src/runtime.rs")
+    widget = source("native/qt/live2d_gl_widget.cpp")
+    window_header = source("native/qt/native_main_window.h")
+    window = source("native/qt/native_main_window.cpp")
+    pet = source("native/qt/pet_main.cpp")
+
+    assert "pub struct EmotionBehavior" in emotion
+    assert "pub fn infer_emotion_behavior" in emotion
+    assert "latest_action_wins_like_the_python_action_scan" in emotion
+    assert "emotion_behavior_enabled" in dashboard
+    assert "getEmotionBehaviorJson" in backend
+    assert "infer_emotion_behavior" in backend
+    assert "getEmotionBehaviorJson" in generation
+    assert "bool emotionBehaviorEnabled = true" in supervisor_header
+    assert 'QStringLiteral("--emotion-behavior-enabled")' in supervisor
+    assert "bandori_live2d_trigger_expression_tag" in live2d_ffi
+    assert "bandori_live2d_trigger_motion_tag" in live2d_ffi
+    assert "pub fn trigger_expression_tag" in live2d_runtime
+    assert "pub fn trigger_motion_tag" in live2d_runtime
+    assert "Live2dGlWidget::triggerExpressionTag" in widget
+    assert "Live2dGlWidget::triggerMotionTag" in widget
+    assert "qfw::SwitchButton* emotionBehaviorSwitch_" in window_header
+    assert "dispatchNativeEmotionBehavior" in window
+    assert "backend_.getEmotionBehaviorJson" in window
+    assert 'QStringLiteral("EMOTION\\t") + compactJson(behavior)' in window
+    assert "enqueueNativeTts(chatStreamText_, character, false, ttsRate)" in window
+    assert 'QStringLiteral("EMOTION\\t")' in pet
+    assert "playEmotionWindowFeedback" in pet
+    assert 'QStringLiteral("expression_tags")' in pet
+    assert 'QStringLiteral("motion_tags")' in pet
+    assert 'QStringLiteral("emotion_behavior_enabled")' in pet
+
+
 def test_native_chat_memory_extraction_uses_model_or_single_fallback_update():
     memory = source("rust/crates/bandori-core/src/memory_extraction.rs")
     backend = source("rust/crates/bandori-qt-bridge/src/backend.rs")
@@ -812,7 +853,7 @@ def test_native_tts_is_rust_owned_streamed_and_played_through_qt_multimedia():
     assert "backend_.saveTtsSettings" in window
     assert "backend_.startTtsSynthesis" in window
     assert "backend_.cancelTtsSynthesis" in window
-    assert "enqueueNativeTts(chatStreamText_, character)" in window
+    assert "enqueueNativeTts(chatStreamText_, character, false, ttsRate)" in window
     assert "enqueueNativeTts(text, ttsCharacter)" in window
     assert 'QStringLiteral("LIP\\t%1\\t%2\\t%3")' in window
     assert "Qt6::Multimedia" in cmake
@@ -895,7 +936,7 @@ def test_native_screen_awareness_captures_with_qt_and_analyzes_through_rust():
     assert "backend_.cancelScreenAwareness" in window
     assert 'QStringLiteral("NO_SPEAK")' not in window
     assert 'QStringLiteral("REMINDER_EVENT\\t")' in window
-    assert "enqueueNativeTts(text, character)" in window
+    assert "enqueueNativeTts(text, character, false, ttsRate)" in window
 
 
 def test_native_special_events_drive_context_and_tray_notifications_without_python():

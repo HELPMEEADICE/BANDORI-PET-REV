@@ -226,6 +226,10 @@ private:
     void handleChatStreamEvent(const QString& payloadJson);
     void handleChatMemoryEvent(const QString& payloadJson);
     int dispatchChatToolEffects(const QJsonObject& payload, const QString& character);
+    double dispatchNativeEmotionBehavior(
+        const QString& text,
+        const QString& character,
+        const QJsonArray& actions);
     void pollNativeReminders();
     void chooseChatAttachments();
     void clearPendingChatAttachments();
@@ -584,6 +588,7 @@ private:
     qfw::SwitchButton* moveTogetherSwitch_ = nullptr;
     qfw::SwitchButton* headTrackingSwitch_ = nullptr;
     qfw::SwitchButton* mutualGazeSwitch_ = nullptr;
+    qfw::SwitchButton* emotionBehaviorSwitch_ = nullptr;
     qfw::SwitchButton* autoStartSwitch_ = nullptr;
     qfw::SwitchButton* birthdayNotificationsSwitch_ = nullptr;
     qfw::ComboBox* themeComboBox_ = nullptr;

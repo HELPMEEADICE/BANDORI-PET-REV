@@ -49,6 +49,7 @@ pub struct NativeRuntimeSnapshot {
     pub random_actions_enabled: bool,
     pub head_tracking_enabled: bool,
     pub mutual_gaze_enabled: bool,
+    pub emotion_behavior_enabled: bool,
     pub move_all_roles_together: bool,
     pub drag_locked: bool,
     pub poke_motion: String,
@@ -86,6 +87,7 @@ pub struct NativeSettingsUpdate {
     pub move_all_roles_together: Option<bool>,
     pub live2d_head_tracking_enabled: Option<bool>,
     pub live2d_mutual_gaze_enabled: Option<bool>,
+    pub emotion_behavior_enabled: Option<bool>,
     pub chat_attachment_auto_cleanup_enabled: Option<bool>,
     pub chat_attachment_retention_days: Option<i64>,
     pub birthday_tray_notifications_enabled: Option<bool>,
@@ -167,6 +169,9 @@ impl NativeSettingsUpdate {
         }
         if let Some(enabled) = self.live2d_mutual_gaze_enabled {
             config.set("live2d_mutual_gaze_enabled", Value::Bool(enabled));
+        }
+        if let Some(enabled) = self.emotion_behavior_enabled {
+            config.set("emotion_behavior_enabled", Value::Bool(enabled));
         }
         if let Some(enabled) = self.chat_attachment_auto_cleanup_enabled {
             config.set("chat_attachment_auto_cleanup_enabled", Value::Bool(enabled));
@@ -320,6 +325,7 @@ impl NativeRuntimeSnapshot {
             random_actions_enabled: bool_value(values, "live2d_random_actions_enabled", true),
             head_tracking_enabled: bool_value(values, "live2d_head_tracking_enabled", true),
             mutual_gaze_enabled: bool_value(values, "live2d_mutual_gaze_enabled", false),
+            emotion_behavior_enabled: bool_value(values, "emotion_behavior_enabled", true),
             move_all_roles_together: bool_value(values, "move_all_roles_together", false),
             drag_locked: global_drag_locked,
             poke_motion: string_value(values, "poke_motion", ""),
@@ -630,6 +636,7 @@ mod tests {
                 "move_all_roles_together": true,
                 "live2d_head_tracking_enabled": false,
                 "live2d_mutual_gaze_enabled": true,
+                "emotion_behavior_enabled": false,
                 "chat_attachment_auto_cleanup_enabled": true,
                 "chat_attachment_retention_days": 9999,
                 "birthday_tray_notifications_enabled": false
@@ -647,12 +654,14 @@ mod tests {
         assert!(!runtime.idle_actions_enabled);
         assert!(!runtime.random_actions_enabled);
         assert!(runtime.drag_locked);
+        assert!(!runtime.emotion_behavior_enabled);
         assert!(runtime.chat_attachment_auto_cleanup_enabled);
         assert_eq!(runtime.chat_attachment_retention_days, 3650);
         assert!(!runtime.birthday_tray_notifications_enabled);
         assert_eq!(saved["llm_api_key"], "keep-me");
         assert_eq!(saved["auto_start"], true);
         assert_eq!(saved["live2d_mutual_gaze_enabled"], true);
+        assert_eq!(saved["emotion_behavior_enabled"], false);
         assert_eq!(saved["chat_attachment_auto_cleanup_enabled"], true);
         assert_eq!(saved["chat_attachment_retention_days"], 3650);
         assert_eq!(saved["birthday_tray_notifications_enabled"], false);

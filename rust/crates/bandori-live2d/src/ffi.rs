@@ -248,6 +248,70 @@ pub unsafe extern "C" fn bandori_live2d_trigger_action(
 }
 
 #[unsafe(no_mangle)]
+/// Resolves and applies only an expression tag against model metadata.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. Both string pointers must contain
+/// valid NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_trigger_expression_tag(
+    host: *mut BandoriLive2dHost,
+    action: *const c_char,
+    character: *const c_char,
+) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let action = unsafe { required_string(action, "action") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let character = unsafe { required_string(character, "character") }?;
+        if host
+            .runtime
+            .trigger_expression_tag(&action, &character)
+            .map_err(|error| error.to_string())?
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Live2D expression tag did not match model metadata: {action}"
+            ))
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Resolves and starts only a motion tag against model metadata.
+///
+/// # Safety
+/// `host` must be live and uniquely owned. Both string pointers must contain
+/// valid NUL-terminated UTF-8. The owning GL context must be current.
+pub unsafe extern "C" fn bandori_live2d_trigger_motion_tag(
+    host: *mut BandoriLive2dHost,
+    action: *const c_char,
+    character: *const c_char,
+) -> bool {
+    ffi_bool(|| {
+        // SAFETY: pointer ownership remains with the C++ caller.
+        let host = unsafe { required_host(host) }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let action = unsafe { required_string(action, "action") }?;
+        // SAFETY: string validity is part of the C ABI contract.
+        let character = unsafe { required_string(character, "character") }?;
+        if host
+            .runtime
+            .trigger_motion_tag(&action, &character)
+            .map_err(|error| error.to_string())?
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Live2D motion tag did not match model metadata: {action}"
+            ))
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
 /// Applies the configured startup motion as a loop and the configured expression.
 ///
 /// Returns `1` when at least one configured value matched model metadata, `0`

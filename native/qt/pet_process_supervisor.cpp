@@ -337,6 +337,8 @@ void PetProcessSupervisor::launchNow(ChildState* child) {
         spec.headTrackingEnabled ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--mutual-gaze-enabled"),
         spec.mutualGazeEnabled ? QStringLiteral("true") : QStringLiteral("false"),
+        QStringLiteral("--emotion-behavior-enabled"),
+        spec.emotionBehaviorEnabled ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--compact-ai-window-enabled"),
         spec.compactAiWindowEnabled ? QStringLiteral("true") : QStringLiteral("false"),
         QStringLiteral("--ai-event-overlay-enabled"),

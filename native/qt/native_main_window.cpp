@@ -3306,6 +3306,7 @@ QWidget* NativeMainWindow::createSettingsPage() {
     moveTogetherSwitch_ = new qfw::SwitchButton(live2d);
     headTrackingSwitch_ = new qfw::SwitchButton(live2d);
     mutualGazeSwitch_ = new qfw::SwitchButton(live2d);
+    emotionBehaviorSwitch_ = new qfw::SwitchButton(live2d);
     themeComboBox_ = new qfw::ComboBox(live2d);
     themeComboBox_->addItem(
         tr("Follow system"), QVariant(), QStringLiteral("follow_system"));
@@ -3367,6 +3368,11 @@ QWidget* NativeMainWindow::createSettingsPage() {
         tr("Mutual gaze"),
         tr("Look toward the nearest pet on the shared IPC session"),
         mutualGazeSwitch_);
+    live2d->addGroup(
+        qfw::FluentIcon(qfw::FluentIconEnum::Heart),
+        tr("Emotion behavior"),
+        tr("Infer expression, motion, window feedback and speech rate from replies"),
+        emotionBehaviorSwitch_);
     live2d->addGroup(
         qfw::FluentIcon(qfw::FluentIconEnum::Brush),
         tr("Application theme"),
@@ -5701,7 +5707,6 @@ void NativeMainWindow::handleNativeScreenAwarenessEvent(const QString& payloadJs
         const QString action = actions.isEmpty()
             ? QStringLiteral("surprised")
             : actions.first().toString(QStringLiteral("surprised"));
-        enqueueNativeTts(text, character);
         if (payload.value(QStringLiteral("display_mode")).toString()
                 == QStringLiteral("system")
             && trayIcon_ != nullptr) {
@@ -5727,6 +5732,8 @@ void NativeMainWindow::handleNativeScreenAwarenessEvent(const QString& payloadJs
             supervisor_.broadcastControlLine(
                 QStringLiteral("REMINDER_EVENT\t") + compactJson(event));
         }
+        const double ttsRate = dispatchNativeEmotionBehavior(text, character, actions);
+        enqueueNativeTts(text, character, false, ttsRate);
         const QString warning =
             payload.value(QStringLiteral("auxiliary_warning")).toString().trimmed();
         screenAwarenessStatusLabel_->setText(
@@ -7800,6 +7807,8 @@ void NativeMainWindow::syncSettingsControls() {
         runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true));
     mutualGazeSwitch_->setChecked(
         runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool());
+    emotionBehaviorSwitch_->setChecked(
+        runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true));
     autoStartSwitch_->setChecked(
         runtime_.value(QStringLiteral("auto_start")).toBool(false));
     birthdayNotificationsSwitch_->setChecked(
@@ -7868,6 +7877,7 @@ void NativeMainWindow::saveNativeSettings() {
         {QStringLiteral("move_all_roles_together"), moveTogetherSwitch_->isChecked()},
         {QStringLiteral("live2d_head_tracking_enabled"), headTrackingSwitch_->isChecked()},
         {QStringLiteral("live2d_mutual_gaze_enabled"), mutualGazeSwitch_->isChecked()},
+        {QStringLiteral("emotion_behavior_enabled"), emotionBehaviorSwitch_->isChecked()},
         {QStringLiteral("birthday_tray_notifications_enabled"),
          birthdayNotificationsSwitch_->isChecked()},
     };
@@ -7895,6 +7905,7 @@ void NativeMainWindow::saveNativeSettings() {
         spec.moveAllRolesTogether = moveTogetherSwitch_->isChecked();
         spec.headTrackingEnabled = headTrackingSwitch_->isChecked();
         spec.mutualGazeEnabled = mutualGazeSwitch_->isChecked();
+        spec.emotionBehaviorEnabled = emotionBehaviorSwitch_->isChecked();
     }
     const bool wasRunning = supervisor_.isRunning();
     bool delivered = true;
@@ -8893,8 +8904,10 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
                 compactJson(payload));
             if (saved) {
                 const QJsonObject turn = parseObject(backend_.getChatTurnJson());
+                const QJsonArray turnActions =
+                    turn.value(QStringLiteral("actions")).toArray();
                 int actionsSent = 0;
-                for (const QJsonValue& value : turn.value(QStringLiteral("actions")).toArray()) {
+                for (const QJsonValue& value : turnActions) {
                     const QString action = value.toString();
                     if (!action.isEmpty()
                         && supervisor_.broadcastControlLine(
@@ -8908,7 +8921,9 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
                           .arg(actionsSent)
                     : backend_.getStatus();
                 groupSpokenNames_.append(characterDisplay);
-                enqueueNativeTts(chatStreamText_, character);
+                const double ttsRate =
+                    dispatchNativeEmotionBehavior(chatStreamText_, character, turnActions);
+                enqueueNativeTts(chatStreamText_, character, false, ttsRate);
             } else {
                 terminalStatus = backend_.getStatus();
             }
@@ -8952,8 +8967,10 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
                 chatStreamReasoning_,
                 compactJson(payload))) {
             const QJsonObject turn = parseObject(backend_.getChatTurnJson());
+            const QJsonArray turnActions =
+                turn.value(QStringLiteral("actions")).toArray();
             int actionsSent = 0;
-            for (const QJsonValue& value : turn.value(QStringLiteral("actions")).toArray()) {
+            for (const QJsonValue& value : turnActions) {
                 const QString action = value.toString();
                 if (!action.isEmpty()
                     && supervisor_.broadcastControlLine(
@@ -8965,7 +8982,9 @@ void NativeMainWindow::handleChatStreamEvent(const QString& payloadJson) {
             terminalStatus = actionsSent > 0
                 ? tr("%1 · %2 Live2D action(s) sent").arg(savedStatus).arg(actionsSent)
                 : savedStatus;
-            enqueueNativeTts(chatStreamText_, character);
+            const double ttsRate =
+                dispatchNativeEmotionBehavior(chatStreamText_, character, turnActions);
+            enqueueNativeTts(chatStreamText_, character, false, ttsRate);
         } else {
             terminalStatus = backend_.getStatus();
         }
@@ -9031,6 +9050,28 @@ int NativeMainWindow::dispatchChatToolEffects(
         }
     }
     return dispatched;
+}
+
+double NativeMainWindow::dispatchNativeEmotionBehavior(
+    const QString& text,
+    const QString& character,
+    const QJsonArray& actions) {
+    const QString actionsJson =
+        QString::fromUtf8(QJsonDocument(actions).toJson(QJsonDocument::Compact));
+    QJsonObject behavior =
+        parseObject(backend_.getEmotionBehaviorJson(text, actionsJson));
+    const double ttsRate = std::clamp(
+        behavior.value(QStringLiteral("tts_rate")).toDouble(1.0),
+        0.75,
+        1.25);
+    const QString target = character.trimmed();
+    if (!behavior.isEmpty() && !target.isEmpty()
+        && runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true)) {
+        behavior.insert(QStringLiteral("character"), target);
+        supervisor_.broadcastControlLine(
+            QStringLiteral("EMOTION\t") + compactJson(behavior));
+    }
+    return ttsRate;
 }
 
 void NativeMainWindow::pollNativeReminders() {
@@ -9423,6 +9464,8 @@ PetLaunchSpec NativeMainWindow::launchSpecFor(const ModelCatalogItem& model) con
         runtime_.value(QStringLiteral("head_tracking_enabled")).toBool(true);
     spec.mutualGazeEnabled =
         runtime_.value(QStringLiteral("mutual_gaze_enabled")).toBool(false);
+    spec.emotionBehaviorEnabled =
+        runtime_.value(QStringLiteral("emotion_behavior_enabled")).toBool(true);
     spec.compactAiWindowEnabled =
         runtime_.value(QStringLiteral("compact_ai_window_enabled")).toBool(false);
     spec.aiEventOverlayEnabled =

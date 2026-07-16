@@ -381,6 +381,58 @@ bool Live2dGlWidget::triggerAction(const QString& action, const QString& charact
     return triggered;
 }
 
+bool Live2dGlWidget::triggerExpressionTag(
+    const QString& action,
+    const QString& character,
+    int holdMilliseconds) {
+    if (pixelMode() || host_ == nullptr || action.trimmed().isEmpty()) {
+        return false;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const QByteArray actionUtf8 = action.toUtf8();
+    const QByteArray characterUtf8 = character.toUtf8();
+    const bool triggered = bandori_live2d_trigger_expression_tag(
+        host_, actionUtf8.constData(), characterUtf8.constData());
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (triggered) {
+        update();
+        const std::uint64_t token = ++interactionExpressionToken_;
+        QTimer::singleShot(
+            std::clamp(holdMilliseconds, 1, 60'000),
+            this,
+            [this, token]() { resetInteractionExpression(token); });
+    }
+    return triggered;
+}
+
+bool Live2dGlWidget::triggerMotionTag(
+    const QString& action,
+    const QString& character) {
+    if (pixelMode() || host_ == nullptr || action.trimmed().isEmpty()) {
+        return false;
+    }
+    const bool needsCurrent = context() != nullptr && QOpenGLContext::currentContext() != context();
+    if (needsCurrent) {
+        makeCurrent();
+    }
+    const QByteArray actionUtf8 = action.toUtf8();
+    const QByteArray characterUtf8 = character.toUtf8();
+    const bool triggered = bandori_live2d_trigger_motion_tag(
+        host_, actionUtf8.constData(), characterUtf8.constData());
+    if (needsCurrent) {
+        doneCurrent();
+    }
+    if (triggered) {
+        update();
+    }
+    return triggered;
+}
+
 bool Live2dGlWidget::applyDefaultState(
     const QString& configuredMotion,
     const QString& configuredExpression,

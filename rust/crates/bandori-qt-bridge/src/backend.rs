@@ -65,6 +65,14 @@ pub mod ffi {
         ) -> bool;
 
         #[qinvokable]
+        #[cxx_name = "getEmotionBehaviorJson"]
+        fn get_emotion_behavior_json(
+            self: Pin<&mut Self>,
+            text: &QString,
+            actions_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
         #[cxx_name = "tickReminders"]
         fn tick_reminders(
             self: Pin<&mut Self>,
@@ -679,6 +687,7 @@ use bandori_core::data_management::{
     import_settings_package as import_native_settings_package,
 };
 use bandori_core::database::Database;
+use bandori_core::emotion_behavior::infer_emotion_behavior;
 use bandori_core::group_chat::{
     GroupMember, apply_group_plan_priority, build_group_planner_request_from_database,
     build_native_group_chat_request, conversation_key_for, fallback_group_plan,
@@ -1162,6 +1171,23 @@ impl ffi::Backend {
                 false
             }
         }
+    }
+
+    pub fn get_emotion_behavior_json(
+        self: Pin<&mut Self>,
+        text: &QString,
+        actions_json: &QString,
+    ) -> QString {
+        let actions_json = actions_json.to_string();
+        let actions = if actions_json.len() <= 64 * 1024 {
+            serde_json::from_str::<Vec<String>>(&actions_json).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let payload = infer_emotion_behavior(&text.to_string(), &actions)
+            .and_then(|behavior| serde_json::to_string(&behavior).ok())
+            .unwrap_or_else(|| "{}".to_owned());
+        QString::from(&payload)
     }
 
     pub fn tick_reminders(

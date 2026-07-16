@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QCursor>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
@@ -25,6 +26,7 @@
 #include <QVariantAnimation>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #ifdef Q_OS_WIN
@@ -201,6 +203,125 @@ void shakeWindow(QWidget& widget, int intensity) {
         widget.move(origin);
         animation->deleteLater();
     });
+    animation->start();
+}
+
+QPoint constrainedWindowPoint(const QWidget& widget, const QPoint& requested) {
+    const QScreen* screen = widget.screen();
+    if (screen == nullptr) {
+        screen = QGuiApplication::screenAt(widget.frameGeometry().center());
+    }
+    if (screen == nullptr) {
+        return requested;
+    }
+    const QRect available = screen->availableGeometry();
+    return {
+        std::clamp(requested.x(), available.left(),
+                   std::max(available.left(), available.right() - widget.width() + 1)),
+        std::clamp(requested.y(), available.top(),
+                   std::max(available.top(), available.bottom() - widget.height() + 1)),
+    };
+}
+
+void playEmotionWindowFeedback(
+    QWidget& widget,
+    const QString& rawKind,
+    int intensity,
+    bool dragLocked) {
+    const QString kind = rawKind.trimmed().toLower();
+    if (kind.isEmpty() || kind == QStringLiteral("none")
+        || ((kind == QStringLiteral("forward") || kind == QStringLiteral("back"))
+            && dragLocked)) {
+        return;
+    }
+    if (kind != QStringLiteral("forward") && kind != QStringLiteral("back")
+        && kind != QStringLiteral("hop") && kind != QStringLiteral("shake")
+        && kind != QStringLiteral("wobble") && kind != QStringLiteral("settle")) {
+        return;
+    }
+
+    if (auto* active = widget.findChild<QVariantAnimation*>(kWindowShakeObjectName)) {
+        active->stop();
+        active->setObjectName(QString {});
+        active->deleteLater();
+    }
+    const QPoint origin = widget.pos();
+    auto* animation = new QVariantAnimation(&widget);
+    animation->setObjectName(kWindowShakeObjectName);
+    animation->setProperty("bandori-origin", origin);
+    animation->setEasingCurve(QEasingCurve::OutCubic);
+
+    QPoint finalPoint = origin;
+    if (kind == QStringLiteral("forward") || kind == QStringLiteral("back")) {
+        const QPoint cursor = QCursor::pos();
+        const QPoint center = widget.frameGeometry().center();
+        const double dx = static_cast<double>(cursor.x() - center.x());
+        const double dy = static_cast<double>(cursor.y() - center.y());
+        const double length = std::hypot(dx, dy);
+        const double direction = kind == QStringLiteral("back") ? -1.0 : 1.0;
+        const int distance = std::clamp(10 + intensity * 8 / 25, 8, 42);
+        const QPoint delta = length >= 8.0
+            ? QPoint(
+                  qRound(direction * distance * dx / length),
+                  qRound(direction * distance * dy / length))
+            : QPoint(0, qRound(-direction * distance));
+        finalPoint = constrainedWindowPoint(widget, origin + delta);
+        animation->setDuration(300);
+        animation->setKeyValueAt(0.0, origin);
+        animation->setKeyValueAt(1.0, finalPoint);
+    } else if (kind == QStringLiteral("hop")) {
+        const int lift = std::clamp(8 + intensity * 6 / 25, 10, 34);
+        animation->setDuration(420);
+        animation->setKeyValueAt(0.0, origin);
+        animation->setKeyValueAt(0.38, constrainedWindowPoint(widget, origin + QPoint(0, -lift)));
+        animation->setKeyValueAt(
+            0.72,
+            constrainedWindowPoint(widget, origin + QPoint(0, std::max(2, lift / 5))));
+        animation->setKeyValueAt(1.0, origin);
+    } else if (kind == QStringLiteral("settle")) {
+        const int drop = std::clamp(2 + intensity * 2 / 25, 3, 10);
+        animation->setDuration(340);
+        animation->setKeyValueAt(0.0, origin);
+        animation->setKeyValueAt(0.45, constrainedWindowPoint(widget, origin + QPoint(0, drop)));
+        animation->setKeyValueAt(1.0, origin);
+    } else if (kind == QStringLiteral("shake")) {
+        const int amplitude = std::clamp(6 + intensity / 5, 8, 26);
+        animation->setDuration(360);
+        animation->setKeyValueAt(0.0, origin);
+        animation->setKeyValueAt(0.18, constrainedWindowPoint(widget, origin + QPoint(-amplitude, 0)));
+        animation->setKeyValueAt(0.36, constrainedWindowPoint(widget, origin + QPoint(amplitude, 0)));
+        animation->setKeyValueAt(0.55, constrainedWindowPoint(widget, origin + QPoint(-amplitude / 2, 0)));
+        animation->setKeyValueAt(0.74, constrainedWindowPoint(widget, origin + QPoint(amplitude / 2, 0)));
+        animation->setKeyValueAt(1.0, origin);
+    } else {
+        const int amplitude = std::clamp(4 + intensity * 3 / 25, 5, 16);
+        animation->setDuration(420);
+        animation->setKeyValueAt(0.0, origin);
+        animation->setKeyValueAt(
+            0.25,
+            constrainedWindowPoint(widget, origin + QPoint(amplitude, 2)));
+        animation->setKeyValueAt(
+            0.50,
+            constrainedWindowPoint(widget, origin + QPoint(-amplitude, -1)));
+        animation->setKeyValueAt(
+            0.75,
+            constrainedWindowPoint(widget, origin + QPoint(amplitude / 2, 0)));
+        animation->setKeyValueAt(1.0, origin);
+    }
+    QObject::connect(
+        animation,
+        &QVariantAnimation::valueChanged,
+        &widget,
+        [&widget](const QVariant& value) { widget.move(value.toPoint()); });
+    QObject::connect(
+        animation,
+        &QVariantAnimation::finished,
+        &widget,
+        [&widget, animation, finalPoint]() {
+            animation->setObjectName(QString {});
+            widget.move(finalPoint);
+            animation->deleteLater();
+        });
     animation->start();
 }
 
@@ -397,6 +518,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Look toward the nearest active pet process"),
         QStringLiteral("bool"),
         QStringLiteral("false"));
+    QCommandLineOption emotionBehaviorEnabled(
+        QStringLiteral("emotion-behavior-enabled"),
+        QStringLiteral("Apply inferred expression, motion, window and voice feedback"),
+        QStringLiteral("bool"),
+        QStringLiteral("true"));
     QCommandLineOption compactAiWindowEnabled(
         QStringLiteral("compact-ai-window-enabled"),
         QStringLiteral("Show compact native event bubbles"),
@@ -451,6 +577,7 @@ int main(int argc, char* argv[]) {
          moveAllRolesTogether,
          headTrackingEnabled,
          mutualGazeEnabled,
+         emotionBehaviorEnabled,
          compactAiWindowEnabled,
          aiEventOverlayEnabled,
          chatIntegrationOverlayEnabled,
@@ -482,6 +609,7 @@ int main(int argc, char* argv[]) {
     widget.setDragLocked(optionBool(parser.value(dragLocked)));
     bool headTracking = optionBool(parser.value(headTrackingEnabled), true);
     bool mutualGaze = optionBool(parser.value(mutualGazeEnabled));
+    bool emotionBehavior = optionBool(parser.value(emotionBehaviorEnabled), true);
     bool compactAiWindow = optionBool(parser.value(compactAiWindowEnabled));
     bool aiEventOverlay = optionBool(parser.value(aiEventOverlayEnabled));
     bool chatIntegrationOverlay =
@@ -832,6 +960,7 @@ int main(int argc, char* argv[]) {
          &completedPeerDragOrder,
          &headTracking,
          &mutualGaze,
+         &emotionBehavior,
          &peerPositions,
          &lastPublishedCenterValid,
          &updateMutualGaze,
@@ -1086,6 +1215,66 @@ int main(int argc, char* argv[]) {
                 }
                 return;
             }
+            if (line.startsWith(QStringLiteral("EMOTION\t"))) {
+                if (!emotionBehavior) {
+                    return;
+                }
+                const QJsonObject behavior = ipcJsonPayload(line);
+                const QString target =
+                    behavior.value(QStringLiteral("character")).toString().trimmed();
+                if (!target.isEmpty() && target != characterId) {
+                    return;
+                }
+                const int intensity =
+                    std::clamp(behavior.value(QStringLiteral("intensity")).toInt(64), 20, 100);
+                if (!widget.pixelMode()) {
+                    const QJsonArray expressions =
+                        behavior.value(QStringLiteral("expression_tags")).toArray();
+                    for (const QJsonValue& value : expressions) {
+                        const QString action = value.toString().trimmed();
+                        if (!action.isEmpty()
+                            && widget.triggerExpressionTag(
+                                action, characterId, 2'600 + intensity * 38)) {
+                            break;
+                        }
+                    }
+
+                    QSet<QString> sourceActions;
+                    for (const QJsonValue& value :
+                         behavior.value(QStringLiteral("source_actions")).toArray()) {
+                        const QString action = value.toString().trimmed().toLower();
+                        if (!action.isEmpty()) {
+                            sourceActions.insert(action);
+                        }
+                    }
+                    QStringList preferredMotions;
+                    QStringList sourceMotions;
+                    for (const QJsonValue& value :
+                         behavior.value(QStringLiteral("motion_tags")).toArray()) {
+                        const QString action = value.toString().trimmed();
+                        if (action.isEmpty()) {
+                            continue;
+                        }
+                        if (sourceActions.contains(action.toLower())) {
+                            sourceMotions.append(action);
+                        } else {
+                            preferredMotions.append(action);
+                        }
+                    }
+                    preferredMotions.append(sourceMotions);
+                    for (const QString& action : preferredMotions) {
+                        if (widget.triggerMotionTag(action, characterId)) {
+                            break;
+                        }
+                    }
+                }
+                playEmotionWindowFeedback(
+                    widget,
+                    behavior.value(QStringLiteral("window")).toString(),
+                    intensity,
+                    widget.dragLocked());
+                return;
+            }
             if (line.startsWith(QStringLiteral("LIP\t"))) {
                 const QStringList parts = line.split(u'\t');
                 if (parts.size() < 3 || parts.at(1) != characterId) {
@@ -1161,6 +1350,10 @@ int main(int argc, char* argv[]) {
                 mutualGaze =
                     settings.value(QStringLiteral("live2d_mutual_gaze_enabled")).toBool(false);
                 lastPublishedCenterValid = false;
+            }
+            if (settings.contains(QStringLiteral("emotion_behavior_enabled"))) {
+                emotionBehavior =
+                    settings.value(QStringLiteral("emotion_behavior_enabled")).toBool(true);
             }
             if (settings.contains(QStringLiteral("compact_ai_window_enabled"))) {
                 compactAiWindow =

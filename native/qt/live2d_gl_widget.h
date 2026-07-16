@@ -66,6 +66,11 @@ public:
     QSize pixelFrameSize() const;
     void setLive2dWindowSize(const QSize& size);
     bool triggerAction(const QString& action, const QString& character);
+    bool triggerExpressionTag(
+        const QString& action,
+        const QString& character,
+        int holdMilliseconds);
+    bool triggerMotionTag(const QString& action, const QString& character);
     bool applyDefaultState(
         const QString& configuredMotion,
         const QString& configuredExpression,

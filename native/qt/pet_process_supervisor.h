@@ -43,6 +43,7 @@ struct PetLaunchSpec {
     bool moveAllRolesTogether = false;
     bool headTrackingEnabled = true;
     bool mutualGazeEnabled = false;
+    bool emotionBehaviorEnabled = true;
     bool compactAiWindowEnabled = false;
     bool aiEventOverlayEnabled = false;
     bool chatIntegrationOverlayEnabled = true;

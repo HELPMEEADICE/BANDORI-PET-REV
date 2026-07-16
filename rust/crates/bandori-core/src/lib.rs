@@ -19,6 +19,7 @@ pub mod cross_chat_history;
 pub mod dashboard;
 pub mod data_management;
 pub mod database;
+pub mod emotion_behavior;
 pub mod group_chat;
 pub mod history_dashboard;
 pub mod ipc;

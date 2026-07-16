@@ -41,6 +41,14 @@ bool bandori_live2d_trigger_action(
     BandoriLive2dHost* host,
     const char* action,
     const char* character);
+bool bandori_live2d_trigger_expression_tag(
+    BandoriLive2dHost* host,
+    const char* action,
+    const char* character);
+bool bandori_live2d_trigger_motion_tag(
+    BandoriLive2dHost* host,
+    const char* action,
+    const char* character);
 std::int32_t bandori_live2d_apply_default_state(
     BandoriLive2dHost* host,
     const char* configuredMotion,
