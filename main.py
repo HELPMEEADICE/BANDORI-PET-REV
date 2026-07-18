@@ -22,6 +22,7 @@ from config_manager import DEFAULTS
 APP_AUMID = APP_NAME
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
+from PySide6.QtGui import QPixmapCache
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
@@ -83,6 +84,7 @@ def main():
     set_windows_app_user_model_id(APP_AUMID)
 
     app = QApplication(sys.argv)
+    QPixmapCache.setCacheLimit(1024)
 
     import macos_patch
     macos_patch.hide_dock_icon_if_needed()

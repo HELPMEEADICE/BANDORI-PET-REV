@@ -70,10 +70,20 @@ def test_controller_passes_the_known_model_format_to_pet_processes():
 def test_pet_adapter_defers_luajit_and_imports_only_the_selected_format():
     adapter_source = _source("live2d_lua_adapter.py")
     eager_imports = adapter_source.split("def _model_manifest_format", 1)[0]
+    widget_eager_imports = _source("live2d_widget.py").split(
+        "def render_pipeline_for_model", 1
+    )[0]
     pet_source = _source("pet_process.py")
 
     assert "from live2d_lua_adapter_base import" not in eager_imports
     assert "from live2d_lua_adapter_moc import" not in eager_imports
     assert "from live2d_lua_adapter_moc3 import" not in eager_imports
+    assert "from live2d_widget_moc3 import" not in widget_eager_imports
     assert "live2d_for_format(args.model_format)" in pet_source
     assert "QPixmapCache.setCacheLimit(2048)" in pet_source
+
+
+def test_controller_limits_duplicated_qt_pixmap_cache():
+    source = _source("main.py")
+
+    assert "QPixmapCache.setCacheLimit(1024)" in source

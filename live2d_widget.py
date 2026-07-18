@@ -4,9 +4,6 @@ from live2d_widget_base import (
     DEFAULT_LIP_SYNC_MAX_OPEN,
     Live2DWidgetBase,
 )
-from live2d_widget_moc3 import (
-    MOC3_RENDER_PIPELINE,
-)
 
 __all__ = [
     "DEFAULT_HIT_ALPHA_THRESHOLD",
@@ -18,6 +15,8 @@ __all__ = [
 
 def render_pipeline_for_model(model):
     if getattr(model, "renderer_format", "") == "moc3":
+        from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
+
         return MOC3_RENDER_PIPELINE
     return DIRECT_RENDER_PIPELINE
 

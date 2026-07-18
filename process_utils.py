@@ -323,6 +323,13 @@ def ensure_windows_app_user_model_shortcut(
 ) -> bool:
     if sys.platform != "win32" or not app_id:
         return False
+    programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    shortcut_path = programs / f"{_safe_shortcut_name(name)}.lnk"
+    try:
+        if shortcut_path.is_file() and shortcut_path.stat().st_size > 0:
+            return True
+    except OSError:
+        pass
     try:
         import pythoncom
         from win32com.propsys import propsys, pscon
@@ -341,9 +348,7 @@ def ensure_windows_app_user_model_shortcut(
             if main_py.exists():
                 arguments = f'"{main_py}"'
 
-        programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
         programs.mkdir(parents=True, exist_ok=True)
-        shortcut_path = programs / f"{_safe_shortcut_name(name)}.lnk"
 
         pythoncom.CoInitialize()
         try:
