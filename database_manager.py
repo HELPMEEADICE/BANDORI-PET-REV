@@ -514,14 +514,28 @@ def import_chat_database(source_path: str, target_path=DB_PATH) -> dict:
         with tempfile.TemporaryDirectory(prefix="bandori-chat-import-") as temp_dir:
             local_source = _copy_database_for_import(source, Path(temp_dir))
             source_uri = _read_only_database_uri(local_source)
-            with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
-                _validate_chat_database(src)
-                with closing(sqlite3.connect(str(target), timeout=10)) as dst:
-                    dst.execute("PRAGMA busy_timeout=10000")
-                    src.backup(dst)
-                    _sanitize_database_attachments(dst)
-                    dst.commit()
-                    _validate_chat_database(dst)
+            fd, staged_path = tempfile.mkstemp(
+                prefix=target.name + ".",
+                suffix=".import",
+                dir=str(target.parent),
+            )
+            os.close(fd)
+            try:
+                with closing(sqlite3.connect(source_uri, uri=True, timeout=10)) as src:
+                    _validate_chat_database(src)
+                    with closing(sqlite3.connect(staged_path, timeout=10)) as dst:
+                        dst.execute("PRAGMA busy_timeout=10000")
+                        src.backup(dst)
+                        _sanitize_database_attachments(dst)
+                        dst.commit()
+                        _validate_chat_database(dst)
+                os.replace(staged_path, target)
+            except Exception:
+                try:
+                    os.unlink(staged_path)
+                except OSError:
+                    pass
+                raise
 
         _checkpoint_database(target)
         return chat_database_summary(str(target))

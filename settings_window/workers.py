@@ -178,10 +178,13 @@ class ModelPackageDownloadWorker(QThread):
                         self._emit_progress(package_key)
             if self._cancelled():
                 return "cancelled"
-            if part.stat().st_size <= 0:
+            downloaded_size = part.stat().st_size
+            if downloaded_size <= 0:
                 raise RuntimeError("empty response")
-            if target.exists():
-                target.unlink()
+            if length > 0 and downloaded_size != length:
+                raise RuntimeError(
+                    f"incomplete response: expected {length} bytes, got {downloaded_size}"
+                )
             part.replace(target)
             return "downloaded"
         finally:

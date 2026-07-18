@@ -637,8 +637,15 @@ class StdioMcpClient:
             **hidden_subprocess_kwargs(),
         )
         self._reader = threading.Thread(target=self._read_stdout, name=f"MCP:{server.get('label','stdio')}", daemon=True)
-        self._reader.start()
-        self._initialize()
+        try:
+            self._reader.start()
+            self._initialize()
+        except Exception:
+            try:
+                self.close()
+            except Exception:
+                pass
+            raise
 
     @property
     def alive(self) -> bool:
@@ -675,7 +682,10 @@ class StdioMcpClient:
                 pass
         reader = getattr(self, "_reader", None)
         if reader is not None and reader is not threading.current_thread():
-            reader.join(timeout=0.5)
+            try:
+                reader.join(timeout=0.5)
+            except RuntimeError:
+                pass
 
     def _process_environment(self) -> dict:
         environment = os.environ.copy()

@@ -29,6 +29,10 @@ class _DownloadResponse:
         return False
 
 
+class _TruncatedDownloadResponse(_DownloadResponse):
+    headers = {"Content-Length": "10"}
+
+
 class _Signal:
     def __init__(self):
         self.callbacks = []
@@ -167,6 +171,40 @@ class DownloadManagementTests(unittest.TestCase):
                 worker._download_one("kasumi")
 
             self.assertEqual(b"new", target.read_bytes())
+
+    def test_truncated_download_keeps_existing_zst_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            target = models_dir / "kasumi.zst"
+            target.write_bytes(b"working-model")
+            worker = ModelPackageDownloadWorker(["kasumi"], models_dir, overwrite=True)
+            worker._started_at = time.monotonic()
+
+            with patch(
+                "settings_window.workers.urllib.request.urlopen",
+                return_value=_TruncatedDownloadResponse(),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "incomplete response"):
+                    worker._download_one("kasumi")
+
+            self.assertEqual(b"working-model", target.read_bytes())
+
+    def test_failed_atomic_replace_keeps_existing_zst_package(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            target = models_dir / "kasumi.zst"
+            target.write_bytes(b"working-model")
+            worker = ModelPackageDownloadWorker(["kasumi"], models_dir, overwrite=True)
+            worker._started_at = time.monotonic()
+
+            with patch(
+                "settings_window.workers.urllib.request.urlopen",
+                return_value=_DownloadResponse(),
+            ), patch.object(Path, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    worker._download_one("kasumi")
+
+            self.assertEqual(b"working-model", target.read_bytes())
 
     def test_wizard_footer_update_is_safe_outside_first_run_wizard(self):
         SettingsWindow._update_wizard_footer(object())

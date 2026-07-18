@@ -153,6 +153,66 @@ class DatabaseMemorySafetyTests(unittest.TestCase):
 
         self.assertEqual({"character", "Display Name"}, aliases)
 
+    def test_failed_chat_database_import_preserves_existing_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target_path = root / "target.db"
+            source_path = root / "source.db"
+            target = DatabaseManager(str(target_path))
+            source = DatabaseManager(str(source_path))
+            try:
+                target.create_conversation("target-character", "existing")
+                source.create_conversation("source-character", "imported")
+            finally:
+                target.close()
+                source.close()
+
+            with patch.object(
+                database_manager,
+                "_sanitize_database_attachments",
+                side_effect=RuntimeError("sanitize failed"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "sanitize failed"):
+                    database_manager.import_chat_database(
+                        str(source_path), str(target_path)
+                    )
+
+            with database_manager.closing(
+                database_manager.sqlite3.connect(str(target_path))
+            ) as conn:
+                rows = conn.execute(
+                    "SELECT character, title FROM conversations"
+                ).fetchall()
+
+        self.assertEqual([("target-character", "existing")], rows)
+
+    def test_successful_chat_database_import_replaces_existing_database(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target_path = root / "target.db"
+            source_path = root / "source.db"
+            target = DatabaseManager(str(target_path))
+            source = DatabaseManager(str(source_path))
+            try:
+                target.create_conversation("target-character", "existing")
+                source.create_conversation("source-character", "imported")
+            finally:
+                target.close()
+                source.close()
+
+            summary = database_manager.import_chat_database(
+                str(source_path), str(target_path)
+            )
+            with database_manager.closing(
+                database_manager.sqlite3.connect(str(target_path))
+            ) as conn:
+                rows = conn.execute(
+                    "SELECT character, title FROM conversations"
+                ).fetchall()
+
+        self.assertEqual(1, summary["conversations"])
+        self.assertEqual([("source-character", "imported")], rows)
+
 
 if __name__ == "__main__":
     unittest.main()

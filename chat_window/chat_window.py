@@ -306,24 +306,27 @@ class AttachmentImportWorker(CancelableNetworkWorker):
 
             reader = QImageReader(str(target))
             reader.setDecideFormatFromContent(True)
-            if not reader.canRead():
-                raise OSError("The downloaded content is not a readable image")
-            detected_format = bytes(reader.format()).decode("ascii", errors="ignore").lower()
-            if detected_format not in _REMOTE_IMAGE_FORMATS:
-                raise OSError("The downloaded image format is not supported")
-            image_size = reader.size()
-            width = image_size.width()
-            height = image_size.height()
-            if (
-                width <= 0
-                or height <= 0
-                or width > 16_384
-                or height > 16_384
-                or width * height > _REMOTE_IMAGE_MAX_PIXELS
-            ):
-                raise OSError("The downloaded image dimensions are too large")
-            if reader.read().isNull():
-                raise OSError("The downloaded image could not be decoded")
+            try:
+                if not reader.canRead():
+                    raise OSError("The downloaded content is not a readable image")
+                detected_format = bytes(reader.format()).decode("ascii", errors="ignore").lower()
+                if detected_format not in _REMOTE_IMAGE_FORMATS:
+                    raise OSError("The downloaded image format is not supported")
+                image_size = reader.size()
+                width = image_size.width()
+                height = image_size.height()
+                if (
+                    width <= 0
+                    or height <= 0
+                    or width > 16_384
+                    or height > 16_384
+                    or width * height > _REMOTE_IMAGE_MAX_PIXELS
+                ):
+                    raise OSError("The downloaded image dimensions are too large")
+                if reader.read().isNull():
+                    raise OSError("The downloaded image could not be decoded")
+            finally:
+                reader.setFileName("")
 
             detected_suffix, detected_mime = _REMOTE_IMAGE_FORMATS[detected_format]
             if target.suffix.lower() != detected_suffix:

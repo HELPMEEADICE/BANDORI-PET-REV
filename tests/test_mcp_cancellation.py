@@ -146,6 +146,84 @@ class McpCancellationTests(unittest.TestCase):
 
         self.assertLess(events.index("terminate"), events.index("close:stdout"))
 
+    def test_stdio_initialization_failure_closes_process_and_reader(self):
+        class Stream:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class Process:
+            def __init__(self):
+                self.stdin = Stream()
+                self.stdout = Stream()
+                self.terminated = False
+
+            def poll(self):
+                return 0 if self.terminated else None
+
+            def terminate(self):
+                self.terminated = True
+
+            def wait(self, timeout):
+                return 0
+
+        class Reader:
+            def __init__(self):
+                self.started = False
+                self.joined = False
+
+            def start(self):
+                self.started = True
+
+            def join(self, timeout):
+                self.joined = True
+
+        process = Process()
+        reader = Reader()
+        with patch(
+            "mcp_bridge._validated_stdio_command",
+            return_value=("server", [], None),
+        ), patch("mcp_bridge.subprocess.Popen", return_value=process), patch(
+            "mcp_bridge.threading.Thread", return_value=reader
+        ), patch.object(
+            mcp_bridge.StdioMcpClient,
+            "_initialize",
+            side_effect=RuntimeError("initialization failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "initialization failed"):
+                mcp_bridge.StdioMcpClient({"label": "broken"})
+
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(reader.started)
+        self.assertTrue(reader.joined)
+
+    def test_stdio_reader_start_failure_closes_process(self):
+        process = unittest.mock.Mock()
+        process.poll.side_effect = [None, 0]
+        process.wait.return_value = 0
+        process.stdin = unittest.mock.Mock()
+        process.stdout = unittest.mock.Mock()
+        reader = unittest.mock.Mock()
+        reader.start.side_effect = RuntimeError("thread start failed")
+        reader.join.side_effect = RuntimeError("cannot join thread before it is started")
+
+        with patch(
+            "mcp_bridge._validated_stdio_command",
+            return_value=("server", [], None),
+        ), patch("mcp_bridge.subprocess.Popen", return_value=process), patch(
+            "mcp_bridge.threading.Thread", return_value=reader
+        ):
+            with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                mcp_bridge.StdioMcpClient({"label": "broken"})
+
+        process.terminate.assert_called_once()
+        process.stdin.close.assert_called_once()
+        process.stdout.close.assert_called_once()
+
     def test_stdio_validation_accepts_user_configured_python_server(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             script = Path(temp_dir) / "server.py"
