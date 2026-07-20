@@ -1,4 +1,5 @@
 import ssl
+import sys
 import threading
 import time
 import urllib.parse
@@ -98,6 +99,13 @@ class ModelPackageDownloadWorker(QThread):
     def _cancelled(self) -> bool:
         return self._cancel_event.is_set()
 
+    @staticmethod
+    def _remove_partial_file(part) -> None:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"Failed to remove partial model download {part}: {exc}", file=sys.stderr)
+
     def run(self):
         if not self._package_keys:
             self.finished.emit({"downloaded": 0, "failed": []})
@@ -142,17 +150,14 @@ class ModelPackageDownloadWorker(QThread):
         target = self._models_dir / f"{package_key}.zst"
         part = self._models_dir / f"{package_key}.zst.part"
         if self._cancelled():
-            part.unlink(missing_ok=True)
+            self._remove_partial_file(part)
             return "cancelled"
+        self._remove_partial_file(part)
         if not self._overwrite and target.exists() and target.stat().st_size > 0:
             return "skipped"
-        if part.exists():
-            try:
-                part.unlink()
-            except OSError:
-                pass
         req = urllib.request.Request(url, headers={"User-Agent": "Bandori-Pet/1.0"}, method="GET")
         ctx = ssl.create_default_context()
+        installed = False
         try:
             with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
                 with self._lock:
@@ -186,12 +191,13 @@ class ModelPackageDownloadWorker(QThread):
                     f"incomplete response: expected {length} bytes, got {downloaded_size}"
                 )
             part.replace(target)
+            installed = True
             return "downloaded"
         finally:
             with self._lock:
                 self._active_responses.discard(locals().get("resp"))
-            if self._cancelled():
-                part.unlink(missing_ok=True)
+            if not installed:
+                self._remove_partial_file(part)
 
     def _emit_progress(self, current: str):
         if self._cancelled():

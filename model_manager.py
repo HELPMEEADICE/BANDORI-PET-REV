@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from collections import OrderedDict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
@@ -35,7 +35,87 @@ _MODEL_JSON_CACHE_LIMIT = 32
 
 
 def models_dir_exists() -> bool:
-    return any(path.is_dir() and any(path.iterdir()) for path in model_search_dirs())
+    """Return whether a usable model source is available.
+
+    A stale download ``.part`` file, an empty character folder, or unrelated
+    files must not suppress the missing-model prompt at startup.
+    """
+    for root in model_search_dirs():
+        try:
+            entries = list(root.iterdir()) if root.is_dir() else []
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith((".", "_")):
+                continue
+            if entry.is_file() and entry.suffix.lower() == ".zst":
+                try:
+                    if entry.stat().st_size > 0:
+                        return True
+                except OSError:
+                    continue
+            elif entry.is_dir() and has_valid_model_directory(entry):
+                return True
+    return False
+
+
+def _model_manifest_candidates(costume_dir: Path):
+    model_json = costume_dir / "model.json"
+    if model_json.is_file():
+        yield model_json
+    yield from sorted(
+        path for path in costume_dir.glob("*.model3.json") if path.is_file()
+    )
+
+
+def _model_resource_exists(model_json: Path, resource) -> bool:
+    if not isinstance(resource, str) or not resource.strip():
+        return False
+    raw = resource.strip()
+    if Path(raw).is_absolute() or PureWindowsPath(raw).is_absolute():
+        return False
+    try:
+        return (model_json.parent / Path(*raw.replace("\\", "/").split("/"))).is_file()
+    except (OSError, ValueError):
+        return False
+
+
+def is_basic_valid_model_manifest(model_json: Path) -> bool:
+    """Check only the resources required to load a Live2D model initially."""
+    try:
+        data = json.loads(model_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    refs = data.get("FileReferences")
+    if isinstance(refs, dict):
+        moc = refs.get("Moc")
+        textures = refs.get("Textures")
+    else:
+        moc = data.get("model")
+        textures = data.get("textures")
+    if not _model_resource_exists(model_json, moc):
+        return False
+    return (
+        isinstance(textures, list)
+        and bool(textures)
+        and all(_model_resource_exists(model_json, texture) for texture in textures)
+    )
+
+
+def has_valid_model_directory(character_dir: Path) -> bool:
+    """Return whether a character directory contains at least one loadable costume."""
+    try:
+        costume_dirs = sorted(path for path in character_dir.iterdir() if path.is_dir())
+    except OSError:
+        return False
+    return any(
+        is_basic_valid_model_manifest(manifest)
+        for costume_dir in costume_dirs
+        for manifest in _model_manifest_candidates(costume_dir)
+    )
 
 
 def model_search_dirs() -> list[Path]:
@@ -117,6 +197,8 @@ class ModelManager:
             override = root == MODELS_DIR and root != BUNDLED_MODELS_DIR
             for entry in entries:
                 if not entry.is_dir():
+                    continue
+                if not has_valid_model_directory(entry):
                     continue
                 character = entry.name
                 image_path = self._find_dir_character_image(entry)
@@ -298,7 +380,7 @@ class ModelManager:
         for costume_dir in sorted(entry.iterdir()):
             if not costume_dir.is_dir():
                 continue
-            model_json = self._find_model_manifest(costume_dir)
+            model_json = self._find_valid_model_manifest(costume_dir)
             if model_json:
                 model_path = str(model_json.resolve())
                 costumes.append({
@@ -507,11 +589,17 @@ class ModelManager:
 
     @classmethod
     def _find_model_manifest(cls, costume_dir: Path) -> Path | None:
-        model_json = costume_dir / "model.json"
-        if model_json.exists():
-            return model_json
-        model3_jsons = sorted(path for path in costume_dir.glob("*.model3.json") if path.is_file())
-        return model3_jsons[0] if model3_jsons else None
+        return next(_model_manifest_candidates(costume_dir), None)
+
+    @classmethod
+    def _find_valid_model_manifest(cls, costume_dir: Path) -> Path | None:
+        return next(
+            (
+                path for path in _model_manifest_candidates(costume_dir)
+                if is_basic_valid_model_manifest(path)
+            ),
+            None,
+        )
 
     def _model_format_from_path(self, path: str) -> str:
         if str(path).lower().endswith(".model3.json"):
@@ -553,7 +641,7 @@ class ModelManager:
         if model_path:
             return model_path
         for root in model_lookup_dirs():
-            path = self._find_model_manifest(root / character / costume)
+            path = self._find_valid_model_manifest(root / character / costume)
             if path:
                 return str(path.resolve())
         return ""

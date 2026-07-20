@@ -13,6 +13,8 @@ class ModelManagerArchivePrecedenceTest(unittest.TestCase):
     def _write_dir_model(models: Path, character: str, costume: str = "default"):
         costume_dir = models / character / costume
         costume_dir.mkdir(parents=True)
+        (costume_dir / "base.moc").write_bytes(b"moc")
+        (costume_dir / "base.png").write_bytes(b"png")
         model_json = costume_dir / "model.json"
         model_json.write_text('{"model": "base.moc", "textures": ["base.png"]}', encoding="utf-8")
         return str(model_json.resolve())

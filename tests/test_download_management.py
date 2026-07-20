@@ -1,6 +1,7 @@
 import tempfile
 import time
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -31,6 +32,29 @@ class _DownloadResponse:
 
 class _TruncatedDownloadResponse(_DownloadResponse):
     headers = {"Content-Length": "10"}
+
+
+class _FailingDownloadResponse:
+    headers = {"Content-Length": "10"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _size):
+        raise OSError("connection lost")
+
+
+def _write_valid_folder_model(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "model.moc").write_bytes(b"moc")
+    (root / "texture.png").write_bytes(b"png")
+    (root / "model.json").write_text(
+        json.dumps({"model": "model.moc", "textures": ["texture.png"]}),
+        encoding="utf-8",
+    )
 
 
 class _Signal:
@@ -97,6 +121,15 @@ class DownloadManagementTests(unittest.TestCase):
             self.assertEqual("cancelled", result)
             self.assertFalse(part.exists())
 
+    def test_cancelled_download_ignores_partial_cleanup_failure(self):
+        worker = ModelPackageDownloadWorker(["kasumi"], Path("."), overwrite=True)
+        worker._cancel_event.set()
+
+        with patch.object(Path, "unlink", side_effect=OSError("file is busy")):
+            result = worker._download_one("kasumi")
+
+        self.assertEqual("cancelled", result)
+
     def test_cancelled_overwrite_keeps_existing_model(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             models_dir = Path(temp_dir)
@@ -123,9 +156,7 @@ class DownloadManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "kasumi.zst").write_bytes(b"archive")
-            model_json = root / "custom" / "default" / "model.json"
-            model_json.parent.mkdir(parents=True)
-            model_json.write_text("{}", encoding="utf-8")
+            _write_valid_folder_model(root / "custom" / "default")
 
             sources = discover_download_model_sources([root])
 
@@ -136,14 +167,12 @@ class DownloadManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "kasumi.zst").write_bytes(b"archive")
-            model_json = root / "custom" / "default" / "model.json"
-            model_json.parent.mkdir(parents=True)
-            model_json.write_text("{}", encoding="utf-8")
+            _write_valid_folder_model(root / "custom" / "default")
 
             sources = scan_download_model_sources([root])
 
         self.assertEqual(7, sources["kasumi"]["archive_size"])
-        self.assertEqual(2, sources["custom"]["folder_size"])
+        self.assertGreater(sources["custom"]["folder_size"], 2)
 
     def test_cached_download_page_does_not_start_another_scan(self):
         page = _DownloadPage()
@@ -188,6 +217,49 @@ class DownloadManagementTests(unittest.TestCase):
                     worker._download_one("kasumi")
 
             self.assertEqual(b"working-model", target.read_bytes())
+            self.assertFalse((models_dir / "kasumi.zst.part").exists())
+
+    def test_failed_download_removes_partial_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            worker = ModelPackageDownloadWorker(["kasumi"], models_dir, overwrite=True)
+            worker._started_at = time.monotonic()
+
+            with patch(
+                "settings_window.workers.urllib.request.urlopen",
+                return_value=_FailingDownloadResponse(),
+            ):
+                with self.assertRaisesRegex(OSError, "connection lost"):
+                    worker._download_one("kasumi")
+
+            self.assertFalse((models_dir / "kasumi.zst.part").exists())
+
+    def test_partial_cleanup_failure_preserves_original_download_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            worker = ModelPackageDownloadWorker(
+                ["kasumi"], Path(temp_dir), overwrite=True
+            )
+            worker._started_at = time.monotonic()
+
+            with patch(
+                "settings_window.workers.urllib.request.urlopen",
+                return_value=_FailingDownloadResponse(),
+            ), patch.object(Path, "unlink", side_effect=OSError("file is busy")):
+                with self.assertRaisesRegex(OSError, "connection lost"):
+                    worker._download_one("kasumi")
+
+    def test_skipped_download_removes_stale_partial_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            models_dir = Path(temp_dir)
+            target = models_dir / "kasumi.zst"
+            target.write_bytes(b"working-model")
+            part = models_dir / "kasumi.zst.part"
+            part.write_bytes(b"stale")
+
+            result = ModelPackageDownloadWorker(["kasumi"], models_dir)._download_one("kasumi")
+
+            self.assertEqual("skipped", result)
+            self.assertFalse(part.exists())
 
     def test_failed_atomic_replace_keeps_existing_zst_package(self):
         with tempfile.TemporaryDirectory() as temp_dir:

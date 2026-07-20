@@ -2,7 +2,7 @@ from pathlib import Path
 
 from settings_window.constants import *
 from settings_window.workers import ModelPackageDownloadWorker
-from model_manager import BAND_JSON, OUTFIT_JSON, model_lookup_dirs
+from model_manager import BAND_JSON, OUTFIT_JSON, has_valid_model_directory, model_lookup_dirs
 
 
 def discover_download_model_sources(
@@ -42,15 +42,12 @@ def discover_download_model_sources(
 
 
 def _contains_model_manifest(path: Path, *, cancelled=None) -> bool:
+    if cancelled is not None and cancelled():
+        return False
     try:
-        for pattern in ('model.json', '*.model3.json'):
-            for _candidate in path.rglob(pattern):
-                if cancelled is not None and cancelled():
-                    return False
-                return True
+        return has_valid_model_directory(path)
     except OSError:
         return False
-    return False
 
 
 def _path_size(paths: list[Path], *, cancelled=None) -> int:

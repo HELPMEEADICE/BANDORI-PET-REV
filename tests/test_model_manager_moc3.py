@@ -9,6 +9,9 @@ from model_manager import ModelManager
 
 
 def _write_model3(root: Path, name: str = "test.model3.json") -> Path:
+    (root / "textures").mkdir(parents=True, exist_ok=True)
+    (root / "test.moc3").write_bytes(b"moc3")
+    (root / "textures" / "texture_00.png").write_bytes(b"png")
     model3_path = root / name
     model3_path.write_text(
         json.dumps({
