@@ -60,7 +60,7 @@ def _item_color(item: dict) -> QColor | None:
     return QColor(int(color_values[0]), int(color_values[1]), int(color_values[2]))
 
 
-def _build_menu(payload: dict, actions: list[str]) -> RadialMenu:
+def _build_menu(payload: dict, actions: list[str], emit_action=_emit) -> RadialMenu:
     menu = RadialMenu()
     actions.clear()
     for item in _payload_items(payload):
@@ -77,7 +77,7 @@ def _build_menu(payload: dict, actions: list[str]) -> RadialMenu:
             "",
             label,
             color,
-            on_click=lambda idx=index: _emit(f"ACT\t{actions[idx]}"),
+            on_click=lambda idx=index: emit_action(actions[idx]),
             glyph=glyph,
             enabled=enabled,
         )
@@ -149,6 +149,40 @@ def main():
     menu = None
     menu_actions: list[str] = []
 
+    from plugin_system.bridge import PluginComponentBridge
+    from plugin_system.native import NativePluginLoader
+
+    plugin_bridge = PluginComponentBridge("radial", app)
+    plugin_bridge.connect()
+
+    def dispatch_action(action: str):
+        result = plugin_bridge.dispatch_event("radial.action.before", {"action": action})
+        if result.get("cancelled"):
+            return
+        action = str(result.get("payload", {}).get("action", action) or action)
+        if action.startswith("plugin:"):
+            plugin_bridge.notify_event("radial.action", {"action": action})
+        else:
+            _emit(f"ACT\t{action}")
+
+    def with_plugin_items(payload: dict) -> dict:
+        result = dict(payload)
+        items = list(_payload_items(payload))
+        for contribution in plugin_bridge.contributions("ui", "radial_menu"):
+            spec = contribution.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            color = spec.get("color", [91, 91, 116])
+            items.append({
+                "action": f"plugin:{contribution.get('plugin_id', '')}:{contribution.get('id', '')}",
+                "label": str(spec.get("label", contribution.get("id", "")) or ""),
+                "glyph": str(spec.get("glyph", "") or ""),
+                "color": color if isinstance(color, list) else [91, 91, 116],
+                "enabled": bool(spec.get("enabled", True)),
+            })
+        result["items"] = items
+        return result
+
     def on_menu_closed():
         interaction_trace("radial_process", "menu_closed")
         _emit("STATE\tCLOSED")
@@ -173,6 +207,7 @@ def main():
         menu.lock_toggled.connect(on_lock_toggled)
 
     def show_payload(payload: dict):
+        payload = with_plugin_items(payload)
         interaction_trace(
             "radial_process",
             "show_payload",
@@ -181,9 +216,9 @@ def main():
             existing=menu is not None,
         )
         if menu is None:
-            attach_menu(_build_menu(payload, menu_actions))
+            attach_menu(_build_menu(payload, menu_actions, dispatch_action))
         elif not _update_menu(menu, payload, menu_actions):
-            attach_menu(_build_menu(payload, menu_actions))
+            attach_menu(_build_menu(payload, menu_actions, dispatch_action))
         if menu is None:
             return
         if menu._is_showing:
@@ -235,9 +270,20 @@ def main():
     command_timer.setInterval(15)
     command_timer.timeout.connect(read_stdio_commands if _STDIO_MODE else read_commands)
     command_timer.start()
+
+    native_plugin_loader = NativePluginLoader(
+        "radial",
+        transport_factory=plugin_bridge.native_transport,
+        application=app,
+        controller=show_payload,
+        objects={"show_payload": show_payload, "close_menu": close_menu, "attach_menu": attach_menu},
+    )
+    native_plugin_loader.load_all()
     if command_queue is not None:
         app.aboutToQuit.connect(command_queue.close)
     app.aboutToQuit.connect(lambda: _EVENT_QUEUE.close() if _EVENT_QUEUE is not None else None)
+    app.aboutToQuit.connect(native_plugin_loader.close)
+    app.aboutToQuit.connect(plugin_bridge.close)
     _emit("READY")
     return app.exec()
 

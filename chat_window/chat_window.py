@@ -4,8 +4,9 @@ fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
 import logging
 import time
+import threading
 
-from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QPoint, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPropertyAnimation, QEasingCurve, QEvent, QPoint, QRect, QSize, QVariantAnimation, QParallelAnimationGroup
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QImage, QImageReader, QTextCursor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -73,6 +74,40 @@ from tts_common import clean_tts_payload
 from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
 from .chat_window_base import ChatWindowMixin
 _TTS_AVAILABLE = True
+
+
+class _PluginToolInvoker(QObject):
+    requested = Signal(object)
+
+    def __init__(self, bridge, parent=None):
+        super().__init__(parent)
+        self._bridge = bridge
+        self.requested.connect(self._invoke_on_ui_thread)
+
+    def invoke(self, contribution_id: str, arguments):
+        request = {
+            "id": str(contribution_id),
+            "arguments": arguments,
+            "event": threading.Event(),
+            "result": None,
+            "error": None,
+        }
+        self.requested.emit(request)
+        if not request["event"].wait(11.0):
+            raise TimeoutError("Plugin tool timed out")
+        if request["error"] is not None:
+            raise request["error"]
+        return request["result"]
+
+    def _invoke_on_ui_thread(self, request):
+        try:
+            request["result"] = self._bridge.invoke_contribution(
+                "tools", request["id"], request["arguments"]
+            )
+        except Exception as exc:
+            request["error"] = exc
+        finally:
+            request["event"].set()
 
 try:
     from asr_manager import ASRRecorderWorker, ASRRequestWorker
@@ -3163,6 +3198,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         if not self._asr_enabled() or ASRRequestWorker is None:
             return
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            result = bridge.dispatch_event("asr.request.before", {
+                "media_type": media_type,
+                "size": len(audio),
+            })
+            if result.get("cancelled"):
+                return
         self._asr_transcribing = True
         self._composer_hint.setText(_tr("ChatWindow.asr_transcribing", default="正在识别语音..."))
         self._asr_request_worker = ASRRequestWorker(audio, media_type, asr_config_snapshot(self._cfg), self)
@@ -3181,6 +3224,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
         text = str(text or "").strip()
         if not text:
             return
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            result = bridge.dispatch_event("asr.result.before", {"text": text})
+            if result.get("cancelled"):
+                return
+            text = str(result.get("payload", {}).get("text", text) or "").strip()
+            if not text:
+                return
+            bridge.notify_event("asr.result.received", {"text": text})
         mode = str(self._cfg.get("asr_insert_mode", "append") if self._cfg else "append")
         if mode == "replace":
             self._input.setPlainText(text)
@@ -4931,6 +4983,17 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def apply_runtime_settings(self, data: dict):
         if not isinstance(data, dict):
             return False
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            from plugin_system.redaction import redact_secrets, restore_secrets
+            result = bridge.dispatch_event(
+                "settings.apply.before", {"settings": redact_secrets(data)}
+            )
+            if result.get("cancelled"):
+                return False
+            patched = result.get("payload", {}).get("settings", data)
+            if isinstance(patched, dict):
+                data = restore_secrets(patched, data)
         self._reload_runtime_config()
         return True
 
@@ -5165,6 +5228,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
             include_chat_keys=True,
             latest_user_text=self._last_user_text,
         )
+        plugin_tool_enricher = getattr(self, "_with_plugin_tools", None)
+        if callable(plugin_tool_enricher):
+            tool_config = plugin_tool_enricher(tool_config)
         if self._is_group_chat:
             tool_config["llm_auto_continue_enabled"] = False
         api_url = self._cfg.get("llm_api_url", "")
@@ -5367,6 +5433,29 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not text:
             return
 
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            result = bridge.dispatch_event("chat.message.before", {
+                "text": text,
+                "attachments": attachments,
+                "character": self._character,
+                "group": bool(self._is_group_chat),
+            })
+            if result.get("cancelled"):
+                self._composer_hint.setText(str(result.get("reason", "") or ""))
+                return
+            patched = result.get("payload", {})
+            text = str(patched.get("text", text) or "").strip()
+            next_attachments = patched.get("attachments", attachments)
+            if isinstance(next_attachments, list):
+                attachments = next_attachments
+            if not text:
+                return
+
+        if not attachments and self._handle_plugin_command(text):
+            self._input.clear()
+            return
+
         if is_interrupt_command(text):
             self._interrupt_generation()
             return
@@ -5446,6 +5535,135 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
 
         self._commit_user_message(text, attachments, user_bubble=user_bubble)
+        if bridge is not None:
+            bridge.notify_event("chat.message.sent", {
+                "text": text,
+                "character": self._character,
+                "group": bool(self._is_group_chat),
+            })
+
+    def _handle_plugin_command(self, text: str) -> bool:
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is None:
+            return False
+        try:
+            commands = bridge.contributions("commands")
+        except Exception:
+            return False
+        stripped = str(text or "").strip()
+        for command in commands:
+            spec = command.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            triggers = spec.get("triggers", [])
+            if isinstance(triggers, str):
+                triggers = [triggers]
+            name = str(spec.get("name", "") or "").strip()
+            if name:
+                triggers = [*triggers, "/" + name]
+            matched = next((str(value) for value in triggers if str(value) and (
+                stripped == str(value) or stripped.startswith(str(value) + " ")
+            )), "")
+            if not matched:
+                continue
+            try:
+                result = bridge.invoke_contribution("commands", str(command.get("id", "")), {
+                    "text": stripped,
+                    "arguments": stripped[len(matched):].strip(),
+                    "character": self._character,
+                    "group": bool(self._is_group_chat),
+                })
+                if isinstance(result, dict):
+                    result = result.get("text", result.get("message", ""))
+                if result:
+                    self._show_local_assistant_message(str(result))
+            except Exception as exc:
+                self._show_local_assistant_message(str(exc))
+            return True
+        return False
+
+    def _with_plugin_tools(self, tool_config: dict) -> dict:
+        config = dict(tool_config or {})
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is None:
+            return config
+        try:
+            contributions = bridge.contributions("tools")
+        except Exception:
+            return config
+        reserved = {
+            "web_search", "web_fetch", "continue_conversation", "create_alarm",
+            "start_pomodoro", "poke_user",
+        }
+        tools = []
+        seen = set(reserved)
+        for contribution in contributions:
+            spec = contribution.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            name = str(spec.get("name", "") or "").strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) or name in seen:
+                continue
+            parameters = spec.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}}
+            tools.append({
+                "id": str(contribution.get("id", "") or ""),
+                "plugin_id": str(contribution.get("plugin_id", "") or ""),
+                "spec": {
+                    "name": name,
+                    "description": str(spec.get("description", "") or ""),
+                    "parameters": parameters,
+                },
+            })
+            seen.add(name)
+        if not tools:
+            return config
+        invoker = getattr(self, "_plugin_tool_invoker", None)
+        if invoker is None:
+            invoker = _PluginToolInvoker(bridge, self)
+            self._plugin_tool_invoker = invoker
+        config["_plugin_tools"] = tools
+        config["_plugin_tool_runner"] = invoker.invoke
+        return config
+
+    @staticmethod
+    def _plugin_safe_messages(messages: list[dict]) -> list[dict]:
+        marker_key = "__bandoripet_large_value__"
+
+        def scrub(value):
+            if isinstance(value, str):
+                if value.startswith("data:") or len(value) > 16_000:
+                    return {
+                        marker_key: True,
+                        "length": len(value),
+                        "preview": value[:240],
+                    }
+                return value
+            if isinstance(value, list):
+                return [scrub(item) for item in value]
+            if isinstance(value, dict):
+                return {str(key): scrub(item) for key, item in value.items()}
+            return value
+
+        return scrub(messages)
+
+    @staticmethod
+    def _plugin_hydrate_messages(patched, original):
+        marker_key = "__bandoripet_large_value__"
+        if isinstance(patched, dict) and patched.get(marker_key) is True:
+            return original
+        if isinstance(patched, list) and isinstance(original, list):
+            return [
+                ChatWindow._plugin_hydrate_messages(item, original[index] if index < len(original) else None)
+                for index, item in enumerate(patched)
+            ]
+        if isinstance(patched, dict) and isinstance(original, dict):
+            return {
+                key: ChatWindow._plugin_hydrate_messages(value, original.get(key))
+                for key, value in patched.items()
+            }
+        return patched
 
     def _on_send_button_clicked(self):
         if self._generation_busy():
@@ -5800,12 +6018,46 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
         messages = self._build_messages_for_character(character, spoken_names)
         self._pending_interaction_context = ""
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            plugin_messages = self._plugin_safe_messages(messages)
+            prompt_result = bridge.dispatch_event("llm.prompt.before", {
+                "character": character,
+                "messages": plugin_messages,
+            })
+            if prompt_result.get("cancelled"):
+                self._current_bubble.set_streaming(False)
+                self._current_bubble.set_text(str(prompt_result.get("reason", "") or ""))
+                self._set_busy(False)
+                return
+            patched_messages = prompt_result.get("payload", {}).get("messages", plugin_messages)
+            if isinstance(patched_messages, list):
+                messages = self._plugin_hydrate_messages(patched_messages, messages)
+            request_messages = self._plugin_safe_messages(messages)
+            request_result = bridge.dispatch_event("llm.request.before", {
+                "character": character,
+                "model": model_id,
+                "api_url": api_url,
+                "messages": request_messages,
+            })
+            if request_result.get("cancelled"):
+                self._current_bubble.set_streaming(False)
+                self._current_bubble.set_text(str(request_result.get("reason", "") or ""))
+                self._set_busy(False)
+                return
+            request_payload = request_result.get("payload", {})
+            model_id = str(request_payload.get("model", model_id) or model_id)
+            api_url = str(request_payload.get("api_url", api_url) or api_url)
+            patched_messages = request_payload.get("messages", messages)
+            if isinstance(patched_messages, list):
+                messages = self._plugin_hydrate_messages(patched_messages, messages)
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
         tool_config = tool_config_snapshot(
             self._cfg,
             include_chat_keys=True,
             latest_user_text=self._last_user_text,
         )
+        tool_config = self._with_plugin_tools(tool_config)
         tool_config["_active_character"] = character
         if self._is_group_chat:
             tool_config["llm_auto_continue_enabled"] = False
@@ -6081,6 +6333,26 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         usage = getattr(stream.worker, "token_usage", None)
         tool_calls = getattr(stream.worker, "tool_trace", None)
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            result = bridge.dispatch_event("llm.response.before", {
+                "character": stream.character,
+                "text": full_text,
+                "reasoning": reasoning_text,
+                "actions": actions,
+                "usage": usage,
+                "tools": tool_calls,
+            })
+            if result.get("cancelled"):
+                full_text = str(result.get("reason", "") or "")
+                reasoning_text = ""
+                actions = []
+            else:
+                patched = result.get("payload", {})
+                full_text = str(patched.get("text", full_text) or "")
+                reasoning_text = str(patched.get("reasoning", reasoning_text) or "")
+                if isinstance(patched.get("actions"), list):
+                    actions = patched["actions"]
         self._finalize_current_response_segment(
             stream,
             full_text,
@@ -6089,6 +6361,20 @@ class ChatWindow(ChatWindowMixin, QWidget):
             llm_usage=usage,
             tool_calls=tool_calls,
         )
+        if bridge is not None:
+            bridge.notify_event("llm.response.received", {
+                "character": stream.character,
+                "text": full_text,
+                "reasoning": reasoning_text,
+                "actions": actions,
+                "usage": usage,
+                "tools": tool_calls,
+            })
+            bridge.notify_event("chat.message.received", {
+                "character": stream.character,
+                "text": full_text,
+                "group": bool(self._is_group_chat),
+            })
 
         if self._is_group_chat:
             self._group_spoken.append(self._model_manager.get_display_name(stream.character))
@@ -6224,6 +6510,26 @@ class ChatWindow(ChatWindowMixin, QWidget):
         text = self._clean_tts_payload(text)
         if not text:
             return
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            result = bridge.dispatch_event("tts.request.before", {
+                "sequence": sequence,
+                "text": text,
+                "character": character,
+            })
+            if result.get("cancelled"):
+                if sequence == self._tts_next_play_sequence:
+                    self._tts_next_play_sequence += 1
+                    QTimer.singleShot(0, self._start_next_tts_request)
+                return
+            patched = result.get("payload", {})
+            text = str(patched.get("text", text) or "").strip()
+            character = str(patched.get("character", character) or character)
+            if not text:
+                if sequence == self._tts_next_play_sequence:
+                    self._tts_next_play_sequence += 1
+                    QTimer.singleShot(0, self._start_next_tts_request)
+                return
         if self._tts_should_translate():
             worker = TTSTranslationWorker(sequence, self._tts_generation, text, character, tts_config_snapshot(self._cfg), self)
             self._tts_translation_workers[sequence] = worker
@@ -6309,6 +6615,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if generation != self._tts_generation or sequence not in self._tts_active_workers:
             return
         worker = self._tts_active_workers.get(sequence)
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            bridge.notify_event("tts.audio.ready", {
+                "sequence": sequence,
+                "character": self._tts_characters.get(sequence, ""),
+                "media_type": media_type,
+                "size": len(audio),
+            })
         if worker is not None:
             self._tts_player.prepare_lip_sync_text(
                 getattr(worker, "prepared_text", ""),
@@ -6334,8 +6648,16 @@ class ChatWindow(ChatWindowMixin, QWidget):
             publish_lip_sync(character, level, form)
 
     def _on_tts_playback_finished(self):
+        sequence = self._tts_playing_sequence
+        character = self._tts_characters.get(sequence, "")
         self._release_tts_audio_in_order()
         self._start_next_tts_request()
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            bridge.notify_event("tts.playback.finished", {
+                "sequence": sequence,
+                "character": character,
+            })
 
     def _on_tts_worker_finished(self):
         worker = self.sender()

@@ -33,6 +33,7 @@ from settings_window.pages.statistics import StatisticsPageMixin
 from settings_window.pages.chat_history import ChatHistoryPageMixin
 from settings_window.pages.character_persona import CharacterPersonaPageMixin
 from settings_window.pages.download_manager import DownloadManagementPageMixin
+from settings_window.pages.plugins import PluginManagementPageMixin
 
 
 class SettingsWindow(
@@ -55,6 +56,7 @@ class SettingsWindow(
     ChatHistoryPageMixin,
     CharacterPersonaPageMixin,
     DownloadManagementPageMixin,
+    PluginManagementPageMixin,
     QWidget,
 ):
 
@@ -144,6 +146,7 @@ class SettingsWindow(
         self._mcp_computer_page = None
         self._data_management_page = None
         self._download_management_page = None
+        self._plugins_page = None
         self._download_manager_scan_worker = None
         self._download_manager_workers: dict[str, QThread] = {}
         self._retired_settings_workers: list[QThread] = []
@@ -1441,6 +1444,9 @@ class SettingsWindow(
                 "download_management", self._build_download_management_page(),
             )
             return self._download_management_page
+        if key == "plugins":
+            self._plugins_page = self._add_lazy_page("plugins", self._build_plugins_page())
+            return self._plugins_page
         if key == "statistics":
             self._statistics_page = self._add_lazy_page("statistics", self._build_statistics_page())
             return self._statistics_page
@@ -1705,6 +1711,17 @@ class SettingsWindow(
         self._nav_buttons["download_management"] = btn_download_management
         nav_layout.addWidget(btn_download_management)
 
+        btn_plugins = NavButton(
+            "plugins",
+            FluentIcon.DEVELOPER_TOOLS,
+            _tr("SettingsWindow.nav_plugins", default="插件管理"),
+            nav_content,
+            "#7c3aed",
+        )
+        btn_plugins.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["plugins"] = btn_plugins
+        nav_layout.addWidget(btn_plugins)
+
         nav_layout.addStretch()
         nav_scroll.setWidget(nav_content)
         nav_scroll.verticalScrollBar().valueChanged.connect(
@@ -1768,6 +1785,8 @@ class SettingsWindow(
                 QTimer.singleShot(0, self._activate_chat_history_page)
             elif nav_key == "download_management":
                 self._refresh_download_management_page()
+            elif nav_key == "plugins":
+                self._refresh_plugins_page()
         self._current_page = nav_key
         self._animate_indicator(nav_key)
 

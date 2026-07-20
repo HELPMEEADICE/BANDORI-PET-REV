@@ -20,9 +20,9 @@ BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 
-from PySide6.QtCore import QLockFile, QRect, Qt
+from PySide6.QtCore import QLockFile, QRect, Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QToolButton
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
@@ -187,6 +187,82 @@ def main():
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     window.closed.connect(app.quit)
 
+    from plugin_system.bridge import PluginComponentBridge
+    from plugin_system.native import NativePluginLoader
+
+    plugin_bridge = PluginComponentBridge("chat", app)
+    window._plugin_bridge = plugin_bridge
+
+    def plugin_send_message(payload):
+        data = payload if isinstance(payload, dict) else {}
+        text = str(data.get("text", "") or "").strip()
+        if not text:
+            raise ValueError("chat.send requires non-empty text")
+        window._input.setPlainText(text)
+        QTimer.singleShot(0, window._send_message)
+        return {"ok": True, "queued": True}
+
+    plugin_bridge.register_service("chat.info", lambda _payload: {
+        "character": window._character,
+        "group": list(window._current_chat_members()),
+        "busy": bool(window._generation_busy()),
+    }, permission="chat.read")
+    plugin_bridge.register_service("chat.send", plugin_send_message, permission="chat.send")
+    plugin_bridge.register_service("chat.message.local", lambda payload: (
+        window._show_local_assistant_message(str((payload or {}).get("text", "") or ""))
+        or {"ok": True}
+    ), permission="chat.write")
+    plugin_bridge.register_service("chat.interrupt", lambda _payload: (
+        window._interrupt_generation(clear_input=False) or {"ok": True}
+    ), permission="chat.control")
+    plugin_bridge.connect()
+
+    def refresh_plugin_chat_actions():
+        controls = getattr(window, "_composer_controls", None)
+        layout = controls.layout() if controls is not None else None
+        if layout is None:
+            return
+        for button in getattr(window, "_plugin_chat_action_buttons", []):
+            layout.removeWidget(button)
+            button.deleteLater()
+        buttons = []
+        for contribution in plugin_bridge.contributions("ui", "chat_action"):
+            spec = contribution.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            button = QToolButton(controls)
+            button.setText(str(spec.get("glyph", spec.get("label", "P")) or "P")[:3])
+            button.setToolTip(str(spec.get("label", contribution.get("id", "")) or ""))
+            button.setEnabled(bool(spec.get("enabled", True)))
+
+            def clicked(_checked=False, item=contribution):
+                payload = {
+                    "plugin_id": item.get("plugin_id", ""),
+                    "component_id": item.get("id", ""),
+                    "character": window._character,
+                }
+                result = plugin_bridge.dispatch_event("chat.action.before", payload)
+                if not result.get("cancelled"):
+                    plugin_bridge.notify_event("chat.action", result.get("payload", payload))
+
+            button.clicked.connect(clicked)
+            layout.insertWidget(max(0, layout.count() - 1), button)
+            buttons.append(button)
+        window._plugin_chat_action_buttons = buttons
+
+    plugin_bridge.contributions_changed.connect(refresh_plugin_chat_actions)
+    refresh_plugin_chat_actions()
+
+    native_plugin_loader = NativePluginLoader(
+        "chat",
+        transport_factory=plugin_bridge.native_transport,
+        application=app,
+        controller=window,
+        window=window,
+        objects={"model_manager": mgr, "config": cfg},
+    )
+    native_plugin_loader.load_all()
+
     ipc_peer_id = make_peer_id("chat")
     ipc = {"inbound": None, "reliable_inbound": None, "broadcast": None, "control": None}
 
@@ -234,6 +310,8 @@ def main():
     start_ipc_heartbeat(app, register_chat_window, read_shutdown_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
     app.aboutToQuit.connect(close_mcp_clients)
+    app.aboutToQuit.connect(native_plugin_loader.close)
+    app.aboutToQuit.connect(plugin_bridge.close)
 
     window.show()
     saved_x = cfg.get("chat_window_x")

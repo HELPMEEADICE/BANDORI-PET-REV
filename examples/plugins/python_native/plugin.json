@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "com.bandoripet.example.native",
+  "name": "Native Python Example",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "app": ">=3.1.4,<4.0",
+  "language": "python",
+  "execution": "native",
+  "entrypoints": {"pet": "pet_native.py"},
+  "permissions": {"intent": {"pet_internal_behavior": true}},
+  "platforms": ["windows", "macos", "linux"],
+  "description": "Demonstrates unrestricted access to a pet-process internal behavior."
+}

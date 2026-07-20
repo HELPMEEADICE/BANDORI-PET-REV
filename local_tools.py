@@ -261,6 +261,32 @@ def chat_completion_tools(
     tools.append(CHAT_COMPLETIONS_POKE_USER_TOOL)
     tools.extend(mcp_proxy_tools(config, exclude_native=mcp_exclude_native))
     tools.extend(computer_tools(config))
+    existing_names = {
+        str(item.get("function", {}).get("name", "") or "")
+        for item in tools
+        if isinstance(item, dict) and isinstance(item.get("function"), dict)
+    }
+    for item in config.get("_plugin_tools", []) or []:
+        if not isinstance(item, dict):
+            continue
+        spec = item.get("spec", {})
+        if not isinstance(spec, dict):
+            continue
+        name = str(spec.get("name", "") or "").strip()
+        if not name or name in existing_names:
+            continue
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": str(spec.get("description", "") or ""),
+                "parameters": spec.get("parameters") or {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        })
+        existing_names.add(name)
     return tools
 
 
@@ -351,6 +377,8 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "鼠标移动/点击/滚动请使用最近一次截图图片上的像素坐标，程序会自动映射到真实桌面坐标。"
             "不要执行购买、支付、删除、发送消息、发布内容、登录、修改安全设置等高风险操作。"
         )
+    if config.get("_plugin_tools"):
+        hints.append("可以使用已启用插件提供的工具；只依据真实工具结果回答，不要编造执行结果。")
     if not hints:
         return ""
     return "【工具使用边界】\n" + "\n".join(hints)
@@ -402,6 +430,25 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
     if name == WEB_FETCH_TOOL_NAME:
         return _run_web_fetch_tool_call(arguments, tool_config or {})
     if name != WEB_SEARCH_TOOL_NAME:
+        plugin_tool = next((
+            item for item in tool_config.get("_plugin_tools", []) or []
+            if isinstance(item, dict)
+            and str(item.get("spec", {}).get("name", "") or "") == name
+        ), None)
+        if plugin_tool is not None:
+            runner = tool_config.get("_plugin_tool_runner")
+            if not callable(runner):
+                return {"content": f"Plugin tool unavailable: {name}", "extra_messages": []}
+            try:
+                result = runner(str(plugin_tool.get("id", "") or ""), arguments)
+                content = (
+                    json.dumps(result, ensure_ascii=False)
+                    if isinstance(result, (dict, list))
+                    else str(result or "")
+                )
+            except Exception as exc:
+                content = f"Plugin tool failed: {exc}"
+            return {"content": content, "extra_messages": []}
         if is_mcp_tool_name(name):
             return {"content": call_mcp_tool(name, arguments, cancel_event=cancel_event), "extra_messages": []}
         if is_computer_tool_name(name):

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "com.bandoripet.example.lua",
+  "name": "Lua Managed Example",
+  "version": "1.0.0",
+  "api": ">=1.0,<2.0",
+  "app": ">=3.1.4,<4.0",
+  "language": "lua",
+  "execution": "managed",
+  "entrypoints": {"worker": "main.lua"},
+  "permissions": {
+    "events": {"observe": true, "intercept": true},
+    "pet": {"control": true},
+    "commands": {"register": true},
+    "llm": {"tools": true},
+    "ui": {"settings_page": true, "radial_menu": true}
+  },
+  "platforms": ["windows", "macos", "linux"],
+  "description": "Demonstrates API parity in managed Lua."
+}

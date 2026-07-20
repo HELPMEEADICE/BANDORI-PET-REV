@@ -28,6 +28,7 @@ _PROCESS_NAMES = (
     "radial_menu_process",
     "settings_process",
     "chat_process",
+    "plugin_worker",
     "bandori-ai-event",
     "bandori-codex-runner",
 )

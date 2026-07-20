@@ -18,7 +18,7 @@ BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmapCache
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QVBoxLayout
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
@@ -198,6 +198,91 @@ def main():
         on_shutdown_requested=normal_shutdown_requested.set,
     )
 
+    from plugin_system.bridge import PluginComponentBridge
+    from plugin_system.native import NativePluginLoader
+
+    plugin_bridge = PluginComponentBridge("pet", app)
+    pet._plugin_bridge = plugin_bridge
+    plugin_bridge.register_service("pet.info", lambda _payload: {
+        "character": pet._current_char,
+        "costume": pet._current_costume,
+        "mode": "pixel" if pet._pixel_mode else "live2d",
+        "visible": pet.isVisible(),
+        "position": {"x": pet.x(), "y": pet.y()},
+    }, permission="pet.read")
+    plugin_bridge.register_service("pet.motion.play", lambda payload: (
+        pet._start_click_motion(
+            str((payload or {}).get("motion", "") or ""),
+            str((payload or {}).get("expression", "") or ""),
+        ) or {"ok": True}
+    ), permission="pet.control")
+    plugin_bridge.register_service("pet.expression.set", lambda payload: (
+        pet._apply_click_expression(str((payload or {}).get("expression", "") or ""))
+        or {"ok": True}
+    ), permission="pet.control")
+    plugin_bridge.register_service("pet.position.set", lambda payload: (
+        pet.move(int((payload or {}).get("x", pet.x())), int((payload or {}).get("y", pet.y())))
+        or {"ok": True}
+    ), permission="pet.control")
+    plugin_bridge.register_service("pet.visibility.set", lambda payload: (
+        pet.setVisible(bool((payload or {}).get("visible", True))) or {"ok": True}
+    ), permission="pet.control")
+    plugin_bridge.connect()
+
+    plugin_overlay = QFrame(pet)
+    plugin_overlay.setObjectName("pluginPetOverlay")
+    plugin_overlay.setStyleSheet(
+        "#pluginPetOverlay { background: rgba(20, 20, 28, 150); border-radius: 8px; }"
+        "QLabel, QPushButton { color: white; }"
+    )
+    plugin_overlay_layout = QVBoxLayout(plugin_overlay)
+    plugin_overlay_layout.setContentsMargins(7, 6, 7, 6)
+    plugin_overlay_layout.setSpacing(4)
+
+    def refresh_plugin_pet_overlay():
+        while plugin_overlay_layout.count():
+            item = plugin_overlay_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for contribution in plugin_bridge.contributions("ui", "pet_overlay"):
+            spec = contribution.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            label = str(spec.get("label", spec.get("text", contribution.get("id", ""))) or "")
+            if spec.get("interactive", False):
+                widget = QPushButton(label, plugin_overlay)
+
+                def clicked(_checked=False, item=contribution):
+                    payload = {
+                        "plugin_id": item.get("plugin_id", ""),
+                        "component_id": item.get("id", ""),
+                        "character": pet._current_char,
+                    }
+                    result = plugin_bridge.dispatch_event("pet.overlay.action.before", payload)
+                    if not result.get("cancelled"):
+                        plugin_bridge.notify_event("pet.overlay.action", result.get("payload", payload))
+
+                widget.clicked.connect(clicked)
+            else:
+                widget = QLabel(label, plugin_overlay)
+            plugin_overlay_layout.addWidget(widget)
+        plugin_overlay.adjustSize()
+        plugin_overlay.move(8, 8)
+        plugin_overlay.setVisible(plugin_overlay_layout.count() > 0)
+
+    plugin_bridge.contributions_changed.connect(refresh_plugin_pet_overlay)
+    refresh_plugin_pet_overlay()
+
+    native_plugin_loader = NativePluginLoader(
+        "pet",
+        transport_factory=plugin_bridge.native_transport,
+        application=app,
+        controller=pet,
+        window=pet,
+        objects={"model_manager": mgr, "config": cfg, "live2d": live2d},
+    )
+    native_plugin_loader.load_all()
+
     def close_mcp_clients_on_shutdown():
         # MCP networking is not used while constructing the pet. Import it only
         # if shutdown actually needs to dispose a client created later.
@@ -223,6 +308,8 @@ def main():
     app.aboutToQuit.connect(pet._save_position_config)
     app.aboutToQuit.connect(pet._flush_save)
     app.aboutToQuit.connect(live2d.dispose)
+    app.aboutToQuit.connect(native_plugin_loader.close)
+    app.aboutToQuit.connect(plugin_bridge.close)
 
     if not cfg.get("hide_live2d_model", False):
         pet.show()

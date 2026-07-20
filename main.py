@@ -15,14 +15,14 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from app_info import APP_NAME
+from app_info import APP_NAME, APP_VERSION
 
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
 from config_manager import DEFAULTS
 APP_AUMID = APP_NAME
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
-from PySide6.QtGui import QPixmapCache
+from PySide6.QtGui import QAction, QPixmapCache
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
@@ -59,8 +59,40 @@ class AiEventBridge(QObject):
     delivery_requested = Signal(str, object)
 
 
+class MainRuntimeController(QObject):
+    """Stable, deliberately small facade exposed to native main-process plugins.
+
+    The application historically builds most of its runtime from closures in
+    ``main``.  Keeping those implementation details private while binding the
+    supported operations here gives plugins a durable host object and lets the
+    internals continue to evolve independently.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._operations = {}
+
+    def bind(self, **operations):
+        self._operations.update({key: value for key, value in operations.items() if callable(value)})
+
+    def call(self, operation, *args, **kwargs):
+        handler = self._operations.get(str(operation))
+        if handler is None:
+            raise KeyError(f"Unknown main runtime operation: {operation}")
+        return handler(*args, **kwargs)
+
+    def operations(self):
+        return tuple(sorted(self._operations))
+
+
 def main():
     os.environ["BANDORI_PET_MAIN_PID"] = str(os.getpid())
+
+    safe_mode = "--safe-mode" in sys.argv or os.environ.get("BANDORI_PLUGIN_SAFE_MODE", "") == "1"
+    if "--safe-mode" in sys.argv:
+        sys.argv.remove("--safe-mode")
+    if safe_mode:
+        os.environ["BANDORI_PLUGIN_SAFE_MODE"] = "1"
 
     def refresh_ipc_session_name():
         os.environ.pop("BANDORI_PET_IPC_SERVER_NAME", None)
@@ -93,6 +125,12 @@ def main():
     app.setApplicationDisplayName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
+
+    from plugin_system.native import NativePluginLoader
+    from plugin_system.supervisor import PluginSupervisor
+
+    runtime_controller = MainRuntimeController(app)
+    plugin_supervisor = PluginSupervisor(app, safe_mode=safe_mode)
 
     apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)
 
@@ -174,6 +212,36 @@ def main():
         if sys.platform == "darwin":
             return
         launch_settings_process(show_launch=False)
+
+    def refresh_plugin_tray_actions():
+        menu = tray_ref.get("menu")
+        if menu is None:
+            return
+        for action in tray_ref.pop("plugin_actions", []):
+            menu.removeAction(action)
+            action.deleteLater()
+        plugin_actions = []
+        exit_action = tray_ref.get("actions", [None])[-1]
+        for contribution in plugin_supervisor.contributions.list("ui", location="tray"):
+            spec = contribution.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+            action = QAction(str(spec.get("label", contribution.get("id", "")) or ""), menu)
+            action.setEnabled(bool(spec.get("enabled", True)))
+
+            def triggered(_checked=False, item=contribution):
+                payload = {
+                    "plugin_id": item.get("plugin_id", ""),
+                    "component_id": item.get("id", ""),
+                }
+                result = plugin_supervisor.dispatch_event("tray.action.before", payload)
+                if not result.get("cancelled"):
+                    plugin_supervisor.notify_event("tray.action", result.get("payload", payload))
+
+            action.triggered.connect(triggered)
+            menu.insertAction(exit_action, action)
+            plugin_actions.append(action)
+        tray_ref["plugin_actions"] = plugin_actions
 
     def quit_all():
         if quit_ref["running"]:
@@ -1623,7 +1691,103 @@ def main():
     except Exception as exc:
         print(f"Stale runtime lock cleanup failed: {exc}")
 
+    def plugin_config_get(payload):
+        data = payload if isinstance(payload, dict) else {}
+        cfg.load()
+        key = str(data.get("key", "") or "")
+        return cfg.get(key, data.get("default"))
+
+    def plugin_config_set(payload):
+        from plugin_system.redaction import is_sensitive_key
+        data = payload if isinstance(payload, dict) else {}
+        key = str(data.get("key", "") or "")
+        if not key:
+            raise ValueError("config.set requires a key")
+        sensitive = is_sensitive_key(key)
+        before = plugin_supervisor.dispatch_event("config.write.before", {
+            "key": key,
+            "value": {"__bandoripet_secret_value__": True} if sensitive else data.get("value"),
+        })
+        if before.get("cancelled"):
+            return {"ok": False, "cancelled": True, "reason": before.get("reason", "")}
+        patched = before.get("payload", {})
+        candidate_key = str(patched.get("key", key))
+        patched_key = key if sensitive or is_sensitive_key(candidate_key) else candidate_key
+        patched_value = data.get("value") if sensitive else patched.get("value")
+        cfg.load()
+        cfg.set(patched_key, patched_value)
+        saved = cfg.save()
+        plugin_supervisor.notify_event(
+            "config.written", {"key": patched_key, "saved": bool(saved)}
+        )
+        return {"ok": bool(saved)}
+
+    runtime_controller.bind(
+        quit=quit_all,
+        open_chat=launch_chat_process,
+        open_settings=lambda: launch_settings_process(show_launch=False),
+        reload_pets=lambda: launch_pet(persist_config=False),
+        broadcast_ipc=broadcast_ipc_line,
+        configured_models=configured_models,
+    )
+    plugin_supervisor.register_service("app.info", lambda _payload: {
+        "name": APP_NAME,
+        "version": APP_VERSION,
+        "safe_mode": safe_mode,
+        "component": "main",
+        "plugin_api": "1.0",
+    })
+    plugin_supervisor.register_service("config.get", plugin_config_get, permission="config.read")
+    plugin_supervisor.register_service("config.set", plugin_config_set, permission="config.write")
+    plugin_supervisor.register_service(
+        "windows.open_chat", lambda _payload: launch_chat_process(), permission="chat.window"
+    )
+    plugin_supervisor.register_service(
+        "windows.open_settings",
+        lambda _payload: launch_settings_process(show_launch=False),
+        permission="ui.settings",
+    )
+    plugin_supervisor.register_service(
+        "pet.reload", lambda _payload: launch_pet(persist_config=False), permission="pet.control"
+    )
+    plugin_supervisor.register_service(
+        "models.list", lambda _payload: configured_models(), permission="models.read"
+    )
+    plugin_supervisor.register_service(
+        "ipc.broadcast",
+        lambda payload: broadcast_ipc_line(str((payload or {}).get("line", "") or "")[:65535]),
+        permission="ipc.raw",
+    )
+    plugin_supervisor.register_service(
+        "reminders.reload",
+        lambda _payload: (
+            reminder_ref.get("scheduler").reload()
+            if reminder_ref.get("scheduler") is not None else False
+        ),
+        permission="reminders.write",
+    )
+    plugin_supervisor.register_service(
+        "app.quit", lambda _payload: QTimer.singleShot(0, quit_all), permission="app.quit"
+    )
+
+    native_plugin_loader = NativePluginLoader(
+        "main",
+        transport_factory=plugin_supervisor.local_transport,
+        application=app,
+        controller=runtime_controller,
+        objects={
+            "config": cfg,
+            "model_manager": mgr,
+            "tray": tray_ref,
+            "ipc": ipc_ref,
+        },
+        safe_mode=safe_mode,
+    )
+    native_plugin_loader.load_all()
+
     init_tray()
+    plugin_supervisor.contributions_changed.connect(refresh_plugin_tray_actions)
+    refresh_plugin_tray_actions()
     init_ipc_server()
 
     # Start the visible UI as soon as the tray and IPC queues are ready. The
@@ -1725,6 +1889,15 @@ def main():
     app.aboutToQuit.connect(lambda: close_pet_processes(force=False, wait=False))
     app.aboutToQuit.connect(stop_ipc_server)
 
+    def shutdown_plugins():
+        try:
+            plugin_supervisor.notify_event("app.shutdown", {"reason": "application_shutdown"})
+        finally:
+            native_plugin_loader.close()
+            plugin_supervisor.close()
+
+    app.aboutToQuit.connect(shutdown_plugins)
+
     def repair_windows_startup_command():
         try:
             from startup_manager import repair_startup_command
@@ -1744,6 +1917,20 @@ def main():
     QTimer.singleShot(1300, start_usage_session)
     QTimer.singleShot(1600, repair_windows_startup_command)
     QTimer.singleShot(2500, apply_chat_attachment_retention)
+
+    def start_plugins():
+        plugin_supervisor.start_enabled_plugins()
+        plugin_supervisor.mark_app_started({
+            "safe_mode": safe_mode,
+            "configured_models": len(configured_models()),
+        })
+
+    QTimer.singleShot(0, start_plugins)
+    plugin_update_timer = QTimer(app)
+    plugin_update_timer.setInterval(6 * 60 * 60 * 1000)
+    plugin_update_timer.timeout.connect(plugin_supervisor.check_updates_async)
+    plugin_update_timer.start()
+    QTimer.singleShot(30_000, plugin_supervisor.check_updates_async)
 
     ret = app.exec()
     return ret

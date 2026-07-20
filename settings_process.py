@@ -129,6 +129,32 @@ def main():
     )
     window.connect_ipc_output(send_ipc_line)
 
+    from plugin_system.bridge import PluginComponentBridge
+    from plugin_system.native import NativePluginLoader
+
+    plugin_bridge = PluginComponentBridge("settings", app)
+    window._plugin_bridge = plugin_bridge
+    plugin_bridge.contributions_changed.connect(
+        lambda: getattr(window, "_refresh_plugin_declared_ui", lambda: None)()
+    )
+    plugin_bridge.register_service("settings.info", lambda _payload: {
+        "visible": window.isVisible(),
+        "character": args.character,
+        "costume": args.costume,
+    }, permission="ui.settings")
+    plugin_bridge.connect()
+
+    native_plugin_loader = NativePluginLoader(
+        "settings",
+        transport_factory=plugin_bridge.native_transport,
+        application=app,
+        controller=window,
+        window=window,
+        objects={"model_manager": mgr, "config": cfg},
+    )
+    window._native_plugin_loader = native_plugin_loader
+    native_plugin_loader.load_all()
+
     def bring_window_to_front():
         window.showNormal()
         window.raise_()
@@ -173,6 +199,8 @@ def main():
 
     start_ipc_heartbeat(app, send_ipc_heartbeat, poll_ipc_messages)
     app.aboutToQuit.connect(lambda: [q.close() for q in ipc.values() if q is not None])
+    app.aboutToQuit.connect(native_plugin_loader.close)
+    app.aboutToQuit.connect(plugin_bridge.close)
     if not keep_alive:
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 

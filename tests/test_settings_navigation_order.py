@@ -28,6 +28,7 @@ EXPECTED_NAV_ORDER = [
     "chat_integration",
     "data_management",
     "download_management",
+    "plugins",
 ]
 
 
