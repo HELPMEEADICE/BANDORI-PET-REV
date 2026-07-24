@@ -700,6 +700,7 @@ def estimate_llm_request_tokens(
         or reminder_tools_enabled(config)
         or bool(config.get("llm_mcp_enabled", False))
         or bool(config.get("computer_use_enabled", False))
+        or bool(config.get("_plugin_tools"))
     )
     if use_tools:
         prepared = with_local_tool_system_hint(prepared, config)
@@ -725,6 +726,7 @@ def _tool_support_is_required(web_search: bool, tool_config: dict | None = None)
         or reminder_tools_enabled(config)
         or bool(config.get("llm_mcp_enabled", False))
         or bool(config.get("computer_use_enabled", False))
+        or bool(config.get("_plugin_tools"))
     )
 
 
@@ -860,6 +862,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                 or reminder_tools_enabled(self._tool_config)
                 or bool(self._tool_config.get("llm_mcp_enabled", False))
                 or bool(self._tool_config.get("computer_use_enabled", False))
+                or bool(self._tool_config.get("_plugin_tools"))
             )
             if use_tools:
                 messages = with_local_tool_system_hint(messages, self._tool_config)
@@ -1226,6 +1229,7 @@ class ResponsesStreamWorker(_CancelableNetworkWorker):
                 or reminder_tools_enabled(self._tool_config)
                 or self._tool_config.get("llm_mcp_enabled", False)
                 or self._tool_config.get("computer_use_enabled", False)
+                or self._tool_config.get("_plugin_tools")
             )
             if use_tools:
                 messages = with_local_tool_system_hint(messages, self._tool_config)

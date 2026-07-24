@@ -6,7 +6,7 @@ import socket
 import ssl
 import urllib.parse
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
@@ -206,6 +206,10 @@ def open_public_url(
     timeout: float = 12,
     max_redirects: int = 5,
     headers: Mapping[str, str] | None = None,
+    method: str = "GET",
+    body: bytes | None = None,
+    url_validator: Callable[[str], bool] | None = None,
+    raise_for_status: bool = True,
 ) -> tuple[PublicHttpResponse, str]:
     """Open a URL through a socket pinned to its validated public IP address."""
 
@@ -215,6 +219,10 @@ def open_public_url(
         raise ValueError("Maximum redirects cannot be negative")
 
     current_url = str(url or "").strip()
+    current_method = str(method or "GET").strip().upper()
+    if current_method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ValueError("Unsupported public HTTP method")
+    current_body = body
     request_headers = {
         "User-Agent": "BanG-Dream-Desktop-Pet/1.0",
         "Accept": "image/*",
@@ -226,6 +234,8 @@ def open_public_url(
     tls_context = ssl.create_default_context()
 
     for redirect_count in range(max_redirects + 1):
+        if url_validator is not None and not url_validator(current_url):
+            raise PermissionError("Remote URL is outside the approved origin scope")
         parsed = _parse_public_url(current_url)
         endpoints = _resolve_public_endpoints(parsed.host, parsed.port)
         last_error: BaseException | None = None
@@ -233,7 +243,12 @@ def open_public_url(
         for endpoint in endpoints:
             connection = _create_connection(parsed, endpoint, timeout, tls_context)
             try:
-                connection.request("GET", parsed.request_target, headers=request_headers)
+                connection.request(
+                    current_method,
+                    parsed.request_target,
+                    body=current_body,
+                    headers=request_headers,
+                )
                 raw_response = connection.getresponse()
                 response = PublicHttpResponse(raw_response, connection, current_url)
             except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
@@ -248,10 +263,30 @@ def open_public_url(
                     raise OSError("Remote image redirect did not include a destination")
                 if redirect_count >= max_redirects:
                     raise OSError("Remote image URL redirected too many times")
-                current_url = urllib.parse.urljoin(current_url, location)
+                next_url = urllib.parse.urljoin(current_url, location)
+                old_origin = urllib.parse.urlsplit(current_url)
+                new_origin = urllib.parse.urlsplit(next_url)
+                if (
+                    old_origin.scheme.lower(), old_origin.hostname, old_origin.port
+                ) != (
+                    new_origin.scheme.lower(), new_origin.hostname, new_origin.port
+                ):
+                    for sensitive in ("authorization", "proxy-authorization", "cookie"):
+                        for header_name in list(request_headers):
+                            if header_name.lower() == sensitive:
+                                request_headers.pop(header_name, None)
+                if response.status == 303 or (
+                    response.status in {301, 302} and current_method not in {"GET", "HEAD"}
+                ):
+                    current_method = "GET"
+                    current_body = None
+                    for header_name in list(request_headers):
+                        if header_name.lower() in {"content-length", "content-type"}:
+                            request_headers.pop(header_name, None)
+                current_url = next_url
                 break
 
-            if response.status >= 400:
+            if response.status >= 400 and raise_for_status:
                 status = response.status
                 response.close()
                 raise OSError(f"Remote image request failed with HTTP {status}")

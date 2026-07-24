@@ -1719,6 +1719,13 @@ class PetWindow(QWidget):
         # 窗口移动时更新对视目标（最近优先）
         if self._live2d_mutual_gaze_enabled:
             self._update_mutual_gaze()
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            bridge.notify_event("pet.position.changed", {
+                "character": self._current_char,
+                "x": self.x(),
+                "y": self.y(),
+            })
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2590,6 +2597,17 @@ class PetWindow(QWidget):
         return ""
 
     def _apply_settings(self, data: dict, previous_models_signature=None):
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            from plugin_system.redaction import redact_secrets, restore_secrets
+            result = bridge.dispatch_event(
+                "settings.apply.before", {"settings": redact_secrets(data)}
+            )
+            if result.get("cancelled"):
+                return
+            patched = result.get("payload", {}).get("settings", data)
+            if isinstance(patched, dict):
+                data = restore_secrets(patched, data)
         if data.get("language"):
             set_language(str(data["language"]))
         if "compact_ai_window_enabled" in data:
@@ -2801,14 +2819,28 @@ class PetWindow(QWidget):
         return bool(self._live2d_widget._dragging or self._pixel_widget._dragging)
 
     def _on_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
+        bridge = getattr(self, "_plugin_bridge", None)
+        click_payload = {"character": self._current_char, "x": x, "y": y, "area": area_name}
+        if bridge is not None:
+            result = bridge.dispatch_event("pet.click.before", click_payload)
+            if result.get("cancelled"):
+                return
+            click_payload = result.get("payload", click_payload)
+            x = click_payload.get("x", x)
+            y = click_payload.get("y", y)
+            area_name = str(click_payload.get("area", area_name) or "")
         self._note_user_interaction()
         self._bring_to_front(force=True)
         if self._is_radial_menu_visible():
             self._send_radial_menu_command("CLOSE")
             return
         if self._pixel_mode or x is None or y is None:
+            if bridge is not None:
+                bridge.notify_event("pet.clicked", click_payload)
             return
         self._trigger_click_motion(float(x), float(y), area_name)
+        if bridge is not None:
+            bridge.notify_event("pet.clicked", click_payload)
 
     def _on_live2d_double_click(self, x: float | None = None, y: float | None = None, area_name: str = ""):
         self._note_user_interaction()
@@ -2942,6 +2974,19 @@ class PetWindow(QWidget):
             return []
 
     def _start_click_motion(self, motion_name: str = "", expression: str = ""):
+        bridge = getattr(self, "_plugin_bridge", None)
+        motion_payload = {
+            "character": getattr(self, "_current_char", ""),
+            "motion": motion_name,
+            "expression": expression,
+        }
+        if bridge is not None:
+            result = bridge.dispatch_event("pet.motion.before", motion_payload)
+            if result.get("cancelled"):
+                return
+            motion_payload = result.get("payload", motion_payload)
+            motion_name = str(motion_payload.get("motion", motion_name) or "")
+            expression = str(motion_payload.get("expression", expression) or "")
         model = self._live2d_widget.model
         if model is None:
             return
@@ -2969,6 +3014,11 @@ class PetWindow(QWidget):
             QTimer.singleShot(3200, lambda t=token: self._restore_default_if_finished(t))
         elif expression:
             QTimer.singleShot(5000, lambda t=self._expression_guard_token: self._restore_default_expression_if_current(t))
+        if bridge is not None:
+            bridge.notify_event("pet.motion.started", {
+                **motion_payload,
+                "started": bool(started),
+            })
 
     def _apply_click_expression(self, expression: str):
         expression = str(expression or "").strip()
