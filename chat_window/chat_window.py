@@ -53,7 +53,7 @@ from llm_manager import (
     estimate_llm_request_tokens,
 )
 from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import chat_completions_api_url, use_responses_api
+from llm_api_compat import append_google_chat_continuation, chat_completions_api_url, use_responses_api
 from llm_error_hints import format_llm_error_message
 from chat_config_snapshots import (
     asr_config_snapshot,
@@ -6051,6 +6051,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
             patched_messages = request_payload.get("messages", messages)
             if isinstance(patched_messages, list):
                 messages = self._plugin_hydrate_messages(patched_messages, messages)
+        if self._is_group_chat:
+            display_name = self._model_manager.get_display_name(character)
+            messages = append_google_chat_continuation(
+                messages,
+                api_url,
+                f"请由{display_name}自然承接上面的群聊内容继续发言。",
+            )
         enable_thinking = self._cfg.get("llm_enable_thinking", None)
         tool_config = tool_config_snapshot(
             self._cfg,

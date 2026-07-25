@@ -30,6 +30,26 @@ def is_google_generative_language_url(api_url: str) -> bool:
         return False
 
 
+def append_google_chat_continuation(
+    messages: list[dict],
+    api_url: str,
+    continuation_text: str,
+) -> list[dict]:
+    """Ensure Gemini chat requests do not end with a prefilled model turn."""
+    if not is_google_generative_language_url(api_url) or not messages:
+        return messages
+    last_message = messages[-1]
+    if last_message.get("role") != "assistant" or not str(last_message.get("content", "") or "").strip():
+        return messages
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": str(continuation_text or "").strip() or "请自然承接上面的对话继续回复。",
+        },
+    ]
+
+
 def chat_completions_api_url(api_url: str) -> str:
     url = (api_url or "").rstrip("/")
     if not url:

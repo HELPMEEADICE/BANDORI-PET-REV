@@ -888,6 +888,7 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                             self.error.emit(
                                 f"HTTP {e.code}: 当前接口不支持 Chat Completions 工具调用，"
                                 "已启用的联网、提醒、MCP 或电脑操作功能无法使用。"
+                                f"\n服务端详情：{err_msg}"
                             )
                             return
                         messages = [dict(message) for message in self._messages]
