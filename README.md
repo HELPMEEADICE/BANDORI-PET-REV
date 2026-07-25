@@ -115,18 +115,6 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-**Python 包（macOS 源码运行）：**
-
-macOS 的 PyPI `lupa` wheel 不包含 Live2D 所需的 `lupa.luajit21`。激活虚拟环境后，
-使用专用脚本安装常规依赖并在当前虚拟环境中编译 LuaJIT 2.1：
-
-```bash
-bash installer/macos/install_source_dependencies.sh
-```
-
-脚本最后显示 `OK: LuaJIT 2.1...` 才表示安装成功。请勿使用 `sudo`，否则可能使
-虚拟环境或 `config.json` 变成 root 所有。
-
 **第三方依赖（从源码编译时需要）：**
 
 ```bash
@@ -139,6 +127,19 @@ pip install -e third_party/PyQt-Fluent-Widgets
 # Live2D-v2-Lua（自研 LuaJIT Live2D 渲染核心，无需 pip install）
 git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-Lua
 ```
+
+**Python 包（macOS 源码运行）：**
+
+macOS 的 PyPI `lupa` wheel 不包含 Live2D 所需的 `lupa.luajit21`。完成上述第三方
+依赖安装并激活虚拟环境后，使用专用脚本安装常规依赖、编译 LuaJIT 2.1，并为
+Live2D-v2-Lua 应用图片字节流补丁：
+
+```bash
+bash installer/macos/install_source_dependencies.sh
+```
+
+脚本最后显示 `OK: LuaJIT 2.1...` 才表示安装成功。请勿使用 `sudo`，否则可能使
+虚拟环境或 `config.json` 变成 root 所有。
 
 ### 5. 启动！
 

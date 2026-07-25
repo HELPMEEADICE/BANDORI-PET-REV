@@ -178,14 +178,44 @@ def test_default_shared_memory_queue_stays_below_macos_shared_memory_budget():
     assert _DEFAULT_SLOT_SIZE >= 32768
 
 
+def test_shared_memory_queue_uses_only_configured_smaller_fallbacks():
+    from shared_memory_ipc import _queue_slot_count_candidates
+
+    assert _queue_slot_count_candidates(
+        32,
+        using_default=False,
+        fallback_slot_counts=(16, 8),
+    ) == [32, 16, 8]
+    assert _queue_slot_count_candidates(
+        8,
+        using_default=False,
+        fallback_slot_counts=(8, 4, 2, 16),
+    ) == [8, 4, 2]
+
+
 def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
+    from ipc_bus import (
+        MAIN_CONTROL_SLOT_COUNT,
+        MAIN_IPC_SLOT_SIZE,
+        MAIN_RELIABLE_INBOUND_SLOT_COUNT,
+    )
     from shared_memory_ipc import (
         _DEFAULT_SLOT_COUNT,
         _DEFAULT_SLOT_SIZE,
         _queue_memory_size,
     )
 
-    main_ipc_bytes = 3 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
+    main_ipc_bytes = (
+        2 * _queue_memory_size(_DEFAULT_SLOT_COUNT, _DEFAULT_SLOT_SIZE)
+        + _queue_memory_size(
+            MAIN_RELIABLE_INBOUND_SLOT_COUNT,
+            MAIN_IPC_SLOT_SIZE,
+        )
+        + _queue_memory_size(
+            MAIN_CONTROL_SLOT_COUNT,
+            MAIN_IPC_SLOT_SIZE,
+        )
+    )
     radial_ipc_bytes = _queue_memory_size(8, 8192) + _queue_memory_size(8, 4096)
 
     assert main_ipc_bytes + radial_ipc_bytes < 4 * 1024 * 1024

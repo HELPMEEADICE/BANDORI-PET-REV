@@ -72,58 +72,7 @@ PYVER="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;print("%d.%d"%sys.version_info
 echo "▶ 架构=$ARCH  Python=$PYTHON (3.x=$PYVER)  版本=$VERSION"
 
 echo "▶ 复核 Live2D Lua 图片字节流加载补丁"
-"${ARCHRUN[@]}" "$PYTHON" - <<'PY'
-from pathlib import Path
-import sys
-
-path = Path("third_party/Live2D-v2-Lua/live2d/image_loader.lua")
-if not path.exists():
-    sys.exit(f"找不到 {path}，无法打包 Live2D 运行时。")
-
-source = path.read_text()
-if "function M.loadImageBytes" in source:
-    print("  image_loader.lua 已包含 loadImageBytes")
-    raise SystemExit(0)
-
-needle = """    function M.loadImage(path)
-        local ok, w, h, data = pcall(decodePNGFile, path)
-        if not ok then
-            print("PNG load failed for: " .. path .. " (" .. tostring(w) .. ")")
-            return createDummyTexture(4, 4)
-        end
-        return w, h, data
-    end
-
-    return M
-end
-"""
-replacement = """    function M.loadImage(path)
-        local ok, w, h, data = pcall(decodePNGFile, path)
-        if not ok then
-            print("PNG load failed for: " .. path .. " (" .. tostring(w) .. ")")
-            return createDummyTexture(4, 4)
-        end
-        return w, h, data
-    end
-
-    function M.loadImageBytes(bytes, path)
-        local label = tostring(path or "<memory>")
-        local ok, w, h, data = pcall(decodePNG, bytes, label)
-        if not ok then
-            print("PNG byte load failed for: " .. label .. " (" .. tostring(w) .. ")")
-            return createDummyTexture(4, 4)
-        end
-        return w, h, data
-    end
-
-    return M
-end
-"""
-if needle not in source:
-    sys.exit("image_loader.lua 结构已变化，无法自动加入 loadImageBytes。")
-path.write_text(source.replace(needle, replacement))
-print("  已为 image_loader.lua 加入 loadImageBytes")
-PY
+"${ARCHRUN[@]}" "$PYTHON" installer/macos/patch_live2d_image_loader.py
 
 # ---------------------------------------------------------------------------
 # 2. 为该架构建独立 venv，安装依赖（含从源码编译、带 LuaJIT FFI 的 lupa）

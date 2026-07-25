@@ -38,6 +38,11 @@ from onebot_message import onebot_event_mentions_self
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from gpu_acceleration import configure_qt_gpu_acceleration
 from ipc_bus import (
+    MAIN_CONTROL_FALLBACK_SLOT_COUNTS,
+    MAIN_CONTROL_SLOT_COUNT,
+    MAIN_IPC_SLOT_SIZE,
+    MAIN_RELIABLE_INBOUND_FALLBACK_SLOT_COUNTS,
+    MAIN_RELIABLE_INBOUND_SLOT_COUNT,
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
     ipc_inbound_queue_key,
@@ -279,20 +284,29 @@ def main():
 
     def init_ipc_server():
         def create_ipc_queues():
-            inbound = SharedMemoryLineQueue.create(ipc_inbound_queue_key())
-            reliable_inbound = SharedMemoryLineQueue.create(
-                ipc_reliable_inbound_queue_key(), slot_count=32, slot_size=65536
-            )
+            queues = []
             try:
-                outbound = SharedMemoryLineQueue.create(ipc_broadcast_queue_key())
-                control = SharedMemoryLineQueue.create(
-                    ipc_control_queue_key(), slot_count=16, slot_size=65536
+                inbound = SharedMemoryLineQueue.create(ipc_inbound_queue_key())
+                queues.append(inbound)
+                reliable_inbound = SharedMemoryLineQueue.create(
+                    ipc_reliable_inbound_queue_key(),
+                    slot_count=MAIN_RELIABLE_INBOUND_SLOT_COUNT,
+                    slot_size=MAIN_IPC_SLOT_SIZE,
+                    fallback_slot_counts=MAIN_RELIABLE_INBOUND_FALLBACK_SLOT_COUNTS,
                 )
+                queues.append(reliable_inbound)
+                outbound = SharedMemoryLineQueue.create(ipc_broadcast_queue_key())
+                queues.append(outbound)
+                control = SharedMemoryLineQueue.create(
+                    ipc_control_queue_key(),
+                    slot_count=MAIN_CONTROL_SLOT_COUNT,
+                    slot_size=MAIN_IPC_SLOT_SIZE,
+                    fallback_slot_counts=MAIN_CONTROL_FALLBACK_SLOT_COUNTS,
+                )
+                queues.append(control)
             except RuntimeError:
-                inbound.close()
-                reliable_inbound.close()
-                if "outbound" in locals():
-                    outbound.close()
+                for queue in reversed(queues):
+                    queue.close()
                 raise
             return inbound, reliable_inbound, outbound, control
 

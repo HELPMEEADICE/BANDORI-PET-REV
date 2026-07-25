@@ -14,6 +14,12 @@ _ipc_sender_id = make_peer_id("oneshot")
 _ipc_inbound_queue = None
 _ipc_reliable_inbound_queue = None
 
+MAIN_IPC_SLOT_SIZE = 65536
+MAIN_RELIABLE_INBOUND_SLOT_COUNT = 32
+MAIN_RELIABLE_INBOUND_FALLBACK_SLOT_COUNTS = (16, 8)
+MAIN_CONTROL_SLOT_COUNT = 8
+MAIN_CONTROL_FALLBACK_SLOT_COUNTS = (4, 2)
+
 
 def ipc_inbound_queue_key() -> str:
     return make_shared_memory_key(ipc_server_name(), "main-in")

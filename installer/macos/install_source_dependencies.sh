@@ -62,6 +62,9 @@ if ! xcrun --find clang >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "▶ Applying the Live2D in-memory image loader patch"
+"$PYTHON" installer/macos/patch_live2d_image_loader.py
+
 echo "▶ Installing Python dependencies into the active venv"
 "$PYTHON" -m pip install --upgrade pip wheel setuptools Cython
 "$PYTHON" -m pip install -r requirements.txt

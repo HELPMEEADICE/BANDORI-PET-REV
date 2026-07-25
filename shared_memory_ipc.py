@@ -23,6 +23,25 @@ def _queue_memory_size(slot_count: int, slot_size: int) -> int:
     return _HEADER.size + int(slot_count) * (_SLOT_HEADER.size + int(slot_size))
 
 
+def _queue_slot_count_candidates(
+    slot_count: int,
+    *,
+    using_default: bool,
+    fallback_slot_counts: tuple[int, ...] | None,
+) -> list[int]:
+    candidates = [max(1, int(slot_count))]
+    fallback_counts = (
+        _DEFAULT_FALLBACK_SLOT_COUNTS
+        if using_default and fallback_slot_counts is None
+        else fallback_slot_counts or ()
+    )
+    for count in fallback_counts:
+        count = max(1, int(count))
+        if count < candidates[0] and count not in candidates:
+            candidates.append(count)
+    return candidates
+
+
 def _reclaim_stale_segment(key: str) -> bool:
     memory = QSharedMemory(key)
     if not memory.attach():
@@ -139,17 +158,24 @@ class SharedMemoryLineQueue:
         self.last_publish_error = ""
 
     @classmethod
-    def create(cls, key: str, *, slot_count: int | None = None, slot_size: int | None = None) -> "SharedMemoryLineQueue":
+    def create(
+        cls,
+        key: str,
+        *,
+        slot_count: int | None = None,
+        slot_size: int | None = None,
+        fallback_slot_counts: tuple[int, ...] | None = None,
+    ) -> "SharedMemoryLineQueue":
         using_default_slot_count = slot_count is None
         slot_count = _DEFAULT_SLOT_COUNT if slot_count is None else slot_count
         slot_size = _DEFAULT_SLOT_SIZE if slot_size is None else slot_size
         slot_count = max(1, int(slot_count))
         slot_size = max(64, int(slot_size))
-        candidates = [slot_count]
-        if using_default_slot_count:
-            candidates = [count for count in _DEFAULT_FALLBACK_SLOT_COUNTS if count <= slot_count]
-            if slot_count not in candidates:
-                candidates.insert(0, slot_count)
+        candidates = _queue_slot_count_candidates(
+            slot_count,
+            using_default=using_default_slot_count,
+            fallback_slot_counts=fallback_slot_counts,
+        )
 
         errors = []
         for candidate_count in candidates:
