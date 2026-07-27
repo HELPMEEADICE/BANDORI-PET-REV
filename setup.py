@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 import fluent_bootstrap
+from live2d_lua_source_patch import patch_live2d_lua_module
 from setuptools import Command
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
@@ -404,9 +405,29 @@ def _compiled_lua_include(path: str, dest_path: str | None = None) -> tuple[str,
     compiled_src = BYTECODE_BUILD_DIR / compiled_dest
     compiled_src.parent.mkdir(parents=True, exist_ok=True)
 
-    if not compiled_src.exists() or src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns:
+    compile_src = src
+    live2d_root = BASE_DIR / "third_party" / "Live2D-v2-Lua"
+    if src.is_relative_to(live2d_root):
+        module_path = src.relative_to(live2d_root).with_suffix("")
+        module_parts = list(module_path.parts)
+        if module_parts and module_parts[-1] == "init":
+            module_parts.pop()
+        module_name = ".".join(module_parts)
+        source = src.read_bytes()
+        patched = patch_live2d_lua_module(module_name, source)
+        if patched != source:
+            compile_src = BYTECODE_BUILD_DIR / ".patched-source" / src.relative_to(BASE_DIR)
+            compile_src.parent.mkdir(parents=True, exist_ok=True)
+            if not compile_src.exists() or compile_src.read_bytes() != patched:
+                compile_src.write_bytes(patched)
+
+    if (
+        not compiled_src.exists()
+        or src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns
+        or compile_src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns
+    ):
         subprocess.run(
-            [_luajit_executable(), "-b", str(src), str(compiled_src)],
+            [_luajit_executable(), "-b", str(compile_src), str(compiled_src)],
             check=True,
             cwd=BASE_DIR,
         )

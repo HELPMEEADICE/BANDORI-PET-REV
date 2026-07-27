@@ -5,8 +5,9 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
-from live2d_lua_adapter_moc import LuaLive2DModuleMOC
+from live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
 from live2d_lua_adapter_moc3 import LuaLive2DModuleMOC3, _patch_lua_moc3_pet_embed_delta
+from live2d_lua_source_patch import patch_live2d_lua_module
 from live2d_widget import Live2DWidget, render_pipeline_for_model
 from live2d_widget_base import DIRECT_RENDER_PIPELINE
 from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
@@ -37,6 +38,63 @@ def test_releasing_hidden_model_disposes_renderer_and_runtime_for_reuse():
 def test_only_cubism2_runtime_installs_platform_manager_override():
     assert LuaLive2DModuleMOC._configure_runtime is not LuaLive2DRuntimeBase._configure_runtime
     assert LuaLive2DModuleMOC3._configure_runtime is LuaLive2DRuntimeBase._configure_runtime
+
+
+def test_moc_model_falls_back_when_lua_image_loader_has_no_byte_stream_support(monkeypatch):
+    module = LuaLive2DModuleMOC()
+    module._initialized = True
+    module._lua = SimpleNamespace(table=dict)
+    module._supports_texture_byte_streams = False
+    model = LuaLAppModelMOC(module)
+    calls = []
+    monkeypatch.setattr(
+        model,
+        "_load_model_json",
+        lambda path, *, decode_textures: calls.append((path, decode_textures)),
+    )
+
+    model.LoadModelJson("character.zst::casual-2023/model.json")
+
+    assert calls == [("character.zst::casual-2023/model.json", True)]
+
+
+def test_moc_model_keeps_lua_byte_stream_fast_path_when_available(monkeypatch):
+    module = LuaLive2DModuleMOC()
+    module._initialized = True
+    module._lua = SimpleNamespace(table=dict)
+    module._supports_texture_byte_streams = True
+    model = LuaLAppModelMOC(module)
+    calls = []
+    monkeypatch.setattr(
+        model,
+        "_load_model_json",
+        lambda path, *, decode_textures: calls.append((path, decode_textures)),
+    )
+
+    model.LoadModelJson("character.zst::casual-2023/model.json")
+
+    assert calls == [("character.zst::casual-2023/model.json", False)]
+
+
+def test_live2d_fragment_precision_is_guarded_for_desktop_opengl():
+    source = b"local shader = [[\nprecision mediump float;\nvoid main() {}\n]]"
+
+    patched = patch_live2d_lua_module(
+        "live2d.core.graphics.draw_param_opengl",
+        source,
+    )
+
+    assert b"#ifdef GL_ES\nprecision mediump float;\n#endif" in patched
+    assert patch_live2d_lua_module(
+        "live2d.core.graphics.draw_param_opengl",
+        patched,
+    ) == patched
+
+
+def test_live2d_fragment_precision_patch_does_not_touch_unrelated_modules():
+    source = b"precision mediump float;"
+
+    assert patch_live2d_lua_module("live2d.dkjson", source) == source
 
 
 def test_live2d_widget_has_no_redundant_head_tracking_timer():
