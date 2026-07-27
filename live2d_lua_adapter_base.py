@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from lupa.luajit21 import LuaRuntime
+from live2d_lua_source_patch import patch_live2d_lua_module
 from live2d_quality import LIVE2D_QUALITY_PROFILES, normalize_live2d_quality
 from platform_patch import get_live2d_texture_quality
 from process_utils import app_base_dir, app_data_dir
@@ -147,6 +148,7 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path, extra_module_pa
         if module_path is None:
             return None, None
         chunk = module_path.read_bytes()
+        chunk = patch_live2d_lua_module(module_name, chunk)
         chunk = _patch_lua_gl_loader(module_name, chunk)
         if extra_module_patch is not None:
             chunk = extra_module_patch(module_name, chunk)
