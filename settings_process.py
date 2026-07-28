@@ -72,6 +72,9 @@ def main():
 
     keep_alive = args.show_launch == "0"
     app = QApplication(sys.argv)
+    from wayland.environment import verify_native_wayland_qpa
+
+    verify_native_wayland_qpa(app)
     install_parent_death_watch(app)
 
     import macos_patch

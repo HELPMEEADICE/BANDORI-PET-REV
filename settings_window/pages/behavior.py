@@ -5,6 +5,156 @@ from settings_window.workers import *
 
 class BehaviorPageMixin:
 
+    def _wayland_status_summary(self) -> str:
+        from wayland.installer import companion_status
+
+        status = companion_status()
+        compositor = status["compositor"]
+        if compositor == "gnome":
+            companion = "已安装" if status["gnome_installed"] else "未安装"
+        elif compositor == "plasma":
+            companion = "已安装" if status["kwin_installed"] else "未安装"
+        elif compositor == "hyprland":
+            from wayland.types import HYPRLAND_POINTER_CONSENT_KEY
+
+            companion = (
+                "已授权 cursorpos"
+                if self._cfg
+                and self._cfg.get(HYPRLAND_POINTER_CONSENT_KEY, False)
+                else "未授权 cursorpos"
+            )
+        else:
+            companion = "仅基础能力"
+        bridge = "已构建" if status["native_bridge_built"] else "未构建/不需要"
+        input_region = True
+        absolute_placement = (
+            status["native_bridge_built"] and compositor in {"plasma", "hyprland"}
+        ) or (compositor == "gnome" and status["gnome_installed"])
+        global_pointer = (
+            compositor == "plasma" and status["kwin_installed"]
+        ) or (
+            compositor == "gnome" and status["gnome_installed"]
+        )
+        pointer_text = (
+            (
+                "可用"
+                if self._cfg
+                and self._cfg.get(HYPRLAND_POINTER_CONSENT_KEY, False)
+                else "未授权"
+            )
+            if compositor == "hyprland"
+            else ("可用" if global_pointer else "降级")
+        )
+        capability_text = (
+            f"透明输入区域：{'可用' if input_region else '降级'}　"
+            f"绝对定位：{'可用' if absolute_placement else '降级'}　"
+            f"全局鼠标：{pointer_text}　"
+            f"游戏置顶：{'可用' if absolute_placement else '降级'}　"
+            f"多输出：{'可用' if absolute_placement else '降级'}"
+        )
+        return (
+            f"Qt 平台：{QApplication.platformName()}　"
+            f"合成器：{compositor}　伴侣：{companion}　原生桥：{bridge}\n"
+            f"{capability_text}"
+        )
+
+    def _refresh_wayland_status(self):
+        label = getattr(self, "_wayland_status_label", None)
+        if label is not None:
+            label.setText(self._wayland_status_summary())
+
+    def _manage_wayland_companion(self, install: bool):
+        from wayland.environment import detect_compositor
+
+        if detect_compositor() == "hyprland":
+            from wayland.types import HYPRLAND_POINTER_CONSENT_KEY
+
+            action = "授权" if install else "撤销授权"
+            reply = QMessageBox.question(
+                self,
+                f"{action} Hyprland 全局鼠标",
+                (
+                    "允许后，桌宠仅在可见且头部跟踪开启时读取 "
+                    "Hyprland cursorpos，频率不超过 60 Hz。是否继续？"
+                    if install
+                    else "撤销后，模型只能在鼠标位于桌宠内部时跟踪。是否继续？"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            if self._cfg:
+                self._cfg.set(HYPRLAND_POINTER_CONSENT_KEY, bool(install))
+                try:
+                    _require_config_saved(self._cfg)
+                except Exception as exc:
+                    QMessageBox.warning(self, "Wayland 集成", str(exc))
+                    return
+                self.settings_changed.emit(
+                    {HYPRLAND_POINTER_CONSENT_KEY: bool(install)}
+                )
+            self._refresh_wayland_status()
+            return
+        action = "安装或修复" if install else "移除"
+        reply = QMessageBox.question(
+            self,
+            f"{action} Wayland 伴侣",
+            f"将{action}当前合成器的 BandoriPet 用户级伴侣。此操作只修改当前用户的桌面扩展目录，是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        from wayland.installer import install_companion, remove_companion
+
+        ok, detail = install_companion() if install else remove_companion()
+        if ok:
+            QMessageBox.information(self, "Wayland 集成", detail)
+        else:
+            QMessageBox.warning(self, "Wayland 集成", detail)
+        self._refresh_wayland_status()
+
+    def _build_wayland_status_widget(self, parent):
+        widget = CardWidget(parent)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        title = StrongBodyLabel("Wayland 原生集成", widget)
+        layout.addWidget(title)
+        self._wayland_status_label = BodyLabel(self._wayland_status_summary(), widget)
+        self._wayland_status_label.setWordWrap(True)
+        layout.addWidget(self._wayland_status_label)
+        hint = BodyLabel(
+            "Plasma/Hyprland 的完整定位与游戏置顶需要同版本 Qt/LayerShellQt 原生桥；"
+            "Plasma 的全局鼠标与 GNOME 的窗口管理需要显式安装伴侣。拒绝授权时仍保持纯 Wayland 基础模式。",
+            widget,
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QHBoxLayout()
+        from wayland.environment import detect_compositor
+
+        hyprland = detect_compositor() == "hyprland"
+        install_button = PrimaryPushButton(
+            "授权全局鼠标" if hyprland else "安装/修复伴侣",
+            widget,
+        )
+        remove_button = PushButton(
+            "撤销全局鼠标授权" if hyprland else "移除伴侣",
+            widget,
+        )
+        refresh_button = PushButton("刷新状态", widget)
+        install_button.clicked.connect(lambda: self._manage_wayland_companion(True))
+        remove_button.clicked.connect(lambda: self._manage_wayland_companion(False))
+        refresh_button.clicked.connect(self._refresh_wayland_status)
+        buttons.addWidget(install_button)
+        buttons.addWidget(remove_button)
+        buttons.addWidget(refresh_button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        return widget
+
     def _update_switch_button_style(self):
         dark = isDarkTheme()
         card_bg = "#252525" if dark else "#ffffff"
@@ -986,6 +1136,11 @@ class BehaviorPageMixin:
             self._birthday_tray_notifications_enabled,
             self._on_birthday_tray_notifications_changed,
         ))
+
+        from wayland.environment import is_wayland_session
+
+        if is_wayland_session():
+            layout.addWidget(self._build_wayland_status_widget(page))
 
         note = BodyLabel(_tr(
             "SettingsWindow.behavior_apply_hint",

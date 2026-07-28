@@ -7,7 +7,6 @@ import threading
 
 from process_utils import (
     bootstrap_app,
-    ensure_xwayland,
     hidden_subprocess_kwargs,
     install_parent_death_watch,
     process_program_and_args,
@@ -21,7 +20,7 @@ from PySide6.QtGui import QPixmapCache
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QVBoxLayout
 
 from app_theme import apply_app_theme
-from app_info import APP_NAME
+from app_info import APP_NAME, WAYLAND_APP_ID
 from i18n_manager import detect_system_language, set_language
 from live2d_widget import Live2DWidget
 from live2d_lua_adapter import live2d_for_format
@@ -136,7 +135,6 @@ class SingleModelManager:
 
 
 def main():
-    ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
     live2d = live2d_for_format(args.model_format)
@@ -144,10 +142,15 @@ def main():
     set_language(cfg.get("language", "") or detect_system_language())
 
     configure_qt_gpu_acceleration(QApplication, Qt, cfg)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     Live2DWidget.configure_default_surface_format(cfg.get("vsync", True))
     set_windows_app_user_model_id(APP_NAME)
 
     app = QApplication(sys.argv)
+    from wayland.environment import verify_native_wayland_qpa
+
+    verify_native_wayland_qpa(app)
+    app.setDesktopFileName(WAYLAND_APP_ID)
     # Pet processes only need a handful of tray/window icons. The Qt default
     # cache is sized for full desktop applications and is duplicated per pet.
     QPixmapCache.setCacheLimit(2048)
@@ -208,7 +211,10 @@ def main():
         "costume": pet._current_costume,
         "mode": "pixel" if pet._pixel_mode else "live2d",
         "visible": pet.isVisible(),
-        "position": {"x": pet.x(), "y": pet.y()},
+        "position": {
+            "x": pet._surface_position().x(),
+            "y": pet._surface_position().y(),
+        },
     }, permission="pet.read")
     plugin_bridge.register_service("pet.motion.play", lambda payload: (
         pet._start_click_motion(
@@ -221,7 +227,10 @@ def main():
         or {"ok": True}
     ), permission="pet.control")
     plugin_bridge.register_service("pet.position.set", lambda payload: (
-        pet.move(int((payload or {}).get("x", pet.x())), int((payload or {}).get("y", pet.y())))
+        pet._surface_move(
+            int((payload or {}).get("x", pet._surface_position().x())),
+            int((payload or {}).get("y", pet._surface_position().y())),
+        )
         or {"ok": True}
     ), permission="pet.control")
     plugin_bridge.register_service("pet.visibility.set", lambda payload: (
@@ -306,6 +315,7 @@ def main():
     app.aboutToQuit.connect(pet._send_ipc_unregistration)
     app.aboutToQuit.connect(pet._close_ipc_bus)
     app.aboutToQuit.connect(pet._save_position_config)
+    app.aboutToQuit.connect(pet._close_surface_controller)
     app.aboutToQuit.connect(pet._flush_save)
     app.aboutToQuit.connect(live2d.dispose)
     app.aboutToQuit.connect(native_plugin_loader.close)

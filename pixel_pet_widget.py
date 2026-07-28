@@ -1,7 +1,7 @@
 import json
 import random
 
-from PySide6.QtCore import Qt, QPoint, QRect, QTimer
+from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -32,6 +32,8 @@ def load_pixel_frames() -> dict:
 
 
 class PixelPetWidget(QWidget):
+    frame_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._sheet = QPixmap()
@@ -45,6 +47,7 @@ class PixelPetWidget(QWidget):
         self._frame_index = 0
         self._drag_locked = False
         self._dragging = False
+        self._system_move_active = False
         self._drag_moved = False
         self._pressed_on_sprite = False
         self._drag_start_x = 0
@@ -54,12 +57,16 @@ class PixelPetWidget(QWidget):
         self._window_drag_callback = None
         self._window_drag_start_callback = None
         self._window_drag_end_callback = None
+        self._pointer_position_provider = None
+        self._window_position_provider = None
+        self._autonomous_move_callback = None
         self._click_callback = None
         self._right_click_callback = None
         self._move_target = QPoint()
         self._waiting_for_target = False
         self._hovering = False
         self._hit_alpha_threshold = 8
+        self._input_region_cache = {}
         self._hit_probe_offsets = (
             (0, 0),
             (-2, 0), (2, 0), (0, -2), (0, 2),
@@ -81,6 +88,15 @@ class PixelPetWidget(QWidget):
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb
 
+    def set_pointer_position_provider(self, cb):
+        self._pointer_position_provider = cb
+
+    def set_window_position_provider(self, cb):
+        self._window_position_provider = cb
+
+    def set_autonomous_move_callback(self, cb):
+        self._autonomous_move_callback = cb
+
     def set_window_drag_lifecycle_callbacks(self, start_cb, end_cb):
         self._window_drag_start_callback = start_cb
         self._window_drag_end_callback = end_cb
@@ -90,6 +106,14 @@ class PixelPetWidget(QWidget):
 
     def set_right_click_callback(self, cb):
         self._right_click_callback = cb
+
+    def set_hit_alpha_threshold(self, threshold: int):
+        threshold = max(0, min(255, int(threshold)))
+        if threshold == self._hit_alpha_threshold:
+            return
+        self._hit_alpha_threshold = threshold
+        self._input_region_cache.clear()
+        self.frame_changed.emit()
 
     def set_drag_locked(self, locked: bool):
         self._finish_window_drag()
@@ -104,8 +128,9 @@ class PixelPetWidget(QWidget):
             self._wander_timer.start()
 
     def _finish_window_drag(self):
-        was_dragging = self._dragging
+        was_dragging = self._dragging or self._system_move_active
         self._dragging = False
+        self._system_move_active = False
         if was_dragging and self._window_drag_end_callback:
             self._window_drag_end_callback()
 
@@ -125,6 +150,7 @@ class PixelPetWidget(QWidget):
 
         self._sheet = pixmap
         self._sheet_image = pixmap.toImage()
+        self._input_region_cache.clear()
         self._frames = animations
         self._total_cols = cols
         self._total_rows = rows
@@ -132,6 +158,7 @@ class PixelPetWidget(QWidget):
         self._frame_h = max(1, pixmap.height() // rows)
         self.setFixedSize(self._frame_w, self._frame_h)
         self.set_animation("idle")
+        self.frame_changed.emit()
         return True
 
     def set_animation(self, name: str):
@@ -145,6 +172,7 @@ class PixelPetWidget(QWidget):
         self._frame_index = 0
         self._restart_anim_timer()
         self.update()
+        self.frame_changed.emit()
 
     def _restart_anim_timer(self):
         anim = self._frames.get(self._animation, {})
@@ -162,12 +190,13 @@ class PixelPetWidget(QWidget):
                 self.set_animation("idle")
                 return
         self.update()
+        self.frame_changed.emit()
 
     def _choose_wander_target(self):
         self._waiting_for_target = False
         screen = QApplication.primaryScreen()
         if not screen:
-            self._move_target = self.window().pos()
+            self._move_target = self._window_position()
             return
         geo = screen.availableGeometry()
         max_x = max(geo.left(), geo.right() - self.window().width())
@@ -186,7 +215,7 @@ class PixelPetWidget(QWidget):
         if self._waiting_for_target:
             return
         window = self.window()
-        pos = window.pos()
+        pos = self._window_position()
         if (pos - self._move_target).manhattanLength() < 8:
             self.set_animation(random.choice(["idle", "waiting", "review"] if "review" in self._frames else ["idle"]))
             self._waiting_for_target = True
@@ -202,7 +231,26 @@ class PixelPetWidget(QWidget):
             self.set_animation("running_left")
         elif "running_alt" in self._frames:
             self.set_animation("running_alt")
-        window.move(pos.x() + step_x, pos.y() + step_y)
+        if self._autonomous_move_callback is not None:
+            self._autonomous_move_callback(step_x, step_y)
+        else:
+            window.move(pos.x() + step_x, pos.y() + step_y)
+
+    def _window_position(self) -> QPoint:
+        if self._window_position_provider is not None:
+            try:
+                return QPoint(self._window_position_provider())
+            except Exception:
+                pass
+        return self.window().pos()
+
+    def _event_global_position(self, event: QMouseEvent):
+        if self._pointer_position_provider is not None:
+            try:
+                return self._pointer_position_provider(event.position().toPoint())
+            except Exception:
+                pass
+        return event.globalPosition()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -255,6 +303,47 @@ class PixelPetWidget(QWidget):
             return False
         return self._sprite_alpha_at(int(local_x), int(local_y)) > self._hit_alpha_threshold
 
+    def input_region(self):
+        if self._sheet_image.isNull():
+            from PySide6.QtGui import QRegion
+
+            return QRegion()
+        from wayland.input_region import qimage_frame_region
+
+        anim = self._frames.get(self._animation, {})
+        row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
+        frame = max(0, min(self._frame_index, self._total_cols - 1))
+        source = QRect(
+            frame * self._frame_w,
+            row * self._frame_h,
+            self._frame_w,
+            self._frame_h,
+        )
+        cache_key = (
+            row,
+            frame,
+            self.width(),
+            self.height(),
+            self._hit_alpha_threshold,
+        )
+        cached = self._input_region_cache.get(cache_key)
+        if cached is not None:
+            from PySide6.QtGui import QRegion
+
+            return QRegion(cached)
+        region = qimage_frame_region(
+            self._sheet_image,
+            source,
+            self.width(),
+            self.height(),
+            self._hit_alpha_threshold,
+            dilation=1,
+        )
+        self._input_region_cache[cache_key] = region
+        from PySide6.QtGui import QRegion
+
+        return QRegion(region)
+
     def _sprite_alpha_at(self, local_x: int, local_y: int) -> int:
         anim = self._frames.get(self._animation, {})
         row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
@@ -284,15 +373,17 @@ class PixelPetWidget(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.RightButton:
-            if self.is_sprite_hit_at_global(event.globalPosition().toPoint()) and self._right_click_callback:
-                gpos = event.globalPosition()
+            local = event.position().toPoint()
+            if self.is_sprite_opaque_at_local(local.x(), local.y()) and self._right_click_callback:
+                gpos = self._event_global_position(event)
                 self._right_click_callback(int(gpos.x()), int(gpos.y()))
             event.accept()
             return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
-        self._pressed_on_sprite = self.is_sprite_hit_at_global(event.globalPosition().toPoint())
+        local = event.position().toPoint()
+        self._pressed_on_sprite = self.is_sprite_opaque_at_local(local.x(), local.y())
         if not self._pressed_on_sprite:
             return
         event.accept()
@@ -300,11 +391,15 @@ class PixelPetWidget(QWidget):
             return
         self._dragging = True
         self._drag_moved = False
-        gpos = event.globalPosition()
+        gpos = self._event_global_position(event)
         self._drag_start_x = self._drag_origin_x = gpos.x()
         self._drag_start_y = self._drag_origin_y = gpos.y()
         if self._window_drag_start_callback:
-            self._window_drag_start_callback()
+            if self._window_drag_start_callback():
+                self._dragging = False
+                self._system_move_active = True
+                self._drag_moved = True
+                self._pressed_on_sprite = False
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.RightButton:
@@ -327,7 +422,7 @@ class PixelPetWidget(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._drag_locked or not (self._dragging and self._window_drag_callback):
             return
-        gpos = event.globalPosition()
+        gpos = self._event_global_position(event)
         if not self._drag_moved:
             total_dx = gpos.x() - self._drag_origin_x
             total_dy = gpos.y() - self._drag_origin_y

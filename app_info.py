@@ -1,5 +1,6 @@
 APP_NAME = "BandoriPet"
 APP_VERSION = "3.1.4"
+WAYLAND_APP_ID = "io.github.bandoripet.BandoriPet"
 
 APP_REPOSITORY = "HELPMEEADICE/BANDORI-PET-REV"
 APP_REPO_URL = f"https://github.com/{APP_REPOSITORY}"

@@ -13,8 +13,15 @@ if os.name == "nt":
     import ctypes.wintypes
 
 from PySide6.QtCore import Qt, QPoint, QRect, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve, QProcess, QCoreApplication, QParallelAnimationGroup
-from PySide6.QtGui import QCursor, QGuiApplication, QFont
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout, QSystemTrayIcon, QLabel
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QFont, QRegion
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QStackedLayout,
+    QSystemTrayIcon,
+    QLabel,
+    QGraphicsOpacityEffect,
+)
 from shiboken6 import isValid
 
 from app_theme import apply_app_theme, BANDORI_PRIMARY
@@ -54,6 +61,14 @@ from win32_dwm import (
     SWP_NOZORDER,
     apply_no_rounding,
     frame_changed,
+)
+from wayland.controller import create_surface_controller
+from wayland.types import (
+    HYPRLAND_POINTER_CONSENT_KEY,
+    PointerSample,
+    StackMode,
+    SurfacePlacement,
+    SurfaceRole,
 )
 
 if sys.platform == "darwin":
@@ -263,6 +278,14 @@ def _rect_from_list(value) -> QRect | None:
         return None
 
 
+def _window_surface_position(window) -> QPoint:
+    controller = getattr(window, "_surface_controller", None)
+    if controller is not None:
+        placement = controller.placement(window)
+        return QPoint(placement.x, placement.y)
+    return window.pos()
+
+
 def _screen_signature(screen) -> dict:
     if screen is None:
         return {}
@@ -371,6 +394,9 @@ class PetWindow(QWidget):
         self._tray_actions = []
         self._enable_tray = enable_tray
         self._cfg = config_manager
+        self._hyprland_pointer_allowed = bool(
+            config_manager.get(HYPRLAND_POINTER_CONSENT_KEY, False)
+        ) if config_manager else False
         self._runtime_save_failure_reported = False
         self._outfit_description_worker = None
         self._outfit_description_retired_workers = []
@@ -398,6 +424,7 @@ class PetWindow(QWidget):
                 DEFAULT_LIP_SYNC_MAX_OPEN,
             )
         self._radial_menu_process = None
+        self._wayland_radial_menu = None
         self._radial_menu_server_name = ""
         self._radial_menu_command_ipc = None
         self._radial_menu_event_ipc = None
@@ -508,8 +535,20 @@ class PetWindow(QWidget):
         self._mouse_passthrough_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._mouse_passthrough_timer.setInterval(MOUSE_PASSTHROUGH_INTERVAL_MS)
         self._mouse_passthrough_timer.timeout.connect(self._tick_mouse_passthrough)
+        self._surface_controller = None
+        self._wayland_pending_input_region = None
 
         self._init_ui()
+        self._surface_controller = create_surface_controller(self)
+        self._surface_controller.pointer_sampled.connect(self._on_wayland_pointer_sample)
+        self._surface_controller.register_surface(
+            self,
+            SurfaceRole.PET,
+            stack_mode=(
+                StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP
+            ),
+        )
+        self._configure_wayland_widget_hooks()
         if self._enable_tray:
             self._init_tray()
         self._load_initial_model()
@@ -577,7 +616,129 @@ class PetWindow(QWidget):
         )
         self._pixel_widget.set_click_callback(self._on_click)
         self._pixel_widget.set_right_click_callback(self._on_right_click)
+        self._pixel_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
         self._stack.addWidget(self._pixel_widget)
+
+    def _configure_wayland_widget_hooks(self):
+        controller = self._surface_controller
+        if controller is None:
+            return
+        self._live2d_widget.set_pointer_position_provider(
+            lambda local: controller.global_from_local(self, local)
+        )
+        self._live2d_widget.set_surface_origin_provider(
+            lambda: self._surface_position()
+        )
+        self._pixel_widget.set_pointer_position_provider(
+            lambda local: controller.global_from_local(self, local)
+        )
+        self._pixel_widget.set_window_position_provider(self._surface_position)
+        self._pixel_widget.set_autonomous_move_callback(self._on_pixel_autonomous_move)
+        if controller.native_wayland:
+            self._live2d_widget.set_input_region_sampling_enabled(True)
+            self._live2d_widget.input_region_ready.connect(
+                self._on_wayland_live2d_input_region
+            )
+            self._pixel_widget.frame_changed.connect(
+                self._update_wayland_pixel_input_region
+            )
+            controller.set_input_region(self, QRegion(self.rect()))
+
+    def _surface_position(self) -> QPoint:
+        return _window_surface_position(self)
+
+    def _surface_geometry(self) -> QRect:
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None:
+            return controller.geometry(self)
+        return self.geometry()
+
+    def _surface_move(self, x: int, y: int):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None:
+            previous = controller.placement(self)
+            controller.move(self, int(x), int(y))
+            current = controller.placement(self)
+            if controller.native_wayland and (
+                previous.x != current.x or previous.y != current.y
+            ):
+                self._after_native_surface_move()
+        else:
+            self.move(int(x), int(y))
+
+    def _current_pointer_position(self) -> QPoint | None:
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None and controller.native_wayland:
+            sample = controller.latest_pointer(max_age_ms=250)
+            if sample is None:
+                return None
+            return QPoint(round(sample.x), round(sample.y))
+        return QCursor.pos()
+
+    def _sync_wayland_pointer_tracking(self):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is None:
+            return
+        active = self._live2d_head_tracking_enabled and self.isVisible()
+        if controller.compositor == "hyprland":
+            active = active and self._hyprland_pointer_allowed
+        controller.set_pointer_tracking_active(active)
+
+    def _after_native_surface_move(self):
+        if not self._suppress_compact_ai_sync and not self._is_pet_dragging():
+            self._sync_compact_ai_window()
+        if not self._emotion_window_animating and not self._restoring_saved_position:
+            self._schedule_position_save()
+        if self._live2d_mutual_gaze_enabled:
+            self._update_mutual_gaze()
+        bridge = getattr(self, "_plugin_bridge", None)
+        if bridge is not None:
+            pos = self._surface_position()
+            bridge.notify_event(
+                "pet.position.changed",
+                {"character": self._current_char, "x": pos.x(), "y": pos.y()},
+            )
+
+    def _on_wayland_pointer_sample(self, sample: PointerSample):
+        self._live2d_widget.set_pointer_sample(sample)
+
+    def _on_wayland_live2d_input_region(self, region: QRegion):
+        if self._pixel_mode:
+            return
+        self._apply_wayland_input_region(region)
+
+    def _update_wayland_pixel_input_region(self):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is None or not controller.native_wayland or not self._pixel_mode:
+            return
+        try:
+            region = self._pixel_widget.input_region()
+        except Exception as exc:
+            print(f"Pixel Wayland input region update failed: {exc}", file=sys.stderr)
+            return
+        self._apply_wayland_input_region(region)
+
+    def _apply_wayland_input_region(self, region: QRegion):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is None or not controller.native_wayland:
+            return
+        if self._is_pet_dragging() or self._mouse_interaction_in_progress():
+            self._wayland_pending_input_region = QRegion(region)
+            return
+        self._wayland_pending_input_region = None
+        controller.set_input_region(self, region)
+
+    def _flush_wayland_input_region(self):
+        region = self._wayland_pending_input_region
+        if region is not None:
+            self._wayland_pending_input_region = None
+            self._apply_wayland_input_region(region)
+        elif self._pixel_mode:
+            self._update_wayland_pixel_input_region()
+
+    def _on_pixel_autonomous_move(self, dx: int, dy: int):
+        position = self._surface_position()
+        self._move_unconstrained(position.x() + int(dx), position.y() + int(dy))
 
     @staticmethod
     def _should_bypass_x11_window_manager() -> bool:
@@ -592,7 +753,7 @@ class PetWindow(QWidget):
 
     def _screen_for_current_window(self):
         try:
-            center = self.geometry().center()
+            center = self._surface_geometry().center()
             screen = QGuiApplication.screenAt(center)
             if screen is not None:
                 return screen
@@ -649,7 +810,13 @@ class PetWindow(QWidget):
             return {}
         available = screen.availableGeometry()
         geometry = screen.geometry()
-        x, y, w, h = int(self.x()), int(self.y()), int(self.width()), int(self.height())
+        surface = self._surface_geometry()
+        x, y, w, h = (
+            int(surface.x()),
+            int(surface.y()),
+            int(surface.width()),
+            int(surface.height()),
+        )
         span_x = max(1, available.width() - w)
         span_y = max(1, available.height() - h)
         signature = _screen_signature(screen)
@@ -828,7 +995,7 @@ class PetWindow(QWidget):
             return False
         self._restoring_saved_position = True
         try:
-            self.move(pos[0], pos[1])
+            self._surface_move(pos[0], pos[1])
         finally:
             self._restoring_saved_position = False
         self._show_pos_set = True
@@ -996,11 +1163,13 @@ class PetWindow(QWidget):
             return
         if not force and not self._is_pet_dragging():
             return
-        old_x, old_y = self.x(), self.y()
+        old_position = self._surface_position()
+        old_x, old_y = old_position.x(), old_position.y()
         if not self._reanchor_window_to_drag_cursor():
             return
-        actual_dx = self.x() - old_x
-        actual_dy = self.y() - old_y
+        current_position = self._surface_position()
+        actual_dx = current_position.x() - old_x
+        actual_dy = current_position.y() - old_y
         if actual_dx == 0 and actual_dy == 0:
             return
         self._move_compact_ai_with_pet(actual_dx, actual_dy)
@@ -1065,7 +1234,13 @@ class PetWindow(QWidget):
         )
 
     def _apply_game_topmost_state(self):
-        if os.name == "nt":
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None and controller.native_wayland:
+            controller.set_stack_mode(
+                self,
+                StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP,
+            )
+        elif os.name == "nt":
             self._enforce_windows_z_order(force=self._game_topmost)
             self._sync_windows_topmost_guard()
         elif sys.platform == "darwin" and macos_patch is not None and self.isVisible():
@@ -1471,6 +1646,14 @@ class PetWindow(QWidget):
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
         self._apply_game_topmost_state()
+        stack_mode = StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP
+        if self._compact_ai_window is not None:
+            self._compact_ai_window.set_surface_stack_mode(stack_mode)
+        if self._wayland_radial_menu is not None:
+            self._wayland_radial_menu.set_surface_controller(
+                self._surface_controller,
+                stack_mode,
+            )
 
     def set_obs_window_capture_compatible(self, enabled: bool):
         enabled = bool(enabled)
@@ -1536,6 +1719,7 @@ class PetWindow(QWidget):
             return
         self._live2d_head_tracking_enabled = enabled
         self._live2d_widget.set_head_tracking_enabled(enabled)
+        self._sync_wayland_pointer_tracking()
 
     def set_live2d_mutual_gaze_enabled(self, enabled: bool):
         """设置对视功能开关"""
@@ -1557,7 +1741,7 @@ class PetWindow(QWidget):
 
     def _broadcast_window_position(self):
         """广播自己的窗口位置给其他角色"""
-        center = self.geometry().center()
+        center = self._surface_geometry().center()
         current_position = (self._current_char, center.x(), center.y())
         if current_position == self._last_peer_pos_sent:
             return
@@ -1625,7 +1809,12 @@ class PetWindow(QWidget):
                 return
             state = self._peer_drag_states.get(char)
             if not state or state[0] != drag_id:
-                state = (drag_id, self.x(), self.y())
+                pos = (
+                    self._surface_position()
+                    if hasattr(self, "_surface_position")
+                    else self.pos()
+                )
+                state = (drag_id, pos.x(), pos.y())
                 self._peer_drag_states[char] = state
             target_x = state[1] + dx
             target_y = state[2] + dy
@@ -1636,16 +1825,26 @@ class PetWindow(QWidget):
                 dy = int(data.get("dy", 0))
             except (TypeError, ValueError):
                 return
-            target_x = self.x() + dx
-            target_y = self.y() + dy
-        if target_x == self.x() and target_y == self.y():
+            pos = (
+                self._surface_position()
+                if hasattr(self, "_surface_position")
+                else self.pos()
+            )
+            target_x = pos.x() + dx
+            target_y = pos.y() + dy
+        current_pos = (
+            self._surface_position()
+            if hasattr(self, "_surface_position")
+            else self.pos()
+        )
+        if target_x == current_pos.x() and target_y == current_pos.y():
             if finished and drag_id:
                 self._finish_received_peer_drag(char, drag_id)
             return
         self._startup_position_restore_pending = False
         self._startup_transient_position_set = False
-        actual_dx = target_x - self.x()
-        actual_dy = target_y - self.y()
+        actual_dx = target_x - current_pos.x()
+        actual_dy = target_y - current_pos.y()
         self._suppress_compact_ai_sync = True
         try:
             self._move_unconstrained(target_x, target_y)
@@ -1664,10 +1863,18 @@ class PetWindow(QWidget):
             self._completed_peer_drag_sessions.pop(next(iter(self._completed_peer_drag_sessions)))
 
     def _on_peer_drag_started(self):
+        controller = getattr(self, "_surface_controller", None)
+        if (
+            controller is not None
+            and controller.native_wayland
+            and controller.begin_drag(self, QPoint())
+        ):
+            return True
         self._active_peer_drag_id = uuid.uuid4().hex
         self._active_peer_drag_total_x = 0
         self._active_peer_drag_total_y = 0
         self._capture_native_drag_anchor()
+        return False
 
     def _on_peer_drag_finished(self):
         self._sync_drag_anchor_after_window_change(force=True)
@@ -1683,6 +1890,9 @@ class PetWindow(QWidget):
         self._active_peer_drag_total_x = 0
         self._active_peer_drag_total_y = 0
         self._drag_anchor_ratio = None
+        flush_region = getattr(self, "_flush_wayland_input_region", None)
+        if flush_region is not None:
+            flush_region()
 
     def _update_mutual_gaze(self):
         """更新对视状态，让角色看向最近的另一个角色"""
@@ -1693,7 +1903,7 @@ class PetWindow(QWidget):
             self._live2d_widget.clear_gaze_target()
             return
         # 获取自己窗口中心位置
-        my_center = self.geometry().center()
+        my_center = self._surface_geometry().center()
         my_x, my_y = my_center.x(), my_center.y()
         # 计算与所有其他角色的距离，选择最近的
         nearest_pos = None
@@ -1723,12 +1933,15 @@ class PetWindow(QWidget):
         if bridge is not None:
             bridge.notify_event("pet.position.changed", {
                 "character": self._current_char,
-                "x": self.x(),
-                "y": self.y(),
+                "x": self._surface_position().x(),
+                "y": self._surface_position().y(),
             })
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None and controller.native_wayland:
+            controller.resize(self, event.size().width(), event.size().height())
         if self._drag_anchor_ratio is not None:
             self._drag_anchor_refresh_timer.start()
         self._sync_compact_ai_window()
@@ -1747,6 +1960,9 @@ class PetWindow(QWidget):
         self._peer_pos_broadcast_timer.stop()
         self._last_game_topmost_applied = False
         self._last_layer_insert_after = None
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None:
+            controller.set_pointer_tracking_active(False)
         super().hideEvent(event)
 
     def closeEvent(self, event):
@@ -1781,7 +1997,16 @@ class PetWindow(QWidget):
         self._send_ipc_unregistration()
         self._close_ipc_bus()
         self._save_position_config()
+        self._close_surface_controller()
         super().closeEvent(event)
+
+    def _close_surface_controller(self):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is None:
+            return
+        controller.unregister_surface(self)
+        controller.close()
+        self._surface_controller = None
 
     def _schedule_position_save(self):
         if (
@@ -2376,13 +2601,15 @@ class PetWindow(QWidget):
             return
         if now is None:
             now = time.monotonic()
-        cursor = QCursor.pos()
+        cursor = self._current_pointer_position()
+        if cursor is None:
+            return
         approach_radius = max(
             LIVE2D_MOUSE_APPROACH_RADIUS,
             min(360, int(max(self.width(), self.height()) * 0.42)),
         )
         exit_radius = max(LIVE2D_MOUSE_APPROACH_EXIT_RADIUS, approach_radius + 80)
-        if not self.geometry().adjusted(
+        if not self._surface_geometry().adjusted(
             -exit_radius,
             -exit_radius,
             exit_radius,
@@ -2392,7 +2619,7 @@ class PetWindow(QWidget):
             self._cursor_near_live2d_since = 0.0
             self._cursor_near_live2d_reacted = False
             return
-        center = self.geometry().center()
+        center = self._surface_geometry().center()
         dx = cursor.x() - center.x()
         dy = cursor.y() - center.y()
         dist_sq = dx * dx + dy * dy
@@ -2618,6 +2845,11 @@ class PetWindow(QWidget):
             self._ai_event_overlay_enabled = bool(data["ai_event_overlay_enabled"])
         if "chat_integration_overlay_enabled" in data:
             self._chat_integration_overlay_enabled = bool(data["chat_integration_overlay_enabled"])
+        if HYPRLAND_POINTER_CONSENT_KEY in data:
+            self._hyprland_pointer_allowed = bool(
+                data[HYPRLAND_POINTER_CONSENT_KEY]
+            )
+            self._sync_wayland_pointer_tracking()
         if data.get("compact_ai_window_reset_position") and self._compact_ai_window is not None:
             self._compact_ai_window.reset_position_offset()
         if "fps" in data:
@@ -2667,6 +2899,7 @@ class PetWindow(QWidget):
                 DEFAULT_HIT_ALPHA_THRESHOLD,
             )
             self._live2d_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
+            self._pixel_widget.set_hit_alpha_threshold(self._live2d_hit_alpha_threshold)
         if "live2d_lip_sync_max_open" in data:
             self._live2d_lip_sync_max_open = clamp_float(
                 data["live2d_lip_sync_max_open"],
@@ -2784,15 +3017,25 @@ class PetWindow(QWidget):
                 pass
             self._emotion_window_anim = None
         self._emotion_window_animating = False
-        old_x, old_y = self.x(), self.y()
+        old_pos = (
+            self._surface_position()
+            if hasattr(self, "_surface_position")
+            else self.pos()
+        )
+        old_x, old_y = old_pos.x(), old_pos.y()
         self._suppress_compact_ai_sync = True
         try:
             self._move_unconstrained(old_x + dx, old_y + dy)
         finally:
             self._suppress_compact_ai_sync = False
         self._reanchor_window_to_drag_cursor()
-        actual_dx = self.x() - old_x
-        actual_dy = self.y() - old_y
+        new_pos = (
+            self._surface_position()
+            if hasattr(self, "_surface_position")
+            else self.pos()
+        )
+        actual_dx = new_pos.x() - old_x
+        actual_dy = new_pos.y() - old_y
         self._move_compact_ai_with_pet(actual_dx, actual_dy)
         self._active_peer_drag_total_x += actual_dx
         self._active_peer_drag_total_y += actual_dy
@@ -2802,6 +3045,10 @@ class PetWindow(QWidget):
         )
 
     def _move_unconstrained(self, x: int, y: int):
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None and controller.native_wayland:
+            self._surface_move(x, y)
+            return
         if not self._should_bypass_x11_window_manager() or _x11 is None:
             self.move(x, y)
             return
@@ -3170,6 +3417,8 @@ class PetWindow(QWidget):
         }
 
     def _ensure_radial_menu_process(self):
+        if self._uses_in_process_wayland_radial_menu():
+            return
         if self._radial_menu_shutting_down:
             return
         process = self._radial_menu_process
@@ -3247,6 +3496,9 @@ class PetWindow(QWidget):
         self._send_ipc(f"{prefix}\t{payload}")
 
     def _send_radial_menu_command(self, line: str):
+        if self._uses_in_process_wayland_radial_menu():
+            self._handle_wayland_radial_menu_command(line)
+            return
         self._radial_menu_command_queue.append(line)
         interaction_trace(
             "pet",
@@ -3256,6 +3508,86 @@ class PetWindow(QWidget):
         )
         self._ensure_radial_menu_process()
         self._flush_radial_menu_commands()
+
+    def _uses_in_process_wayland_radial_menu(self) -> bool:
+        controller = getattr(self, "_surface_controller", None)
+        return bool(controller is not None and controller.native_wayland)
+
+    def _ensure_wayland_radial_menu(self, payload: dict):
+        menu = self._wayland_radial_menu
+        if menu is None:
+            from radial_menu import RadialMenu
+
+            menu = RadialMenu()
+            menu.set_surface_controller(
+                self._surface_controller,
+                StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP,
+            )
+            menu.closed.connect(
+                lambda: self._handle_radial_menu_process_line("STATE\tCLOSED")
+            )
+            menu.lock_toggled.connect(
+                lambda locked: self._handle_radial_menu_process_line(
+                    f"LOCK\t{1 if locked else 0}"
+                )
+            )
+            self._wayland_radial_menu = menu
+
+        items = payload.get("items") if isinstance(payload, dict) else []
+        if len(menu._items) != len(items):
+            if menu._items:
+                menu.close()
+                menu.deleteLater()
+                self._wayland_radial_menu = None
+                return self._ensure_wayland_radial_menu(payload)
+            for item in items:
+                action = str(item.get("action", "") or "")
+                color = item.get("color") or [80, 80, 80]
+                menu.add_item(
+                    "",
+                    str(item.get("label", "") or ""),
+                    QColor(int(color[0]), int(color[1]), int(color[2])),
+                    on_click=lambda name=action: self._handle_radial_menu_process_line(
+                        f"ACT\t{name}"
+                    ),
+                    glyph=str(item.get("glyph", "") or ""),
+                    enabled=bool(item.get("enabled", True)),
+                )
+        else:
+            for index, item in enumerate(items):
+                color = item.get("color") or [80, 80, 80]
+                menu.update_item(
+                    index,
+                    label=str(item.get("label", "") or ""),
+                    glyph=str(item.get("glyph", "") or ""),
+                    enabled=bool(item.get("enabled", True)),
+                    color=QColor(int(color[0]), int(color[1]), int(color[2])),
+                )
+        menu.set_locked(bool(payload.get("locked", False)))
+        return menu
+
+    def _handle_wayland_radial_menu_command(self, line: str):
+        command, _separator, raw_payload = str(line).partition("\t")
+        if command == "SHOW":
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, json.JSONDecodeError):
+                return
+            menu = self._ensure_wayland_radial_menu(payload)
+            if menu is None:
+                return
+            menu.set_surface_controller(
+                self._surface_controller,
+                StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP,
+            )
+            center = QPoint(int(payload.get("x", 0)), int(payload.get("y", 0)))
+            menu.show_at(center)
+            self._handle_radial_menu_process_line("STATE\tOPEN")
+        elif command == "CLOSE":
+            if self._wayland_radial_menu is not None:
+                self._wayland_radial_menu.dismiss()
+        elif command == "EXIT":
+            self._close_radial_menu_process(force=True)
 
     def _flush_radial_menu_commands(self):
         if self._radial_menu_stdio:
@@ -3305,6 +3637,17 @@ class PetWindow(QWidget):
             self._radial_menu_command_ipc.publish("EXIT")
         if was_visible:
             self._broadcast_radial_menu_state(open=False)
+        if self._wayland_radial_menu is not None:
+            menu = self._wayland_radial_menu
+            self._wayland_radial_menu = None
+            controller = getattr(self, "_surface_controller", None)
+            if controller is not None:
+                controller.unregister_surface(menu)
+            menu.close()
+            menu.deleteLater()
+            self._radial_menu_command_queue.clear()
+            self._radial_menu_process_ready = False
+            return
         process = self._radial_menu_process
         if process is None:
             return
@@ -3444,8 +3787,8 @@ class PetWindow(QWidget):
         process = QProcess(self)
         program, arguments = process_program_and_args(base_dir, "chat_process.py", [
             "--character", self._current_char,
-            "--pet-x", str(self.x()),
-            "--pet-y", str(self.y()),
+            "--pet-x", str(self._surface_position().x()),
+            "--pet-y", str(self._surface_position().y()),
             "--pet-w", str(self.width()),
             "--pet-h", str(self.height()),
             "--group-characters", json.dumps(self._chat_group_characters(), ensure_ascii=False),
@@ -3857,6 +4200,10 @@ class PetWindow(QWidget):
                 self._model_manager,
                 self._cfg,
             )
+            self._compact_ai_window.attach_surface_controller(
+                self._surface_controller,
+                StackMode.GAME_OVERLAY if self._game_topmost else StackMode.TOP,
+            )
             self._compact_ai_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._compact_ai_window.destroyed.connect(self._on_compact_ai_window_destroyed)
             self._compact_ai_window.action_triggered.connect(self._on_chat_action)
@@ -3905,7 +4252,7 @@ class PetWindow(QWidget):
             self._ensure_compact_ai_window()
         if reposition:
             target_width, bounds = self._compact_window_target()
-            self._compact_ai_window.position_near_pet(self.geometry(), target_width, bounds)
+            self._compact_ai_window.position_near_pet(self._surface_geometry(), target_width, bounds)
         self._compact_ai_window.show()
         self._compact_ai_window.raise_()
 
@@ -3916,7 +4263,7 @@ class PetWindow(QWidget):
             or not (self._compact_ai_window_enabled or self._ai_event_overlay_enabled)
         ):
             return
-        self._compact_ai_window.follow_pet_delta(dx, dy, self.geometry())
+        self._compact_ai_window.follow_pet_delta(dx, dy, self._surface_geometry())
 
     def _handle_emotion_behavior(self, event: dict):
         if not isinstance(event, dict):
@@ -4073,8 +4420,10 @@ class PetWindow(QWidget):
         anim.start()
 
     def _emotion_cursor_direction(self) -> tuple[float, float]:
-        center = self.geometry().center()
-        cursor = QCursor.pos()
+        center = self._surface_geometry().center()
+        cursor = self._current_pointer_position()
+        if cursor is None:
+            return 0.0, -1.0
         dx = float(cursor.x() - center.x())
         dy = float(cursor.y() - center.y())
         length = (dx * dx + dy * dy) ** 0.5
@@ -4083,7 +4432,7 @@ class PetWindow(QWidget):
         return dx / length, dy / length
 
     def _constrained_emotion_point(self, point: QPoint) -> QPoint:
-        screen = QGuiApplication.screenAt(self.geometry().center()) or self.screen() or QGuiApplication.primaryScreen()
+        screen = QGuiApplication.screenAt(self._surface_geometry().center()) or self.screen() or QGuiApplication.primaryScreen()
         x, y = self._constrain_position_to_screen(point.x(), point.y(), screen)
         return QPoint(x, y)
 
@@ -4108,7 +4457,9 @@ class PetWindow(QWidget):
             return
         try:
             badge.hide()
-            badge.setWindowOpacity(1.0)
+            effect = badge.graphicsEffect()
+            if effect is not None:
+                effect.setOpacity(1.0)
             badge.deleteLater()
         except RuntimeError:
             pass
@@ -4137,9 +4488,7 @@ class PetWindow(QWidget):
 
     def _poke_user_badge_position(self, badge) -> QPoint:
         margin = 8
-        pet_geo = self.geometry()
-        screen = QGuiApplication.screenAt(pet_geo.center()) or self.screen() or QGuiApplication.primaryScreen()
-        screen_geo = screen.availableGeometry() if screen else pet_geo
+        pet_geo = QRect(0, 0, self.width(), self.height())
         model_bounds = None
         if not self._pixel_mode:
             try:
@@ -4149,8 +4498,8 @@ class PetWindow(QWidget):
 
         if model_bounds:
             left, right, top, _bottom = model_bounds
-            center_x = pet_geo.left() + int(round((left + right) * 0.5))
-            model_top = pet_geo.top() + int(round(top))
+            center_x = int(round((left + right) * 0.5))
+            model_top = int(round(top))
         else:
             center_x = pet_geo.center().x()
             model_top = pet_geo.top() + max(14, int(round(self.height() * 0.20)))
@@ -4158,15 +4507,8 @@ class PetWindow(QWidget):
         x = center_x - badge.width() // 2
         y = model_top - badge.height() - 8
 
-        if self._compact_ai_window_visible_for_feedback():
-            try:
-                compact_geo = self._compact_ai_window.geometry()
-                y = max(compact_geo.bottom() + 6, model_top - badge.height() - 4)
-            except RuntimeError:
-                pass
-
-        x = max(screen_geo.left() + margin, min(x, screen_geo.right() - badge.width() - margin))
-        y = max(screen_geo.top() + margin, min(y, screen_geo.bottom() - badge.height() - margin))
+        x = max(margin, min(x, self.width() - badge.width() - margin))
+        y = max(margin, min(y, self.height() - badge.height() - margin))
         return QPoint(x, y)
 
     def _show_character_poked_user_feedback(self, event: dict):
@@ -4174,22 +4516,17 @@ class PetWindow(QWidget):
         token = self._poke_user_badge_token
         badge = getattr(self, "_poke_user_badge", None)
         if badge is None:
-            flags = (
-                Qt.WindowType.FramelessWindowHint
-                | Qt.WindowType.Tool
-                | Qt.WindowType.WindowStaysOnTopHint
-                | Qt.WindowType.WindowDoesNotAcceptFocus
-                | Qt.WindowType.NoDropShadowWindowHint
-            )
-            badge = QLabel("", None, flags)
+            badge = QLabel("", self)
             badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            badge.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
             badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             font = QFont()
             font.setPointSize(10)
             font.setBold(True)
             badge.setFont(font)
+            opacity_effect = QGraphicsOpacityEffect(badge)
+            opacity_effect.setOpacity(1.0)
+            badge.setGraphicsEffect(opacity_effect)
             badge.hide()
             self._poke_user_badge = badge
 
@@ -4218,26 +4555,11 @@ class PetWindow(QWidget):
         start = QPoint(settle.x(), settle.y() + 12)
         end = QPoint(settle.x(), settle.y() - 8)
 
-        badge.setWindowOpacity(0.0)
+        opacity_effect = badge.graphicsEffect()
+        opacity_effect.setOpacity(0.0)
         badge.move(start)
         badge.raise_()
         badge.show()
-        if os.name == "nt":
-            try:
-                hwnd = int(badge.winId())
-                self._apply_no_activate_to_hwnd(hwnd)
-                _set_window_pos(
-                    hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                )
-            except Exception:
-                pass
-
         move_anim = QPropertyAnimation(badge, b"pos", self)
         move_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         move_anim.setStartValue(start)
@@ -4246,7 +4568,7 @@ class PetWindow(QWidget):
         move_anim.setEndValue(end)
         move_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        opacity_anim = QPropertyAnimation(badge, b"windowOpacity", self)
+        opacity_anim = QPropertyAnimation(opacity_effect, b"opacity", self)
         opacity_anim.setDuration(POKE_USER_BADGE_DURATION_MS)
         opacity_anim.setStartValue(0.0)
         opacity_anim.setKeyValueAt(0.14, 1.0)
@@ -4262,7 +4584,7 @@ class PetWindow(QWidget):
             if t != self._poke_user_badge_token or self._poke_user_badge_anim is not group:
                 return
             badge.hide()
-            badge.setWindowOpacity(1.0)
+            opacity_effect.setOpacity(1.0)
             self._poke_user_badge_anim = None
 
         anim_group.finished.connect(finish)
@@ -4622,14 +4944,15 @@ class PetWindow(QWidget):
             return
         path = self._model_manager.get_model_json_path(self._current_char, self._current_costume)
         placement = self._window_placement()
+        position = self._surface_position()
         if self._configured_model_count() <= 1:
             if self._pixel_mode:
-                self._cfg.set("pixel_window_x", self.x())
-                self._cfg.set("pixel_window_y", self.y())
+                self._cfg.set("pixel_window_x", position.x())
+                self._cfg.set("pixel_window_y", position.y())
                 self._cfg.set("pixel_window_placement", placement)
             else:
-                self._cfg.set("window_x", self.x())
-                self._cfg.set("window_y", self.y())
+                self._cfg.set("window_x", position.x())
+                self._cfg.set("window_y", position.y())
                 self._cfg.set("window_width", self.width())
                 self._cfg.set("window_height", self.height())
                 self._cfg.set("window_placement", placement)
@@ -4643,14 +4966,14 @@ class PetWindow(QWidget):
         self.setFixedSize(w, h)
         pos = self._saved_position("live2d")
         if pos is not None:
-            self.move(pos[0], pos[1])
+            self._surface_move(pos[0], pos[1])
 
     def _restore_pixel_position(self):
         if not self._cfg:
             return
         pos = self._saved_position("pixel")
         if pos is not None:
-            self.move(pos[0], pos[1])
+            self._surface_move(pos[0], pos[1])
 
     def _enable_pixel_mode(self, save: bool = True) -> bool:
         if not self._load_pixel_for_current_character():
@@ -4663,6 +4986,7 @@ class PetWindow(QWidget):
         self._pixel_widget.set_drag_locked(self._live2d_widget._drag_locked)
         self._motion_guard_token += 1
         self._release_live2d_resources()
+        self._update_wayland_pixel_input_region()
         if save:
             self._save_config()
         return True
@@ -4673,6 +4997,9 @@ class PetWindow(QWidget):
         self._stack.setCurrentWidget(self._live2d_widget)
         self._restore_live2d_position()
         self._resume_live2d_resources()
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None and controller.native_wayland:
+            controller.set_input_region(self, QRegion(self.rect()))
         if save:
             self._save_config()
 
@@ -4787,13 +5114,14 @@ class PetWindow(QWidget):
             if model_exists and not skip_model_sync:
                 if configured_model_count <= 1:
                     self._cfg.set("pet_mode", "pixel" if self._pixel_mode else "live2d")
+                    position = _window_surface_position(self)
                     if self._pixel_mode and save_position:
-                        self._cfg.set("pixel_window_x", self.x())
-                        self._cfg.set("pixel_window_y", self.y())
+                        self._cfg.set("pixel_window_x", position.x())
+                        self._cfg.set("pixel_window_y", position.y())
                         self._cfg.set("pixel_window_placement", self._window_placement())
                     elif save_position:
-                        self._cfg.set("window_x", self.x())
-                        self._cfg.set("window_y", self.y())
+                        self._cfg.set("window_x", position.x())
+                        self._cfg.set("window_y", position.y())
                         self._cfg.set("window_width", self.width())
                         self._cfg.set("window_height", self.height())
                         self._cfg.set("window_placement", self._window_placement())
@@ -4814,15 +5142,16 @@ class PetWindow(QWidget):
 
         self._cfg.load()
         placement = self._window_placement()
+        position = _window_surface_position(self)
         configured_model_count = self._configured_model_count()
         if configured_model_count <= 1:
             if self._pixel_mode:
-                self._cfg.set("pixel_window_x", self.x())
-                self._cfg.set("pixel_window_y", self.y())
+                self._cfg.set("pixel_window_x", position.x())
+                self._cfg.set("pixel_window_y", position.y())
                 self._cfg.set("pixel_window_placement", placement)
             else:
-                self._cfg.set("window_x", self.x())
-                self._cfg.set("window_y", self.y())
+                self._cfg.set("window_x", position.x())
+                self._cfg.set("window_y", position.y())
                 self._cfg.set("window_width", self.width())
                 self._cfg.set("window_height", self.height())
                 self._cfg.set("window_placement", placement)
@@ -4845,14 +5174,14 @@ class PetWindow(QWidget):
             if target_index is not None and isinstance(updated_models[target_index], dict):
                 if self._pixel_mode:
                     updated_models[target_index].update({
-                        "pixel_window_x": self.x(),
-                        "pixel_window_y": self.y(),
+                        "pixel_window_x": position.x(),
+                        "pixel_window_y": position.y(),
                         "pixel_window_placement": placement,
                     })
                 else:
                     updated_models[target_index].update({
-                        "window_x": self.x(),
-                        "window_y": self.y(),
+                        "window_x": position.x(),
+                        "window_y": position.y(),
                         "window_width": self.width(),
                         "window_height": self.height(),
                         "window_placement": placement,
@@ -4911,16 +5240,17 @@ class PetWindow(QWidget):
             entry["click_motion_actions"] = click_motion_actions
         self._cfg.set_model_action_profile(self._current_char, self._current_costume, entry)
         entry["pet_mode"] = "pixel" if self._pixel_mode else "live2d"
+        position = _window_surface_position(self)
         if self._pixel_mode and include_position:
             entry.update({
-                "pixel_window_x": self.x(),
-                "pixel_window_y": self.y(),
+                "pixel_window_x": position.x(),
+                "pixel_window_y": position.y(),
                 "pixel_window_placement": self._window_placement(),
             })
         elif include_position:
             entry.update({
-                "window_x": self.x(),
-                "window_y": self.y(),
+                "window_x": position.x(),
+                "window_y": position.y(),
                 "window_width": self.width(),
                 "window_height": self.height(),
                 "window_placement": self._window_placement(),
@@ -4995,6 +5325,14 @@ class PetWindow(QWidget):
         self._apply_windows_frameless_fix()
         self._ensure_screen_scale_tracking()
         self._sync_mouse_passthrough_timer()
+        controller = getattr(self, "_surface_controller", None)
+        if controller is not None:
+            self._sync_wayland_pointer_tracking()
+            if controller.native_wayland:
+                if self._pixel_mode:
+                    QTimer.singleShot(0, self._update_wayland_pixel_input_region)
+                else:
+                    controller.set_input_region(self, QRegion(self.rect()))
         if sys.platform == "darwin" and macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_pet_window_polish(self, game_topmost=self._game_topmost))
         # _apply_game_topmost_state reads isVisible(), so call it after show
@@ -5015,7 +5353,7 @@ class PetWindow(QWidget):
                 geo = screen.availableGeometry()
                 self._restoring_saved_position = True
                 try:
-                    self.move(
+                    self._surface_move(
                         geo.left() + (geo.width() - self.width()) // 2,
                         geo.top() + (geo.height() - self.height()) // 2,
                     )
@@ -5028,7 +5366,7 @@ class PetWindow(QWidget):
         screen = self._screen_for_current_window() or QGuiApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
-            self.move(
+            self._surface_move(
                 geo.left() + (geo.width() - self.width()) // 2,
                 geo.top() + (geo.height() - self.height()) // 2,
             )
@@ -5037,7 +5375,13 @@ class PetWindow(QWidget):
         self._sync_compact_ai_window(allow_create=True)
 
     def _is_position_on_screen(self) -> bool:
-        return self._position_intersects_any_screen(self.x(), self.y(), self.width(), self.height())
+        position = self._surface_position()
+        return self._position_intersects_any_screen(
+            position.x(),
+            position.y(),
+            self.width(),
+            self.height(),
+        )
 
     def _play_entrance(self):
         self.setWindowOpacity(0.0)

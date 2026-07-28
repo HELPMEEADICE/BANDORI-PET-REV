@@ -217,11 +217,39 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._input_shell = None
         self._input = None
         self._send_button = None
+        self._surface_controller = None
+        self._surface_stack_mode = None
 
         self._init_ui()
         self.refresh_theme()
         self._load_last_conversation()
         self._update_output_height(animated=False)
+
+    def attach_surface_controller(self, controller, stack_mode):
+        self._surface_controller = controller
+        self._surface_stack_mode = stack_mode
+        if controller is None:
+            return
+        from wayland.types import SurfaceRole
+
+        controller.register_surface(self, SurfaceRole.AI_PANEL, stack_mode=stack_mode)
+
+    def set_surface_stack_mode(self, stack_mode):
+        self._surface_stack_mode = stack_mode
+        if self._surface_controller is not None:
+            self._surface_controller.set_stack_mode(self, stack_mode)
+
+    def _surface_position(self) -> QPoint:
+        if self._surface_controller is not None:
+            placement = self._surface_controller.placement(self)
+            return QPoint(placement.x, placement.y)
+        return self.pos()
+
+    def _surface_move(self, x: int, y: int):
+        if self._surface_controller is not None:
+            self._surface_controller.move(self, int(x), int(y))
+        else:
+            self.move(int(x), int(y))
 
     def _init_ui(self):
         self.setWindowFlags(
@@ -432,7 +460,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             x = pet_geo.left() + self._manual_offset.x()
             y = pet_geo.top() + self._manual_offset.y()
             x, y = self._clamp_to_screen(x, y, screen_geo, margin)
-            self.move(x, y)
+            self._surface_move(x, y)
             return
         if bounds:
             left, right, top, _bottom = bounds
@@ -444,14 +472,15 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             y = pet_geo.top() + max(10, min(24, self.height() // 5))
         x = center_x - self.width() // 2
         x, y = self._clamp_to_screen(x, y, screen_geo, margin)
-        self.move(x, y)
+        self._surface_move(x, y)
 
     def follow_pet_delta(self, dx: int, dy: int, pet_geo: QRect):
         self._pet_geo = QRect(pet_geo)
         if self._geometry_anim is not None:
             self._geometry_anim.stop()
             self._geometry_anim = None
-        self.move(self.x() + int(dx), self.y() + int(dy))
+        current = self._surface_position()
+        self._surface_move(current.x() + int(dx), current.y() + int(dy))
 
     def reset_position_offset(self):
         self._manual_offset = None
@@ -497,7 +526,12 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         if self._manual_offset is not None and not self._pet_geo.isNull():
             self._manual_offset = target_geo.topLeft() - self._pet_geo.topLeft()
         if not animated or not self.isVisible():
-            self.setGeometry(target_geo)
+            self.resize(target_geo.size())
+            self._surface_move(target_geo.x(), target_geo.y())
+            return
+        if self._surface_controller is not None and self._surface_controller.native_wayland:
+            self.resize(target_geo.size())
+            self._surface_move(target_geo.x(), target_geo.y())
             return
         if self._geometry_anim is not None:
             self._geometry_anim.stop()
@@ -551,26 +585,43 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._geometry_anim = None
         self._dragging = True
         self._drag_start = global_pos
-        self._drag_window_start = self.pos()
+        self._drag_window_start = self._surface_position()
 
     def _update_drag(self, global_pos: QPoint):
         delta = global_pos - self._drag_start
-        self.move(self._drag_window_start + delta)
+        target = self._drag_window_start + delta
+        self._surface_move(target.x(), target.y())
         if not self._pet_geo.isNull():
-            self._manual_offset = self.pos() - self._pet_geo.topLeft()
+            self._manual_offset = self._surface_position() - self._pet_geo.topLeft()
 
     def _end_drag(self):
         self._dragging = False
         if not self._pet_geo.isNull():
-            self._manual_offset = self.pos() - self._pet_geo.topLeft()
+            self._manual_offset = self._surface_position() - self._pet_geo.topLeft()
+
+    def _drag_global_position(self, event) -> QPoint:
+        if self._surface_controller is not None:
+            return self._surface_controller.global_from_local(
+                self,
+                event.position().toPoint(),
+            )
+        return event.globalPosition().toPoint()
 
     def eventFilter(self, obj, event):
         if obj in self._drag_targets():
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                self._begin_drag(event.globalPosition().toPoint())
+                if (
+                    self._surface_controller is not None
+                    and self._surface_controller.begin_drag(
+                        self,
+                        event.position().toPoint(),
+                    )
+                ):
+                    return True
+                self._begin_drag(self._drag_global_position(event))
                 return True
             if event.type() == QEvent.Type.MouseMove and self._dragging:
-                self._update_drag(event.globalPosition().toPoint())
+                self._update_drag(self._drag_global_position(event))
                 return True
             if event.type() == QEvent.Type.MouseButtonRelease and self._dragging:
                 self._end_drag()
@@ -598,6 +649,18 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._apply_windows_frameless_fix()
         if macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_floating_tool_window_polish(self, join_all_spaces=True))
+        if self._surface_controller is not None and self._surface_controller.native_wayland:
+            from PySide6.QtGui import QRegion
+
+            self._surface_controller.set_input_region(self, QRegion(self.rect()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._surface_controller is not None and self._surface_controller.native_wayland:
+            self._surface_controller.resize(self, event.size().width(), event.size().height())
+            from PySide6.QtGui import QRegion
+
+            self._surface_controller.set_input_region(self, QRegion(self.rect()))
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -1404,4 +1467,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._cancelled_workers.clear()
         self._memory_workers.clear()
         self._db.close()
+        if self._surface_controller is not None:
+            self._surface_controller.unregister_surface(self)
+            self._surface_controller = None
         super().closeEvent(event)

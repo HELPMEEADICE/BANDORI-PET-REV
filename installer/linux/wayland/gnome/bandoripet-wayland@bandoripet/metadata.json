@@ -1,0 +1,7 @@
+{
+  "uuid": "bandoripet-wayland@bandoripet",
+  "name": "BandoriPet Wayland Integration",
+  "description": "Native positioning, stacking and global pointer integration for BandoriPet.",
+  "version": 1,
+  "shell-version": ["46", "47", "48", "49", "50", "51"]
+}

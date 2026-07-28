@@ -92,6 +92,7 @@ class _Live2DPerfProbe:
 
 class Live2DWidgetBase(QOpenGLWidget):
     model_loaded = Signal()
+    input_region_ready = Signal(object)
 
     @staticmethod
     def configure_default_surface_format(vsync: bool | None = None):
@@ -113,12 +114,15 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._system_scale = 1.0
         
         self._dragging = False
+        self._system_move_active = False
         self._drag_moved = False
         self._pressed_on_model = False
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._drag_origin_x = 0
         self._drag_origin_y = 0
+        self._pointer_position_provider = None
+        self._surface_origin_provider = None
         self._window_drag_callback = None
         self._window_drag_start_callback = None
         self._window_drag_end_callback = None
@@ -131,6 +135,12 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._initialized_gl = False
         self._head_tracking_enabled = True
         self._gaze_target = None
+        self._external_pointer_sample = None
+        self._last_local_pointer = None
+        self._last_local_pointer_at = 0.0
+        self._last_head_global = None
+        self._neutral_head_started_at = 0.0
+        self._neutral_head_origin = None
         
         self._fps = 120
         self._vsync = True
@@ -169,6 +179,14 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._last_cursor_x = -1
         self._last_cursor_y = -1
         self._head_track_min_delta_sq = 16
+        self._input_region_sampling_enabled = False
+        self._input_region_pbos = []
+        self._input_region_fences = []
+        self._input_region_pbo_index = 0
+        self._input_region_pbo_ready = 0
+        self._input_region_pbo_size = 0
+        self._input_region_last_sample_at = 0.0
+        self._input_region_last_hash = None
 
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -301,6 +319,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         if self._initialized_gl:
             self._initialized_gl = False
             self._safe_make_current()
+            self._dispose_input_region_sampler()
             if self._ssaa_fbo is not None:
                 self._ssaa_fbo.dispose()
             self._dispose_model_renderer()
@@ -316,6 +335,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         if self._initialized_gl:
             self._safe_make_current()
         self._dispose_model_renderer()
+        self._input_region_last_hash = None
         if self._live2d is not None:
             try:
                 self._live2d.dispose()
@@ -359,6 +379,24 @@ class Live2DWidgetBase(QOpenGLWidget):
     def set_window_drag_callback(self, cb):
         self._window_drag_callback = cb
 
+    def set_pointer_position_provider(self, cb):
+        self._pointer_position_provider = cb
+
+    def set_surface_origin_provider(self, cb):
+        self._surface_origin_provider = cb
+
+    def set_input_region_sampling_enabled(self, enabled: bool):
+        self._input_region_sampling_enabled = bool(enabled)
+        if not enabled and self._initialized_gl:
+            self._safe_make_current()
+            self._dispose_input_region_sampler()
+
+    def set_pointer_sample(self, sample):
+        self._external_pointer_sample = sample
+        self._neutral_head_started_at = 0.0
+        self._neutral_head_origin = None
+        self._sync_timer_type()
+
     def set_window_drag_lifecycle_callbacks(self, start_cb, end_cb):
         self._window_drag_start_callback = start_cb
         self._window_drag_end_callback = end_cb
@@ -379,10 +417,20 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._pressed_on_model = False
 
     def _finish_window_drag(self):
-        was_dragging = self._dragging
+        was_dragging = self._dragging or self._system_move_active
         self._dragging = False
+        self._system_move_active = False
         if was_dragging and self._window_drag_end_callback:
             self._window_drag_end_callback()
+
+    def _event_global_position(self, event):
+        provider = self._pointer_position_provider
+        if provider is not None:
+            try:
+                return provider(event.scenePosition().toPoint())
+            except Exception:
+                pass
+        return event.globalPosition()
 
     def set_head_tracking_enabled(self, enabled: bool):
         self._head_tracking_enabled = bool(enabled)
@@ -565,7 +613,14 @@ class Live2DWidgetBase(QOpenGLWidget):
         super().resizeEvent(event)
 
     def _update_global_pos_cache(self) -> bool:
-        global_pos = self.mapToGlobal(QPoint(0, 0))
+        global_pos = None
+        if self._surface_origin_provider is not None:
+            try:
+                global_pos = self._surface_origin_provider()
+            except Exception:
+                global_pos = None
+        if global_pos is None:
+            global_pos = self.mapToGlobal(QPoint(0, 0))
         x, y = global_pos.x(), global_pos.y()
         moved = x != self._cache_global_x or y != self._cache_global_y
         self._cache_global_x, self._cache_global_y = x, y
@@ -574,7 +629,7 @@ class Live2DWidgetBase(QOpenGLWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.RightButton:
             pos = event.scenePosition()
-            gpos = event.globalPosition()
+            gpos = self._event_global_position(event)
             interaction_trace(
                 "live2d",
                 "right_press",
@@ -601,7 +656,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             and event.modifiers() & Qt.KeyboardModifier.ControlModifier
         ):
             pos = event.scenePosition()
-            gpos = event.globalPosition()
+            gpos = self._event_global_position(event)
             if self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y()):
                 self._suppress_next_context_menu = True
                 event.accept()
@@ -620,11 +675,15 @@ class Live2DWidgetBase(QOpenGLWidget):
         if self._pressed_on_model:
             self._dragging = True
             self._drag_moved = False
-            gpos = event.globalPosition()
+            gpos = self._event_global_position(event)
             self._drag_start_x = self._drag_origin_x = gpos.x()
             self._drag_start_y = self._drag_origin_y = gpos.y()
             if self._window_drag_start_callback:
-                self._window_drag_start_callback()
+                if self._window_drag_start_callback():
+                    self._dragging = False
+                    self._system_move_active = True
+                    self._drag_moved = True
+                    self._pressed_on_model = False
 
     def mouseReleaseEvent(self, event):
         pos = event.scenePosition()
@@ -636,7 +695,7 @@ class Live2DWidgetBase(QOpenGLWidget):
                 event.accept()
                 return
             if self._right_click_callback and self._is_model_hit_at(x, y):
-                gpos = event.globalPosition()
+                gpos = self._event_global_position(event)
                 self._right_click_callback(int(gpos.x()), int(gpos.y()))
                 event.accept()
             return
@@ -676,7 +735,13 @@ class Live2DWidgetBase(QOpenGLWidget):
             event.accept()
             return
         pos = event.pos()
-        gpos = event.globalPos()
+        if self._pointer_position_provider is not None:
+            try:
+                gpos = self._pointer_position_provider(pos)
+            except Exception:
+                gpos = event.globalPos()
+        else:
+            gpos = event.globalPos()
         handled = self._emit_right_click(pos.x(), pos.y(), gpos.x(), gpos.y())
         interaction_trace(
             "live2d",
@@ -693,10 +758,13 @@ class Live2DWidgetBase(QOpenGLWidget):
         super().contextMenuEvent(event)
 
     def mouseMoveEvent(self, event):
+        local_pos = event.scenePosition()
+        self._last_local_pointer = (float(local_pos.x()), float(local_pos.y()))
+        self._last_local_pointer_at = time.monotonic()
         if self._drag_locked or not (self._dragging and self._window_drag_callback):
             return
             
-        gpos = event.globalPosition()
+        gpos = self._event_global_position(event)
         if not self._drag_moved:
             total_dx = gpos.x() - self._drag_origin_x
             total_dy = gpos.y() - self._drag_origin_y
@@ -724,6 +792,9 @@ class Live2DWidgetBase(QOpenGLWidget):
             return
             
         self._last_cursor_x, self._last_cursor_y = gx, gy
+        self._last_head_global = (float(gx), float(gy))
+        self._neutral_head_started_at = 0.0
+        self._neutral_head_origin = None
 
         cx = self._cache_global_x + self._cache_w_half
         cy = self._cache_global_y + self._cache_h_half
@@ -750,8 +821,53 @@ class Live2DWidgetBase(QOpenGLWidget):
             return
         if not self._head_tracking_enabled:
             return
+        if str(QGuiApplication.platformName() or "").lower().startswith("wayland"):
+            now_us = time.monotonic_ns() // 1000
+            sample = self._external_pointer_sample
+            if sample is not None:
+                age_us = now_us - int(getattr(sample, "monotonic_us", 0) or 0)
+                if age_us < 0 or age_us <= 250_000:
+                    self._track_head_at_global(float(sample.x), float(sample.y))
+                    return
+            if (
+                self._last_local_pointer is not None
+                and time.monotonic() - self._last_local_pointer_at <= 0.25
+            ):
+                self._update_global_pos_cache()
+                self._track_head_at_global(
+                    self._cache_global_x + self._last_local_pointer[0],
+                    self._cache_global_y + self._last_local_pointer[1],
+                )
+                return
+            self._track_head_to_neutral()
+            return
         pos = QCursor.pos()
         self._track_head_at_global(pos.x(), pos.y())
+
+    def _track_head_to_neutral(self):
+        if not self._model:
+            return
+        self._update_global_pos_cache()
+        target = (
+            self._cache_global_x + self._cache_w_half,
+            self._cache_global_y + self._cache_h_half,
+        )
+        now = time.monotonic()
+        if self._neutral_head_started_at <= 0.0:
+            self._neutral_head_started_at = now
+            self._neutral_head_origin = self._last_head_global or target
+        factor = max(0.0, min(1.0, (now - self._neutral_head_started_at) / 0.3))
+        origin = self._neutral_head_origin or target
+        gx = origin[0] + (target[0] - origin[0]) * factor
+        gy = origin[1] + (target[1] - origin[1]) * factor
+        started_at = self._neutral_head_started_at
+        neutral_origin = self._neutral_head_origin
+        self._last_cursor_x = -1
+        self._last_cursor_y = -1
+        self._track_head_at_global(gx, gy)
+        if factor < 1.0:
+            self._neutral_head_started_at = started_at
+            self._neutral_head_origin = neutral_origin
 
     # --------------------------------------------------------------------------
     # OpenGL
@@ -895,6 +1011,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             if getattr(self, "_compact_memory_after_frame", False):
                 Live2DWidgetBase._compact_live2d_memory(self)
                 self._compact_memory_after_frame = False
+            self._sample_input_region(target_w, target_h)
         except Exception as exc:
             if using_ssaa:
                 try:
@@ -935,6 +1052,145 @@ class Live2DWidgetBase(QOpenGLWidget):
             self._perf_probe.add("paintGL", paint_elapsed)
             self._perf_probe.add("qt_gl_overhead_est", max(0.0, paint_elapsed - draw_elapsed))
             self._perf_probe.frame()
+
+    def _normalize_gl_buffer_ids(self, value) -> list[int]:
+        if isinstance(value, int):
+            return [int(value)]
+        try:
+            return [int(item) for item in value]
+        except TypeError:
+            return [int(value)]
+
+    def _ensure_input_region_sampler(self, byte_count: int):
+        if (
+            len(self._input_region_pbos) == 3
+            and self._input_region_pbo_size == byte_count
+        ):
+            return
+        self._dispose_input_region_sampler()
+        ids = self._normalize_gl_buffer_ids(gl.glGenBuffers(3))
+        if len(ids) != 3:
+            raise RuntimeError("OpenGL did not create the three input-region PBOs")
+        for buffer_id in ids:
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, buffer_id)
+            gl.glBufferData(
+                gl.GL_PIXEL_PACK_BUFFER,
+                byte_count,
+                None,
+                gl.GL_STREAM_READ,
+            )
+        gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+        self._input_region_pbos = ids
+        self._input_region_fences = [None, None, None]
+        self._input_region_pbo_size = byte_count
+        self._input_region_pbo_index = 0
+        self._input_region_pbo_ready = 0
+
+    def _dispose_input_region_sampler(self):
+        buffers = self._input_region_pbos
+        fences = self._input_region_fences
+        self._input_region_pbos = []
+        self._input_region_fences = []
+        self._input_region_pbo_size = 0
+        self._input_region_pbo_ready = 0
+        self._input_region_pbo_index = 0
+        for fence in fences:
+            if fence is not None:
+                try:
+                    gl.glDeleteSync(fence)
+                except Exception:
+                    pass
+        if buffers:
+            try:
+                gl.glDeleteBuffers(len(buffers), buffers)
+            except Exception:
+                pass
+        try:
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+        except Exception:
+            pass
+
+    def _input_region_fence_ready(self, index: int, *, consume: bool) -> bool:
+        fence = self._input_region_fences[index]
+        if fence is None:
+            return False
+        result = gl.glClientWaitSync(fence, 0, 0)
+        ready = result in (
+            gl.GL_ALREADY_SIGNALED,
+            gl.GL_CONDITION_SATISFIED,
+        )
+        if ready and consume:
+            gl.glDeleteSync(fence)
+            self._input_region_fences[index] = None
+        return ready
+
+    def _sample_input_region(self, physical_width: int, physical_height: int):
+        if not self._input_region_sampling_enabled:
+            return
+        now = time.monotonic()
+        if now - self._input_region_last_sample_at < 1.0 / 30.0:
+            return
+        self._input_region_last_sample_at = now
+        byte_count = max(1, int(physical_width) * int(physical_height) * 4)
+        try:
+            self._ensure_input_region_sampler(byte_count)
+            write_index = self._input_region_pbo_index
+            read_index = (write_index + 1) % 3
+            if self._input_region_fences[write_index] is not None:
+                if not self._input_region_fence_ready(write_index, consume=True):
+                    return
+            gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, self._input_region_pbos[write_index])
+            gl.glReadPixels(
+                0,
+                0,
+                int(physical_width),
+                int(physical_height),
+                gl.GL_RGBA,
+                gl.GL_UNSIGNED_BYTE,
+                ctypes.c_void_p(0),
+            )
+            self._input_region_fences[write_index] = gl.glFenceSync(
+                gl.GL_SYNC_GPU_COMMANDS_COMPLETE,
+                0,
+            )
+            if self._input_region_pbo_ready >= 2:
+                if self._input_region_fence_ready(read_index, consume=True):
+                    gl.glBindBuffer(
+                        gl.GL_PIXEL_PACK_BUFFER,
+                        self._input_region_pbos[read_index],
+                    )
+                    rgba = gl.glGetBufferSubData(
+                        gl.GL_PIXEL_PACK_BUFFER,
+                        0,
+                        byte_count,
+                    )
+                    from wayland.input_region import rgba_bytes_to_region
+
+                    region, mask_hash = rgba_bytes_to_region(
+                        rgba,
+                        physical_width,
+                        physical_height,
+                        self._cache_w,
+                        self._cache_h,
+                        self._hit_alpha_threshold,
+                        flip_y=True,
+                        dilation=1,
+                    )
+                    if mask_hash != self._input_region_last_hash:
+                        self._input_region_last_hash = mask_hash
+                        self.input_region_ready.emit(region)
+            self._input_region_pbo_ready += 1
+            self._input_region_pbo_index = (write_index + 1) % 3
+        except Exception as exc:
+            if self._input_region_pbos:
+                print(f"Wayland input-region sampling disabled: {exc}", file=sys.stderr)
+            self._input_region_sampling_enabled = False
+            self._dispose_input_region_sampler()
+        finally:
+            try:
+                gl.glBindBuffer(gl.GL_PIXEL_PACK_BUFFER, 0)
+            except Exception:
+                pass
 
     def _compact_live2d_memory(self):
         compact = getattr(self._live2d, "compact_memory", None)

@@ -1,0 +1,17 @@
+{
+  "KPlugin": {
+    "Id": "bandoripet-wayland",
+    "Name": "BandoriPet Wayland Pointer Bridge",
+    "Description": "Sends KWin global pointer coordinates only to matching BandoriPet processes.",
+    "Version": "1.0.0",
+    "License": "MIT",
+    "Authors": [
+      {
+        "Name": "BandoriPet"
+      }
+    ]
+  },
+  "KPackageStructure": "KWin/Script",
+  "X-Plasma-API": "javascript",
+  "X-Plasma-MainScript": "code/main.js"
+}

@@ -12,9 +12,11 @@ from process_utils import (
     install_parent_death_watch,
     set_windows_app_user_model_id,
 )
+from wayland.environment import configure_native_wayland
 
 configure_debug_logging()
 configure_frozen_runtime_paths()
+configure_native_wayland()
 
 BASE_DIR = str(app_base_dir())
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
@@ -142,6 +144,9 @@ def main():
         pass
 
     app = QApplication(sys.argv)
+    from wayland.environment import verify_native_wayland_qpa
+
+    verify_native_wayland_qpa(app)
     install_parent_death_watch(app)
 
     chat_lock = QLockFile(str(chat_lock_path()))

@@ -24,7 +24,7 @@ APP_AUMID = APP_NAME
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
 from PySide6.QtGui import QAction, QPixmapCache
 from shiboken6 import isValid
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from model_manager import ModelManager
 from outfit_description_config import (
@@ -121,6 +121,9 @@ def main():
     set_windows_app_user_model_id(APP_AUMID)
 
     app = QApplication(sys.argv)
+    from wayland.environment import verify_native_wayland_qpa
+
+    verify_native_wayland_qpa(app)
     QPixmapCache.setCacheLimit(1024)
 
     import macos_patch
@@ -138,6 +141,37 @@ def main():
     plugin_supervisor = PluginSupervisor(app, safe_mode=safe_mode)
 
     apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)
+
+    from wayland.environment import detect_compositor, is_wayland_session
+    from wayland.types import HYPRLAND_POINTER_CONSENT_KEY
+
+    if (
+        is_wayland_session()
+        and detect_compositor() == "hyprland"
+        and cfg.get(HYPRLAND_POINTER_CONSENT_KEY, None) is None
+    ):
+        reply = QMessageBox.question(
+            None,
+            _tr(
+                "Wayland.hyprland_pointer_title",
+                default="允许 Wayland 全局鼠标跟踪",
+            ),
+            _tr(
+                "Wayland.hyprland_pointer_prompt",
+                default=(
+                    "为了让模型头部在 Hyprland 下看向窗口外的鼠标，"
+                    "BandoriPet 将在桌宠可见且头部跟踪开启时读取 "
+                    "Hyprland cursorpos，最高 60 Hz。是否允许？"
+                ),
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        cfg.set(
+            HYPRLAND_POINTER_CONSENT_KEY,
+            reply == QMessageBox.StandardButton.Yes,
+        )
+        cfg.save()
 
     mgr = ModelManager()
     pet_window_ref = {"processes": [], "closing_processes": []}

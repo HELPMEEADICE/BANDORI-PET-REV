@@ -1,0 +1,20 @@
+# Use this file from a venv created with --system-site-packages.  PySide6 is
+# intentionally not listed: the Wayland LayerShellQt bridge must use the
+# distro PySide6/Qt libraries and development headers from the same Qt minor.
+PyOpenGL>=3.1.0
+Pillow>=9.0.0
+darkdetect>=0.8.0
+PySide6-Fluent-Widgets>=1.11.0
+PySideSix-Frameless-Window>=0.8.0
+zstandard>=0.22.0
+lupa>=2.2
+numpy>=1.23.0
+requests>=2.31.0
+sounddevice>=0.4.6
+soundfile>=0.12.1
+pyautogui>=0.9.54
+pyperclip>=1.8.2
+cryptography>=42.0.0
+packaging>=23.2
+platformdirs>=4.0.0
+psutil>=5.9.0

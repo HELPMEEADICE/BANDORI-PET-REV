@@ -209,15 +209,6 @@ def log_swallowed(context: str, exc: BaseException | None = None) -> None:
         pass
 
 
-def ensure_xwayland():
-    if sys.platform not in ("linux", "linux2"):
-        return
-    if os.environ.get("QT_QPA_PLATFORM"):
-        return
-    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or os.environ.get("WAYLAND_DISPLAY"):
-        os.environ["QT_QPA_PLATFORM"] = "xcb"
-
-
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -593,6 +584,9 @@ def run_off_gui_thread(fn):
 
 def bootstrap_app() -> tuple[str, object]:
     """Common startup preamble: debug logging, base dir, GPU config."""
+    from wayland.environment import configure_native_wayland
+
+    configure_native_wayland()
     configure_debug_logging()
     configure_frozen_runtime_paths()
     base_dir = str(app_base_dir())

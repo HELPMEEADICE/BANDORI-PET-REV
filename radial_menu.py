@@ -244,7 +244,10 @@ class RadialMenu(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.NoDropShadowWindowHint
         )
-        if sys.platform.startswith("linux"):
+        if (
+            sys.platform.startswith("linux")
+            and "xcb" in str(QGuiApplication.platformName() or "").lower()
+        ):
             flags |= Qt.WindowType.X11BypassWindowManagerHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -264,11 +267,29 @@ class RadialMenu(QWidget):
         self._lock_anim = None
         self._paint_prewarmed = False
         self._ignore_outside_click_until_release = False
+        self._surface_controller = None
+        self._surface_stack_mode = None
+        self._full_output_overlay = False
+        self._menu_center = None
         self._outside_click_timer = QTimer(self)
         self._outside_click_timer.setInterval(25)
         self._outside_click_timer.timeout.connect(self._check_outside_click)
 
         self.setMouseTracking(True)
+
+    def set_surface_controller(self, controller, stack_mode):
+        self._surface_controller = controller
+        self._surface_stack_mode = stack_mode
+        self._full_output_overlay = bool(
+            controller is not None and controller.native_wayland
+        )
+        if controller is not None:
+            controller.set_stack_mode(self, stack_mode)
+
+    def _center_point(self) -> QPoint:
+        if self._menu_center is not None:
+            return QPoint(self._menu_center)
+        return QPoint(self.width() // 2, self.height() // 2)
 
     def nativeEvent(self, event_type, message):
         if os.name == "nt":
@@ -308,6 +329,8 @@ class RadialMenu(QWidget):
         QTimer.singleShot(0, self._apply_windows_11_border_fix)
         if macos_patch is not None:
             QTimer.singleShot(0, lambda: macos_patch.apply_popup_window_polish(self))
+        if self._full_output_overlay and self._surface_controller is not None:
+            self._surface_controller.set_input_region(self, QRegion(self.rect()))
 
     @staticmethod
     def _is_x11_qt_platform() -> bool:
@@ -344,6 +367,8 @@ class RadialMenu(QWidget):
             self.setMask(region)
 
     def prepare_for_show(self):
+        if self._full_output_overlay:
+            return
         # Force native window creation during idle time so first popup stays responsive.
         self.winId()
         self._apply_windows_11_border_fix()
@@ -511,7 +536,48 @@ class RadialMenu(QWidget):
 
         total_w = self._radius * 2 + 80 * 2
         total_h = self._radius * 2 + 80 * 2
-        self.setGeometry(self._menu_geometry_at(center, total_w, total_h))
+        if self._full_output_overlay and self._surface_controller is not None:
+            from wayland.types import SurfacePlacement, SurfaceRole
+
+            screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+            available = (
+                screen.availableGeometry()
+                if screen is not None
+                else QRect(center.x() - total_w // 2, center.y() - total_h // 2, total_w, total_h)
+            )
+            output_id = ""
+            if screen is not None:
+                try:
+                    output_id = str(screen.serialNumber() or screen.name() or "")
+                except Exception:
+                    output_id = ""
+            placement = SurfacePlacement(
+                output_id,
+                available.x(),
+                available.y(),
+                available.width(),
+                available.height(),
+            )
+            self.resize(available.size())
+            self._menu_center = center - available.topLeft()
+            self._surface_controller.register_surface(
+                self,
+                SurfaceRole.RADIAL_OVERLAY,
+                placement,
+                self._surface_stack_mode,
+            )
+            self._surface_controller.set_placement(self, placement)
+            self._surface_controller.set_stack_mode(self, self._surface_stack_mode)
+            self._surface_controller.set_input_region(
+                self,
+                QRegion(self.rect()),
+            )
+        else:
+            geometry = self._menu_geometry_at(center, total_w, total_h)
+            self.setGeometry(geometry)
+            self._menu_center = QPoint(total_w // 2, total_h // 2)
+
+        menu_center = self._center_point()
 
         for i, item in enumerate(self._items):
             angle = -math.pi / 2 + (2 * math.pi * i / n)
@@ -521,8 +587,8 @@ class RadialMenu(QWidget):
             item.start_offset = QPoint(0, 0)
 
             item.widget.move(
-                total_w // 2 - item.widget.width() // 2,
-                total_h // 2 - item.widget.height() // 2,
+                menu_center.x() - item.widget.width() // 2,
+                menu_center.y() - item.widget.height() // 2,
             )
             item.widget.show()
 
@@ -532,7 +598,7 @@ class RadialMenu(QWidget):
             self._raise_windows_topmost()
             for delay_ms in (0, 50, 180):
                 QTimer.singleShot(delay_ms, self._raise_windows_topmost)
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") and not self._full_output_overlay:
             self.raise_()
             self.activateWindow()
             QTimer.singleShot(0, self.raise_)
@@ -540,7 +606,8 @@ class RadialMenu(QWidget):
         else:
             self.setFocus()
         self._play_show_animation()
-        self._outside_click_timer.start()
+        if not self._full_output_overlay:
+            self._outside_click_timer.start()
 
     @staticmethod
     def _mouse_buttons_pressed() -> bool:
@@ -579,8 +646,9 @@ class RadialMenu(QWidget):
     def _is_interactive_point(self, pos: QPoint) -> bool:
         if any(item.widget.isVisible() and item.widget.geometry().contains(pos) for item in self._items):
             return True
-        cx = self.width() // 2
-        cy = self.height() // 2
+        center = self._center_point()
+        cx = center.x()
+        cy = center.y()
         dx = pos.x() - cx
         dy = pos.y() - cy
         return dx * dx + dy * dy < 40 * 40
@@ -675,9 +743,17 @@ class RadialMenu(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def closeEvent(self, event):
+        self._outside_click_timer.stop()
+        if self._surface_controller is not None:
+            self._surface_controller.unregister_surface(self)
+            self._surface_controller = None
+        super().closeEvent(event)
+
     def mouseMoveEvent(self, event: QMouseEvent):
-        cx = self.width() // 2
-        cy = self.height() // 2
+        center = self._center_point()
+        cx = center.x()
+        cy = center.y()
         dx = event.pos().x() - cx
         dy = event.pos().y() - cy
         dist = (dx * dx + dy * dy) ** 0.5
@@ -696,8 +772,9 @@ class RadialMenu(QWidget):
             super().mousePressEvent(event)
             return
 
-        cx = self.width() // 2
-        cy = self.height() // 2
+        center = self._center_point()
+        cx = center.x()
+        cy = center.y()
         dx = event.pos().x() - cx
         dy = event.pos().y() - cy
         dist = (dx * dx + dy * dy) ** 0.5
@@ -711,8 +788,9 @@ class RadialMenu(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        cx = self.width() // 2
-        cy = self.height() // 2
+        center = self._center_point()
+        cx = center.x()
+        cy = center.y()
         rr = 30 * self._center_scale
 
         base = QColor("#3a3a3a") if self._center_hover else QColor("#2a2a2a")

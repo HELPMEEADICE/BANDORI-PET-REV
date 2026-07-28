@@ -47,7 +47,7 @@ QQ群：1033517952
 ### 1. 环境要求
 
 - **Python 3.10+** & **LuaJIT 2.1+**
-- Windows, macOS, Linux(部分兼容)
+- Windows, macOS, Linux（Wayland 原生支持 Plasma 6、GNOME 46+、Hyprland）
 - 支持 OpenGL 3.3+ 的显卡（核显也能跑）
 - Live2D 默认启用 Qt 硬件 OpenGL/GPU 加速；如需排查驱动问题，可设置 `BANDORI_GPU_ACCELERATION=0` 临时切换到软件渲染。
 
@@ -114,6 +114,13 @@ python -m venv venv
 ```bash
 pip install -r requirements.txt
 ```
+
+> **Wayland 用户：** Plasma/Hyprland 的 layer-shell 桥必须与系统 Qt/PySide6
+> 使用完全相同的 Qt minor，不能使用 PyPI PySide6 wheel。请改用
+> `requirements-linux-wayland.txt` 并按照
+> [原生 Wayland 运行指南](docs/WAYLAND_NATIVE.md) 安装 Qt Wayland、
+> LayerShellQt、KWin/GNOME 伴侣及构建桥接。应用在 Wayland 会话中不会回退到
+> XWayland。
 
 **第三方依赖（从源码编译时需要）：**
 

@@ -8,14 +8,15 @@ from process_utils import (
     app_base_dir,
     configure_debug_logging,
     configure_frozen_runtime_paths,
-    ensure_xwayland,
     install_parent_death_watch,
     interaction_trace,
     set_windows_app_user_model_id,
 )
+from wayland.environment import configure_native_wayland
 
 configure_debug_logging()
 configure_frozen_runtime_paths()
+configure_native_wayland()
 
 BASE_DIR = str(app_base_dir())
 
@@ -115,7 +116,6 @@ def _update_menu(menu: RadialMenu, payload: dict, actions: list[str]) -> bool:
 def main():
     global _EVENT_QUEUE
     global _STDIO_MODE
-    ensure_xwayland()
     os.chdir(BASE_DIR)
     args = _parse_args()
     _STDIO_MODE = bool(args.stdio)
@@ -126,6 +126,9 @@ def main():
 
     set_windows_app_user_model_id(f"{APP_NAME}.RadialMenu")
     app = QApplication(sys.argv)
+    from wayland.environment import verify_native_wayland_qpa
+
+    verify_native_wayland_qpa(app)
     install_parent_death_watch(app)
     app.setApplicationName(f"{APP_NAME}-RadialMenu")
     app.setOrganizationName(APP_NAME)
