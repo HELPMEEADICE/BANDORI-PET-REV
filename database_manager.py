@@ -801,6 +801,16 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             )
         """)
         self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_conversation_backgrounds (
+                group_key TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                user_key TEXT NOT NULL DEFAULT '',
+                temporary_background TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                PRIMARY KEY (group_key, conversation_id, user_key)
+            )
+        """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS relationship_states (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character TEXT NOT NULL,
@@ -896,6 +906,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         conversation_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(conversations)").fetchall()]
         if "user_key" not in conversation_columns:
             self._conn.execute("ALTER TABLE conversations ADD COLUMN user_key TEXT NOT NULL DEFAULT ''")
+        if "temporary_background" not in conversation_columns:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN temporary_background TEXT NOT NULL DEFAULT ''")
         group_columns = [r[1] for r in self._conn.execute("PRAGMA table_info(group_messages)").fetchall()]
         if "conversation_id" not in group_columns:
             self._conn.execute("ALTER TABLE group_messages ADD COLUMN conversation_id TEXT NOT NULL DEFAULT 'default'")
@@ -924,6 +936,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_role_id ON messages(conversation_id, role, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_character_user ON conversations(character, user_key, id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_messages_key_user_conv_id ON group_messages(group_key, user_key, conversation_id, id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_group_backgrounds_user_key ON group_conversation_backgrounds(user_key, group_key, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_character_memories_lookup ON character_memories(character, user_key, importance, updated_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_mood_events_lookup ON mood_events(character, user_key, created_at)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_external_chat_messages_thread ON external_chat_messages(platform, thread_id, id)")
@@ -1303,15 +1316,16 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
         else:
             where, params = self._user_filter_clause(user_key, "", (), "c.user_key")
+        active_where = f"{where} {'AND' if where else 'WHERE'} (latest.id IS NOT NULL OR c.temporary_background != '')"
         rows = self._conn.execute(
             "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
             "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
             "FROM conversations c "
-            "JOIN messages latest ON latest.id=("
+            "LEFT JOIN messages latest ON latest.id=("
             "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
             ") "
-            f"{where} "
-            "ORDER BY latest.id DESC",
+            f"{active_where} "
+            "ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC",
             params,
         ).fetchall()
         result = []
@@ -1332,15 +1346,16 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
     def get_last_conversation(self, character: str, user_key: str | None = None) -> dict | None:
         where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
+        active_where = f"{where} AND (latest.id IS NOT NULL OR c.temporary_background != '')"
         row = self._conn.execute(
             "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
             "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
             "FROM conversations c "
-            "JOIN messages latest ON latest.id=("
+            "LEFT JOIN messages latest ON latest.id=("
             "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
             ") "
-            f"{where} "
-            "ORDER BY latest.id DESC LIMIT 1",
+            f"{active_where} "
+            "ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC LIMIT 1",
             params,
         ).fetchone()
         if row:
@@ -1358,6 +1373,26 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             }
         return None
 
+    def get_conversation_temporary_background(self, conversation_id: int | None) -> str:
+        conversation_id = _db_int(conversation_id)
+        if conversation_id is None:
+            return ""
+        row = self._conn.execute(
+            "SELECT temporary_background FROM conversations WHERE id=?",
+            (conversation_id,),
+        ).fetchone()
+        return _db_text(row[0]).strip() if row else ""
+
+    def set_conversation_temporary_background(self, conversation_id: int, content: str) -> None:
+        conversation_id = _db_int(conversation_id)
+        if conversation_id is None:
+            raise ValueError("conversation_id must be an integer")
+        self._conn.execute(
+            "UPDATE conversations SET temporary_background=? WHERE id=?",
+            (str(content or "").strip(), conversation_id),
+        )
+        self._conn.commit()
+
     def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         attachments_json = _json_text(_sanitize_attachments_payload(attachments))
@@ -1369,6 +1404,48 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         )
         self._conn.commit()
         return cur.lastrowid
+
+    def update_message_content(self, conversation_id: int, message_id: int, content: str) -> bool:
+        cur = self._conn.execute(
+            "UPDATE messages SET content=? WHERE conversation_id=? AND id=?",
+            (str(content or "").strip(), int(conversation_id), int(message_id)),
+        )
+        self._conn.commit()
+        return bool(cur.rowcount)
+
+    def delete_messages_from(
+        self,
+        conversation_id: int,
+        message_id: int,
+        *,
+        include_selected: bool = True,
+    ) -> list[dict]:
+        operator = ">=" if include_selected else ">"
+        params = (int(conversation_id), int(message_id))
+        rows = self._conn.execute(
+            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
+            f"FROM messages WHERE conversation_id=? AND id{operator}? ORDER BY id ASC",
+            params,
+        ).fetchall()
+        deleted = [message for row in rows if (message := _message_row_dict(row)) is not None]
+        self._conn.execute(
+            f"DELETE FROM messages WHERE conversation_id=? AND id{operator}?",
+            params,
+        )
+        self._conn.commit()
+        return deleted
+
+    def delete_message(self, conversation_id: int, message_id: int) -> list[dict]:
+        params = (int(conversation_id), int(message_id))
+        rows = self._conn.execute(
+            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
+            "FROM messages WHERE conversation_id=? AND id=?",
+            params,
+        ).fetchall()
+        deleted = [message for row in rows if (message := _message_row_dict(row)) is not None]
+        self._conn.execute("DELETE FROM messages WHERE conversation_id=? AND id=?", params)
+        self._conn.commit()
+        return deleted
 
     @staticmethod
     def _token_usage_from_rows(rows) -> dict:
@@ -1639,6 +1716,73 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
+    def update_group_message_content(
+        self,
+        group_key: str,
+        conversation_id: str,
+        message_id: int,
+        content: str,
+        user_key: str | None = None,
+    ) -> bool:
+        where, params = self._user_filter_clause(
+            user_key,
+            "group_key=? AND conversation_id=? AND id=?",
+            (group_key, conversation_id or "default", int(message_id)),
+        )
+        cur = self._conn.execute(
+            f"UPDATE group_messages SET content=? WHERE {where}",
+            (str(content or "").strip(), *params),
+        )
+        self._conn.commit()
+        return bool(cur.rowcount)
+
+    def delete_group_messages_from(
+        self,
+        group_key: str,
+        conversation_id: str,
+        message_id: int,
+        *,
+        include_selected: bool = True,
+        user_key: str | None = None,
+    ) -> list[dict]:
+        operator = ">=" if include_selected else ">"
+        where, params = self._user_filter_clause(
+            user_key,
+            f"group_key=? AND conversation_id=? AND id{operator}?",
+            (group_key, conversation_id or "default", int(message_id)),
+        )
+        rows = self._conn.execute(
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
+            f"FROM group_messages WHERE {where} ORDER BY id ASC",
+            params,
+        ).fetchall()
+        deleted = [message for row in rows if (message := _message_row_dict(row, grouped=True)) is not None]
+        self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
+        self._conn.commit()
+        return deleted
+
+    def delete_group_message(
+        self,
+        group_key: str,
+        conversation_id: str,
+        message_id: int,
+        user_key: str | None = None,
+    ) -> list[dict]:
+        where, params = self._user_filter_clause(
+            user_key,
+            "group_key=? AND conversation_id=? AND id=?",
+            (group_key, conversation_id or "default", int(message_id)),
+        )
+        rows = self._conn.execute(
+            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
+            f"FROM group_messages WHERE {where}",
+            params,
+        ).fetchall()
+        deleted = [message for row in rows if (message := _message_row_dict(row, grouped=True)) is not None]
+        self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
+        self._conn.commit()
+        return deleted
+
     def get_group_messages(
         self,
         group_key: str,
@@ -1686,6 +1830,15 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
         def operation():
             self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
+            background_where, background_params = self._user_filter_clause(
+                user_key,
+                "group_key=? AND conversation_id=?",
+                (group_key, conversation_id),
+            )
+            self._conn.execute(
+                f"DELETE FROM group_conversation_backgrounds WHERE {background_where}",
+                background_params,
+            )
             self._conn.commit()
 
         _run_with_locked_retry(self._conn, operation, lock=self._lock)
@@ -1720,7 +1873,78 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "content": _db_text(content),
                 "created_at": _db_text(created_at),
             })
+        background_where, background_params = self._user_filter_clause(
+            user_key,
+            "WHERE group_key=? AND temporary_background != ''",
+            (group_key,),
+        )
+        background_rows = self._conn.execute(
+            "SELECT conversation_id, user_key, updated_at "
+            f"FROM group_conversation_backgrounds {background_where}",
+            background_params,
+        ).fetchall()
+        known_ids = {item["conversation_id"] for item in result}
+        for conversation_id, row_user_key, updated_at in background_rows:
+            conversation_id = _db_text(conversation_id, "default") or "default"
+            if conversation_id in known_ids:
+                continue
+            result.append({
+                "group_key": group_key,
+                "conversation_id": conversation_id,
+                "user_key": _db_text(row_user_key),
+                "message_id": 0,
+                "role": "system",
+                "content": "",
+                "created_at": _db_text(updated_at),
+            })
+        result.sort(key=lambda item: (item.get("created_at", ""), item.get("message_id", 0)), reverse=True)
         return result
+
+    def get_group_conversation_temporary_background(
+        self,
+        group_key: str,
+        conversation_id: str,
+        user_key: str | None = None,
+    ) -> str:
+        conversation_id = str(conversation_id or "default")
+        where, params = self._user_filter_clause(
+            user_key,
+            "WHERE group_key=? AND conversation_id=?",
+            (group_key, conversation_id),
+        )
+        row = self._conn.execute(
+            f"SELECT temporary_background FROM group_conversation_backgrounds {where} LIMIT 1",
+            params,
+        ).fetchone()
+        return _db_text(row[0]).strip() if row else ""
+
+    def set_group_conversation_temporary_background(
+        self,
+        group_key: str,
+        conversation_id: str,
+        content: str,
+        user_key: str = "",
+    ) -> None:
+        conversation_id = str(conversation_id or "default")
+        user_key = self._normalize_user_key(user_key)
+        content = str(content or "").strip()
+        if not content:
+            self._conn.execute(
+                "DELETE FROM group_conversation_backgrounds "
+                "WHERE group_key=? AND conversation_id=? AND user_key=?",
+                (group_key, conversation_id, user_key),
+            )
+        else:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._conn.execute(
+                "INSERT INTO group_conversation_backgrounds "
+                "(group_key, conversation_id, user_key, temporary_background, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(group_key, conversation_id, user_key) DO UPDATE SET "
+                "temporary_background=excluded.temporary_background, updated_at=excluded.updated_at",
+                (group_key, conversation_id, user_key, content, now),
+            )
+        self._conn.commit()
 
     def get_group_chats(self, user_key: str | None = None) -> list[dict]:
         where, params = self._user_filter_clause(user_key, "", ())
@@ -1789,11 +2013,11 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             base = "character=?" if character else ""
             base_params: tuple = (character,) if character else ()
             where, params = self._user_filter_clause(user_key, base, base_params)
-            suffix = " AND " if where else ""
+            prefix = f"WHERE {where} AND " if where else "WHERE "
             self._conn.execute(
-                f"DELETE FROM conversations {('WHERE ' + where) if where else ''}{suffix}NOT EXISTS ("
+                f"DELETE FROM conversations {prefix}NOT EXISTS ("
                 "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ")",
+                ") AND temporary_background=''",
                 params,
             )
             self._conn.commit()

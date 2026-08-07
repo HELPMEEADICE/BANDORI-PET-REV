@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QRectF, QSize, QUrl,
+    QPoint, QRectF, QSize, QUrl,
 )
 from PySide6.QtGui import (
     QFont, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QRegion, QDesktopServices, QCursor,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QGraphicsColorizeEffect, QFrame,
     QSplitter, QSplitterHandle, QCheckBox, QDialog,
+    QPlainTextEdit,
 )
 
 from i18n_manager import tr as _tr
@@ -76,6 +77,9 @@ class AuxVisionFallbackWorker(CancelableNetworkWorker):
 
 
 class FluentContextLabel(QLabel):
+    def set_message_actions_provider(self, provider):
+        self._message_actions_provider = provider
+
     def contextMenuEvent(self, event):
         full_text = self.text()
         if not full_text:
@@ -93,6 +97,15 @@ class FluentContextLabel(QLabel):
         copy_all_action.triggered.connect(lambda: QApplication.clipboard().setText(full_text))
         copy_all_action.setEnabled(bool(full_text))
         menu.addAction(copy_all_action)
+
+        provider = getattr(self, "_message_actions_provider", None)
+        actions = provider() if callable(provider) else []
+        if actions:
+            menu.addSeparator()
+            for icon, label, callback in actions:
+                action = Action(icon, label, self)
+                action.triggered.connect(callback)
+                menu.addAction(action)
 
         _prepare_fluent_round_menu(menu)
         menu.exec(event.globalPos(), ani=True)
@@ -120,6 +133,211 @@ class GroupRenameDialog(MessageBoxBase):
 
     def group_name(self) -> str:
         return self.name_edit.text().strip()
+
+
+class TemporaryBackgroundDialog(MessageBoxBase):
+    def __init__(self, current_text: str, parent=None):
+        super().__init__(parent)
+        self.title_label = StrongBodyLabel(
+            _tr("ChatWindow.temporary_background_title", default="临时背景"),
+            self.widget,
+        )
+        self.desc_label = BodyLabel(
+            _tr(
+                "ChatWindow.temporary_background_description",
+                default="仅作用于当前会话，会作为额外的通用提示词添加到每次回复请求。留空保存即可关闭。",
+            ),
+            self.widget,
+        )
+        self.desc_label.setWordWrap(True)
+        self.text_edit = QPlainTextEdit(self.widget)
+        self.text_edit.setObjectName("TemporaryBackgroundEdit")
+        self.text_edit.setPlaceholderText(
+            _tr(
+                "ChatWindow.temporary_background_placeholder",
+                default="例如：当前场景、剧情走向，或本次会话需要遵守的临时规则……",
+            )
+        )
+        self.text_edit.setPlainText(str(current_text or ""))
+        self.text_edit.setMinimumHeight(180)
+        self.text_edit.setTabChangesFocus(False)
+
+        dark = isDarkTheme()
+        self.text_edit.setStyleSheet(f"""
+            QPlainTextEdit#TemporaryBackgroundEdit {{
+                color: {'#f8f8fb' if dark else '#1f2328'};
+                background: {'#181c25' if dark else '#ffffff'};
+                border: 1px solid {'#303849' if dark else '#cfd8ec'};
+                border-radius: 8px;
+                padding: 8px;
+                selection-background-color: {accent_color(dark)};
+            }}
+            QPlainTextEdit#TemporaryBackgroundEdit:focus {{
+                border-color: {accent_color(dark)};
+            }}
+        """)
+
+        self.yesButton.setText(_tr("ChatWindow.temporary_background_save", default="保存"))
+        self.cancelButton.setText(_tr("ChatWindow.temporary_background_cancel", default="取消"))
+        self.widget.setFixedWidth(520)
+        self.viewLayout.addWidget(self.title_label)
+        self.viewLayout.addWidget(self.desc_label)
+        self.viewLayout.addWidget(self.text_edit)
+        QTimer.singleShot(0, self.text_edit.setFocus)
+
+    def background_text(self) -> str:
+        return self.text_edit.toPlainText().strip()
+
+
+class _DropPlusBadge(QLabel):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("white"), 3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        center = self.rect().center()
+        painter.drawLine(center.x() - 8, center.y(), center.x() + 8, center.y())
+        painter.drawLine(center.x(), center.y() - 8, center.x(), center.y() + 8)
+
+
+class ChatAttachmentDropOverlay(QWidget):
+    """Overlay that keeps ownership of drag/drop events once it is visible."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ChatAttachmentDropOverlay")
+        self.setAcceptDrops(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(36, 36, 36, 36)
+        layout.addStretch(1)
+        self._card = QFrame(self)
+        self._card.setObjectName("ChatAttachmentDropCard")
+        self._card.setMaximumWidth(430)
+        self._card.setMinimumHeight(190)
+        card_layout = QVBoxLayout(self._card)
+        card_layout.setContentsMargins(30, 24, 30, 24)
+        card_layout.setSpacing(9)
+
+        self._badge = _DropPlusBadge("", self._card)
+        self._badge.setObjectName("ChatAttachmentDropBadge")
+        self._badge.setFixedSize(50, 50)
+        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self._badge, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._title = StrongBodyLabel(
+            _tr("ChatWindow.attach_drop_overlay_title", default="松开即可添加"), self._card
+        )
+        self._title.setObjectName("ChatAttachmentDropTitle")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self._title)
+        self._description = BodyLabel(
+            _tr("ChatWindow.attach_drop_overlay_description", default="将图片或文件添加到当前消息"),
+            self._card,
+        )
+        self._description.setObjectName("ChatAttachmentDropDescription")
+        self._description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._description.setWordWrap(True)
+        card_layout.addWidget(self._description)
+        layout.addWidget(self._card, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
+        self.apply_theme()
+
+    def apply_theme(self):
+        dark = isDarkTheme()
+        accent = accent_color(dark)
+        overlay = "rgba(8, 13, 22, 205)" if dark else "rgba(238, 244, 253, 220)"
+        card = "rgba(22, 30, 44, 242)" if dark else "rgba(255, 255, 255, 245)"
+        title = "#f8f8fb" if dark else "#1f2328"
+        muted = "#aeb8ca" if dark else "#647089"
+        self.setStyleSheet(f"""
+            QWidget#ChatAttachmentDropOverlay {{ background: {overlay}; border: 2px dashed {accent}; border-radius: 18px; }}
+            QFrame#ChatAttachmentDropCard {{ background: {card}; border: 1px solid {accent}; border-radius: 18px; }}
+            QLabel#ChatAttachmentDropBadge {{ color: white; background: {accent}; border: none; border-radius: 25px; font-size: 29px; font-weight: 500; }}
+            QLabel#ChatAttachmentDropTitle {{ color: {title}; background: transparent; border: none; font-size: 16px; font-weight: 600; }}
+            QLabel#ChatAttachmentDropDescription {{ color: {muted}; background: transparent; border: none; font-size: 12px; }}
+        """)
+
+
+class SlidingStatusLabel(QWidget):
+    """A clipped two-line status label whose replacements always push upward."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(18)
+        self._track = QWidget(self)
+        self._current = QLabel(str(text or ""), self._track)
+        self._next = QLabel("", self._track)
+        self._animation = QPropertyAnimation(self._track, b"pos", self)
+        self._animation.setDuration(230)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.finished.connect(self._finish_slide)
+        self._sliding = False
+        self._layout_lines()
+
+    def text(self) -> str:
+        return self._next.text() if self._sliding else self._current.text()
+
+    def setText(self, text: str):
+        self._animation.stop()
+        self._sliding = False
+        self._current.setText(str(text or ""))
+        self._next.clear()
+        self._track.move(0, 0)
+        self._layout_lines()
+
+    def slide_to(self, text: str, duration: int = 230):
+        target = str(text or "")
+        if target == self.text():
+            return
+        if self._sliding:
+            self.setText(self._next.text())
+        self._next.setText(target)
+        self._sliding = True
+        self._layout_lines()
+        height = max(1, self.height())
+        self._animation.stop()
+        self._animation.setDuration(max(1, int(duration)))
+        self._animation.setStartValue(QPoint(0, 0))
+        self._animation.setEndValue(QPoint(0, -height))
+        self._animation.start()
+
+    def setFont(self, font):
+        super().setFont(font)
+        if hasattr(self, "_current"):
+            self._current.setFont(font)
+            self._next.setFont(font)
+            self._layout_lines()
+
+    def setStyleSheet(self, style: str):
+        super().setStyleSheet(style)
+        if hasattr(self, "_current"):
+            self._current.setStyleSheet(style)
+            self._next.setStyleSheet(style)
+
+    def resizeEvent(self, event):
+        self._layout_lines()
+        super().resizeEvent(event)
+
+    def _layout_lines(self):
+        if not hasattr(self, "_track"):
+            return
+        width = max(1, self.width())
+        height = max(1, self.height())
+        self._track.resize(width, height * 2)
+        self._current.setGeometry(0, 0, width, height)
+        self._next.setGeometry(0, height, width, height)
+
+    def _finish_slide(self):
+        if not self._sliding:
+            return
+        self._current.setText(self._next.text())
+        self._next.clear()
+        self._track.move(0, 0)
+        self._sliding = False
 
 
 def _rounded_path(rect: QRectF, radii: tuple[float, float, float, float]) -> QPainterPath:
@@ -198,6 +416,10 @@ class IconButton(QToolButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.setAutoRaise(True)
+
+    def set_primary(self, primary: bool):
+        self._primary = bool(primary)
+        self.apply_theme()
 
     def enterEvent(self, event):
         self._hover_glow(True)

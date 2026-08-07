@@ -7,11 +7,11 @@ from PySide6.QtGui import QFont, QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QGraphicsOpacityEffect, QFrame, QToolButton,
-    QGraphicsColorizeEffect,
+    QGraphicsColorizeEffect, QPlainTextEdit,
 )
 
 from i18n_manager import tr as _tr
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import FluentIcon, isDarkTheme
 
 from app_theme import (
     BANDORI_PRIMARY,
@@ -55,6 +55,11 @@ class PokeAvatarLabel(QLabel):
 
 class MessageBubble(QWidget):
     avatar_double_clicked = Signal(str)
+    delete_requested = Signal(object)
+    rollback_requested = Signal(object)
+    edit_saved = Signal(object, str)
+    edit_started = Signal(object)
+    edit_closed = Signal(object)
 
     def __init__(
         self,
@@ -72,6 +77,7 @@ class MessageBubble(QWidget):
         search_sources: list[dict] | None = None,
         attachments: list[dict] | str | None = None,
         avatar_character: str = "",
+        message_id: int | None = None,
     ):
         super().__init__(parent)
         self._text = text
@@ -82,6 +88,8 @@ class MessageBubble(QWidget):
         self._search_sources = self._normalize_search_sources(search_sources)
         self._attachments = self._normalize_display_attachments(attachments)
         self._avatar_character = avatar_character
+        self._message_id = message_id
+        self._editing = False
         self._author = author or (_tr("ChatWindow.you") if role == "user" else _tr("ChatWindow.you"))
         self._created_at = created_at
         self._avatar_color = avatar_color
@@ -147,6 +155,39 @@ class MessageBubble(QWidget):
         font = QFont()
         font.setPointSize(10)
         self._label.setFont(font)
+        self._label.set_message_actions_provider(self._message_context_actions)
+
+        self._edit_panel = QWidget(self)
+        self._edit_panel.setObjectName("MessageEditPanel")
+        edit_layout = QHBoxLayout(self._edit_panel)
+        edit_layout.setContentsMargins(0, 0, 0, 0)
+        edit_layout.setSpacing(6)
+        self._edit_text = QPlainTextEdit(self._edit_panel)
+        self._edit_text.setObjectName("MessageInlineEdit")
+        self._edit_text.setPlainText(self._text)
+        self._edit_text.setMinimumSize(220, 88)
+        self._edit_text.setFont(font)
+        edit_layout.addWidget(self._edit_text, 1)
+        edit_actions = QVBoxLayout()
+        edit_actions.setContentsMargins(0, 0, 0, 0)
+        edit_actions.setSpacing(6)
+        self._edit_cancel_btn = QToolButton(self._edit_panel)
+        self._edit_cancel_btn.setText("×")
+        self._edit_cancel_btn.setFixedSize(28, 28)
+        self._edit_cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._edit_cancel_btn.setToolTip(_tr("ChatWindow.message_edit_cancel_tooltip", default="取消编辑"))
+        self._edit_cancel_btn.clicked.connect(self.cancel_edit)
+        self._edit_save_btn = QToolButton(self._edit_panel)
+        self._edit_save_btn.setText("✓")
+        self._edit_save_btn.setFixedSize(28, 28)
+        self._edit_save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._edit_save_btn.setToolTip(_tr("ChatWindow.message_edit_save_tooltip", default="保存修改"))
+        self._edit_save_btn.clicked.connect(self._confirm_edit)
+        edit_actions.addWidget(self._edit_cancel_btn)
+        edit_actions.addWidget(self._edit_save_btn)
+        edit_actions.addStretch()
+        edit_layout.addLayout(edit_actions)
+        self._edit_panel.hide()
 
         self._reasoning_panel = RoundedPanel(self)
         self._reasoning_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -229,6 +270,7 @@ class MessageBubble(QWidget):
         bubble_layout.setSpacing(4)
         bubble_layout.addWidget(self._reasoning_panel)
         bubble_layout.addWidget(self._label)
+        bubble_layout.addWidget(self._edit_panel)
         bubble_layout.addWidget(self._attachments_panel)
         bubble_layout.addWidget(self._sources_row)
         bubble_layout.addWidget(self._stream_label)
@@ -358,6 +400,8 @@ class MessageBubble(QWidget):
 
     def _natural_bubble_width(self) -> int:
         content_width = self._widest_plain_line(self._label)
+        if self._editing:
+            content_width = max(content_width, 300)
         for preview in self._attachment_previews:
             content_width = max(content_width, preview.preferred_width())
         if self._stream_label.isVisible() and self._stream_label.text():
@@ -410,6 +454,8 @@ class MessageBubble(QWidget):
 
         text_width = max(1, target_width - 24)
         self._label.setFixedWidth(text_width)
+        if self._editing:
+            self._edit_panel.setFixedWidth(text_width)
         self._stream_label.setFixedWidth(text_width)
         for preview in self._attachment_previews:
             preview.set_preview_width(text_width)
@@ -489,6 +535,31 @@ class MessageBubble(QWidget):
             self._avatar.setText("")
             self._avatar.setPixmap(avatar_pixmap)
         self._label.setStyleSheet(f"color: {text}; background: transparent;")
+        self._edit_text.setStyleSheet(f"""
+            QPlainTextEdit#MessageInlineEdit {{
+                color: {text};
+                background: {'#181c25' if dark else '#ffffff'};
+                border: 1px solid {stream};
+                border-radius: 7px;
+                padding: 6px;
+                selection-background-color: {stream};
+            }}
+        """)
+        for button, foreground in (
+            (self._edit_cancel_btn, "#d9534f"),
+            (self._edit_save_btn, "#ffffff"),
+        ):
+            button.setStyleSheet(f"""
+                QToolButton {{
+                    color: {foreground};
+                    background: {stream if button is self._edit_save_btn else ('#35252b' if dark else '#fff0f0')};
+                    border: none;
+                    border-radius: 14px;
+                    font-size: 17px;
+                    font-weight: 700;
+                }}
+                QToolButton:hover {{ background: {'#4a3038' if dark else '#ffe0e0'}; }}
+            """)
         for preview in self._attachment_previews:
             preview.apply_theme()
         self._meta.setAlignment(Qt.AlignmentFlag.AlignRight if user else Qt.AlignmentFlag.AlignLeft)
@@ -622,10 +693,69 @@ class MessageBubble(QWidget):
         if self._streaming and old_height > 0:
             self.setMaximumHeight(old_height)
         self._label.setText(text)
+        self._text = text
         self.update_bubble_width()
         if self._streaming:
             self._animate_stream_text()
             QTimer.singleShot(0, lambda h=old_height: self._animate_stream_height(h))
+
+    def set_message_id(self, message_id: int | None):
+        self._message_id = message_id
+
+    def message_id(self) -> int | None:
+        return self._message_id
+
+    def role(self) -> str:
+        return self._role
+
+    def avatar_character(self) -> str:
+        return self._avatar_character
+
+    def attachments(self) -> list[dict]:
+        return [dict(item) for item in self._attachments]
+
+    def _message_context_actions(self):
+        if self._message_id is None or self._streaming or self._editing:
+            return []
+        return [
+            (FluentIcon.EDIT, _tr("ChatWindow.message_edit", default="编辑"), self.start_edit),
+            (FluentIcon.RETURN, _tr("ChatWindow.message_rollback", default="回退到这条前"), lambda: self.rollback_requested.emit(self)),
+            (FluentIcon.DELETE, _tr("ChatWindow.message_delete", default="删除消息"), lambda: self.delete_requested.emit(self)),
+        ]
+
+    def start_edit(self):
+        if self._message_id is None or self._streaming:
+            return
+        if self._editing:
+            return
+        self.edit_started.emit(self)
+        self._editing = True
+        self._edit_text.setPlainText(self._label.text())
+        self._label.hide()
+        self._edit_panel.show()
+        self.update_bubble_width()
+        QTimer.singleShot(0, self._edit_text.setFocus)
+
+    def cancel_edit(self):
+        if not self._editing:
+            return
+        self._editing = False
+        self._edit_panel.hide()
+        self._label.show()
+        self.update_bubble_width()
+        self.edit_closed.emit(self)
+
+    def _confirm_edit(self):
+        text = self._edit_text.toPlainText().strip()
+        if not text:
+            self._edit_text.setToolTip(_tr("ChatWindow.message_edit_empty", default="消息内容不能为空"))
+            self._edit_text.setFocus()
+            return
+        self.edit_saved.emit(self, text)
+
+    def finish_edit(self, text: str):
+        self.set_text(text)
+        self.cancel_edit()
 
     def set_reasoning(self, reasoning: str):
         was_visible = self._reasoning_panel.isVisible()

@@ -141,7 +141,8 @@ from .constants import (
 from .avatar_utils import _rounded_avatar_pixmap
 from .scrollbar_style import fluent_scrollbar_style
 from .widgets import (
-    AuxVisionFallbackWorker, GroupRenameDialog,
+    AuxVisionFallbackWorker, GroupRenameDialog, TemporaryBackgroundDialog,
+    ChatAttachmentDropOverlay, SlidingStatusLabel,
     RoundedPanel, IconButton, ChatSendButton,
     FluentSplitter, ChatResizeGrip,
     ConversationHistoryRow, GroupChatListRow,
@@ -492,11 +493,22 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._poke_window_anim_origin = None
         self._pending_history_menu_action = None
         self._pending_attachments: list[dict] = []
+        self._temporary_background = ""
+        self._active_edit_bubble: MessageBubble | None = None
         self._attachment_cards: list[ComposerAttachmentCard] = []
         self._attachment_import_worker: AttachmentImportWorker | None = None
         self._attachment_import_queue: list[list[dict]] = []
         self._attachment_import_last_error = ""
         self._composer_drag_active = False
+        self._composer_drag_leave_token = 0
+        self._chat_content = None
+        self._attachment_drop_overlay = None
+        self._temporary_background_notice_text = ""
+        self._temporary_background_notice_timer = QTimer(self)
+        self._temporary_background_notice_timer.setSingleShot(True)
+        self._temporary_background_notice_timer.timeout.connect(
+            self._restore_temporary_background_notice
+        )
         self._group_splitter = None
         self._group_toggle_btn = None
         self._group_sidebar_toggle_btn = None
@@ -1027,6 +1039,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._cfg.save()
 
     def _init_ui(self):
+        # Register the native top-level window as an OLE drop site.  Accepting
+        # drops only on alien child widgets is not sufficient on Windows.
+        self.setAcceptDrops(True)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -1053,6 +1068,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         content = QWidget(self._shell)
         content.setObjectName("ChatContent")
         content.setMinimumWidth(360)
+        content.setAcceptDrops(True)
+        content.installEventFilter(self)
+        self._chat_content = content
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
@@ -1064,16 +1082,22 @@ class ChatWindow(ChatWindowMixin, QWidget):
         QTimer.singleShot(0, self._restore_group_splitter_sizes)
 
         self._titlebar = self._build_titlebar()
+        self._titlebar.setAcceptDrops(True)
+        self._titlebar.installEventFilter(self)
         content_layout.addWidget(self._titlebar)
 
         self._msg_area = QWidget()
         self._msg_area.setObjectName("MessageArea")
+        self._msg_area.setAcceptDrops(True)
+        self._msg_area.installEventFilter(self)
         self._msg_layout = QVBoxLayout(self._msg_area)
         self._msg_layout.setContentsMargins(0, 14, 0, 14)
         self._msg_layout.setSpacing(4)
         self._msg_layout.addStretch()
 
         self._scroll = QScrollArea()
+        self._scroll.setAcceptDrops(True)
+        self._scroll.installEventFilter(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1083,10 +1107,16 @@ class ChatWindow(ChatWindowMixin, QWidget):
         message_scrollbar.actionTriggered.connect(self._cancel_pending_scroll_to_bottom)
         message_scrollbar.valueChanged.connect(self._on_message_scroll_value_changed)
         message_scrollbar.sliderPressed.connect(self._pause_stream_output_follow)
+        self._scroll.viewport().setAcceptDrops(True)
         self._scroll.viewport().installEventFilter(self)
         content_layout.addWidget(self._scroll, 1)
 
         content_layout.addWidget(self._build_input_area())
+
+        self._attachment_drop_overlay = ChatAttachmentDropOverlay(content)
+        self._attachment_drop_overlay.installEventFilter(self)
+        self._attachment_drop_overlay.hide()
+        self._position_attachment_drop_overlay()
 
         self._resize_grip = ChatResizeGrip(self, self._shell)
         self._resize_grip.setObjectName("ChatResizeGrip")
@@ -1099,6 +1129,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not self._group_sidebar_collapsed and not self._group_sidebar_animating:
             self._schedule_group_sidebar_ratio_apply()
         self._position_resize_grip()
+        self._position_attachment_drop_overlay()
         if not self._group_sidebar_animating:
             self._relayout_message_bubbles()
 
@@ -1110,6 +1141,58 @@ class ChatWindow(ChatWindowMixin, QWidget):
             max(0, self._shell.width() - self._resize_grip.width() - inset),
             max(0, self._shell.height() - self._resize_grip.height() - inset),
         )
+
+    def _position_attachment_drop_overlay(self):
+        content = getattr(self, "_chat_content", None)
+        overlay = getattr(self, "_attachment_drop_overlay", None)
+        if content is None or overlay is None:
+            return
+        inset = 10
+        overlay.setGeometry(content.rect().adjusted(inset, inset, -inset, -inset))
+        overlay.raise_()
+
+    def _drag_event_hits_chat_content(self, event) -> bool:
+        content = getattr(self, "_chat_content", None)
+        if content is None or not content.isVisible():
+            return False
+        try:
+            position = event.position().toPoint()
+        except (AttributeError, TypeError):
+            return False
+        top_left = content.mapTo(self, QPoint(0, 0))
+        return QRect(top_left, content.size()).contains(position)
+
+    def dragEnterEvent(self, event):
+        if self._mime_has_chat_attachments(event.mimeData()):
+            self._composer_drag_leave_token += 1
+            self._set_composer_drag_active(self._drag_event_hits_chat_content(event))
+            event.acceptProposedAction()
+            return
+        self._set_composer_drag_active(False)
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if self._mime_has_chat_attachments(event.mimeData()):
+            self._composer_drag_leave_token += 1
+            self._set_composer_drag_active(self._drag_event_hits_chat_content(event))
+            # Keep ownership of the native drag while it crosses child widgets.
+            event.acceptProposedAction()
+            return
+        self._set_composer_drag_active(False)
+        super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event):
+        self._composer_drag_leave_token += 1
+        self._set_composer_drag_active(False)
+        event.accept()
+
+    def dropEvent(self, event):
+        if self._drag_event_hits_chat_content(event):
+            self._handle_composer_drag_event(event)
+            return
+        self._composer_drag_leave_token += 1
+        self._set_composer_drag_active(False)
+        event.ignore()
 
     def _restore_group_splitter_sizes(self):
         if not self._group_splitter:
@@ -2048,13 +2131,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
         hint_row.setSpacing(6)
         self._status_dot = QLabel("", area)
         self._status_dot.setFixedSize(7, 7)
-        self._composer_hint = QLabel(self._idle_status_text(), area)
+        self._composer_hint = SlidingStatusLabel(self._idle_status_text(), area)
         hint_font = QFont()
         hint_font.setPointSize(8)
         self._composer_hint.setFont(hint_font)
         hint_row.addWidget(self._status_dot)
-        hint_row.addWidget(self._composer_hint)
-        hint_row.addStretch()
+        # The animated status is the flexible part of this row.  A separate
+        # stretch spacer would split the remaining width and truncate it in
+        # compact chat windows.
+        hint_row.addWidget(self._composer_hint, 1)
         self._attachment_progress = ProgressBar(area)
         self._attachment_progress.setRange(0, 100)
         self._attachment_progress.setValue(0)
@@ -2124,6 +2209,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._asr_btn.setEnabled(self._asr_enabled())
         layout.addWidget(self._asr_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self._temporary_background_btn = IconButton(FluentIcon.EDIT, self._composer_controls)
+        self._temporary_background_btn.setFixedSize(46, 46)
+        self._temporary_background_btn.setIconSize(QSize(22, 22))
+        self._temporary_background_btn.clicked.connect(self._edit_temporary_background)
+        layout.addWidget(self._temporary_background_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._sync_temporary_background_button()
+
         self._input = ChatComposerTextEdit()
         self._input.set_chat_mime_handlers(self._mime_has_chat_attachments, self._add_chat_attachments_from_mime)
         self._input.setPlaceholderText(_tr("ChatWindow.input_placeholder"))
@@ -2185,6 +2277,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 getattr(self, "_attachment_strip", None),
                 getattr(self, "_composer_controls", None),
                 getattr(self, "_input_area", None),
+                getattr(self, "_chat_content", None),
+                getattr(self, "_titlebar", None),
+                getattr(self, "_scroll", None),
+                getattr(self, "_msg_area", None),
+                getattr(self, "_attachment_drop_overlay", None),
                 getattr(self, "_attach_btn", None),
                 getattr(self, "_asr_btn", None),
                 getattr(self, "_send_btn", None),
@@ -2255,6 +2352,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
             "border": input_border,
             "focus_border": accent_color(dark),
         }
+        drop_overlay = getattr(self, "_attachment_drop_overlay", None)
+        if drop_overlay is not None:
+            drop_overlay.apply_theme()
 
         window_bg = bg if self._normal_window_mode else "transparent"
         self.setStyleSheet(f"""
@@ -2402,6 +2502,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._attach_btn.apply_theme()
         self._refresh_attach_button_icon()
         self._asr_btn.apply_theme()
+        self._sync_temporary_background_button()
         for card in self._attachment_cards:
             card.apply_theme()
         self._update_asr_button_state()
@@ -2454,6 +2555,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
             bubble.update_bubble_width(viewport_width)
 
     def _clear_message_widgets(self):
+        active_editor = getattr(self, "_active_edit_bubble", None)
+        if active_editor is not None:
+            try:
+                active_editor.cancel_edit()
+            except RuntimeError:
+                pass
+            self._active_edit_bubble = None
         self._reset_tts_stream()
         self._cancel_pending_scroll_to_bottom()
         self._history_load_generation += 1
@@ -2844,6 +2952,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._auto_active = False
         self._auto_round = 0
         self._group_conv_id = conversation_id
+        self._load_temporary_background()
         self._clear_message_widgets()
         self._load_messages()
         self._input.setFocus()
@@ -3032,6 +3141,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._reasoning_stream_text = ""
         self._current_bubble = None
         self._conv_id = conv_id
+        self._load_temporary_background()
         self._clear_message_widgets()
         self._load_messages()
         self._input.setFocus()
@@ -3057,9 +3167,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._clear_message_widgets()
         if conversations:
             self._conv_id = conversations[0]["id"]
+            self._load_temporary_background()
             self._load_messages()
         else:
             self._conv_id = None
+            self._set_temporary_background("")
         self._input.setFocus()
 
     def _delete_group_conversation(self, conversation_id: str):
@@ -3087,7 +3199,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._clear_message_widgets()
         self._group_conv_id = conversations[0]["conversation_id"] if conversations else ""
         if self._group_conv_id:
+            self._load_temporary_background()
             self._load_messages()
+        else:
+            self._set_temporary_background("")
         self._input.setFocus()
 
     def _has_llm_config(self) -> bool:
@@ -3100,6 +3215,19 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
     def _idle_status_text(self) -> str:
         return _tr("ChatWindow.ready") if self._has_llm_config() else _tr("ChatWindow.not_configured")
+
+    def _show_temporary_background_notice(self, text: str):
+        notice = str(text or "")
+        self._temporary_background_notice_timer.stop()
+        self._temporary_background_notice_text = notice
+        self._composer_hint.slide_to(notice)
+        self._temporary_background_notice_timer.start(5000)
+
+    def _restore_temporary_background_notice(self):
+        notice = self._temporary_background_notice_text
+        self._temporary_background_notice_text = ""
+        if notice and self._composer_hint.text() == notice:
+            self._composer_hint.slide_to(self._idle_status_text())
 
     def _set_busy(self, busy: bool, planning: bool = False):
         self._input.setEnabled(True)
@@ -3366,11 +3494,13 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self._is_group_chat:
             conversations = self._db.get_group_conversations(self._conversation_key, self._chat_user_key)
             self._group_conv_id = conversations[0]["conversation_id"] if conversations else ""
+            self._load_temporary_background()
             self._load_messages()
             return
         last = self._db.get_last_conversation(self._conversation_key, self._chat_user_key)
         if last:
             self._conv_id = last["id"]
+        self._load_temporary_background()
         self._load_messages()
 
     def _new_conversation(self):
@@ -3384,6 +3514,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._current_bubble = None
             self._clear_message_widgets()
             self._group_conv_id = self._new_group_conversation_id()
+            self._set_temporary_background("")
             self._refresh_group_list()
             self._input.setFocus()
             return
@@ -3394,6 +3525,86 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._current_bubble = None
         self._clear_message_widgets()
         self._conv_id = None
+        self._set_temporary_background("")
+
+    def _set_temporary_background(self, content: str):
+        self._temporary_background = str(content or "").strip()
+        self._sync_temporary_background_button()
+
+    def _load_temporary_background(self):
+        if self._is_group_chat:
+            content = self._db.get_group_conversation_temporary_background(
+                self._conversation_key,
+                self._group_conv_id,
+                self._chat_user_key,
+            ) if self._group_conv_id else ""
+        else:
+            content = self._db.get_conversation_temporary_background(self._conv_id)
+        self._set_temporary_background(content)
+
+    def _sync_temporary_background_button(self):
+        button = getattr(self, "_temporary_background_btn", None)
+        if button is None:
+            return
+        enabled = bool(self._temporary_background)
+        button.set_primary(enabled)
+        button.setToolTip(_tr(
+            "ChatWindow.temporary_background_enabled_tooltip" if enabled else "ChatWindow.temporary_background_tooltip",
+            default="临时背景已启用，点击编辑" if enabled else "设置当前会话的临时背景",
+        ))
+
+    def _edit_temporary_background(self):
+        if self._chat_context_change_blocked():
+            return
+        dialog = TemporaryBackgroundDialog(self._temporary_background, self)
+        if not dialog.exec():
+            return
+        content = dialog.background_text()
+        try:
+            if self._is_group_chat:
+                conversation_id = self._ensure_group_conversation_id()
+                self._db.set_group_conversation_temporary_background(
+                    self._conversation_key,
+                    conversation_id,
+                    content,
+                    self._chat_user_key,
+                )
+            else:
+                if self._conv_id is None and content:
+                    self._conv_id = self._db.create_conversation(
+                        self._conversation_key,
+                        user_key=self._chat_user_key,
+                    )
+                if self._conv_id is not None:
+                    self._db.set_conversation_temporary_background(self._conv_id, content)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                _tr("ChatWindow.temporary_background_save_failed_title", default="保存失败"),
+                _tr(
+                    "ChatWindow.temporary_background_save_failed_content",
+                    default="临时背景未能保存，请检查数据库文件。\n{error}",
+                    error=str(exc),
+                ),
+            )
+            return
+        self._set_temporary_background(content)
+        self._refresh_group_list()
+        self._show_temporary_background_notice(_tr(
+            "ChatWindow.temporary_background_enabled" if content else "ChatWindow.temporary_background_disabled",
+            default="当前会话临时背景已启用。" if content else "当前会话临时背景已关闭。",
+        ))
+
+    def _system_prompt_with_temporary_background(self, system_prompt: str) -> str:
+        background = str(self._temporary_background or "").strip()
+        if not background:
+            return system_prompt
+        return (
+            f"{system_prompt}\n\n【当前会话临时背景】\n"
+            "以下内容是当前会话的补充背景，请在理解用户消息和组织回复时自然地参考，"
+            "并尽量保持场景与设定连贯：\n"
+            f"{background}"
+        )
 
     def _load_messages(self):
         self._history_load_generation += 1
@@ -3463,6 +3674,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             search_sources=self._message_search_sources(message.get("tool_trace_json")),
             attachments=self._normalize_attachments(message.get("attachments_json")) if role == "user" else None,
             avatar_character=message_character,
+            message_id=message.get("id"),
         )
         self._connect_message_bubble(bubble)
         return bubble
@@ -3753,6 +3965,193 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
     def _connect_message_bubble(self, bubble: MessageBubble):
         bubble.avatar_double_clicked.connect(self._on_message_avatar_double_clicked)
+        bubble.delete_requested.connect(self._delete_message_from_bubble)
+        bubble.rollback_requested.connect(self._rollback_to_message)
+        bubble.edit_saved.connect(self._save_edited_message)
+        bubble.edit_started.connect(self._on_message_edit_started)
+        bubble.edit_closed.connect(self._on_message_edit_closed)
+
+    def _on_message_edit_started(self, bubble: MessageBubble):
+        previous = getattr(self, "_active_edit_bubble", None)
+        if previous is not None and previous is not bubble:
+            try:
+                previous.cancel_edit()
+            except RuntimeError:
+                pass
+        self._active_edit_bubble = bubble
+
+    def _on_message_edit_closed(self, bubble: MessageBubble):
+        if getattr(self, "_active_edit_bubble", None) is bubble:
+            self._active_edit_bubble = None
+
+    def _message_action_blocked(self) -> bool:
+        if not self._generation_busy():
+            return False
+        self._composer_hint.setText(_tr(
+            "ChatWindow.message_action_busy",
+            default="当前回复还在进行中，请等待完成或先中断。",
+        ))
+        return True
+
+    def _delete_records_attachment_copies(self, records: list[dict]):
+        attachments = []
+        for record in records:
+            attachments.extend(self._normalize_attachments(record.get("attachments_json")))
+        self._delete_saved_attachment_copies(attachments)
+
+    def _reload_after_message_change(self):
+        self._memory_generation += 1
+        self._auto_active = False
+        self._auto_round = 0
+        self._group_queue = []
+        self._group_spoken = []
+        self._clear_raw_image_inline_state()
+        self._last_user_message_id = None
+        self._last_group_user_message_id = None
+        self._last_user_text = ""
+        self._clear_message_widgets()
+        self._load_messages()
+        self._refresh_group_list()
+
+    def _delete_message_from_bubble(self, bubble: MessageBubble):
+        if self._message_action_blocked() or bubble.message_id() is None:
+            return
+        try:
+            if self._is_group_chat:
+                deleted = self._db.delete_group_message(
+                    self._conversation_key,
+                    self._group_conv_id,
+                    bubble.message_id(),
+                    self._chat_user_key,
+                )
+            else:
+                deleted = self._db.delete_message(self._conv_id, bubble.message_id()) if self._conv_id else []
+            self._delete_records_attachment_copies(deleted)
+            self._reload_after_message_change()
+        except Exception as exc:
+            self._composer_hint.setText(_tr(
+                "ChatWindow.message_action_failed",
+                default="消息操作失败：{error}",
+                error=str(exc),
+            ))
+
+    def _rollback_to_message(self, bubble: MessageBubble):
+        if self._message_action_blocked() or bubble.message_id() is None:
+            return
+        try:
+            if self._is_group_chat:
+                deleted = self._db.delete_group_messages_from(
+                    self._conversation_key,
+                    self._group_conv_id,
+                    bubble.message_id(),
+                    include_selected=True,
+                    user_key=self._chat_user_key,
+                )
+            else:
+                deleted = self._db.delete_messages_from(
+                    self._conv_id,
+                    bubble.message_id(),
+                    include_selected=True,
+                ) if self._conv_id else []
+            self._delete_records_attachment_copies(deleted)
+            self._reload_after_message_change()
+        except Exception as exc:
+            self._composer_hint.setText(_tr(
+                "ChatWindow.message_action_failed",
+                default="消息操作失败：{error}",
+                error=str(exc),
+            ))
+
+    def _save_edited_message(self, bubble: MessageBubble, text: str):
+        if self._message_action_blocked() or bubble.message_id() is None:
+            return
+        text = str(text or "").strip()
+        if not text:
+            return
+        role = bubble.role()
+        stored = text
+        if role == "assistant" and self._is_group_chat:
+            character = bubble.avatar_character() or self._character
+            stored = self._assistant_content(character, text)
+        try:
+            if self._is_group_chat:
+                updated = self._db.update_group_message_content(
+                    self._conversation_key,
+                    self._group_conv_id,
+                    bubble.message_id(),
+                    stored,
+                    self._chat_user_key,
+                )
+            else:
+                updated = self._db.update_message_content(
+                    self._conv_id,
+                    bubble.message_id(),
+                    stored,
+                ) if self._conv_id else False
+            if not updated:
+                raise RuntimeError("message no longer exists")
+
+            if role != "user":
+                bubble.finish_edit(text)
+                self._refresh_group_list()
+                return
+
+            if self._is_group_chat:
+                deleted = self._db.delete_group_messages_from(
+                    self._conversation_key,
+                    self._group_conv_id,
+                    bubble.message_id(),
+                    include_selected=False,
+                    user_key=self._chat_user_key,
+                )
+                self._last_group_user_message_id = bubble.message_id()
+                self._last_user_message_id = None
+            else:
+                deleted = self._db.delete_messages_from(
+                    self._conv_id,
+                    bubble.message_id(),
+                    include_selected=False,
+                ) if self._conv_id else []
+                self._last_user_message_id = bubble.message_id()
+                self._last_group_user_message_id = None
+            self._delete_records_attachment_copies(deleted)
+            attachments = bubble.attachments()
+            if self._attachments_have_raw_images(attachments):
+                if self._is_group_chat:
+                    self._raw_image_inline_group_message_id = bubble.message_id()
+                    self._raw_image_inline_message_id = None
+                else:
+                    self._raw_image_inline_message_id = bubble.message_id()
+                    self._raw_image_inline_group_message_id = None
+            else:
+                self._clear_raw_image_inline_state()
+            self._last_user_text = text
+            self._memory_generation += 1
+            self._auto_active = False
+            self._auto_round = 0
+            self._group_queue = []
+            self._group_spoken = []
+            self._clear_message_widgets()
+            self._load_messages()
+            self._refresh_group_list()
+            self._reload_runtime_config()
+            if not self._has_llm_config():
+                self._composer_hint.setText(_tr("ChatWindow.not_configured"))
+                return
+            self._set_busy(True, planning=self._is_group_chat)
+            self._follow_stream_output = True
+            self._reset_tts_stream()
+            if self._is_group_chat:
+                self._group_spoken = []
+                self._start_group_plan(text)
+            else:
+                self._start_response_for_character(self._character, [])
+        except Exception as exc:
+            self._composer_hint.setText(_tr(
+                "ChatWindow.message_action_failed",
+                default="消息操作失败：{error}",
+                error=str(exc),
+            ))
 
     def _on_message_avatar_double_clicked(self, character: str):
         target = str(character or "").strip() or self._character
@@ -4409,12 +4808,22 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if self._composer_drag_active == active:
             return
         self._composer_drag_active = active
+        overlay = getattr(self, "_attachment_drop_overlay", None)
+        if overlay is not None:
+            overlay.setVisible(active)
+            if active:
+                self._position_attachment_drop_overlay()
         self._update_composer_focus_style()
+
+    def _finish_composer_drag_leave(self, token: int):
+        if token == self._composer_drag_leave_token:
+            self._set_composer_drag_active(False)
 
     def _handle_composer_drag_event(self, event) -> bool:
         event_type = event.type()
         if event_type in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
             if self._mime_has_chat_attachments(event.mimeData()):
+                self._composer_drag_leave_token += 1
                 self._set_composer_drag_active(True)
                 event.acceptProposedAction()
                 return True
@@ -4422,11 +4831,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
             event.ignore()
             return True
         if event_type == QEvent.Type.DragLeave:
-            self._set_composer_drag_active(False)
+            self._composer_drag_leave_token += 1
+            token = self._composer_drag_leave_token
+            QTimer.singleShot(60, lambda: self._finish_composer_drag_leave(token))
             event.accept()
             return True
         if event_type == QEvent.Type.Drop:
             mime_data = event.mimeData()
+            self._composer_drag_leave_token += 1
             self._set_composer_drag_active(False)
             supported = self._mime_has_chat_attachments(mime_data)
             added = self._add_chat_attachments_from_mime(mime_data)
@@ -5121,6 +5533,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
     def _build_messages_for_character(self, character: str, spoken_names: list[str]) -> list[dict]:
         system_prompt = self._group_system_prompt(character, spoken_names) if self._is_group_chat else build_system_prompt(character, self._cfg)
+        system_prompt = self._system_prompt_with_temporary_background(system_prompt)
         dynamic_context = build_relationship_context(
             self._db,
             character,
@@ -5800,6 +6213,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 restore_draft=restore_draft_on_failure,
             )
             return False
+        if user_bubble is not None:
+            user_bubble.set_message_id(
+                self._last_group_user_message_id if self._is_group_chat else self._last_user_message_id
+            )
         try:
             self._store_requested_favorite(
                 favorite_phrase,
@@ -5861,6 +6278,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             "如果 latest_interaction.priority_speaker 不为空，则 speakers 第一项必须是该 key，后续再安排其他成员自然接话。"
             "只允许使用给定成员 key，不要输出解释、Markdown 或多余文字。"
         )
+        planner_prompt = self._system_prompt_with_temporary_background(planner_prompt)
         content = json.dumps({
             "members": members,
             "latest_user_message": user_text,
@@ -6268,7 +6686,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         saved_response = False
         try:
             if self._is_group_chat:
-                self._db.add_group_message(
+                saved_message_id = self._db.add_group_message(
                     self._conversation_key,
                     self._ensure_group_conversation_id(),
                     "assistant",
@@ -6279,8 +6697,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 )
                 saved_response = True
             elif self._conv_id:
-                self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
+                saved_message_id = self._db.add_message(self._conv_id, "assistant", stored, reasoning_clean, tool_trace=tool_trace)
                 saved_response = True
+            else:
+                saved_message_id = None
+            if saved_response:
+                stream.bubble.set_message_id(saved_message_id)
         except Exception as exc:
             self._handle_assistant_message_save_failed(exc)
         if saved_response:
