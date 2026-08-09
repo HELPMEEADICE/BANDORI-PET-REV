@@ -19,6 +19,23 @@ class ConfigSaveResultTests(unittest.TestCase):
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual("ja", saved["language"])
 
+    def test_model_picker_state_survives_save_and_reload(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            config = ConfigManager(path)
+            picker_state = {
+                "recent_characters": ["kasumi"],
+                "favorite_characters": [],
+                "recent_costumes": ["kasumi:live_default"],
+                "favorite_costumes": ["kasumi:school_winter"],
+            }
+            config.set("model_picker_state", picker_state)
+
+            self.assertTrue(config.save())
+            reloaded = ConfigManager(path)
+
+            self.assertEqual(picker_state, reloaded.get("model_picker_state"))
+
     def test_save_returns_false_when_existing_config_cannot_be_merged(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.json"

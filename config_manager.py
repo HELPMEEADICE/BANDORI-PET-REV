@@ -269,6 +269,12 @@ DEFAULTS = {
     "costume": "",
     OUTFIT_DESCRIPTIONS_KEY: {},
     "models": [],
+    "model_picker_state": {
+        "recent_characters": [],
+        "favorite_characters": [],
+        "recent_costumes": [],
+        "favorite_costumes": [],
+    },
     "model_action_settings": {},
     "language": "",
     "fps": 120,
