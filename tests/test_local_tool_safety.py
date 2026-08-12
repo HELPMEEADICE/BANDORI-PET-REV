@@ -84,6 +84,33 @@ class LocalToolSafetyTests(unittest.TestCase):
         web_search.assert_called_once_with("Bandori", max_results=2, engine="bing_cn")
         self.assertEqual("result", result["content"])
 
+    def test_remote_companion_only_exposes_and_runs_safe_tools(self):
+        config = {
+            "_remote_companion_request": True,
+            "llm_mcp_enabled": True,
+            "computer_use_enabled": True,
+        }
+        names = {
+            str(item.get("function", {}).get("name", ""))
+            for item in local_tools.chat_completion_tools(True, config)
+        }
+        self.assertIn(local_tools.WEB_SEARCH_TOOL_NAME, names)
+        self.assertNotIn(local_tools.POKE_USER_TOOL_NAME, names)
+        self.assertNotIn(local_tools.CREATE_ALARM_TOOL_NAME, names)
+        self.assertNotIn(local_tools.AUTO_CONTINUE_TOOL_NAME, names)
+        self.assertNotIn("戳一戳", local_tools.local_tool_system_hint(config))
+
+        for name in (
+            local_tools.POKE_USER_TOOL_NAME,
+            local_tools.CREATE_ALARM_TOOL_NAME,
+            local_tools.AUTO_CONTINUE_TOOL_NAME,
+            "mcp__server__tool",
+            "computer_click",
+            "plugin_command",
+        ):
+            result = local_tools.run_local_tool_call(name, {}, config)
+            self.assertIn("cannot invoke", result["content"])
+
     def test_web_tools_tolerate_infinite_result_limits(self):
         with (
             patch("local_tools.web_search", return_value="search") as web_search,

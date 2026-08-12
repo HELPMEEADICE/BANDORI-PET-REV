@@ -10,6 +10,7 @@ class ReplyStreamBinding:
     character: str
     worker: Any | None
     bubble: Any | None
+    origin: str = "desktop"
 
     def owns(self, active_stream: object, worker: object, bubble: object) -> bool:
         """Return whether this binding still owns the active response target."""

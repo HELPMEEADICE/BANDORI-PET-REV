@@ -89,6 +89,7 @@ class _ReplyStreamHarness:
         self._tts_next_sequence = 0
         self._tts_bubbles = {}
         self._tts_characters = {}
+        self._tts_destinations = {}
 
     def activate(self, stream):
         self._worker = stream.worker
@@ -110,6 +111,9 @@ class _ReplyStreamHarness:
 
     def _reset_tts_stream(self, stop_player=True):
         self.tts_reset_calls.append(stop_player)
+
+    def _set_companion_backend_status(self, backend, error=""):
+        pass
 
     def _clear_raw_image_inline_state(self):
         self.raw_image_clear_calls += 1

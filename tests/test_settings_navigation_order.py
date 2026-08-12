@@ -26,6 +26,7 @@ EXPECTED_NAV_ORDER = [
     "pov",
     "character_persona",
     "chat_integration",
+    "companion",
     "data_management",
     "download_management",
     "plugins",

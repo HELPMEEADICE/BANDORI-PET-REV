@@ -16,3 +16,6 @@ cryptography>=42.0.0
 packaging>=23.2
 platformdirs>=4.0.0
 psutil>=5.9.0
+aiohttp>=3.10.0
+qrcode>=7.4.2
+zeroconf>=0.132.0

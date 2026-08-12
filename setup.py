@@ -552,6 +552,7 @@ build_exe_options = {
     "packages": [
         "OpenGL",
         "PIL",
+        "aiohttp",
         "lupa",
         "PySide6.QtCore",
         "PySide6.QtGui",
@@ -567,12 +568,14 @@ build_exe_options = {
         "platformdirs",
         "plugin_system",
         "psutil",
+        "qrcode",
         "qfluentwidgets",
         "requests",
         "sounddevice",
         "soundfile",
         "sqlite3",
         "zstandard",
+        "zeroconf",
     ],
     "excludes": [
         "PyQt5",

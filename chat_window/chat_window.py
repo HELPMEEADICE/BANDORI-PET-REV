@@ -433,6 +433,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._reply_stream_generation = 0
         self._active_reply_stream: ReplyStreamBinding | None = None
         self._stream_buffer_owner: ReplyStreamBinding | None = None
+        self._pending_request_origin = "desktop"
+        self._companion_controller = None
+        self._companion_keepalive = False
         self._pending_actions: list[str] = []
         self._pending_action_character = character
         self._seen_actions: set[str] = set()
@@ -450,6 +453,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._tts_audio_buffers: dict[int, list[tuple[bytes, str]]] = {}
         self._tts_bubbles: dict[int, MessageBubble] = {}
         self._tts_characters: dict[int, str] = {}
+        self._tts_destinations: dict[int, str] = {}
+        self._tts_remote_chunk_sequence = 0
+        self._tts_remote_target = ""
         self._tts_completed_sequences: set[int] = set()
         self._tts_generation = 0
         self._tts_request_allowed = False
@@ -5838,13 +5844,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
         QTimer.singleShot(500, self._start_next_group_response)
 
     def _send_message(self):
+        request_origin = str(getattr(self, "_pending_request_origin", "desktop") or "desktop")
+        remote_request = request_origin.startswith("android:")
         if self._attachment_import_active():
             self._composer_hint.setText(
                 _tr("ChatWindow.attachment_upload_wait", default="请等待附件上传完成后再发送。")
             )
             return
         text = self._input.toPlainText().strip()
-        attachments = list(self._pending_attachments)
+        attachments = [] if remote_request else list(self._pending_attachments)
         if not text and attachments:
             has_file = any(isinstance(item, dict) and item.get("type") == "file" for item in attachments)
             text = (
@@ -5855,7 +5863,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         if not text:
             return
 
-        bridge = getattr(self, "_plugin_bridge", None)
+        bridge = None if remote_request else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             result = bridge.dispatch_event("chat.message.before", {
                 "text": text,
@@ -5874,15 +5882,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
             if not text:
                 return
 
-        if not attachments and self._handle_plugin_command(text):
+        if not remote_request and not attachments and self._handle_plugin_command(text):
             self._input.clear()
             return
 
-        if is_interrupt_command(text):
+        if not remote_request and is_interrupt_command(text):
             self._interrupt_generation()
             return
 
-        auto_result = self._handle_auto_command(text)
+        auto_result = None if remote_request else self._handle_auto_command(text)
         if auto_result is not None:
             self._input.clear()
             self._show_local_assistant_message(auto_result)
@@ -5901,7 +5909,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
         self._reload_runtime_config()
 
-        if not attachments and self._handle_local_memory_command(text):
+        if not remote_request and not attachments and self._handle_local_memory_command(text):
             return
 
         api_url = self._cfg.get("llm_api_url", "")
@@ -5927,9 +5935,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
 
         self._input.clear()
-        self._pending_attachments = []
-        self._refresh_attachment_previews()
-        self._update_attachment_hint()
+        if not remote_request:
+            self._pending_attachments = []
+            self._refresh_attachment_previews()
+            self._update_attachment_hint()
         self._set_busy(True, planning=self._is_group_chat)
         self._follow_stream_output = True
         self._reset_tts_stream()
@@ -6379,7 +6388,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             result.extend(character for character in self._group_characters if character != priority_character)
         return result[:6]
 
-    def _activate_reply_stream(self, character: str, worker, bubble: MessageBubble) -> ReplyStreamBinding:
+    def _activate_reply_stream(self, character: str, worker, bubble: MessageBubble, origin: str = "desktop") -> ReplyStreamBinding:
         previous = self._active_reply_stream
         if previous is not None:
             self._clear_active_reply_stream(previous)
@@ -6389,6 +6398,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             character=character,
             worker=worker,
             bubble=bubble,
+            origin=str(origin or "desktop"),
         )
         self._active_reply_stream = stream
         self._stream_buffer_owner = stream
@@ -6415,6 +6425,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return True
 
     def _start_response_for_character(self, character: str, spoken_names: list[str]):
+        request_origin = str(getattr(self, "_pending_request_origin", "desktop") or "desktop")
+        remote_request = request_origin.startswith("android:")
         self._set_busy(True, planning=False)
         api_url = self._cfg.get("llm_api_url", "")
         api_key = self._cfg.get("llm_api_key", "")
@@ -6445,7 +6457,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
         messages = self._build_messages_for_character(character, spoken_names)
         self._pending_interaction_context = ""
-        bridge = getattr(self, "_plugin_bridge", None)
+        bridge = None if remote_request else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             plugin_messages = self._plugin_safe_messages(messages)
             prompt_result = bridge.dispatch_event("llm.prompt.before", {
@@ -6491,7 +6503,21 @@ class ChatWindow(ChatWindowMixin, QWidget):
             include_chat_keys=True,
             latest_user_text=self._last_user_text,
         )
-        tool_config = self._with_plugin_tools(tool_config)
+        if remote_request:
+            tool_config.update({
+                "llm_mcp_enabled": False,
+                "llm_mcp_servers": [],
+                "computer_use_enabled": False,
+                "computer_use_allow_screenshot": False,
+                "computer_use_allow_mouse": False,
+                "computer_use_allow_keyboard": False,
+                "computer_use_allow_clipboard": False,
+                "llm_auto_continue_enabled": False,
+                "_disable_reminder_tools": True,
+                "_remote_companion_request": True,
+            })
+        else:
+            tool_config = self._with_plugin_tools(tool_config)
         tool_config["_active_character"] = character
         if self._is_group_chat:
             tool_config["llm_auto_continue_enabled"] = False
@@ -6520,7 +6546,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 tool_config=tool_config,
             )
         self._worker = worker
-        reply_stream = self._activate_reply_stream(character, worker, self._current_bubble)
+        reply_stream = self._activate_reply_stream(
+            character,
+            worker,
+            self._current_bubble,
+            origin=request_origin,
+        )
         worker.chunk_received.connect(
             lambda text, reasoning, stream=reply_stream: self._on_chunk_received(stream, text, reasoning)
         )
@@ -6772,6 +6803,21 @@ class ChatWindow(ChatWindowMixin, QWidget):
         stream.retarget(self._current_bubble)
         self._stream_buffer_owner = stream
 
+    def _set_companion_backend_status(self, backend: str, error: str = ""):
+        if self._cfg is None or backend not in {"llm", "tts"}:
+            return
+        error_key = f"companion_{backend}_last_error"
+        failed_key = f"companion_{backend}_last_failed_at"
+        error = str(error or "")[:500]
+        if str(self._cfg.get(error_key, "") or "") == error:
+            return
+        self._cfg.set(error_key, error)
+        self._cfg.set(failed_key, int(time.time() * 1000) if error else 0)
+        try:
+            self._cfg.save()
+        except Exception:
+            pass
+
     def _on_response_finished(
         self,
         stream: ReplyStreamBinding,
@@ -6781,9 +6827,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
     ):
         if not self._is_active_reply_stream(stream):
             return
+        self._set_companion_backend_status("llm")
         usage = getattr(stream.worker, "token_usage", None)
         tool_calls = getattr(stream.worker, "tool_trace", None)
-        bridge = getattr(self, "_plugin_bridge", None)
+        bridge = None if str(stream.origin or "").startswith("android:") else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             result = bridge.dispatch_event("llm.response.before", {
                 "character": stream.character,
@@ -6852,6 +6899,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_response_error(self, stream: ReplyStreamBinding, error_msg: str):
         if not self._is_active_reply_stream(stream):
             return
+        self._set_companion_backend_status("llm", error_msg)
         stream.bubble.set_streaming(False)
         stream.bubble.set_text(format_llm_error_message(error_msg))
         self._stream_flush_timer.stop()
@@ -6890,6 +6938,14 @@ class ChatWindow(ChatWindowMixin, QWidget):
         return is_tts_enabled(_TTS_AVAILABLE, self._cfg)
 
     def _reset_tts_stream(self, stop_player: bool = True):
+        remote_target = str(getattr(self, "_tts_remote_target", "") or "")
+        controller = getattr(self, "_companion_controller", None)
+        if remote_target and controller is not None:
+            controller.event_ready.emit(
+                "tts.stopped",
+                {},
+                None if remote_target == "*" else remote_target,
+            )
         self._tts_text_buffer = ""
         self._tts_tag_buffer = ""
         self._tts_queue.clear()
@@ -6907,6 +6963,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._tts_audio_buffers.clear()
         self._tts_bubbles.clear()
         self._tts_characters.clear()
+        self._tts_destinations.clear()
+        self._tts_remote_chunk_sequence = 0
+        self._tts_remote_target = ""
         self._tts_completed_sequences.clear()
         self._tts_generation += 1
         self._tts_request_allowed = False
@@ -6938,6 +6997,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
             if target_bubble:
                 self._tts_bubbles[sequence] = target_bubble
             self._tts_characters[sequence] = character
+            active_stream = self._active_reply_stream
+            self._tts_destinations[sequence] = (
+                str(active_stream.origin or "desktop") if active_stream is not None else "desktop"
+            )
             self._queue_tts_request(sequence, text, character)
         self._start_next_tts_request()
 
@@ -6961,7 +7024,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         text = self._clean_tts_payload(text)
         if not text:
             return
-        bridge = getattr(self, "_plugin_bridge", None)
+        destination = str(self._tts_destinations.get(sequence, "desktop") or "desktop")
+        bridge = None if destination.startswith("android:") else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             result = bridge.dispatch_event("tts.request.before", {
                 "sequence": sequence,
@@ -7065,8 +7129,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_tts_audio_ready(self, sequence: int, generation: int, audio: bytes, media_type: str):
         if generation != self._tts_generation or sequence not in self._tts_active_workers:
             return
+        self._set_companion_backend_status("tts")
         worker = self._tts_active_workers.get(sequence)
-        bridge = getattr(self, "_plugin_bridge", None)
+        destination = str(self._tts_destinations.get(sequence, "desktop") or "desktop")
+        bridge = None if destination.startswith("android:") else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             bridge.notify_event("tts.audio.ready", {
                 "sequence": sequence,
@@ -7079,6 +7145,27 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 getattr(worker, "prepared_text", ""),
                 getattr(worker, "prepared_language", ""),
             )
+        routing = str(self._cfg.get("companion_tts_routing", "origin") or "origin") if self._cfg else "origin"
+        remote_device = destination.split(":", 1)[1] if destination.startswith("android:") else ""
+        controller = getattr(self, "_companion_controller", None)
+        if (remote_device or routing == "both") and controller is not None:
+            chunk_sequence = self._tts_remote_chunk_sequence
+            self._tts_remote_chunk_sequence += 1
+            self._tts_remote_target = remote_device or "*"
+            stream_id = str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"bandoripet-tts:{generation}:{remote_device or 'all'}",
+            ))
+            controller.publish_tts_audio(remote_device, {
+                "streamId": stream_id,
+                "chunkSequence": chunk_sequence,
+                "audio": audio,
+                "mediaType": media_type,
+                "characterId": self._tts_characters.get(sequence, ""),
+                "text": getattr(worker, "prepared_text", "") if worker is not None else "",
+            })
+            if routing != "both":
+                return
         if sequence < self._tts_next_play_sequence:
             return
         if sequence == self._tts_next_play_sequence:
@@ -7091,6 +7178,18 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._tts_audio_buffers.setdefault(sequence, []).append((audio, media_type))
 
     def _on_tts_error(self, error_msg: str):
+        self._set_companion_backend_status("tts", error_msg)
+        worker = self.sender()
+        sequence = getattr(worker, "sequence", None)
+        destination = str(self._tts_destinations.get(sequence, "desktop") or "desktop")
+        if destination.startswith("android:"):
+            controller = getattr(self, "_companion_controller", None)
+            if controller is not None:
+                controller.event_ready.emit(
+                    "tts.error",
+                    {"sequence": sequence, "message": str(error_msg or "")[:240]},
+                    destination.split(":", 1)[1],
+                )
         logging.getLogger(__name__).warning("TTS error: %s", error_msg)
 
     def _on_tts_mouth_pose_changed(self, level: float, form: float):
@@ -7101,9 +7200,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_tts_playback_finished(self):
         sequence = self._tts_playing_sequence
         character = self._tts_characters.get(sequence, "")
+        destination = str(self._tts_destinations.get(sequence, "desktop") or "desktop")
         self._release_tts_audio_in_order()
         self._start_next_tts_request()
-        bridge = getattr(self, "_plugin_bridge", None)
+        bridge = None if destination.startswith("android:") else getattr(self, "_plugin_bridge", None)
         if bridge is not None:
             bridge.notify_event("tts.playback.finished", {
                 "sequence": sequence,
@@ -7118,6 +7218,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         self._tts_active_workers.pop(sequence, None)
         self._tts_completed_sequences.add(sequence)
+        destination = str(self._tts_destinations.get(sequence, "desktop") or "desktop")
+        if destination.startswith("android:"):
+            controller = getattr(self, "_companion_controller", None)
+            if controller is not None:
+                controller.event_ready.emit("tts.finished", {"sequence": sequence}, destination.split(":", 1)[1])
+        elif self._cfg and self._cfg.get("companion_tts_routing", "origin") == "both":
+            controller = getattr(self, "_companion_controller", None)
+            if controller is not None:
+                controller.event_ready.emit("tts.finished", {"sequence": sequence}, None)
         self._release_tts_audio_in_order()
         self._start_next_tts_request()
 
@@ -7136,10 +7245,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._set_tts_bubble_playing(None)
             self._tts_bubbles.pop(sequence, None)
             self._tts_characters.pop(sequence, None)
+            self._tts_destinations.pop(sequence, None)
 
         while self._tts_next_play_sequence in self._tts_completed_sequences and not self._tts_audio_buffers.get(self._tts_next_play_sequence):
             self._tts_bubbles.pop(self._tts_next_play_sequence, None)
             self._tts_characters.pop(self._tts_next_play_sequence, None)
+            self._tts_destinations.pop(self._tts_next_play_sequence, None)
             self._tts_completed_sequences.remove(self._tts_next_play_sequence)
             self._tts_next_play_sequence += 1
 
@@ -7263,6 +7374,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self.move(x, y)
 
     def closeEvent(self, event):
+        if (
+            getattr(self, "_companion_keepalive", False)
+            and not self._immediate_shutdown
+            and self._closing
+        ):
+            event.ignore()
+            self.hide()
+            self.prepare_for_reopen()
+            return
         if not self._closing:
             event.ignore()
             self._play_close_animation()

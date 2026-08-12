@@ -24,6 +24,7 @@ from settings_window.pages.reminder import ReminderPageMixin
 from settings_window.pages.screen_awareness import ScreenAwarenessPageMixin
 from settings_window.pages.compact import CompactPageMixin
 from settings_window.pages.chat_integration import ChatIntegrationPageMixin
+from settings_window.pages.companion import CompanionPageMixin
 from settings_window.pages.mcp import MCPPageMixin
 from settings_window.pages.data import DataManagementPageMixin
 from settings_window.pages.quality import QualityPageMixin
@@ -47,6 +48,7 @@ class SettingsWindow(
     ScreenAwarenessPageMixin,
     CompactPageMixin,
     ChatIntegrationPageMixin,
+    CompanionPageMixin,
     MCPPageMixin,
     DataManagementPageMixin,
     QualityPageMixin,
@@ -143,6 +145,7 @@ class SettingsWindow(
         self._behavior_page = None
         self._compact_window_page = None
         self._chat_integration_page = None
+        self._companion_page = None
         self._mcp_computer_page = None
         self._data_management_page = None
         self._download_management_page = None
@@ -1433,6 +1436,9 @@ class SettingsWindow(
         if key == "chat_integration":
             self._chat_integration_page = self._add_lazy_page("chat_integration", self._build_chat_integration_page())
             return self._chat_integration_page
+        if key == "companion":
+            self._companion_page = self._add_lazy_page("companion", self._build_companion_page())
+            return self._companion_page
         if key == "mcp_computer":
             self._mcp_computer_page = self._add_lazy_page("mcp_computer", self._build_mcp_computer_page())
             return self._mcp_computer_page
@@ -1688,6 +1694,17 @@ class SettingsWindow(
         btn_chat_integration.nav_activated.connect(self._on_nav_selected)
         self._nav_buttons["chat_integration"] = btn_chat_integration
         nav_layout.addWidget(btn_chat_integration)
+
+        btn_companion = NavButton(
+            "companion",
+            FluentIcon.LINK,
+            _tr("SettingsWindow.nav_companion", default="手机互联"),
+            nav_content,
+            "#2563eb",
+        )
+        btn_companion.nav_activated.connect(self._on_nav_selected)
+        self._nav_buttons["companion"] = btn_companion
+        nav_layout.addWidget(btn_companion)
 
         btn_data_management = NavButton(
             "data_management",
@@ -3140,6 +3157,10 @@ class SettingsWindow(
             "chat_integration_include_context": self._cfg.get("chat_integration_include_context", True) if self._cfg else True,
             "chat_integration_port": clamp_int(self._cfg.get("chat_integration_port", 38473), 1024, 65535, 38473) if self._cfg else 38473,
             "chat_integration_token": self._cfg.get("chat_integration_token", "") if self._cfg else "",
+            "companion_enabled": self._cfg.get("companion_enabled", False) if self._cfg else False,
+            "companion_port": clamp_int(self._cfg.get("companion_port", 38474), 1024, 65535, 38474) if self._cfg else 38474,
+            "companion_device_name": self._cfg.get("companion_device_name", "") if self._cfg else "",
+            "companion_tts_routing": self._cfg.get("companion_tts_routing", "origin") if self._cfg else "origin",
             "napcat_enabled": self._cfg.get("napcat_enabled", False) if self._cfg else False,
             "napcat_ws_url": self._cfg.get("napcat_ws_url", "ws://127.0.0.1:3001") if self._cfg else "ws://127.0.0.1:3001",
             "napcat_access_token": self._cfg.get("napcat_access_token", "") if self._cfg else "",

@@ -258,7 +258,14 @@ def chat_completion_tools(
         tools.append(CHAT_COMPLETIONS_AUTO_CONTINUE_TOOL)
     if reminder_tools_enabled(config):
         tools.extend(CHAT_COMPLETIONS_REMINDER_TOOLS)
-    tools.append(CHAT_COMPLETIONS_POKE_USER_TOOL)
+    if not config.get("_remote_companion_request", False):
+        tools.append(CHAT_COMPLETIONS_POKE_USER_TOOL)
+    if config.get("_remote_companion_request", False):
+        return [
+            item for item in tools
+            if str(item.get("function", {}).get("name", "") or "")
+            in {WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME}
+        ]
     tools.extend(mcp_proxy_tools(config, exclude_native=mcp_exclude_native))
     tools.extend(computer_tools(config))
     existing_names = {
@@ -291,7 +298,8 @@ def chat_completion_tools(
 
 
 def reminder_tools_enabled(tool_config: dict | None = None) -> bool:
-    return True
+    config = tool_config or {}
+    return not bool(config.get("_disable_reminder_tools", False) or config.get("_remote_companion_request", False))
 
 
 def responses_tools(web_search_enabled: bool, tool_config: dict | None = None) -> list[dict]:
@@ -319,7 +327,8 @@ def responses_tools(web_search_enabled: bool, tool_config: dict | None = None) -
             },
         })
 
-    tools.extend(mcp_native_tools(config))
+    if not config.get("_remote_companion_request", False):
+        tools.extend(mcp_native_tools(config))
     return tools
 def local_tool_system_hint(tool_config: dict | None = None) -> str:
     config = tool_config or {}
@@ -338,10 +347,11 @@ def local_tool_system_hint(tool_config: dict | None = None) -> str:
             "当用户表达设置闹钟、提醒、番茄钟、专注计时等明确意图时，可以直接调用对应工具创建；"
             "时间不明确时先追问，不要凭空编造具体时间。工具成功后，用角色口吻简短确认。"
         )
-    hints.append(
-        f"当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 {POKE_USER_TOOL_NAME}；"
-        "调用后仍要用角色口吻自然回应，不要解释工具细节。"
-    )
+    if not config.get("_remote_companion_request", False):
+        hints.append(
+            f"当你想像 QQ 一样玩笑式地戳一戳用户，或用户戳你之后你想回戳，可以调用 {POKE_USER_TOOL_NAME}；"
+            "调用后仍要用角色口吻自然回应，不要解释工具细节。"
+        )
     if config.get("llm_auto_continue_enabled", False):
         max_turns = _normalize_auto_continue_max_turns(config.get("llm_auto_continue_max_turns", 5))
         hints.append(
@@ -409,6 +419,10 @@ def with_web_search_system_hint(messages: list[dict], include_sources: bool = Tr
 
 def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -> dict:
     tool_config = tool_config or {}
+    if tool_config.get("_remote_companion_request", False):
+        allowed = {WEB_SEARCH_TOOL_NAME, WEB_FETCH_TOOL_NAME}
+        if name not in allowed:
+            return {"content": "Remote companion requests cannot invoke this tool.", "extra_messages": []}
     cancel_event = tool_config.get("_cancel_event")
     if cancel_event is not None and cancel_event.is_set():
         return {"content": "Tool call cancelled.", "extra_messages": []}

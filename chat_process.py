@@ -55,6 +55,7 @@ def _parse_args():
     parser.add_argument("--pet-w", type=int, required=True)
     parser.add_argument("--pet-h", type=int, required=True)
     parser.add_argument("--group-characters", default="")
+    parser.add_argument("--headless", action="store_true")
     return parser.parse_args()
 
 
@@ -88,7 +89,7 @@ def _send_ipc_line(line: str):
     send_ipc_message(line + "\n")
 
 
-def _apply_settings_line(window, line: str) -> bool:
+def _apply_settings_line(window, line: str, on_applied=None) -> bool:
     if not str(line or "").startswith("SETTINGS\t"):
         return False
     try:
@@ -101,6 +102,8 @@ def _apply_settings_line(window, line: str) -> bool:
     if not callable(apply_settings):
         return False
     apply_settings(payload)
+    if callable(on_applied):
+        on_applied()
     return True
 
 
@@ -191,6 +194,46 @@ def main():
     window.action_triggered.connect(window.emit_action_for_ipc)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     window.closed.connect(app.quit)
+
+    from companion_controller import CompanionController
+    from companion_server import CompanionServer
+
+    companion_controller = CompanionController(window, cfg, window)
+    window._companion_controller = companion_controller
+    window.action_triggered.connect(
+        lambda character_id, action: companion_controller.event_ready.emit(
+            "action.play",
+            {"characterId": character_id, "action": action},
+            None,
+        )
+    )
+    companion_server_ref = {"server": None, "port": None}
+
+    def sync_companion_runtime():
+        try:
+            cfg.load()
+        except Exception:
+            pass
+        enabled = bool(cfg.get("companion_enabled", False))
+        port = max(1024, min(65535, int(cfg.get("companion_port", 38474) or 38474)))
+        window._companion_keepalive = enabled
+        server = companion_server_ref.get("server")
+        if server is not None:
+            server.revalidate_clients()
+        if server is not None and (not enabled or companion_server_ref.get("port") != port):
+            server.stop()
+            companion_server_ref["server"] = None
+            companion_server_ref["port"] = None
+            server = None
+        if enabled and server is None:
+            server = CompanionServer(companion_controller, cfg)
+            companion_server_ref["server"] = server
+            companion_server_ref["port"] = port
+            server.start()
+        if not enabled and not window.isVisible():
+            QTimer.singleShot(0, window.request_immediate_shutdown)
+
+    sync_companion_runtime()
 
     from plugin_system.bridge import PluginComponentBridge
     from plugin_system.native import NativePluginLoader
@@ -302,7 +345,7 @@ def main():
             if line == "FOCUS_CHAT":
                 focus_window()
             if line.startswith("SETTINGS\t"):
-                _apply_settings_line(window, line)
+                _apply_settings_line(window, line, sync_companion_runtime)
             if line.startswith("POKE_USER\t"):
                 try:
                     window.handle_external_user_poke(json.loads(line.split("\t", 1)[1]))
@@ -318,8 +361,10 @@ def main():
     app.aboutToQuit.connect(close_mcp_clients)
     app.aboutToQuit.connect(native_plugin_loader.close)
     app.aboutToQuit.connect(plugin_bridge.close)
+    app.aboutToQuit.connect(lambda: companion_server_ref.get("server") and companion_server_ref["server"].stop())
 
-    window.show()
+    if not args.headless:
+        window.show()
     saved_x = cfg.get("chat_window_x")
     saved_y = cfg.get("chat_window_y")
     saved_w = cfg.get("chat_window_width")

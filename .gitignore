@@ -13,6 +13,16 @@ config.json
 config.json.*.tmp
 config.json.*
 .runtime/
+# Desktop companion identity and pairing state are generated locally on first use.
+/companion/
+/companion-credentials*.json
+/companion-pairing*.json
+**/identity-key.pem
+**/identity-cert.pem
+*.key
+*.pem
+*.p12
+*.pfx
 # Anchor to repo root so source files like settings_window/pages/data.py are
 # not accidentally ignored (this is meant for the root data.db / data.* files).
 /data.*

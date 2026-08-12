@@ -1576,10 +1576,11 @@ def main():
             chat_process_ref.pop("process", None)
         process.deleteLater()
 
-    def launch_chat_process():
+    def launch_chat_process(show=True):
         existing = chat_process_ref.get("process")
         if existing is not None and existing.state() != QProcess.ProcessState.NotRunning:
-            broadcast_ipc_line("FOCUS_CHAT")
+            if show:
+                broadcast_ipc_line("FOCUS_CHAT")
             return
 
         cfg.load()
@@ -1594,7 +1595,7 @@ def main():
             launch_settings_process(show_launch=False)
             return
 
-        if pet_window_ref.get("processes") and has_registered_pet_clients():
+        if show and pet_window_ref.get("processes") and has_registered_pet_clients():
             broadcast_ipc_line(f"OPEN_CHAT\t{current_char}")
             return
 
@@ -1618,14 +1619,17 @@ def main():
             pet_y = 100
 
         process = QProcess(app)
-        program, arguments = process_program_and_args(BASE_DIR, "chat_process.py", [
+        chat_arguments = [
             "--character", current_char,
             "--pet-x", str(pet_x),
             "--pet-y", str(pet_y),
             "--pet-w", "1",
             "--pet-h", "1",
             "--group-characters", json.dumps(group_characters, ensure_ascii=False),
-        ])
+        ]
+        if not show:
+            chat_arguments.append("--headless")
+        program, arguments = process_program_and_args(BASE_DIR, "chat_process.py", chat_arguments)
         process.setProgram(program)
         process.setArguments(arguments)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
@@ -1662,6 +1666,8 @@ def main():
                 ipc_ref["latest_settings_line"] = line
             on_settings_changed(payload)
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
+            if bool(payload.get("companion_enabled", cfg.get("companion_enabled", False))):
+                QTimer.singleShot(0, lambda: launch_chat_process(show=False))
         elif line == "LAUNCH":
             settings_process_ref["launched"] = True
             launch_pet(persist_config=False)
@@ -1978,6 +1984,8 @@ def main():
     QTimer.singleShot(1300, start_usage_session)
     QTimer.singleShot(1600, repair_windows_startup_command)
     QTimer.singleShot(2500, apply_chat_attachment_retention)
+    if bool(cfg.get("companion_enabled", False)):
+        QTimer.singleShot(1800, lambda: launch_chat_process(show=False))
 
     def start_plugins():
         plugin_supervisor.start_enabled_plugins()
