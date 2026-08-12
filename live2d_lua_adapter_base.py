@@ -427,6 +427,7 @@ class LuaLive2DRuntimeBase:
         self._set_expression = None
         self._preload_expression = None
         self._preload_motion_group = None
+        self._set_action_cache_limits = None
         self._reset_expression = None
         self._dispose_renderer = None
         self.MotionPriority = MotionPriority
@@ -462,6 +463,7 @@ class LuaLive2DRuntimeBase:
         self._set_expression = None
         self._preload_expression = None
         self._preload_motion_group = None
+        self._set_action_cache_limits = None
         self._reset_expression = None
         self._dispose_renderer = None
         self._lua = None
@@ -594,6 +596,21 @@ class LuaLive2DRuntimeBase:
         )
         self._preload_motion_group = lua.eval(
             b"function(renderer, name) return renderer:preload_motion_group(name) end"
+        )
+        self._set_action_cache_limits = lua.eval(
+            b"function(renderer, motion_limit, expression_limit) "
+            b"motion_limit = math.max(8, math.floor(tonumber(motion_limit) or 8)); "
+            b"expression_limit = math.max(4, math.floor(tonumber(expression_limit) or 4)); "
+            b"if renderer.motion_cache_limit ~= nil then renderer.motion_cache_limit = motion_limit end; "
+            b"if renderer.expression_cache_limit ~= nil then renderer.expression_cache_limit = expression_limit end; "
+            b"local model = nil; "
+            b"if renderer.get_model ~= nil then model = renderer:get_model() end; "
+            b"if model ~= nil then "
+            b"model.motionCacheLimit = motion_limit; "
+            b"model.expressionCacheLimit = expression_limit; "
+            b"end; "
+            b"return motion_limit, expression_limit "
+            b"end"
         )
         self._reset_expression = lua.eval(b"function(renderer) return renderer:reset_expression() end")
         self._dispose_renderer = lua.eval(b"function(renderer) return renderer:dispose() end")
@@ -814,6 +831,15 @@ class LuaLAppModelBase:
         if self._renderer is None or not name:
             return
         self._module._preload_expression(self._renderer, str(name).encode("utf-8"))
+
+    def SetActionCacheLimits(self, motion_limit: int, expression_limit: int):
+        if self._renderer is None or self._module._set_action_cache_limits is None:
+            return
+        self._module._set_action_cache_limits(
+            self._renderer,
+            max(8, int(motion_limit)),
+            max(4, int(expression_limit)),
+        )
 
     def ClearMotions(self):
         if self._renderer is None:

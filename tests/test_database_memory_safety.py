@@ -12,6 +12,32 @@ from database_manager import DatabaseManager
 
 
 class DatabaseMemorySafetyTests(unittest.TestCase):
+    def test_attachment_cleanup_queries_only_attachment_payload_columns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = DatabaseManager(str(Path(temp_dir) / "data.db"))
+            try:
+                conversation_id = db.create_conversation("character")
+                db._conn.execute(
+                    "INSERT INTO messages "
+                    "(conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json) "
+                    "VALUES (?, 'assistant', ?, ?, ?, ?)",
+                    (conversation_id, "large-body", "large-reasoning", '[{"path":"a"}]', '{"trace":1}'),
+                )
+                db._conn.execute(
+                    "INSERT INTO group_messages "
+                    "(group_key, conversation_id, user_key, role, content, attachments_json) "
+                    "VALUES ('group', 'thread', 'user', 'assistant', ?, ?)",
+                    ("large-group-body", '[{"path":"b"}]'),
+                )
+                db._conn.commit()
+
+                assert db.get_conversation_attachment_payloads(conversation_id) == ['[{"path":"a"}]']
+                assert db.get_group_conversation_attachment_payloads(
+                    "group", "thread", "user"
+                ) == ['[{"path":"b"}]']
+            finally:
+                db.close()
+
     def test_usage_statistics_tolerate_overflowing_session_duration(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = DatabaseManager(str(Path(temp_dir) / "data.db"))

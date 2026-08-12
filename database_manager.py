@@ -1486,7 +1486,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "SELECT tool_trace_json FROM messages "
             "WHERE conversation_id=? AND role='assistant'",
             (int(conversation_id),),
-        ).fetchall()
+        )
         return self._token_usage_from_rows(rows)
 
     def get_group_conversation_token_usage(
@@ -1506,7 +1506,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         rows = self._conn.execute(
             f"SELECT tool_trace_json FROM group_messages {where}",
             params,
-        ).fetchall()
+        )
         return self._token_usage_from_rows(rows)
 
     def get_messages(
@@ -1532,15 +1532,27 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
             f"{where} ORDER BY id {order}{limit_sql}",
             params,
-        ).fetchall()
-        if limit is not None:
-            rows.reverse()
+        )
         result = []
         for r in rows:
             message = _message_row_dict(r)
             if message is not None:
                 result.append(message)
+        if limit is not None:
+            result.reverse()
         return result
+
+    def get_conversation_attachment_payloads(self, conversation_id: int) -> list[str]:
+        """Read only attachment metadata, without materializing message bodies."""
+        conversation_id = _db_int(conversation_id)
+        if conversation_id is None:
+            return []
+        cursor = self._conn.execute(
+            "SELECT attachments_json FROM messages "
+            "WHERE conversation_id=? AND attachments_json!=''",
+            (conversation_id,),
+        )
+        return [_db_text(row[0]) for row in cursor if row and row[0]]
 
     def get_chat_history_filter_options(self) -> dict:
         characters = {
@@ -1812,15 +1824,35 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
             f"{where} ORDER BY id {order}{limit_sql}",
             params,
-        ).fetchall()
-        if limit is not None:
-            rows.reverse()
+        )
         result = []
         for r in rows:
             message = _message_row_dict(r, grouped=True)
             if message is not None:
                 result.append(message)
+        if limit is not None:
+            result.reverse()
         return result
+
+    def get_group_conversation_attachment_payloads(
+        self,
+        group_key: str,
+        conversation_id: str,
+        user_key: str | None = None,
+    ) -> list[str]:
+        """Read only group attachment metadata for cleanup/export paths."""
+        conversation_id = conversation_id or "default"
+        where, params = self._user_filter_clause(
+            user_key,
+            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
+            "AND attachments_json!=''",
+            (group_key, conversation_id, conversation_id),
+        )
+        cursor = self._conn.execute(
+            f"SELECT attachments_json FROM group_messages {where}",
+            params,
+        )
+        return [_db_text(row[0]) for row in cursor if row and row[0]]
 
     def delete_group_conversation(self, group_key: str, conversation_id: str, user_key: str | None = None):
         conversation_id = conversation_id or "default"
@@ -2639,14 +2671,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 "SELECT group_key, role, content "
                 "FROM group_messages WHERE user_key=? AND group_key LIKE '__group__:%'",
                 (user_key,),
-            ).fetchall()
+            )
         else:
             group_rows = self._conn.execute(
                 "SELECT group_key, role, content "
                 "FROM group_messages WHERE user_key=? AND group_key LIKE '__group__:%' "
                 "AND created_at>=datetime('now','localtime',?)",
                 (user_key, f"-{days} days"),
-            ).fetchall()
+            )
 
         for row in group_rows:
             for character in self._group_message_count_characters(row):
@@ -2771,20 +2803,24 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         aliases: set[str],
     ) -> tuple[str, int]:
         rows = self._conn.execute(
-            "SELECT id, group_key, conversation_id, role, content, reasoning_content, "
-            "attachments_json, tool_trace_json, created_at "
+            "SELECT role, content "
             "FROM group_messages WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
             "AND user_key=? ORDER BY id DESC",
             (group_key, conversation_id, conversation_id, user_key),
-        ).fetchall()
+        )
         preview = ""
         count = 0
-        for row in rows:
-            if not self._group_message_matches_character(row, "", aliases):
+        for role, content in rows:
+            content = _db_text(content)
+            if (
+                _db_text(role, "user") == "assistant"
+                and (speaker := _group_message_speaker(content))
+                and speaker not in aliases
+            ):
                 continue
             count += 1
             if not preview:
-                preview = _db_text(row[4])
+                preview = content
         return preview, count
 
     def get_character_recent_messages(

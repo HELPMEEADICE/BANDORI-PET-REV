@@ -25,7 +25,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
 from app_info import APP_NAME
-from ipc_bus import radial_command_queue_key, radial_event_queue_key
+from ipc_bus import AdaptivePollInterval, radial_command_queue_key, radial_event_queue_key
 from radial_menu import RadialMenu
 from shared_memory_ipc import SharedMemoryLineQueue
 
@@ -254,24 +254,40 @@ def main():
 
     def read_commands():
         if command_queue is None:
-            return
-        for line in command_queue.read_available(max_messages=100):
+            return False
+        lines = command_queue.read_available(max_messages=100)
+        for line in lines:
             handle_line(line)
+        return bool(lines)
 
     def read_stdio_commands():
+        had_activity = False
         while True:
             ready, _write, _error = select.select([sys.stdin], [], [], 0)
             if not ready:
-                return
+                return had_activity
             line = sys.stdin.readline()
             if line == "":
                 app.quit()
-                return
+                return had_activity
+            had_activity = True
             handle_line(line.rstrip("\r\n"))
 
     command_timer = QTimer(app)
-    command_timer.setInterval(15)
-    command_timer.timeout.connect(read_stdio_commands if _STDIO_MODE else read_commands)
+    command_poll_state = AdaptivePollInterval(
+        active_interval_ms=15,
+        idle_interval_ms=75,
+        empty_polls_before_idle=40,
+    )
+    command_reader = read_stdio_commands if _STDIO_MODE else read_commands
+
+    def poll_commands():
+        interval = command_poll_state.observe(command_reader())
+        if command_timer.interval() != interval:
+            command_timer.setInterval(interval)
+
+    command_timer.setInterval(command_poll_state.active_interval_ms)
+    command_timer.timeout.connect(poll_commands)
     command_timer.start()
 
     native_plugin_loader = NativePluginLoader(

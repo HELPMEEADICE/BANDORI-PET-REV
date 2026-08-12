@@ -553,8 +553,23 @@ class Live2DWidgetBase(QOpenGLWidget):
     # Render timer
     # --------------------------------------------------------------------------
 
+    def _effective_fps(self) -> int:
+        fps = max(10, min(int(self._fps), 240))
+        if not self._vsync:
+            return fps
+        try:
+            screen = self.screen()
+            refresh_rate = float(screen.refreshRate()) if screen is not None else 0.0
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            refresh_rate = 0.0
+        # A timer faster than the display cannot produce additional visible
+        # frames when VSync is active; it only adds event-loop and GL work.
+        if 24.0 <= refresh_rate <= 360.0:
+            fps = min(fps, max(24, round(refresh_rate)))
+        return fps
+
     def _frame_interval_ms(self) -> int:
-        return max(1, round(1000 / self._fps))
+        return max(1, round(1000 / self._effective_fps()))
 
     def _sync_timer_type(self):
         timer_type = (
@@ -916,6 +931,11 @@ class Live2DWidgetBase(QOpenGLWidget):
     def refresh_screen_scale(self):
         scale = self._current_device_pixel_ratio()
         if abs(scale - (self._system_scale or 1.0)) < 0.001:
+            # The new screen may have the same DPR but a different refresh
+            # rate, which still changes the optimal VSync render interval.
+            update_render_timer = getattr(self, "_update_render_timer", None)
+            if update_render_timer is not None:
+                update_render_timer()
             return
         self._system_scale = scale
         self._reset_hit_stability()
@@ -928,6 +948,9 @@ class Live2DWidgetBase(QOpenGLWidget):
             # some Live2D runtimes when Qt reports several DPI transitions.
             self._sync_renderer_target_size()
         self._apply_physical_viewport(self._cache_w, self._cache_h)
+        update_render_timer = getattr(self, "_update_render_timer", None)
+        if update_render_timer is not None:
+            update_render_timer()
         self.update()
 
     def _apply_physical_viewport(self, w: int, h: int):

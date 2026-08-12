@@ -2,7 +2,7 @@ import json
 import random
 
 from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPixmap
+from PySide6.QtGui import QImage, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
 from process_utils import app_base_dir
@@ -36,7 +36,6 @@ class PixelPetWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._sheet = QPixmap()
         self._sheet_image = QImage()
         self._frames = {}
         self._frame_w = 128
@@ -137,8 +136,8 @@ class PixelPetWidget(QWidget):
     def load_sprite(self, image_path: str, frames_data: dict) -> bool:
         self._anim_timer.stop()
         self._wander_timer.stop()
-        pixmap = QPixmap(image_path)
-        if pixmap.isNull():
+        image = QImage(image_path)
+        if image.isNull():
             return False
 
         sheet = frames_data.get("spriteSheet", {}) if isinstance(frames_data, dict) else {}
@@ -148,18 +147,31 @@ class PixelPetWidget(QWidget):
         if cols <= 0 or rows <= 0 or not animations:
             return False
 
-        self._sheet = pixmap
-        self._sheet_image = pixmap.toImage()
+        # Keep a single raster backing store.  Holding both a QPixmap and the
+        # QImage used for alpha hit-testing duplicated the entire uncompressed
+        # sprite sheet for every pixel-pet process.
+        self._sheet_image = image
         self._input_region_cache.clear()
         self._frames = animations
         self._total_cols = cols
         self._total_rows = rows
-        self._frame_w = max(1, pixmap.width() // cols)
-        self._frame_h = max(1, pixmap.height() // rows)
+        self._frame_w = max(1, image.width() // cols)
+        self._frame_h = max(1, image.height() // rows)
         self.setFixedSize(self._frame_w, self._frame_h)
         self.set_animation("idle")
         self.frame_changed.emit()
         return True
+
+    def release_sprite(self):
+        """Drop the decoded sheet while pixel mode is inactive or hidden."""
+        self._anim_timer.stop()
+        self._wander_timer.stop()
+        self._sheet_image = QImage()
+        self._frames = {}
+        self._input_region_cache.clear()
+        self._frame_index = 0
+        self.update()
+        self.frame_changed.emit()
 
     def set_animation(self, name: str):
         if name not in self._frames:
@@ -219,7 +231,8 @@ class PixelPetWidget(QWidget):
         if (pos - self._move_target).manhattanLength() < 8:
             self.set_animation(random.choice(["idle", "waiting", "review"] if "review" in self._frames else ["idle"]))
             self._waiting_for_target = True
-            QTimer.singleShot(random.randint(1200, 3500), self._choose_wander_target)
+            self._wander_timer.stop()
+            QTimer.singleShot(random.randint(1200, 3500), self._resume_wander)
             return
         dx = self._move_target.x() - pos.x()
         dy = self._move_target.y() - pos.y()
@@ -259,6 +272,13 @@ class PixelPetWidget(QWidget):
             self._choose_wander_target()
             self._wander_timer.start()
 
+    def _resume_wander(self):
+        if self._drag_locked or not self.isVisible():
+            return
+        self._choose_wander_target()
+        if not self._hovering:
+            self._wander_timer.start()
+
     def hideEvent(self, event):
         self._anim_timer.stop()
         self._wander_timer.stop()
@@ -266,16 +286,19 @@ class PixelPetWidget(QWidget):
 
     def enterEvent(self, event):
         self._hovering = True
+        self._wander_timer.stop()
         self.set_animation("waiting")
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hovering = False
         self._choose_wander_target()
+        if not self._drag_locked:
+            self._wander_timer.start()
         super().leaveEvent(event)
 
     def paintEvent(self, event):
-        if self._sheet.isNull():
+        if self._sheet_image.isNull():
             return
         anim = self._frames.get(self._animation, {})
         row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
@@ -283,7 +306,7 @@ class PixelPetWidget(QWidget):
         source = QRect(frame * self._frame_w, row * self._frame_h, self._frame_w, self._frame_h)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-        painter.drawPixmap(self.rect(), self._sheet, source)
+        painter.drawImage(self.rect(), self._sheet_image, source)
 
     def is_sprite_hit_at_global(self, global_pos: QPoint) -> bool:
         local = self.mapFromGlobal(global_pos)

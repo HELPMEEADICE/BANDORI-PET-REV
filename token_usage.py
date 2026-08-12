@@ -173,6 +173,16 @@ def estimate_untracked_history_usage(
     output_tokens = 0
     request_count = 0
 
+    # Prefix sums preserve the exact request-size estimate while avoiding a
+    # slice and a full rescan for every historical assistant response.  The
+    # previous implementation became quadratic on long conversations.
+    token_prefix = [0]
+    for message in prepared:
+        message_tokens = 3
+        message_tokens += estimate_text_tokens(message.get("role", ""))
+        message_tokens += estimate_value_tokens(message.get("content", ""))
+        token_prefix.append(token_prefix[-1] + message_tokens)
+
     for index, message in enumerate(prepared):
         if message.get("role") != "assistant":
             continue
@@ -185,19 +195,13 @@ def estimate_untracked_history_usage(
         if isinstance(trace.get("llm_usage"), dict):
             continue
 
-        preceding = (
-            prepared[:index]
+        start = (
+            0
             if history_limit == HISTORY_MESSAGE_LIMIT_UNLIMITED
-            else prepared[max(0, index - max(1, history_limit)):index]
+            else max(0, index - max(1, history_limit))
         )
-        request_messages = [
-            {
-                "role": item.get("role", ""),
-                "content": item.get("content", ""),
-            }
-            for item in preceding
-        ]
-        input_tokens += input_overhead + estimate_messages_tokens(request_messages)
+        preceding_tokens = 3 + token_prefix[index] - token_prefix[start]
+        input_tokens += input_overhead + preceding_tokens
         output_tokens += estimate_value_tokens(message.get("content", ""))
         output_tokens += estimate_text_tokens(message.get("reasoning_content", ""))
         request_count += 1

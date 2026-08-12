@@ -38,6 +38,7 @@ from outfit_description_config import (
 )
 from process_utils import app_base_dir, clamp_float, clamp_int, interaction_trace, ipc_server_name, process_program_and_args
 from ipc_bus import (
+    AdaptivePollInterval,
     ipc_broadcast_queue_key,
     ipc_control_queue_key,
     ipc_inbound_queue_key,
@@ -245,9 +246,10 @@ PEER_POS_BROADCAST_INTERVAL_MS = 200
 MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS = 0.08
 MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE = 12
-LIVE2D_PREWARM_MAX_MOTIONS = 2
-LIVE2D_PREWARM_MAX_EXPRESSIONS = 2
-LIVE2D_PREWARM_STEP_MS = 90
+LIVE2D_PREWARM_MAX_MOTION_FILES = 96
+LIVE2D_PREWARM_MAX_EXPRESSIONS = 64
+LIVE2D_PREWARM_STEP_MS = 24
+LIVE2D_PREWARM_WAIT_MS = 25
 STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS = (0, 100, 300, 800, 1600, 3000)
 
 
@@ -475,6 +477,7 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = []
         self._live2d_prewarm_expression_queue = []
         self._live2d_prewarm_prefetched = False
+        self._live2d_prewarm_prefetch_completed_token = 0
         self._live2d_prewarmed_motions = set()
         self._live2d_prewarmed_expressions = set()
         self._motion_names_cache = []
@@ -509,6 +512,7 @@ class PetWindow(QWidget):
         self._ipc_poll_timer = QTimer(self)
         self._ipc_poll_timer.setInterval(30)
         self._ipc_poll_timer.timeout.connect(self._read_ipc_messages)
+        self._ipc_poll_state = AdaptivePollInterval()
         self._ipc_heartbeat_timer = QTimer(self)
         self._ipc_heartbeat_timer.setInterval(3000)
         self._ipc_heartbeat_timer.timeout.connect(self._send_ipc_registration)
@@ -2406,10 +2410,15 @@ class PetWindow(QWidget):
         self._live2d_prewarm_motion_queue = self._build_live2d_prewarm_motion_queue()
         self._live2d_prewarm_expression_queue = self._build_live2d_prewarm_expression_queue()
         self._live2d_prewarm_prefetched = False
+        self._live2d_prewarm_prefetch_completed_token = 0
         self._live2d_prewarmed_motions = set()
         self._live2d_prewarmed_expressions = set()
+        self._configure_live2d_action_cache()
         QTimer.singleShot(0, lambda t=token: self._prefetch_live2d_action_resources(t))
-        QTimer.singleShot(120, lambda t=token: self._prewarm_next_live2d_action(t))
+        QTimer.singleShot(
+            LIVE2D_PREWARM_WAIT_MS,
+            lambda t=token: self._wait_for_live2d_action_prefetch(t),
+        )
 
     def _restart_live2d_action_prewarm(self):
         self._live2d_prewarm_token += 1
@@ -2446,10 +2455,12 @@ class PetWindow(QWidget):
         motions = list(self._live2d_prewarm_motion_queue)
         expressions = list(self._live2d_prewarm_expression_queue)
         if not motions and not expressions:
+            self._live2d_prewarm_prefetch_completed_token = token
             return
         try:
             from zst_model_archive import is_virtual_path, prefetch_virtual_action_resources
             if not is_virtual_path(model_path):
+                self._live2d_prewarm_prefetch_completed_token = token
                 return
 
             def worker():
@@ -2457,10 +2468,42 @@ class PetWindow(QWidget):
                     prefetch_virtual_action_resources(model_path, motions, expressions)
                 except Exception:
                     pass
+                finally:
+                    # Plain integer assignment is atomic under the GIL.  The
+                    # GUI thread polls this token and is the only thread that
+                    # touches the Live2D/Lua renderer.
+                    self._live2d_prewarm_prefetch_completed_token = token
 
             threading.Thread(target=worker, name="Live2DActionPrefetch", daemon=True).start()
         except Exception:
-            pass
+            self._live2d_prewarm_prefetch_completed_token = token
+
+    def _wait_for_live2d_action_prefetch(self, token: int):
+        if token != self._live2d_prewarm_token or self._pixel_mode:
+            return
+        if self._live2d_prewarm_prefetch_completed_token != token:
+            QTimer.singleShot(
+                LIVE2D_PREWARM_WAIT_MS,
+                lambda t=token: self._wait_for_live2d_action_prefetch(t),
+            )
+            return
+        self._prewarm_next_live2d_action(token)
+
+    def _configure_live2d_action_cache(self):
+        model = self._live2d_widget.model
+        if model is None:
+            return
+        setting = getattr(model, "modelSetting", None)
+        motion_count = 0
+        if setting is not None:
+            for name in self._live2d_prewarm_motion_queue:
+                try:
+                    motion_count += max(0, int(setting.getMotionNum(name)))
+                except Exception:
+                    pass
+        configure = getattr(model, "SetActionCacheLimits", None)
+        if callable(configure):
+            configure(max(8, motion_count), max(4, len(self._live2d_prewarm_expression_queue)))
 
     def _build_live2d_prewarm_motion_queue(self) -> list[str]:
         model = self._live2d_widget.model
@@ -2481,7 +2524,26 @@ class PetWindow(QWidget):
             if self._is_idle_motion_name(name):
                 add(name)
                 break
-        return ordered[:LIVE2D_PREWARM_MAX_MOTIONS]
+        for name in motion_names:
+            add(name)
+
+        # Bound parsed action memory by file count rather than by group count;
+        # a group may contain multiple motion files.
+        selected = []
+        selected_files = 0
+        setting = getattr(model, "modelSetting", None)
+        for name in ordered:
+            try:
+                file_count = max(1, int(setting.getMotionNum(name)))
+            except Exception:
+                file_count = 1
+            if selected and selected_files + file_count > LIVE2D_PREWARM_MAX_MOTION_FILES:
+                continue
+            selected.append(name)
+            selected_files += file_count
+            if selected_files >= LIVE2D_PREWARM_MAX_MOTION_FILES:
+                break
+        return selected
 
     def _build_live2d_prewarm_expression_queue(self) -> list[str]:
         expression_names = self._current_expression_names()
@@ -2497,6 +2559,8 @@ class PetWindow(QWidget):
         add(entry.get("default_expression", ""))
         for tag in ("default", "idle"):
             add(self._find_expression_tag(tag))
+        for name in expression_names:
+            add(name)
         return ordered[:LIVE2D_PREWARM_MAX_EXPRESSIONS]
 
     def _prewarm_next_live2d_action(self, token: int):
@@ -2511,7 +2575,6 @@ class PetWindow(QWidget):
                 lambda t=token: self._clear_live2d_archive_cache_if_current(t),
             )
             return
-        self._prefetch_live2d_action_resources(token)
         prefer_expression = bool(self._live2d_prewarm_expression_queue) and (
             not self._live2d_prewarmed_expressions
             or len(self._live2d_prewarmed_motions) > len(self._live2d_prewarmed_expressions) * 2
@@ -2656,6 +2719,87 @@ class PetWindow(QWidget):
         if not motion_name:
             return False
         priority = priority or self._live2d.MotionPriority.FORCE
+        prewarm_token = getattr(self, "_live2d_prewarm_token", 0)
+        prefetch_completed_token = getattr(
+            self,
+            "_live2d_prewarm_prefetch_completed_token",
+            prewarm_token,
+        )
+        if (
+            model is self._live2d_widget.model
+            and motion_name not in getattr(self, "_live2d_prewarmed_motions", set())
+            and prefetch_completed_token != prewarm_token
+        ):
+            request_token = self._motion_guard_token
+            QTimer.singleShot(
+                LIVE2D_PREWARM_WAIT_MS,
+                lambda pt=prewarm_token, rt=request_token, current=model,
+                name=str(motion_name), p=priority, finish=on_finish, repeat=loop:
+                    self._start_motion_after_prefetch(
+                        pt, rt, current, name,
+                        priority=p,
+                        on_finish=finish,
+                        loop=repeat,
+                    ),
+            )
+            # The request is accepted and will start as soon as archive I/O is
+            # complete. Reporting success prevents callers from falling back
+            # to another synchronous random motion.
+            return True
+        return PetWindow._start_motion_now(
+            self,
+            model,
+            motion_name,
+            priority=priority,
+            on_finish=on_finish,
+            loop=loop,
+        )
+
+    def _start_motion_after_prefetch(
+        self,
+        prewarm_token: int,
+        request_token: int,
+        model,
+        motion_name: str,
+        *,
+        priority,
+        on_finish,
+        loop,
+    ):
+        if (
+            prewarm_token != self._live2d_prewarm_token
+            or request_token != self._motion_guard_token
+            or model is not self._live2d_widget.model
+        ):
+            return
+        if self._live2d_prewarm_prefetch_completed_token != prewarm_token:
+            QTimer.singleShot(
+                LIVE2D_PREWARM_WAIT_MS,
+                lambda pt=prewarm_token, rt=request_token, current=model,
+                name=motion_name, p=priority, finish=on_finish, repeat=loop:
+                    self._start_motion_after_prefetch(
+                        pt, rt, current, name,
+                        priority=p,
+                        on_finish=finish,
+                        loop=repeat,
+                    ),
+            )
+            return
+        try:
+            model.PreloadMotionGroup(motion_name)
+            self._live2d_prewarmed_motions.add(str(motion_name))
+        except Exception:
+            pass
+        PetWindow._start_motion_now(
+            self,
+            model,
+            motion_name,
+            priority=priority,
+            on_finish=on_finish,
+            loop=loop,
+        )
+
+    def _start_motion_now(self, model, motion_name: str, *, priority, on_finish=None, loop=None) -> bool:
         kwargs = {}
         if on_finish:
             kwargs["onFinishMotionHandler"] = on_finish
@@ -2688,6 +2832,61 @@ class PetWindow(QWidget):
                 return True
             except Exception:
                 return False
+
+    def _safe_set_expression(self, model, expression: str) -> bool:
+        expression = str(expression or "").strip()
+        if not expression:
+            return False
+        prewarm_token = getattr(self, "_live2d_prewarm_token", 0)
+        prefetch_completed_token = getattr(
+            self,
+            "_live2d_prewarm_prefetch_completed_token",
+            prewarm_token,
+        )
+        if (
+            model is self._live2d_widget.model
+            and expression not in getattr(self, "_live2d_prewarmed_expressions", set())
+            and prefetch_completed_token != prewarm_token
+        ):
+            request_token = self._expression_guard_token
+            QTimer.singleShot(
+                LIVE2D_PREWARM_WAIT_MS,
+                lambda pt=prewarm_token, rt=request_token, current=model, name=expression:
+                    self._set_expression_after_prefetch(pt, rt, current, name),
+            )
+            return True
+        try:
+            model.SetExpression(expression)
+            self._live2d_prewarmed_expressions.add(expression)
+            return True
+        except Exception:
+            return False
+
+    def _set_expression_after_prefetch(
+        self,
+        prewarm_token: int,
+        request_token: int,
+        model,
+        expression: str,
+    ):
+        if (
+            prewarm_token != self._live2d_prewarm_token
+            or request_token != self._expression_guard_token
+            or model is not self._live2d_widget.model
+        ):
+            return
+        if self._live2d_prewarm_prefetch_completed_token != prewarm_token:
+            QTimer.singleShot(
+                LIVE2D_PREWARM_WAIT_MS,
+                lambda pt=prewarm_token, rt=request_token, current=model, name=expression:
+                    self._set_expression_after_prefetch(pt, rt, current, name),
+            )
+            return
+        try:
+            model.PreloadExpression(expression)
+        except Exception:
+            pass
+        self._safe_set_expression(model, expression)
 
     def _start_context_idle_behavior(self, kind: str) -> bool:
         if not self._live2d_idle_actions_enabled or not self._live2d_random_actions_enabled:
@@ -2725,12 +2924,9 @@ class PetWindow(QWidget):
         if expression:
             self._expression_guard_token += 1
             token = self._expression_guard_token
-            try:
-                model.SetExpression(expression)
+            if self._safe_set_expression(model, expression):
                 expression_applied = True
                 QTimer.singleShot(6000, lambda t=token: self._restore_default_expression_if_current(t))
-            except Exception:
-                pass
         return started or expression_applied
 
     def _current_motion_names(self) -> list[str]:
@@ -3246,14 +3442,17 @@ class PetWindow(QWidget):
             started = self._safe_start_motion(model, motion_name, loop=False)
         else:
             warmed_motion = self._choose_prewarmed_click_motion()
-            if warmed_motion:
-                started = self._safe_start_motion(model, warmed_motion, loop=False)
-        if not started and not motion_name:
-            try:
-                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE, loop=False)
-                started = True
-            except Exception:
-                pass
+            fallback_motion = warmed_motion
+            if not fallback_motion:
+                candidates = [
+                    name for name in self._current_motion_names()
+                    if not self._is_idle_motion_name(name)
+                ]
+                if not candidates:
+                    candidates = self._current_motion_names()
+                fallback_motion = random.choice(candidates) if candidates else ""
+            if fallback_motion:
+                started = self._safe_start_motion(model, fallback_motion, loop=False)
         if started:
             if expression:
                 QTimer.singleShot(80, lambda t=self._expression_guard_token, e=expression: self._set_click_expression_if_current(t, e))
@@ -3291,8 +3490,7 @@ class PetWindow(QWidget):
             return
         if expression not in model.expressions:
             return
-        model.SetExpression(expression)
-        self._live2d_prewarmed_expressions.add(str(expression))
+        self._safe_set_expression(model, expression)
 
     def _choose_click_action_motion(self, region: str) -> str:
         from live2d_click_actions import click_motion_auto_buckets
@@ -3874,18 +4072,26 @@ class PetWindow(QWidget):
             broadcast_queue is None or not broadcast_queue.is_attached()
             or control_queue is None or not control_queue.is_attached()
         ):
-            return
-        raw_lines = coalesce_latest_peer_positions(
-            broadcast_queue.read_available(max_messages=200)
-        )
-        # Ordinary peer updates are older than any later reliable lifecycle
-        # notification. Process them first so final state cannot be undone.
-        raw_lines += control_queue.read_available(max_messages=200)
+            raw_lines = []
+        else:
+            raw_lines = coalesce_latest_peer_positions(
+                broadcast_queue.read_available(max_messages=200)
+            )
+            # Ordinary peer updates are older than any later reliable lifecycle
+            # notification. Process them first so final state cannot be undone.
+            raw_lines += control_queue.read_available(max_messages=200)
         for raw_line in raw_lines:
             envelope = decode_ipc_envelope(raw_line)
             if envelope.exclude_peer_id == self._ipc_peer_id:
                 continue
             self._handle_ipc_line(envelope.line)
+        poll_state = getattr(self, "_ipc_poll_state", None)
+        poll_timer = getattr(self, "_ipc_poll_timer", None)
+        if poll_state is not None and poll_timer is not None:
+            interval = poll_state.observe(bool(raw_lines))
+            if poll_timer.interval() != interval:
+                poll_timer.setInterval(interval)
+        return bool(raw_lines)
 
     def _handle_ipc_line(self, line: str):
         if line.startswith("ACTION\t"):
@@ -4016,11 +4222,14 @@ class PetWindow(QWidget):
         if motion:
             started = self._safe_start_motion(model, motion, loop=False)
         else:
-            try:
-                model.StartRandomMotion(priority=self._live2d.MotionPriority.FORCE, loop=False)
-                started = True
-            except Exception:
-                pass
+            motion_names = self._current_motion_names()
+            if motion_names:
+                started = self._safe_start_motion(
+                    model,
+                    random.choice(motion_names),
+                    priority=self._live2d.MotionPriority.FORCE,
+                    loop=False,
+                )
         if started:
             QTimer.singleShot(3200, lambda t=token: self._restore_default_if_finished(t))
 
@@ -4292,15 +4501,11 @@ class PetWindow(QWidget):
             expression = self._find_expression_tag(str(tag or "").strip().lower())
             if not expression:
                 continue
-            try:
-                self._expression_guard_token += 1
-                token = self._expression_guard_token
-                model.SetExpression(expression)
-                self._live2d_prewarmed_expressions.add(str(expression))
+            self._expression_guard_token += 1
+            token = self._expression_guard_token
+            if self._safe_set_expression(model, expression):
                 hold_ms = 2600 + int(intensity * 38)
                 QTimer.singleShot(hold_ms, lambda t=token: self._restore_default_expression_if_current(t))
-            except Exception:
-                pass
             return
 
     def _apply_emotion_motion(self, event: dict, intensity: int):
@@ -4717,11 +4922,8 @@ class PetWindow(QWidget):
             base, ext = normalized.rsplit(".", 1)
             exp = _find_expression(base)
             if exp:
-                try:
-                    model.SetExpression(exp)
+                if self._safe_set_expression(model, exp):
                     self._schedule_default_expression_restore()
-                except Exception:
-                    pass
                 return
             if ext.lower() in {"mtn", "motion"}:
                 normalized = base
@@ -4746,28 +4948,25 @@ class PetWindow(QWidget):
                 QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
                 QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
             else:
-                try:
+                fallback_names = self._current_motion_names()
+                if fallback_names:
                     self._motion_guard_token += 1
                     token = self._motion_guard_token
-                    model.StartRandomMotion(
+                    motion_started = self._safe_start_motion(
+                        model,
+                        random.choice(fallback_names),
                         priority=self._live2d.MotionPriority.FORCE,
                         loop=False,
-                        onFinishMotionHandler=lambda *args, t=token: self._on_motion_finished(t, *args),
+                        on_finish=lambda *args, t=token: self._on_motion_finished(t, *args),
                     )
-                    motion_started = True
-                    QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
-                    QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
-                except Exception:
-                    pass
+                    if motion_started:
+                        QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
+                        QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
 
         exp = _find_expression(mapped)
         if exp:
-            try:
-                model.SetExpression(exp)
-                if not motion_started:
-                    self._schedule_default_expression_restore()
-            except Exception:
-                pass
+            if self._safe_set_expression(model, exp) and not motion_started:
+                self._schedule_default_expression_restore()
 
     def _on_radial_costume(self):
         self._note_user_interaction()
@@ -4778,19 +4977,21 @@ class PetWindow(QWidget):
         model = self._live2d_widget.model
         if model is None:
             return
-        try:
-            self._expression_guard_token += 1
-            self._motion_guard_token += 1
-            token = self._motion_guard_token
-            model.StartRandomMotion(
-                priority=self._live2d.MotionPriority.FORCE,
-                loop=False,
-                onFinishMotionHandler=lambda *args, t=token: self._on_motion_finished(t, *args),
-            )
+        motion_names = self._current_motion_names()
+        if not motion_names:
+            return
+        self._expression_guard_token += 1
+        self._motion_guard_token += 1
+        token = self._motion_guard_token
+        if self._safe_start_motion(
+            model,
+            random.choice(motion_names),
+            priority=self._live2d.MotionPriority.FORCE,
+            on_finish=lambda *args, t=token: self._on_motion_finished(t, *args),
+            loop=False,
+        ):
             QTimer.singleShot(8000, lambda t=token: self._clear_motion_if_current(t))
             QTimer.singleShot(1800, lambda t=token: self._restore_default_if_finished(t))
-        except Exception:
-            pass
 
     def _on_motion_finished(self, token=None, *_args):
         if token is not None and token != self._motion_guard_token:
@@ -4896,7 +5097,7 @@ class PetWindow(QWidget):
             model.ResetExpression()
             default_exp = self._find_default_expression(model)
             if default_exp:
-                model.SetExpression(default_exp)
+                self._safe_set_expression(model, default_exp)
         except Exception:
             pass
 
@@ -4995,6 +5196,8 @@ class PetWindow(QWidget):
         self._remember_current_position()
         self._pixel_mode = False
         self._stack.setCurrentWidget(self._live2d_widget)
+        self._pixel_widget.release_sprite()
+        self._pixel_ready = False
         self._restore_live2d_position()
         self._resume_live2d_resources()
         controller = getattr(self, "_surface_controller", None)
@@ -5020,7 +5223,11 @@ class PetWindow(QWidget):
         if self.isVisible():
             self._user_hidden_live2d_model = True
             self.hide()
-            self._release_live2d_resources()
+            if self._pixel_mode:
+                self._pixel_widget.release_sprite()
+                self._pixel_ready = False
+            else:
+                self._release_live2d_resources()
         else:
             self._user_hidden_live2d_model = False
             self._hide_live2d_model = False
@@ -5028,7 +5235,14 @@ class PetWindow(QWidget):
                 self._cfg.load()
                 self._cfg.set("hide_live2d_model", False)
                 self._persist_runtime_config()
-            self._resume_live2d_resources()
+            if self._pixel_mode:
+                if not self._load_pixel_for_current_character():
+                    self._pixel_mode = False
+                    self._stack.setCurrentWidget(self._live2d_widget)
+                    self._restore_live2d_position()
+                    self._resume_live2d_resources()
+            else:
+                self._resume_live2d_resources()
             self.show()
 
     def _open_settings(self, start_on_costumes=False):

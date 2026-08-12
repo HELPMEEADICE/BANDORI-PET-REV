@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from chat_window.chat_window import ChatWindow
+from chat_window.chat_window import ChatWindow, _stream_flush_batch_size
 from chat_window.reply_stream import ReplyStreamBinding
 
 
@@ -138,6 +138,11 @@ def _stream(generation, character):
 
 
 class GroupReplyStreamBindingTests(unittest.TestCase):
+    def test_large_stream_backlogs_are_drained_in_bounded_adaptive_batches(self):
+        self.assertEqual(4, _stream_flush_batch_size(6))
+        self.assertEqual(13, _stream_flush_batch_size(100))
+        self.assertEqual(64, _stream_flush_batch_size(10_000))
+
     def test_late_chunk_cannot_mutate_the_next_characters_state(self):
         harness = _ReplyStreamHarness()
         first = _stream(1, "character-a")

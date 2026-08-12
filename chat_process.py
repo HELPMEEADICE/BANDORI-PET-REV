@@ -288,7 +288,7 @@ def main():
 
     def read_shutdown_messages():
         if not attach_main_ipc_queues(ipc):
-            return
+            return False
         raw_lines = ipc["control"].read_available(max_messages=200)
         raw_lines += ipc["broadcast"].read_available(max_messages=200)
         for raw_line in raw_lines:
@@ -308,6 +308,7 @@ def main():
                     window.handle_external_user_poke(json.loads(line.split("\t", 1)[1]))
                 except Exception:
                     window.handle_external_user_poke({})
+        return bool(raw_lines)
 
     def register_chat_window():
         send_ipc_line(f"REGISTER\tCHAT\t{args.character}")

@@ -23,6 +23,18 @@ class _VSyncHarness:
         self.repaint_calls += 1
 
 
+class _RefreshRateHarness:
+    _effective_fps = Live2DWidgetBase._effective_fps
+
+    def __init__(self, fps: int, vsync: bool, refresh_rate: float):
+        self._fps = fps
+        self._vsync = vsync
+        self._refresh_rate = refresh_rate
+
+    def screen(self):
+        return type("Screen", (), {"refreshRate": lambda _self: self._refresh_rate})()
+
+
 def test_default_surface_format_uses_configured_vsync():
     original = QSurfaceFormat(QSurfaceFormat.defaultFormat())
     try:
@@ -33,6 +45,15 @@ def test_default_surface_format_uses_configured_vsync():
         assert QSurfaceFormat.defaultFormat().swapInterval() == 1
     finally:
         QSurfaceFormat.setDefaultFormat(original)
+
+
+def test_vsync_timer_does_not_schedule_faster_than_the_display():
+    synced = _RefreshRateHarness(120, True, 60.0)
+    unsynced = _RefreshRateHarness(120, False, 60.0)
+
+    assert Live2DWidgetBase._effective_fps(synced) == 60
+    assert Live2DWidgetBase._frame_interval_ms(synced) == 17
+    assert Live2DWidgetBase._effective_fps(unsynced) == 120
 
 
 def test_unspecified_vsync_preserves_existing_surface_setting():

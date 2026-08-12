@@ -76,6 +76,14 @@ from .chat_window_base import ChatWindowMixin
 _TTS_AVAILABLE = True
 
 
+def _stream_flush_batch_size(backlog: int) -> int:
+    """Keep the typing effect while preventing a large stream backlog."""
+    backlog = max(0, int(backlog))
+    if backlog == 0:
+        return 0
+    return min(backlog, max(4, min(64, (backlog + 7) // 8)))
+
+
 class _PluginToolInvoker(QObject):
     requested = Signal(object)
 
@@ -431,6 +439,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._reasoning_stream_dirty = False
         self._stream_search_sources: list[dict] = []
         self._pending_source_json = ""
         self._tts_text_buffer = ""
@@ -5082,19 +5091,19 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _conversation_attachments(self, conversation_id: int) -> list[dict]:
         return [
             attachment
-            for message in self._db.get_messages(conversation_id)
-            for attachment in self._normalize_attachments(message.get("attachments_json"))
+            for payload in self._db.get_conversation_attachment_payloads(conversation_id)
+            for attachment in self._normalize_attachments(payload)
         ]
 
     def _group_conversation_attachments(self, group_key: str, conversation_id: str) -> list[dict]:
         return [
             attachment
-            for message in self._db.get_group_messages(
+            for payload in self._db.get_group_conversation_attachment_payloads(
                 group_key,
                 conversation_id,
                 user_key=self._chat_user_key,
             )
-            for attachment in self._normalize_attachments(message.get("attachments_json"))
+            for attachment in self._normalize_attachments(payload)
         ]
 
     def _delete_saved_attachment_copies(self, attachments: list[dict]):
@@ -6555,6 +6564,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._reasoning_stream_dirty = False
         self._start_response_for_character(character, list(self._group_spoken))
 
     def _on_chunk_received(self, stream: ReplyStreamBinding, text: str, reasoning: str):
@@ -6562,9 +6572,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         if reasoning:
             self._reasoning_stream_text += reasoning
-            stream.bubble.set_reasoning(self._reasoning_stream_text)
+            self._reasoning_stream_dirty = True
             stream.bubble.set_streaming(True)
-            self._scroll_to_bottom_for_stream()
+            if not self._stream_flush_timer.isActive():
+                self._stream_flush_timer.start()
 
         text = self._extract_stream_search_sources(text)
         chunk_actions, self._action_tag_stream_buffer = consume_stream_action_tags(
@@ -6598,12 +6609,20 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._stream_flush_timer.stop()
             self._stream_buffer = ""
             self._stream_buffer_owner = None
+            self._reasoning_stream_dirty = False
             return
+        updated = False
+        if getattr(self, "_reasoning_stream_dirty", False):
+            self._reasoning_stream_dirty = False
+            stream.bubble.set_reasoning(self._reasoning_stream_text)
+            updated = True
         if not self._stream_buffer:
             self._stream_flush_timer.stop()
+            if updated:
+                self._scroll_to_bottom_for_stream()
             return
 
-        take = max(1, min(4, len(self._stream_buffer)))
+        take = _stream_flush_batch_size(len(self._stream_buffer))
         self._visible_stream_text += self._stream_buffer[:take]
         self._stream_buffer = self._stream_buffer[take:]
         stream.bubble.set_text(self._visible_stream_text)
@@ -6669,6 +6688,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
             self._stream_buffer_owner = None
             self._visible_stream_text = clean
             self._reasoning_stream_text = reasoning_clean
+            self._reasoning_stream_dirty = False
             stream.bubble.set_streaming(False)
             stream.bubble.set_reasoning(reasoning_clean)
             stream.bubble.set_search_sources(self._stream_search_sources if self._show_search_sources() else [])
@@ -6727,6 +6747,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_buffer = ""
         self._visible_stream_text = ""
         self._reasoning_stream_text = ""
+        self._reasoning_stream_dirty = False
         self._current_response_actions = []
         self._action_tag_stream_buffer = ""
         self._current_tts_rate = 1.0
@@ -6836,6 +6857,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._stream_flush_timer.stop()
         self._stream_buffer = ""
         self._stream_buffer_owner = None
+        self._reasoning_stream_dirty = False
         self._action_tag_stream_buffer = ""
         self._current_response_actions = []
         self._reset_tts_stream(stop_player=False)

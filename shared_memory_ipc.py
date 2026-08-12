@@ -113,9 +113,9 @@ def decode_ipc_envelope(value: str) -> IpcEnvelope:
 
 def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
     """Keep only the newest coalescible peer update for each state stream."""
-    classified: list[tuple[str, str]] = []
-    latest_index: dict[str, int] = {}
-    for index, raw_line in enumerate(raw_lines):
+    retained: list[str] = []
+    seen_streams: set[str] = set()
+    for raw_line in reversed(raw_lines):
         envelope = decode_ipc_envelope(raw_line)
         stream_key = ""
         event_name = ""
@@ -136,15 +136,13 @@ def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
                     drag_id = str(payload.get("drag_id", "") or "").strip()
                     if drag_id:
                         stream_key = f"drag:{character}:{drag_id}"
-        classified.append((raw_line, stream_key))
         if stream_key:
-            latest_index[stream_key] = index
-
-    return [
-        raw_line
-        for index, (raw_line, stream_key) in enumerate(classified)
-        if not stream_key or latest_index[stream_key] == index
-    ]
+            if stream_key in seen_streams:
+                continue
+            seen_streams.add(stream_key)
+        retained.append(raw_line)
+    retained.reverse()
+    return retained
 
 
 class SharedMemoryLineQueue:

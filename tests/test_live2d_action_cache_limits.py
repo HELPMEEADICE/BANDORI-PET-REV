@@ -1,6 +1,9 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from lupa import LuaRuntime
+
+from live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
 
 
 LUA_ROOT = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()
@@ -115,3 +118,40 @@ def test_moc_motion_cache_is_lru_bounded():
     )
 
     assert [result[i] for i in range(1, 5)] == [2, True, True, True]
+
+
+def test_runtime_cache_limit_bridge_updates_moc3_and_legacy_renderers():
+    lua = LuaRuntime(unpack_returned_tuples=True, encoding=None)
+    runtime = LuaLive2DRuntimeBase()
+    runtime._load_lua_runtime_functions(lua)
+
+    moc3_renderer = lua.eval(
+        b"{ motion_cache_limit = 8, expression_cache_limit = 4 }"
+    )
+    runtime._set_action_cache_limits(moc3_renderer, 52, 32)
+    assert moc3_renderer[b"motion_cache_limit"] == 52
+    assert moc3_renderer[b"expression_cache_limit"] == 32
+
+    legacy_renderer = lua.eval(
+        b"(function() local model = { motionCacheLimit = 8, expressionCacheLimit = 4 }; "
+        b"return { get_model = function() return model end }, model end)()"
+    )
+    renderer, model = legacy_renderer
+    runtime._set_action_cache_limits(renderer, 52, 32)
+    assert model[b"motionCacheLimit"] == 52
+    assert model[b"expressionCacheLimit"] == 32
+
+
+def test_model_cache_limit_api_clamps_minimums_before_entering_lua():
+    calls = []
+    model = object.__new__(LuaLAppModelBase)
+    model._renderer = object()
+    model._module = SimpleNamespace(
+        _set_action_cache_limits=lambda renderer, motions, expressions: calls.append(
+            (renderer, motions, expressions)
+        )
+    )
+
+    model.SetActionCacheLimits(1, 1)
+
+    assert calls == [(model._renderer, 8, 4)]

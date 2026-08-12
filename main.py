@@ -38,6 +38,7 @@ from onebot_message import onebot_event_mentions_self
 from tray_utils import keep_tray_icon_visible, load_tray_icon
 from gpu_acceleration import configure_qt_gpu_acceleration
 from ipc_bus import (
+    AdaptivePollInterval,
     MAIN_CONTROL_FALLBACK_SLOT_COUNTS,
     MAIN_CONTROL_SLOT_COUNT,
     MAIN_IPC_SLOT_SIZE,
@@ -351,8 +352,19 @@ def main():
                 ipc_ref["outbound"] = outbound
                 ipc_ref["control"] = control
             poll_timer = QTimer(app)
-            poll_timer.setInterval(15)
-            poll_timer.timeout.connect(read_ipc_messages)
+            poll_state = AdaptivePollInterval(
+                active_interval_ms=15,
+                idle_interval_ms=75,
+                empty_polls_before_idle=40,
+            )
+
+            def poll_adaptively():
+                interval = poll_state.observe(read_ipc_messages())
+                if poll_timer.interval() != interval:
+                    poll_timer.setInterval(interval)
+
+            poll_timer.setInterval(poll_state.active_interval_ms)
+            poll_timer.timeout.connect(poll_adaptively)
             poll_timer.start()
             cleanup_timer = QTimer(app)
             cleanup_timer.setInterval(3000)
@@ -950,7 +962,7 @@ def main():
             reliable_queue = ipc_ref.get("reliable_inbound")
             queue = ipc_ref.get("inbound")
         if reliable_queue is None or queue is None:
-            return
+            return False
         raw_lines = reliable_queue.read_available(max_messages=200)
         raw_lines += coalesce_latest_peer_positions(
             queue.read_available(max_messages=200)
@@ -964,6 +976,7 @@ def main():
                 continue
             touch_ipc_peer(envelope.sender_id)
             handle_ipc_line(envelope.line, source_peer_id=envelope.sender_id)
+        return bool(raw_lines)
     def touch_ipc_peer(peer_id: str):
         if not peer_id:
             return

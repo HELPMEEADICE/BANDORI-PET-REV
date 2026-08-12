@@ -166,7 +166,7 @@ def main():
 
     def poll_ipc_messages():
         if not attach_main_ipc_queues(ipc):
-            return
+            return False
         flush_ipc_queue()
         raw_lines = ipc["control"].read_available(max_messages=200)
         raw_lines += ipc["broadcast"].read_available(max_messages=200)
@@ -196,6 +196,7 @@ def main():
                     window.close()
 
                 QTimer.singleShot(0, close_for_shutdown)
+        return bool(raw_lines)
 
     def send_ipc_heartbeat():
         send_ipc_line("REGISTER\tSETTINGS")

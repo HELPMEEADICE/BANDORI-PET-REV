@@ -191,6 +191,11 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._last_user_message_id: int | None = None
         self._stream_text = ""
         self._thinking_text = ""
+        self._stream_output_dirty = False
+        self._stream_output_timer = QTimer(self)
+        self._stream_output_timer.setSingleShot(True)
+        self._stream_output_timer.setInterval(40)
+        self._stream_output_timer.timeout.connect(self._flush_stream_output)
         self._current_response_actions: list[str] = []
         self._action_tag_stream_buffer = ""
         self._tts_worker = None
@@ -685,6 +690,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._conv_id = None
         self._last_user_message_id = None
         self._history.clear()
+        self._stream_output_timer.stop()
+        self._stream_output_dirty = False
         self._external_stream_text = ""
         self._set_output_text("", animated=False)
         self._load_last_conversation()
@@ -813,6 +820,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             self._external_stream_text = ""
             self._stream_text = ""
             self._thinking_text = ""
+            self._stream_output_timer.stop()
+            self._stream_output_dirty = False
             self._current_response_actions = []
             self._action_tag_stream_buffer = ""
             self._set_output_text("")
@@ -850,6 +859,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._last_user_text = text
         self._stream_text = ""
         self._thinking_text = ""
+        self._stream_output_timer.stop()
+        self._stream_output_dirty = False
         self._current_response_actions = []
         self._action_tag_stream_buffer = ""
         self._set_output_text("...")
@@ -1035,6 +1046,14 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         if not clean:
             return
         self._stream_text += clean
+        self._stream_output_dirty = True
+        if not self._stream_output_timer.isActive():
+            self._stream_output_timer.start()
+
+    def _flush_stream_output(self):
+        if not self._stream_output_dirty:
+            return
+        self._stream_output_dirty = False
         self._set_output_text(self._stream_text)
         self._scroll_output_to_bottom()
 
@@ -1047,6 +1066,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         )
         self._action_tag_stream_buffer = ""
         clean = strip_action_tags(full_text)
+        self._stream_output_timer.stop()
+        self._stream_output_dirty = False
         reasoning_clean = strip_action_tags(reasoning_text or self._thinking_text)
         behavior = infer_emotion_behavior(full_text, acts)
         if behavior and (not self._cfg or self._cfg.get("emotion_behavior_enabled", True)):
@@ -1398,6 +1419,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     def _on_response_error(self, error_msg: str):
         if self.sender() is not self._worker:
             return
+        self._stream_output_timer.stop()
+        self._stream_output_dirty = False
         self._set_output_text(format_llm_error_message(error_msg))
         self._current_response_actions = []
         self._action_tag_stream_buffer = ""
@@ -1420,6 +1443,8 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             worker.cancel()
             self._park_cancelled_worker(worker)
         self._worker = None
+        self._stream_output_timer.stop()
+        self._stream_output_dirty = False
         self._thinking_text = ""
         self._current_response_actions = []
         self._action_tag_stream_buffer = ""

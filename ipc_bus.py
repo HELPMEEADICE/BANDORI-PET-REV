@@ -19,6 +19,40 @@ MAIN_RELIABLE_INBOUND_SLOT_COUNT = 32
 MAIN_RELIABLE_INBOUND_FALLBACK_SLOT_COUNTS = (16, 8)
 MAIN_CONTROL_SLOT_COUNT = 8
 MAIN_CONTROL_FALLBACK_SLOT_COUNTS = (4, 2)
+IPC_ACTIVE_POLL_INTERVAL_MS = 30
+IPC_IDLE_POLL_INTERVAL_MS = 150
+IPC_EMPTY_POLLS_BEFORE_IDLE = 20
+
+
+class AdaptivePollInterval:
+    """Back off a polling timer after a quiet period and wake it on activity."""
+
+    __slots__ = (
+        "active_interval_ms",
+        "idle_interval_ms",
+        "empty_polls_before_idle",
+        "empty_polls",
+    )
+
+    def __init__(
+        self,
+        active_interval_ms: int = IPC_ACTIVE_POLL_INTERVAL_MS,
+        idle_interval_ms: int = IPC_IDLE_POLL_INTERVAL_MS,
+        empty_polls_before_idle: int = IPC_EMPTY_POLLS_BEFORE_IDLE,
+    ):
+        self.active_interval_ms = max(1, int(active_interval_ms))
+        self.idle_interval_ms = max(self.active_interval_ms, int(idle_interval_ms))
+        self.empty_polls_before_idle = max(1, int(empty_polls_before_idle))
+        self.empty_polls = 0
+
+    def observe(self, had_activity: bool) -> int:
+        if had_activity:
+            self.empty_polls = 0
+            return self.active_interval_ms
+        self.empty_polls = min(self.empty_polls + 1, self.empty_polls_before_idle)
+        if self.empty_polls >= self.empty_polls_before_idle:
+            return self.idle_interval_ms
+        return self.active_interval_ms
 
 
 def ipc_inbound_queue_key() -> str:
@@ -158,8 +192,15 @@ def start_ipc_heartbeat(app, send_heartbeat_fn, poll_fn):
     from PySide6.QtCore import QTimer
 
     poll_timer = QTimer(app)
-    poll_timer.setInterval(30)
-    poll_timer.timeout.connect(poll_fn)
+    poll_state = AdaptivePollInterval()
+
+    def poll_adaptively():
+        interval = poll_state.observe(bool(poll_fn()))
+        if poll_timer.interval() != interval:
+            poll_timer.setInterval(interval)
+
+    poll_timer.setInterval(poll_state.active_interval_ms)
+    poll_timer.timeout.connect(poll_adaptively)
     poll_timer.start()
     heartbeat_timer = QTimer(app)
     heartbeat_timer.setInterval(3000)

@@ -94,7 +94,7 @@ def test_reset_positions_persists_position_once():
     assert calls == ["reset", "stop", "save"]
 
 
-def test_action_prewarm_keeps_only_default_and_one_idle_motion():
+def test_action_prewarm_prioritizes_defaults_but_covers_all_motion_groups():
     harness = SimpleNamespace(
         _live2d_widget=SimpleNamespace(model=object()),
         _current_motion_names=lambda: ["smile01", "idle01", "idle02", "wave01"],
@@ -102,7 +102,136 @@ def test_action_prewarm_keeps_only_default_and_one_idle_motion():
         _is_idle_motion_name=PetWindow._is_idle_motion_name,
     )
 
-    assert PetWindow._build_live2d_prewarm_motion_queue(harness) == ["smile01", "idle01"]
+    assert PetWindow._build_live2d_prewarm_motion_queue(harness) == [
+        "smile01",
+        "idle01",
+        "idle02",
+        "wave01",
+    ]
+
+
+def test_action_cache_is_sized_for_every_selected_motion_file_and_expression():
+    configured = []
+    setting = SimpleNamespace(
+        getMotionNum=lambda name: {"idle": 5, "wave": 6}[name],
+    )
+    model = SimpleNamespace(
+        modelSetting=setting,
+        SetActionCacheLimits=lambda motions, expressions: configured.append(
+            (motions, expressions)
+        ),
+    )
+    harness = SimpleNamespace(
+        _live2d_widget=SimpleNamespace(model=model),
+        _live2d_prewarm_motion_queue=["idle", "wave"],
+        _live2d_prewarm_expression_queue=["default", "smile", "sad", "angry", "sleep"],
+    )
+
+    PetWindow._configure_live2d_action_cache(harness)
+
+    assert configured == [(11, 5)]
+
+
+def test_action_preload_waits_for_background_archive_prefetch(monkeypatch):
+    callbacks = []
+    monkeypatch.setattr(
+        "pet_window.QTimer",
+        SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
+    )
+
+    class Harness:
+        _live2d_prewarm_token = 7
+        _live2d_prewarm_prefetch_completed_token = 0
+        _pixel_mode = False
+
+        def __init__(self):
+            self.prewarm_calls = []
+
+        def _wait_for_live2d_action_prefetch(self, token):
+            PetWindow._wait_for_live2d_action_prefetch(self, token)
+
+        def _prewarm_next_live2d_action(self, token):
+            self.prewarm_calls.append(token)
+
+    harness = Harness()
+    harness._wait_for_live2d_action_prefetch(7)
+    assert harness.prewarm_calls == []
+    assert len(callbacks) == 1
+
+    harness._live2d_prewarm_prefetch_completed_token = 7
+    callbacks.pop()()
+    assert harness.prewarm_calls == [7]
+
+
+def test_first_motion_request_is_deferred_instead_of_reading_archive_on_ui_thread(monkeypatch):
+    callbacks = []
+    monkeypatch.setattr(
+        "pet_window.QTimer",
+        SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
+    )
+    calls = []
+    setting = SimpleNamespace(
+        getMotionNum=lambda _name: 1,
+        resolveMotion=lambda name, no: (name, no),
+    )
+    model = SimpleNamespace(
+        modelSetting=setting,
+        PreloadMotionGroup=lambda name: calls.append(("preload", name)),
+        StartRandomMotion=lambda name, **_kwargs: calls.append(("start", name)),
+    )
+
+    class Harness:
+        _live2d_prewarm_token = 4
+        _live2d_prewarm_prefetch_completed_token = 0
+        _motion_guard_token = 9
+        _live2d_prewarmed_motions = set()
+        _live2d = SimpleNamespace(MotionPriority=SimpleNamespace(FORCE=3))
+        _live2d_widget = SimpleNamespace(model=model)
+
+        _safe_start_motion = PetWindow._safe_start_motion
+        _start_motion_after_prefetch = PetWindow._start_motion_after_prefetch
+        _start_motion_now = PetWindow._start_motion_now
+
+    harness = Harness()
+    assert harness._safe_start_motion(model, "wave", loop=False)
+    assert calls == []
+    assert len(callbacks) == 1
+
+    harness._live2d_prewarm_prefetch_completed_token = 4
+    callbacks.pop()()
+    assert calls == [("preload", "wave"), ("start", "wave")]
+
+
+def test_first_expression_request_is_deferred_until_archive_prefetch_finishes(monkeypatch):
+    callbacks = []
+    monkeypatch.setattr(
+        "pet_window.QTimer",
+        SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
+    )
+    calls = []
+    model = SimpleNamespace(
+        PreloadExpression=lambda name: calls.append(("preload", name)),
+        SetExpression=lambda name: calls.append(("set", name)),
+    )
+
+    class Harness:
+        _live2d_prewarm_token = 5
+        _live2d_prewarm_prefetch_completed_token = 0
+        _expression_guard_token = 3
+        _live2d_prewarmed_expressions = set()
+        _live2d_widget = SimpleNamespace(model=model)
+
+        _safe_set_expression = PetWindow._safe_set_expression
+        _set_expression_after_prefetch = PetWindow._set_expression_after_prefetch
+
+    harness = Harness()
+    assert harness._safe_set_expression(model, "smile")
+    assert calls == []
+    assert len(callbacks) == 1
+
+    harness._live2d_prewarm_prefetch_completed_token = 5
+    callbacks.pop()()
+    assert calls == [("preload", "smile"), ("set", "smile")]
 
 
 def test_pixel_startup_does_not_load_live2d_model_first():

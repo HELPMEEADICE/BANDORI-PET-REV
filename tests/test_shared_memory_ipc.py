@@ -5,6 +5,21 @@ def _unique_key(prefix: str) -> str:
     return f"test-{prefix}-{uuid.uuid4().hex}"
 
 
+def test_adaptive_polling_backs_off_and_immediately_recovers():
+    from ipc_bus import AdaptivePollInterval
+
+    state = AdaptivePollInterval(
+        active_interval_ms=15,
+        idle_interval_ms=90,
+        empty_polls_before_idle=3,
+    )
+
+    assert [state.observe(False) for _ in range(3)] == [15, 15, 90]
+    assert state.observe(False) == 90
+    assert state.observe(True) == 15
+    assert state.empty_polls == 0
+
+
 def test_shared_memory_queue_delivers_lines_in_order():
     from shared_memory_ipc import SharedMemoryLineQueue
 
