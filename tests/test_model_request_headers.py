@@ -2,7 +2,11 @@ import io
 import json
 from unittest.mock import patch
 
-from llm_api_compat import OPENAI_COMPAT_USER_AGENT, openai_compat_headers
+from llm_api_compat import (
+    OPENAI_COMPAT_USER_AGENT,
+    openai_compat_headers,
+    sanitize_chat_body_for_url,
+)
 from tts_manager import _translate_to_selected_language
 from vision_fallback import analyze_images_with_aux_model
 
@@ -21,6 +25,42 @@ def test_openai_compatible_headers_include_browser_identity_and_auth():
         "Content-Type": "application/json",
         "Authorization": "Bearer secret",
     }
+
+
+def test_deepseek_chat_body_uses_official_thinking_parameters():
+    body = {
+        "model": "DeepSeek-V4-Pro",
+        "enable_thinking": True,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "medium",
+        "messages": [{
+            "role": "assistant",
+            "content": "answer",
+            "reasoning_content": "reasoning",
+        }],
+    }
+
+    sanitize_chat_body_for_url(body, "https://proxy.example/v1/chat/completions")
+
+    assert "enable_thinking" not in body
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "medium"
+    assert body["messages"][0]["reasoning_content"] == "reasoning"
+
+
+def test_non_deepseek_chat_body_drops_reasoning_message_extension():
+    body = {
+        "model": "other-model",
+        "messages": [{
+            "role": "assistant",
+            "content": "answer",
+            "reasoning_content": "reasoning",
+        }],
+    }
+
+    sanitize_chat_body_for_url(body, "https://proxy.example/v1/chat/completions")
+
+    assert "reasoning_content" not in body["messages"][0]
 
 
 def test_aux_vision_request_uses_compatible_user_agent():

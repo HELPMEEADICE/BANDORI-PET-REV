@@ -98,6 +98,19 @@ def models_api_url(api_url: str) -> str:
 
 
 def sanitize_chat_body_for_url(body: dict, api_url: str) -> dict:
+    model_id = str(body.get("model", "") or "").lower()
+    is_deepseek = "deepseek" in model_id
+    if is_deepseek:
+        # DeepSeek's OpenAI-compatible API uses ``thinking`` and
+        # ``reasoning_effort``.  ``enable_thinking`` is a Qwen-style extension
+        # and strict proxies reject the entire request when it is present.
+        body.pop("enable_thinking", None)
+    else:
+        # reasoning_content is a DeepSeek message extension.  Keeping it in
+        # stored history is useful, but unrelated providers may reject it.
+        for message in body.get("messages", []) or []:
+            if isinstance(message, dict):
+                message.pop("reasoning_content", None)
     if not is_google_generative_language_url(api_url):
         return body
     body.pop("enable_thinking", None)

@@ -883,7 +883,12 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                     self._stream_once(messages, use_tools)
                 except urllib.error.HTTPError as e:
                     err_msg = _http_error_message(e)
-                    if use_tools and not tools_executed and e.code in (400, 404, 422):
+                    if (
+                        use_tools
+                        and not tools_executed
+                        and e.code in (400, 404, 422)
+                        and _http_error_indicates_unsupported_tools(err_msg)
+                    ):
                         if _tool_support_is_required(self._web_search, self._tool_config):
                             self.error.emit(
                                 f"HTTP {e.code}: 当前接口不支持 Chat Completions 工具调用，"
@@ -945,11 +950,14 @@ class LLMStreamWorker(_CancelableNetworkWorker):
                     (tool_call.get("function") or {}).get("name") == AUTO_CONTINUE_TOOL_NAME
                     for tool_call in executable_tool_calls
                 )
-                messages.append({
+                assistant_tool_message = {
                     "role": "assistant",
                     "content": segment_text or None,
                     "tool_calls": executable_tool_calls,
-                })
+                }
+                if segment_reasoning:
+                    assistant_tool_message["reasoning_content"] = segment_reasoning
+                messages.append(assistant_tool_message)
                 if has_auto_continue:
                     if segment_text.strip() or segment_reasoning.strip():
                         content, reasoning = split_thinking_text(segment_text, segment_reasoning)
@@ -1762,6 +1770,28 @@ def _http_error_message(error: urllib.error.HTTPError) -> str:
         return err_json.get("error", {}).get("message", str(error))
     except Exception:
         return err_body[:300] or str(error)
+
+
+def _http_error_indicates_unsupported_tools(message: str) -> bool:
+    text = str(message or "").lower()
+    tool_markers = (
+        "tool",
+        "tool_choice",
+        "function call",
+        "function_call",
+        "function calling",
+    )
+    unsupported_markers = (
+        "unsupported",
+        "not support",
+        "does not support",
+        "unknown parameter",
+        "unrecognized",
+        "invalid parameter",
+    )
+    return any(marker in text for marker in tool_markers) and any(
+        marker in text for marker in unsupported_markers
+    )
 
 
 def _normalize_stream_tool_calls(

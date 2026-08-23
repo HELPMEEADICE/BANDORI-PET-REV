@@ -159,6 +159,44 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
         self.assertEqual("function-call-1", bodies[1]["messages"][-1]["tool_call_id"])
         run_tool.assert_called_once()
 
+    def test_deepseek_reasoning_is_returned_with_tool_result_follow_up(self):
+        first_stream = "\n".join([
+            'data: {"choices":[{"delta":{"reasoning_content":"need tool"}}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{'
+            '"function":{"name":"poke_user","arguments":"{}"},'
+            '"id":"call-1","type":"function","index":0}]}}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+            'data: [DONE]',
+            "",
+        ]).encode("utf-8")
+        second_stream = "\n".join([
+            'data: {"choices":[{"delta":{"content":"done"}}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            'data: [DONE]',
+            "",
+        ]).encode("utf-8")
+        worker = LLMStreamWorker(
+            "https://proxy.example/v1/chat/completions",
+            "key",
+            "DeepSeek-V4-Pro",
+            [{"role": "user", "content": "hello"}],
+        )
+        bodies = []
+        streams = iter((first_stream, second_stream))
+
+        def fake_open(request, _timeout):
+            bodies.append(json.loads(request.data.decode("utf-8")))
+            return io.BytesIO(next(streams))
+
+        worker._open_response = fake_open
+        with patch(
+            "llm_manager.run_local_tool_call",
+            return_value={"content": "ok", "extra_messages": []},
+        ):
+            worker.run()
+
+        self.assertEqual("need tool", bodies[1]["messages"][-2]["reasoning_content"])
+
     def test_user_facing_tool_features_require_tool_support(self):
         self.assertTrue(_tool_support_is_required(False, {}))
         self.assertTrue(_tool_support_is_required(True, {}))
@@ -231,6 +269,31 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
         self.assertEqual([True], requests)
         self.assertEqual(1, len(errors))
         self.assertIn("不支持 Chat Completions 工具调用", errors[0])
+
+    def test_non_tool_bad_request_is_not_misreported_as_tool_unsupported(self):
+        worker = LLMStreamWorker(
+            "https://example.com/v1",
+            "key",
+            "DeepSeek-V4-Pro",
+            [{"role": "user", "content": "hello"}],
+            tool_config={"llm_mcp_enabled": True},
+        )
+        errors = []
+
+        def fake_stream_once(_messages, _use_tools):
+            raise urllib.error.HTTPError(
+                "https://example.com/v1/chat/completions",
+                400,
+                "bad request",
+                {},
+                io.BytesIO(b'{"error":{"message":"Unsupported parameter: enable_thinking"}}'),
+            )
+
+        worker._stream_once = fake_stream_once
+        worker.error.connect(errors.append)
+        worker.run()
+
+        self.assertEqual(["HTTP 400: Unsupported parameter: enable_thinking"], errors)
 
     def test_responses_tools_flatten_local_function_schemas(self):
         tools = responses_tools(True, {})

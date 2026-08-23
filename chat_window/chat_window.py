@@ -5607,6 +5607,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
                         m.get("attachments_json"),
                         include_raw_images=m.get("id") == self._raw_image_inline_group_message_id,
                     ),
+                    **(
+                        {"reasoning_content": m.get("reasoning_content", "")}
+                        if m["role"] == "assistant" and m.get("reasoning_content")
+                        else {}
+                    ),
                 }
                 for m in history
             )
@@ -5619,6 +5624,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
                         m["content"],
                         m.get("attachments_json"),
                         include_raw_images=m.get("id") == self._raw_image_inline_message_id,
+                    ),
+                    **(
+                        {"reasoning_content": m.get("reasoning_content", "")}
+                        if m["role"] == "assistant" and m.get("reasoning_content")
+                        else {}
                     ),
                 }
                 for m in history
