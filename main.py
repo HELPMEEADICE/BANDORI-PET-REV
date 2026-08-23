@@ -235,7 +235,10 @@ def main():
 
         menu = QMenu(tray_anchor)
         chat_action = menu.addAction(_tr("MainTray.chat"))
-        chat_action.triggered.connect(launch_chat_process)
+        # QAction.triggered emits ``checked``.  Connecting it directly to
+        # launch_chat_process(show=True) accidentally treated the unchecked
+        # value as show=False and launched an immediately exiting headless chat.
+        chat_action.triggered.connect(lambda _checked=False: launch_chat_process(show=True))
         settings_action = menu.addAction(_tr("MainTray.settings"))
         settings_action.triggered.connect(lambda: launch_settings_process(show_launch=False))
         exit_action = menu.addAction(_tr("MainTray.exit"))

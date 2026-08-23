@@ -25,6 +25,7 @@ os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
 from PySide6.QtCore import QLockFile, QRect, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QToolButton
+from shiboken6 import isValid
 
 from app_theme import apply_app_theme
 from app_info import APP_NAME
@@ -208,6 +209,7 @@ def main():
         )
     )
     companion_server_ref = {"server": None, "port": None}
+    startup_complete = False
 
     def sync_companion_runtime():
         try:
@@ -230,7 +232,7 @@ def main():
             companion_server_ref["server"] = server
             companion_server_ref["port"] = port
             server.start()
-        if not enabled and not window.isVisible():
+        if startup_complete and not enabled and not window.isVisible():
             QTimer.singleShot(0, window.request_immediate_shutdown)
 
     sync_companion_runtime()
@@ -266,11 +268,15 @@ def main():
     plugin_bridge.connect()
 
     def refresh_plugin_chat_actions():
+        if not isValid(window):
+            return
         controls = getattr(window, "_composer_controls", None)
-        layout = controls.layout() if controls is not None else None
+        layout = controls.layout() if controls is not None and isValid(controls) else None
         if layout is None:
             return
         for button in getattr(window, "_plugin_chat_action_buttons", []):
+            if not isValid(button):
+                continue
             layout.removeWidget(button)
             button.deleteLater()
         buttons = []
@@ -365,6 +371,9 @@ def main():
 
     if not args.headless:
         window.show()
+    startup_complete = True
+    if args.headless:
+        sync_companion_runtime()
     saved_x = cfg.get("chat_window_x")
     saved_y = cfg.get("chat_window_y")
     saved_w = cfg.get("chat_window_width")

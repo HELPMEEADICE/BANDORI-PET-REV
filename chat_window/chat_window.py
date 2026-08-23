@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidgetAction,
     QFrame, QFileDialog, QMessageBox,
 )
+from shiboken6 import isValid
 
 from i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
@@ -7330,6 +7331,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._pending_scroll_to_bottom_generation = 0
 
     def _scroll_to_bottom_for_generation(self, generation: int):
+        if not isValid(self):
+            return
         if (
             generation != self._scroll_to_bottom_generation
             or generation != self._pending_scroll_to_bottom_generation
@@ -7345,6 +7348,8 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._scroll_to_bottom()
 
     def _finish_scroll_to_bottom_for_generation(self, generation: int):
+        if not isValid(self):
+            return
         if generation != self._pending_scroll_to_bottom_generation:
             return
         self._scroll_to_bottom_for_generation(generation)
