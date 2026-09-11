@@ -2,7 +2,7 @@ import json
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, Signal, QPoint, QParallelAnimationGroup
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect, Signal, QPoint, QParallelAnimationGroup, QAbstractAnimation
 from PySide6.QtGui import QFont, QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -109,6 +109,7 @@ class MessageBubble(QWidget):
         self._text_opacity_effect = None
         self._text_fade_anim = None
         self._height_anim = None
+        self._applied_layout_signature = None
         self._attachment_previews: list[ChatImagePreview] = []
         self._avatar_bg = _TEAMS_ACCENT
         self._avatar_text = "#ffffff"
@@ -443,8 +444,27 @@ class MessageBubble(QWidget):
         else:
             self._reasoning_label.setFixedHeight(0)
 
+    def _layout_signature(self, available_width: int):
+        # The font height changes when the screen scale changes, which invalidates
+        # previously measured heights even at the same width.
+        return (available_width, self._label.fontMetrics().height())
+
+    def apply_viewport_width(self, viewport_width: int, force: bool = False) -> bool:
+        """Lay the bubble out for ``viewport_width``.
+
+        Returns True when the bubble was actually measured. Bubbles whose layout
+        is still valid for that width and font are skipped, so scrolling or
+        inserting a message does not re-measure the whole conversation.
+        """
+        signature = self._layout_signature(self._available_bubble_width(viewport_width))
+        if not force and signature == self._applied_layout_signature:
+            return False
+        self.update_bubble_width(viewport_width)
+        return True
+
     def update_bubble_width(self, viewport_width: int = 0):
         available_width = self._available_bubble_width(viewport_width)
+        self._applied_layout_signature = self._layout_signature(available_width)
         natural_width = self._natural_bubble_width()
         target_width = min(natural_width, available_width)
         should_wrap = natural_width > available_width or self._has_plain_newline(self._label)
@@ -776,8 +796,14 @@ class MessageBubble(QWidget):
         if self._text_opacity_effect is None:
             self._text_opacity_effect = QGraphicsOpacityEffect(self._label)
             self._label.setGraphicsEffect(self._text_opacity_effect)
-        if self._text_fade_anim:
-            self._text_fade_anim.stop()
+        if (
+            self._text_fade_anim is not None
+            and self._text_fade_anim.state() == QAbstractAnimation.State.Running
+        ):
+            # A fade is already playing for the previous chunk; restarting it on
+            # every flushed chunk keeps the label rendering through an offscreen
+            # pixmap and makes long replies stutter.
+            return
         self._text_opacity_effect.setOpacity(0.55)
         anim = QPropertyAnimation(self._text_opacity_effect, b"opacity", self)
         anim.setDuration(140)
@@ -796,8 +822,14 @@ class MessageBubble(QWidget):
         if target_height <= old_height:
             self.setMaximumHeight(16777215)
             return
-        if self._height_anim:
-            self._height_anim.stop()
+        if (
+            self._height_anim is not None
+            and self._height_anim.state() == QAbstractAnimation.State.Running
+        ):
+            # Grow the animation that is already running instead of building a new
+            # one for every chunk.
+            self._height_anim.setEndValue(target_height)
+            return
         anim = QPropertyAnimation(self, b"maximumHeight", self)
         anim.setDuration(170)
         anim.setStartValue(old_height)
@@ -829,6 +861,15 @@ class MessageBubble(QWidget):
         self._sync_reasoning_collapsed()
         self.update_bubble_width()
 
+    def _clear_stream_effects(self):
+        """Drop the streaming fade so finished bubbles repaint without a pixmap."""
+        if self._text_fade_anim is not None:
+            self._text_fade_anim.stop()
+            self._text_fade_anim = None
+        if self._text_opacity_effect is not None:
+            self._label.setGraphicsEffect(None)
+            self._text_opacity_effect = None
+
     def set_streaming(self, streaming: bool):
         self._streaming = streaming
         if streaming:
@@ -838,6 +879,9 @@ class MessageBubble(QWidget):
         else:
             self._typing_timer.stop()
             self._stream_label.hide()
+            if self._height_anim is not None:
+                self._height_anim.stop()
+            self._clear_stream_effects()
             self.setMaximumHeight(16777215)
             self.update_bubble_width()
 

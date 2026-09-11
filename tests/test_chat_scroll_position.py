@@ -29,7 +29,7 @@ class ChatScrollHarness(QWidget):
         self._current_bubble = object()
         self._history_pagination_ready = False
         self._history_loading = False
-        self._relayout_force_values = []
+        self._relayout_calls = []
 
         layout = QVBoxLayout(self)
         self._scroll = QScrollArea(self)
@@ -46,7 +46,7 @@ class ChatScrollHarness(QWidget):
         scrollbar.sliderPressed.connect(self._pause_stream_output_follow)
 
     def _relayout_message_bubbles(self, force=False):
-        self._relayout_force_values.append(force)
+        self._relayout_calls.append(force)
 
     def _load_older_messages(self):
         return False
@@ -132,18 +132,21 @@ class ChatScrollPositionTest(unittest.TestCase):
 
         harness.close()
 
-    def test_user_scroll_forces_message_bubble_refresh(self):
+    def test_user_scroll_requests_message_bubble_relayout(self):
         harness = ChatScrollHarness()
         harness.show()
         QTest.qWait(50)
 
-        harness._relayout_force_values.clear()
+        harness._relayout_calls.clear()
         scrollbar = harness._scroll.verticalScrollBar()
         self.assertGreater(scrollbar.maximum(), 0)
         scrollbar.setValue(scrollbar.maximum() // 2)
         QTest.qWait(20)
 
-        self.assertIn(True, harness._relayout_force_values)
+        # Scrolling still asks for a relayout, but each bubble now decides whether
+        # it really has to be measured again (see
+        # tests/test_chat_message_relayout_cost.py).
+        self.assertTrue(harness._relayout_calls)
 
         harness.close()
 
