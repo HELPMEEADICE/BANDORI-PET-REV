@@ -550,8 +550,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._group_relayout_timer.setSingleShot(True)
         self._group_relayout_timer.setInterval(45)
         self._group_relayout_timer.timeout.connect(self._relayout_message_bubbles)
-        self._last_message_layout_width = -1
-        self._last_message_layout_count = -1
         self._scroll_to_bottom_generation = 0
         self._pending_scroll_to_bottom_generation = 0
         self._follow_stream_output = True
@@ -2559,16 +2557,12 @@ class ChatWindow(ChatWindowMixin, QWidget):
             return
         viewport_width = self._scroll.viewport().width()
         bubbles = self._message_bubbles()
-        if (
-            not force
-            and viewport_width == self._last_message_layout_width
-            and len(bubbles) == self._last_message_layout_count
-        ):
-            return
-        self._last_message_layout_width = viewport_width
-        self._last_message_layout_count = len(bubbles)
+        # Every bubble remembers the width it was measured for, so only the ones
+        # that actually need it are measured again. Re-measuring all of them here
+        # re-lays out the whole text of the conversation, which is what makes long
+        # chats stutter while scrolling or while loading more history.
         for bubble in bubbles:
-            bubble.update_bubble_width(viewport_width)
+            bubble.apply_viewport_width(viewport_width, force=force)
 
     def _clear_message_widgets(self):
         active_editor = getattr(self, "_active_edit_bubble", None)
@@ -2586,8 +2580,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._history_has_more = False
         self._history_loading = False
         self._history_pagination_ready = False
-        self._last_message_layout_width = -1
-        self._last_message_layout_count = -1
         if self._msg_layout.count() > 0:
             self._msg_layout.takeAt(self._msg_layout.count() - 1)
         for i in range(self._msg_layout.count() - 1, -1, -1):
@@ -3741,8 +3733,6 @@ class ChatWindow(ChatWindowMixin, QWidget):
         for index, message in enumerate(messages):
             self._msg_layout.insertWidget(index, self._message_bubble_from_record(message))
         self._history_oldest_message_id = int(messages[0]["id"])
-        self._last_message_layout_width = -1
-        self._last_message_layout_count = -1
         self._history_prepend_generation += 1
         generation = self._history_prepend_generation
         for delay in (0, 30, 80, 160, 300, 500):
@@ -3763,12 +3753,15 @@ class ChatWindow(ChatWindowMixin, QWidget):
         generation: int,
         old_value: int,
         old_maximum: int,
+        force: bool = False,
     ):
         if generation != self._history_prepend_generation:
             return
         if self._msg_area.layout():
             self._msg_area.layout().activate()
-        self._relayout_message_bubbles(force=True)
+        # Only the freshly prepended bubbles have to be measured; the ones that
+        # were already on screen keep their layout.
+        self._relayout_message_bubbles(force=force)
         scrollbar = self._scroll.verticalScrollBar()
         scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
 
@@ -3780,7 +3773,9 @@ class ChatWindow(ChatWindowMixin, QWidget):
     ):
         if generation != self._history_prepend_generation:
             return
-        self._restore_scroll_after_history_prepend(generation, old_value, old_maximum)
+        # The earlier restore passes only measure the new bubbles; this final one
+        # re-measures everything once the layout has settled.
+        self._restore_scroll_after_history_prepend(generation, old_value, old_maximum, force=True)
         self._history_loading = False
 
     def _message_author(self, content: str) -> str:
@@ -7331,7 +7326,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
     def _on_message_scroll_value_changed(self, value: int):
         scrollbar = self._scroll.verticalScrollBar()
         self._follow_stream_output = value >= scrollbar.maximum()
-        self._relayout_message_bubbles(force=True)
+        # Scrolling does not change any bubble by itself: the viewport width only
+        # changes when a scrollbar appears or the window is resized, and that is
+        # detected per bubble. Forcing a full re-measure on every scroll step made
+        # text-heavy conversations stutter badly.
+        self._relayout_message_bubbles()
         if not self._history_pagination_ready or self._history_loading:
             return
         if value <= scrollbar.minimum() + 48:
