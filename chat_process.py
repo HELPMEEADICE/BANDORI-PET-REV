@@ -56,6 +56,7 @@ def _parse_args():
     parser.add_argument("--pet-w", type=int, required=True)
     parser.add_argument("--pet-h", type=int, required=True)
     parser.add_argument("--group-characters", default="")
+    parser.add_argument("--start-private-chat", action="store_true")
     parser.add_argument("--headless", action="store_true")
     return parser.parse_args()
 
@@ -108,10 +109,14 @@ def _apply_settings_line(window, line: str, on_applied=None) -> bool:
     return True
 
 
-def focus_chat_window(window):
+def focus_chat_window(window, character: str = ""):
     prepare_for_reopen = getattr(window, "prepare_for_reopen", None)
     if callable(prepare_for_reopen):
         prepare_for_reopen()
+    if character:
+        open_private_chat = getattr(window, "open_private_chat", None)
+        if callable(open_private_chat):
+            open_private_chat(character)
     if window.isMinimized():
         window.showNormal()
     else:
@@ -155,7 +160,8 @@ def main():
 
     chat_lock = QLockFile(str(chat_lock_path()))
     if not chat_lock.tryLock(100):
-        _send_ipc_line("FOCUS_CHAT")
+        focus_request = f"FOCUS_CHAT\t{args.character}" if args.start_private_chat else "FOCUS_CHAT"
+        _send_ipc_line(focus_request)
         return 0
 
     normal_window_mode = bool(cfg.get("chat_window_normal_window", False))
@@ -189,7 +195,11 @@ def main():
             ]
         characters = _normalize_characters(model_characters, valid_characters, args.character)
 
-    window = ChatWindow(args.character, mgr, None, cfg, group_characters=characters if len(characters) > 1 else None)
+    window = ChatWindow(
+        args.character, mgr, None, cfg,
+        group_characters=characters if len(characters) > 1 else None,
+        start_private_chat=args.start_private_chat,
+    )
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     window.action_triggered.connect(window.emit_action_for_ipc)
@@ -320,8 +330,8 @@ def main():
     ipc_peer_id = make_peer_id("chat")
     ipc = {"inbound": None, "reliable_inbound": None, "broadcast": None, "control": None}
 
-    def focus_window():
-        focus_chat_window(window)
+    def focus_window(character: str = ""):
+        focus_chat_window(window, character)
 
     def send_ipc_line(line: str):
         queue_key = "reliable_inbound" if is_reliable_ipc_line(line) else "inbound"
@@ -348,8 +358,9 @@ def main():
             if line == "SHUTDOWN":
                 window.request_immediate_shutdown()
                 break
-            if line == "FOCUS_CHAT":
-                focus_window()
+            if line == "FOCUS_CHAT" or line.startswith("FOCUS_CHAT\t"):
+                character = line.split("\t", 1)[1].strip() if "\t" in line else ""
+                focus_window(character)
             if line.startswith("SETTINGS\t"):
                 _apply_settings_line(window, line, sync_companion_runtime)
             if line.startswith("POKE_USER\t"):

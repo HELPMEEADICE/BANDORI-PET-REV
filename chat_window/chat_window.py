@@ -408,11 +408,11 @@ class ChatWindow(ChatWindowMixin, QWidget):
     closed = Signal()
 
     def __init__(self, character: str, model_manager, live2d_module,
-                 config_manager, parent_pet=None, group_characters=None):
+                 config_manager, parent_pet=None, group_characters=None, start_private_chat=False):
         super().__init__()
         self._character = character
         self._available_group_characters = self._normalize_group_characters(group_characters or [])
-        self._group_characters = list(self._available_group_characters)
+        self._group_characters = [] if start_private_chat else list(self._available_group_characters)
         self._is_group_chat = len(self._group_characters) > 1
         self._conversation_key = self._conversation_key_for(self._group_characters if self._is_group_chat else [character])
         self._model_manager = model_manager
@@ -546,6 +546,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._group_sidebar_ratio_timer = QTimer(self)
         self._group_sidebar_ratio_timer.setSingleShot(True)
         self._group_sidebar_ratio_timer.timeout.connect(self._apply_group_sidebar_ratio_to_splitter)
+        self._pending_external_private_character = ""
+        self._pending_external_private_timer = QTimer(self)
+        self._pending_external_private_timer.setSingleShot(True)
+        self._pending_external_private_timer.timeout.connect(self._apply_pending_external_private_chat)
         self._group_relayout_timer = QTimer(self)
         self._group_relayout_timer.setSingleShot(True)
         self._group_relayout_timer.setInterval(45)
@@ -1653,7 +1657,10 @@ class ChatWindow(ChatWindowMixin, QWidget):
 
     def _private_chat_entries(self) -> list[dict]:
         entries = []
-        for index, character in enumerate(self._private_chat_characters_with_history()):
+        characters = self._private_chat_characters_with_history()
+        if not self._is_group_chat and self._character not in characters:
+            characters.insert(0, self._character)
+        for index, character in enumerate(characters):
             preview, last_at = self._private_chat_preview(character)
             chat_key = self._conversation_key_for([character])
             entries.append({
@@ -2870,6 +2877,26 @@ class ChatWindow(ChatWindowMixin, QWidget):
             QTimer.singleShot(0, lambda value=value: self._switch_group_conversation(value))
         elif name == "delete_group":
             QTimer.singleShot(0, lambda value=value: self._delete_group_conversation(value))
+
+    def open_private_chat(self, character: str) -> bool:
+        character = str(character or "").strip()
+        if character not in self._model_manager.characters:
+            return False
+        self._pending_external_private_character = character
+        self._apply_pending_external_private_chat()
+        return True
+
+    def _apply_pending_external_private_chat(self):
+        character = self._pending_external_private_character
+        if not character:
+            return
+        if self._chat_context_change_blocked():
+            if not self._pending_external_private_timer.isActive():
+                self._pending_external_private_timer.start(100)
+            return
+        self._pending_external_private_timer.stop()
+        self._pending_external_private_character = ""
+        self._switch_chat_members([character])
 
     def _switch_group_chat(self, characters: list[str]):
         if self._chat_context_change_blocked():

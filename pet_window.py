@@ -3978,7 +3978,7 @@ class PetWindow(QWidget):
 
     def _open_chat(self):
         if self._chat_process is not None and self._chat_process.state() != QProcess.ProcessState.NotRunning:
-            self._send_ipc("FOCUS_CHAT")
+            self._send_ipc(f"FOCUS_CHAT\t{self._current_char}")
             return
 
         base_dir = str(app_base_dir())
@@ -3990,6 +3990,7 @@ class PetWindow(QWidget):
             "--pet-w", str(self.width()),
             "--pet-h", str(self.height()),
             "--group-characters", json.dumps(self._chat_group_characters(), ensure_ascii=False),
+            "--start-private-chat",
         ])
         process.setProgram(program)
         process.setArguments(arguments)

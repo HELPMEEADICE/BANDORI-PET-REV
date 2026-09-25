@@ -1132,7 +1132,7 @@ def main():
             descriptions.update(normalized)
             cfg.set(OUTFIT_DESCRIPTIONS_KEY, descriptions)
             cfg.save()
-        elif line == "FOCUS_CHAT":
+        elif line == "FOCUS_CHAT" or line.startswith("FOCUS_CHAT\t"):
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
         elif line == "FOCUS_SETTINGS":
             broadcast_ipc_line(line, exclude_peer_id=source_peer_id)
