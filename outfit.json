@@ -379,6 +379,171 @@
         "event_297_story_01": "event_297_story_01"
       }
     },
+    "arale": {
+      "display": "仲町阿拉蕾",
+      "costumes": {
+        "casual_spring_01_hairdown": "春季常服（散发）",
+        "casual_spring_01_hairdown_nose_glasses": "春季常服（散发、眼镜）",
+        "casual_spring_01_twintails": "春季常服（双马尾）",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "detective_01": "侦探服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_winter_jhs": "初中冬季校服",
+        "soundonly_virtual_01_still": "虚拟形象（静态）",
+        "virtual_01": "虚拟形象"
+      }
+    },
+    "nonoka": {
+      "display": "宫永野乃花",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_nose_glasses": "春季常服（眼镜）",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "detective_01": "侦探服",
+        "live_01": "演出服",
+        "school_winter_jhs": "初中冬季校服",
+        "virtual_01": "虚拟形象"
+      }
+    },
+    "ritsu": {
+      "display": "峰月律",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_nose_glasses": "春季常服（眼镜）",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "live_01": "演出服",
+        "school_winter_hs": "高中冬季校服",
+        "school_winter_jhs": "初中冬季校服",
+        "soundonly_virtual_casual_spring_01_still": "春季虚拟形象（静态）",
+        "virtual_01": "虚拟形象"
+      }
+    },
+    "miyako": {
+      "display": "藤都子",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_marukun": "春季常服（丸君）",
+        "casual_spring_01_nose_glasses": "春季常服（眼镜）",
+        "live_01": "演出服",
+        "soundonly_virtual_01_still": "虚拟形象（静态）",
+        "virtual_01": "虚拟形象"
+      }
+    },
+    "yuno": {
+      "display": "千石由乃",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "school_summer_jhs": "初中夏季校服",
+        "virtual_01": "虚拟形象"
+      }
+    },
+    "hotaru": {
+      "display": "汐见萤",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "live_01": "演出服"
+      }
+    },
+    "natsume": {
+      "display": "伊泽枣",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "school_summer_jhs_3rd": "初三夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_hs_2nd": "高二冬季校服",
+        "school_winter_jhs_3rd": "初三冬季校服"
+      }
+    },
+    "nagi": {
+      "display": "琴平凪",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "school_summer_jhs_2nd": "初二夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_jhs_2nd": "初二冬季校服",
+        "school_winter_jhs_3rd": "初三冬季校服"
+      }
+    },
+    "mahoro": {
+      "display": "滨崎茉幌",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_summer_jhs_3rd": "初三夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_hs_2nd": "高二冬季校服",
+        "school_winter_jhs_3rd": "初三冬季校服"
+      }
+    },
+    "houka": {
+      "display": "和泉朋花",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "school_summer_jhs_2nd": "初二夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_jhs_2nd": "初二冬季校服",
+        "school_winter_jhs_3rd": "初三冬季校服"
+      }
+    },
+    "raika": {
+      "display": "须贺蕾叶",
+      "costumes": {
+        "arbeit_livehouse_01": "Live House打工服",
+        "casual_spring_01": "春季常服",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_winter_hs_2nd": "高二冬季校服"
+      }
+    },
+    "miku": {
+      "display": "马桥心玖",
+      "costumes": {
+        "arbeit_livehouse_01": "Live House打工服",
+        "casual_spring_01": "春季常服",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "idol": "偶像服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_winter_hs": "高中冬季校服"
+      }
+    },
+    "yomogi": {
+      "display": "矢仓蓬咲",
+      "costumes": {
+        "arbeit_livehouse_01": "Live House打工服",
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服"
+      }
+    },
+    "chieri": {
+      "display": "梅里千樱梨",
+      "costumes": {
+        "arbeit_livehouse_01": "Live House打工服",
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_winter_hs_1st": "高一冬季校服"
+      }
+    },
+    "shizuku": {
+      "display": "四宫宁月",
+      "costumes": {
+        "arbeit_livehouse_01": "Live House打工服",
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "roomwear_01": "居家服",
+        "school_winter_jhs": "初中冬季校服"
+      }
+    },
     "mana": {
       "display": "纯田真奈",
       "costumes": {

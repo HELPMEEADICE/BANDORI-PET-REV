@@ -115,13 +115,27 @@ CHARACTER_TRILINGUAL_NAMES = {
     "三角初华":    ("三角初華 (Misumi Uika)",       "Uika Misumi"),
     "八幡海铃":    ("八幡海鈴 (Yahata Umiri)",       "Umiri Yahata"),
     "祐天寺若麦":   ("祐天寺にゃむ (Yūtenji Nyamu)",  "Nyamu Yūtenji"),
+    "仲町阿拉蕾": ("仲町 あられ (Arale Nakamachi)", "Arale Nakamachi"),
+    "宫永野乃花": ("宮永 ののか (Nonoka Miyanaga)", "Nonoka Miyanaga"),
+    "峰月律": ("峰月 律 (Ritsu Minetsuki)", "Ritsu Minetsuki"),
+    "藤都子": ("藤 都子 (Miyako Fuji)", "Miyako Fuji"),
+    "千石由乃": ("千石 ユノ (Yuno Sengoku)", "Yuno Sengoku"),
+    "汐见萤": ("汐見 蛍 (Hotaru Shiomi)", "Hotaru Shiomi"),
+    "伊泽枣": ("伊沢 なつめ (Natsume Izawa)", "Natsume Izawa"),
+    "琴平凪": ("琴平 凪 (Nagi Kotohira)", "Nagi Kotohira"),
+    "滨崎茉幌": ("浜崎 まほろ (Mahoro Hamasaki)", "Mahoro Hamasaki"),
+    "和泉朋花": ("和泉 朋花 (Hōka Izumi)", "Hōka Izumi"),
+    "须贺蕾叶": ("須賀 蕾叶 (Raika Suga)", "Raika Suga"),
+    "马桥心玖": ("馬橋 心玖 (Miku Mahashi)", "Miku Mahashi"),
+    "矢仓蓬咲": ("矢倉 蓬咲 (Yomogi Yakura)", "Yomogi Yakura"),
+    "梅里千樱梨": ("梅里 ちえり (Chieri Umezato)", "Chieri Umezato"),
+    "四宫宁月": ("四宮 寧月 (Shizuku Shinomiya)", "Shizuku Shinomiya"),
     "纯田真奈":    ("純田まな (Sumida Mana)",       "Mana Sumida"),
     "户山明日香":   ("戸山明日香 (Toyama Asuka)",    "Asuka Toyama"),
-    "汐見蛍":     ("汐見螢 (Shiomi Hotaru)",       "Hotaru Shiomi"),
 }
 
 
-_ONE_CHAR_SURNAMES = frozenset({"凑", "要"})
+_ONE_CHAR_SURNAMES = frozenset({"凑", "要", "藤"})
 
 
 def _find_referenced_characters(text: str) -> dict:

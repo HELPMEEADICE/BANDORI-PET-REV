@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-06-01",
+  "last_updated": "2026-09-25",
   "birthdays": {
     "poppin_party": {
       "rimi": {"month": 3, "day": 23, "name_zh": "牛込里美"},
@@ -64,6 +64,27 @@
       "umiri": {"month": 4, "day": 7, "name_zh": "八幡海铃"},
       "uika": {"month": 6, "day": 26, "name_zh": "三角初华"},
       "nyamu": {"month": 6, "day": 1, "name_zh": "祐天寺若麦"}
+    },
+    "yumemita": {
+      "arale": {"month": 8, "day": 16, "name_zh": "仲町阿拉蕾"},
+      "nonoka": {"month": 4, "day": 17, "name_zh": "宫永野乃花"},
+      "ritsu": {"month": 2, "day": 7, "name_zh": "峰月律"},
+      "miyako": {"month": 9, "day": 19, "name_zh": "藤都子"},
+      "yuno": {"month": 11, "day": 4, "name_zh": "千石由乃"}
+    },
+    "millsage": {
+      "hotaru": {"month": 3, "day": 12, "name_zh": "汐见萤"},
+      "natsume": {"month": 3, "day": 30, "name_zh": "伊泽枣"},
+      "nagi": {"month": 12, "day": 10, "name_zh": "琴平凪"},
+      "mahoro": {"month": 7, "day": 16, "name_zh": "滨崎茉幌"},
+      "houka": {"month": 10, "day": 24, "name_zh": "和泉朋花"}
+    },
+    "ikka_dumb_rock": {
+      "raika": {"month": 7, "day": 28, "name_zh": "须贺蕾叶"},
+      "miku": {"month": 10, "day": 4, "name_zh": "马桥心玖"},
+      "yomogi": {"month": 5, "day": 6, "name_zh": "矢仓蓬咲"},
+      "chieri": {"month": 4, "day": 2, "name_zh": "梅里千樱梨"},
+      "shizuku": {"month": 3, "day": 5, "name_zh": "四宫宁月"}
     }
   }
 }

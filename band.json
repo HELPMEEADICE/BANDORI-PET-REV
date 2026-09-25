@@ -55,6 +55,24 @@
       "characters": ["sakiko", "mutsumi", "uika", "umiri", "nyamu"]
     },
     {
+      "id": "yumemita",
+      "display": "梦限大MewType",
+      "logo": "band_logo/yumemita.png",
+      "characters": ["arale", "nonoka", "ritsu", "miyako", "yuno"]
+    },
+    {
+      "id": "millsage",
+      "display": "millsage",
+      "logo": "band_logo/millsage.png",
+      "characters": ["hotaru", "natsume", "nagi", "mahoro", "houka"]
+    },
+    {
+      "id": "ikka_dumb_rock",
+      "display": "一家Dumb Rock!",
+      "logo": "band_logo/ikkadumbrock.png",
+      "characters": ["raika", "miku", "yomogi", "chieri", "shizuku"]
+    },
+    {
       "id": "others",
       "display": "其他角色",
       "characters": ["mana", "asuka"]
