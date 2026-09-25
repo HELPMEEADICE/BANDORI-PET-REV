@@ -283,7 +283,7 @@ python setup.py build_msi
 | 运行方式 | 更新方式 |
 |----------|----------|
 | `git clone` 后运行源码 | `git fetch` 检查上游，点击更新后执行 `git pull --ff-only`；仅在依赖清单变化时安装 `requirements.txt` |
-| 便携版 exe | 从 GitHub Release 下载最新 `.zip`，关闭程序后覆盖当前目录并重启 |
+| 便携版 exe | 从 GitHub Release 下载最新 `.zip` 或 `.7z`，关闭程序后覆盖当前目录并重启 |
 | Inno Setup EXE 安装包 | 从 GitHub Release 下载最新 `.exe`，校验安装结果后重启 |
 | MSI 安装包 | 从 GitHub Release 下载最新 `.msi`，启动安装器完成升级 |
 | macOS App | 按 CPU 架构下载 `.dmg` 或 `.zip`，替换当前 `.app`、重新签名并重启 |
@@ -292,6 +292,7 @@ python setup.py build_msi
 
 ```text
 BandoriPet-3.0.1-WIN-AMD64.zip
+BandoriPet-3.0.1-WIN-AMD64.7z
 BandoriPet-3.0.1-WIN-AMD64.msi
 BandoriPet-3.0.1-winamd64-setup.exe
 BandoriPet-3.0.1-macos-arm64.dmg

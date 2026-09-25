@@ -15,7 +15,7 @@ import urllib.request
 import uuid
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from app_info import APP_NAME, APP_REPOSITORY, APP_VERSION, MAIN_EXECUTABLE
 from process_utils import app_base_dir, hidden_subprocess_kwargs, log_swallowed
@@ -391,25 +391,46 @@ def _apply_git_update(cwd: Path) -> UpdateResult:
 def _check_release_update(channel: str) -> UpdateInfo:
     release = _fetch_latest_release()
     latest_version = str(release.get("tag_name") or release.get("name") or "").strip()
-    release_url = str(release.get("html_url") or "")
     update_available = _is_newer_version(latest_version, APP_VERSION)
+    asset = _select_release_asset(release.get("assets", []), channel) if update_available else None
+    if update_available and asset is None:
+        try:
+            recent_releases = _fetch_recent_releases()
+        except Exception as exc:
+            log_swallowed("app_update.list_releases", exc)
+            recent_releases = []
+        compatible = [
+            candidate
+            for candidate in recent_releases
+            if not candidate.get("draft")
+            and not candidate.get("prerelease")
+            and _version_tuple(str(candidate.get("tag_name") or "")) is not None
+            and _select_release_asset(candidate.get("assets", []), channel) is not None
+        ]
+        if compatible:
+            release = max(
+                compatible,
+                key=lambda candidate: _version_tuple(str(candidate.get("tag_name") or "")) or (),
+            )
+            latest_version = str(release.get("tag_name") or release.get("name") or "").strip()
+            update_available = _is_newer_version(latest_version, APP_VERSION)
+            asset = _select_release_asset(release.get("assets", []), channel) if update_available else None
 
     info = UpdateInfo(
         channel=channel,
         latest_version=latest_version,
         update_available=update_available,
-        release_url=release_url,
+        release_url=str(release.get("html_url") or ""),
         summary=str(release.get("name") or latest_version or "Latest release"),
         detail=str(release.get("body") or "").strip(),
     )
     if not update_available:
         return info
 
-    asset = _select_release_asset(release.get("assets", []), channel)
     if asset is None:
         info.detail = (
             "A newer release exists, but no matching installer asset was found. "
-            "Publish a Windows .zip/.exe/.msi or macOS .dmg/.zip asset "
+            "Publish a Windows .zip/.7z/.exe/.msi or macOS .dmg/.zip asset "
             "for the current platform and architecture."
         )
         return info
@@ -453,6 +474,23 @@ def _fetch_latest_release() -> dict:
         raise
 
 
+def _fetch_recent_releases() -> list[dict]:
+    url = f"https://api.github.com/repos/{APP_REPOSITORY}/releases?per_page=30"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+        },
+        method="GET",
+    )
+    with _open_url(req, timeout=20, purpose="checking platform update packages") as resp:
+        releases = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(releases, list):
+        raise RuntimeError("GitHub returned an unexpected release list.")
+    return releases
+
+
 def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
     candidates: list[tuple[int, dict]] = []
     for asset in assets:
@@ -475,7 +513,7 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
             if not lower.endswith(".zip"):
                 continue
         elif channel == "portable":
-            if not lower.endswith(".zip"):
+            if not lower.endswith((".zip", ".7z")):
                 continue
         else:
             continue
@@ -489,7 +527,7 @@ def _select_release_asset(assets: list[dict], channel: str) -> dict | None:
             score += 4
         if _asset_arch(lower) == _current_arch():
             score += 3
-        if lower.endswith(".zip") and channel == "portable":
+        if lower.endswith((".zip", ".7z")) and channel == "portable":
             score += 6
         if lower.endswith(".msi"):
             score += 5 if channel == "msi" else 1
@@ -516,7 +554,7 @@ def _asset_action(asset_name: str, channel: str) -> str:
         return "install_msi"
     if lower.endswith(".exe") and channel == "inno":
         return "install_inno"
-    if lower.endswith(".zip") and channel == "portable":
+    if lower.endswith((".zip", ".7z")) and channel == "portable":
         return "portable_zip"
     if lower.endswith((".dmg", ".zip")) and channel == "macos_app":
         return "install_macos"
@@ -791,11 +829,37 @@ def _ensure_update_space(path: Path, required_bytes: int, purpose: str) -> None:
         )
 
 
-def _portable_zip_layout(archive_path: Path) -> tuple[int, set[str]]:
-    with zipfile.ZipFile(archive_path, "r") as archive:
-        files = [item for item in archive.infolist() if not item.is_dir()]
-    unpacked_size = sum(max(0, int(item.file_size)) for item in files)
-    parts = [Path(item.filename.replace("\\", "/")).parts for item in files]
+def _portable_archive_layout(archive_path: Path) -> tuple[int, set[str]]:
+    if archive_path.suffix.lower() == ".7z":
+        import py7zr
+
+        with py7zr.SevenZipFile(archive_path, "r") as archive:
+            files = [
+                (item.filename, item.uncompressed, getattr(item, "is_symlink", False))
+                for item in archive.list()
+                if not item.is_directory
+            ]
+    else:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            files = [
+                (item.filename, item.file_size, False)
+                for item in archive.infolist()
+                if not item.is_dir()
+            ]
+    parts = []
+    for filename, _, is_symlink in files:
+        normalized = filename.replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if (
+            is_symlink
+            or not normalized
+            or normalized.startswith("/")
+            or re.match(r"^[A-Za-z]:", normalized)
+            or ".." in path.parts
+        ):
+            raise RuntimeError(f"Unsafe path in portable update archive: {filename!r}")
+        parts.append(path.parts)
+    unpacked_size = sum(max(0, int(size or 0)) for _, size, _ in files)
     first_parts = {item[0] for item in parts if item}
     wrapper = next(iter(first_parts)) if len(first_parts) == 1 else ""
     names = {
@@ -825,7 +889,7 @@ def _installed_managed_names(target_dir: Path) -> set[str]:
 
 
 def _check_portable_update_space(archive_path: Path, target_dir: Path) -> None:
-    unpacked_size, names = _portable_zip_layout(archive_path)
+    unpacked_size, names = _portable_archive_layout(archive_path)
     names.update(_installed_managed_names(target_dir))
     backup_size = sum(_path_size(target_dir / name) for name in names)
     temp_required = backup_size + (2 * unpacked_size) + _UPDATE_DISK_MARGIN_BYTES
@@ -836,6 +900,19 @@ def _check_portable_update_space(archive_path: Path, target_dir: Path) -> None:
         existing_size = sum(_path_size(target_dir / name) for name in names)
         target_required = max(0, unpacked_size - existing_size) + _UPDATE_DISK_MARGIN_BYTES
         _ensure_update_space(target_dir, target_required, "installing the portable update")
+
+
+def _extract_portable_7z(archive_path: Path) -> Path:
+    import py7zr
+
+    stage = Path(tempfile.mkdtemp(prefix="BandoriPetUpdate-"))
+    try:
+        with py7zr.SevenZipFile(archive_path, "r") as archive:
+            archive.extractall(path=stage)
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return stage
 
 
 def _check_macos_package_space(package_path: Path) -> None:
@@ -882,10 +959,23 @@ def _launch_powershell_script(script_path: Path) -> None:
 def _launch_portable_zip_updater(archive_path: Path) -> None:
     target_dir = app_base_dir()
     _check_portable_update_space(archive_path, target_dir)
+    prepared_stage = (
+        _extract_portable_7z(archive_path)
+        if archive_path.suffix.lower() == ".7z"
+        else None
+    )
     app_exe = target_dir / MAIN_EXECUTABLE
     process_names = ", ".join(_ps_quote(name) for name in _PROCESS_NAMES)
     protected_files = ", ".join(_ps_quote(name) for name in _PORTABLE_UPDATE_PROTECTED_FILES)
     log_path = archive_path.with_suffix(".update.log")
+    stage_expression = (
+        _ps_quote(prepared_stage)
+        if prepared_stage
+        else "Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetUpdate-' + [guid]::NewGuid().ToString())"
+    )
+    extract_command = (
+        "" if prepared_stage else "Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force"
+    )
     script = f"""
 $ErrorActionPreference = 'Stop'
 $zip = {_ps_quote(archive_path)}
@@ -895,7 +985,7 @@ $log = {_ps_quote(log_path)}
 $processNames = @({process_names})
 $protectedFiles = @({protected_files})
 $manifestName = {_ps_quote(_MANAGED_FILES_MANIFEST)}
-$stage = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetUpdate-' + [guid]::NewGuid().ToString())
+$stage = {stage_expression}
 $backup = Join-Path ([IO.Path]::GetTempPath()) ('BandoriPetBackup-' + [guid]::NewGuid().ToString())
 $replacementStarted = $false
 $processesStopped = $false
@@ -903,11 +993,14 @@ $updateNames = @()
 try {{
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     New-Item -ItemType Directory -Path $backup -Force | Out-Null
-    Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+    {extract_command}
     $source = $stage
     $children = @(Get-ChildItem -LiteralPath $stage -Force)
     if ($children.Count -eq 1 -and $children[0].PSIsContainer) {{
         $source = $children[0].FullName
+    }}
+    if (-not (Test-Path -LiteralPath (Join-Path $source {_ps_quote(MAIN_EXECUTABLE)}) -PathType Leaf)) {{
+        throw 'BandoriPet executable was not found in the portable update archive.'
     }}
     $updateItems = @(Get-ChildItem -LiteralPath $source -Force |
         Where-Object {{ -not ($protectedFiles -contains $_.Name) }})
@@ -1004,7 +1097,12 @@ try {{
     }}
 }}
 """
-    _launch_powershell_script(_write_update_script("apply-portable", script))
+    try:
+        _launch_powershell_script(_write_update_script("apply-portable", script))
+    except Exception:
+        if prepared_stage:
+            shutil.rmtree(prepared_stage, ignore_errors=True)
+        raise
 
 
 def _launch_linux_zip_updater(archive_path: Path) -> None:
