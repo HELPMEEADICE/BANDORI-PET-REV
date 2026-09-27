@@ -168,6 +168,21 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path, extra_module_pa
     )
 
 
+def _append_lua_package_path_root(lua: LuaRuntime, root: Path):
+    root_text = root.as_posix()
+    # LuaJIT's default Lua-file searcher uses the Windows narrow-character CRT
+    # APIs. Keep non-ASCII absolute paths out of package.path there; bundled
+    # modules are already resolved by _install_lazy_lua_module_loader, which
+    # reads them through Python's Unicode-safe filesystem APIs.
+    if sys.platform == "win32" and not root_text.isascii():
+        return
+    lua.execute(
+        b"local root = ...; "
+        b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
+        root_text.encode("utf-8"),
+    )
+
+
 def _install_gl_proc_address_loader(lua: LuaRuntime):
     def qt_gl_get_proc_address(name):
         try:
@@ -480,19 +495,9 @@ class LuaLive2DRuntimeBase:
         lua.execute(b'assert(require("ffi"), "lupa must be built with LuaJIT FFI")')
         _install_lazy_lua_module_loader(lua, LIVE2D_LUA_DIR, extra_module_patch=self._get_extra_module_patch())
         _install_gl_proc_address_loader(lua)
-        base_dir = BASE_DIR.as_posix().encode("utf-8")
-        lua.execute(
-            b"local root = ...; "
-            b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
-            base_dir,
-        )
+        _append_lua_package_path_root(lua, BASE_DIR)
         self._configure_runtime(lua)
-        lua_dir = LIVE2D_LUA_DIR.as_posix().encode("utf-8")
-        lua.execute(
-            b"local root = ...; "
-            b"package.path = package.path .. ';' .. root .. '/?.ljbc;' .. root .. '/?/init.ljbc;' .. root .. '/?.lua;' .. root .. '/?/init.lua'",
-            lua_dir,
-        )
+        _append_lua_package_path_root(lua, LIVE2D_LUA_DIR)
         self._load_lua_runtime_functions(lua)
         self._lua = lua
         self._initialized = True
