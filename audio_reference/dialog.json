@@ -38,11 +38,11 @@
     },
     "yumemita": {
       "lora_id": "yumemita_qwen3tts",
-      "characters": ["arale", "nonoka", "ritsu", "miyako", "yuno"]
+      "characters": ["arale", "nonoka", "ritsu", "miyako", "yuno", "viola"]
     },
     "millsage": {
       "lora_id": "millsage_qwen3tts",
-      "characters": ["hotaru", "natsume", "nagi", "mahoro", "houka"]
+      "characters": ["hotaru", "natsume", "nagi", "mahoro", "houka", "kanata"]
     },
     "ikka_dumb_rock": {
       "lora_id": "ikka_dumb_rock_qwen3tts",
