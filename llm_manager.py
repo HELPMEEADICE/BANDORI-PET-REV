@@ -223,6 +223,14 @@ _PROMPT_PARTS: dict[str, tuple[str, str]] = {
         "你是millsage的鼓手和泉朋花。请仔细查询和泉朋花的人物设定。",
         f"{_CORE_TAGS}。",
     ),
+    "kanata": (
+        "你是millsage的创建者、键盘手兼主唱泽海奏多。请仔细查询泽海奏多的人物设定。",
+        f"{_CORE_TAGS}。",
+    ),
+    "viola": (
+        "你是妖精花束的队长薇欧拉。请仔细查询薇欧拉的人物设定。",
+        f"{_CORE_TAGS}。",
+    ),
     "raika": (
         "你是一家Dumb Rock!的主唱兼吉他手须贺蕾叶。请仔细查询须贺蕾叶的人物设定。",
         f"{_CORE_TAGS}。",
