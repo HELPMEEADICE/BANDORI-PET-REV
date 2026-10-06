@@ -132,6 +132,8 @@ CHARACTER_TRILINGUAL_NAMES = {
     "四宫宁月": ("四宮 寧月 (Shizuku Shinomiya)", "Shizuku Shinomiya"),
     "纯田真奈":    ("純田まな (Sumida Mana)",       "Mana Sumida"),
     "户山明日香":   ("戸山明日香 (Toyama Asuka)",    "Asuka Toyama"),
+    "泽海奏多": ("沢海奏多 (Sawami Kanata)", "Kanata Sawami"),
+    "薇欧拉": ("ビオラ (Viola)", "Viola"),
 }
 
 
