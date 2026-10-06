@@ -3190,6 +3190,23 @@
         "live_event_329_sr": "329期 Beyond my Imagination"
       }
     },
+    "kanata": {
+      "display": "泽海奏多",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "live_01": "演出服",
+        "school_summer_jhs_3rd": "初三夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_jhs_3rd": "初三冬季校服"
+      }
+    },
+    "viola": {
+      "display": "薇欧拉",
+      "costumes": {
+        "casual_spring_01": "春季常服",
+        "school_winter_hs": "高中冬季校服"
+      }
+    },
     "asuka": {
       "display": "户山明日香",
       "costumes": {

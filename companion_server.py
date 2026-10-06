@@ -41,6 +41,11 @@ class CompanionServer:
         controller.event_ready.connect(self.publish_event)
         controller.audio_ready.connect(self.publish_audio)
 
+    def _notify_client_count(self) -> None:
+        signal = getattr(self.controller, "client_count_changed", None)
+        if signal is not None:
+            signal.emit(len(self._clients))
+
     @property
     def status(self) -> dict:
         return {"state": self._status, "error": self._error, "clients": len(self._clients)}
@@ -85,6 +90,7 @@ class CompanionServer:
                 continue
             self._clients.pop(device_id, None)
             self._client_contexts.pop(device_id, None)
+            self._notify_client_count()
             try:
                 await ws.close(code=4003, message=b"authorization revoked")
             except Exception:
@@ -137,6 +143,7 @@ class CompanionServer:
                 pass
         self._clients.clear()
         self._client_contexts.clear()
+        self._notify_client_count()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -214,6 +221,7 @@ class CompanionServer:
             old = self._clients.get(client.device_id)
             self._clients[client.device_id] = ws
             self._client_contexts[client.device_id] = client
+            self._notify_client_count()
             if old is not None and old is not ws:
                 await old.close(code=4001, message=b"replaced")
             hello = await asyncio.wrap_future(self.controller.submit_hello(client))
@@ -240,6 +248,7 @@ class CompanionServer:
             if client is not None and self._clients.get(client.device_id) is ws:
                 self._clients.pop(client.device_id, None)
                 self._client_contexts.pop(client.device_id, None)
+                self._notify_client_count()
         return ws
 
     def _authenticate_headers(self, headers) -> AuthenticatedDevice | None:

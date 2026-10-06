@@ -1,6 +1,8 @@
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -12,6 +14,23 @@ from database_manager import DatabaseManager
 
 
 class DatabaseMemorySafetyTests(unittest.TestCase):
+    def test_change_revision_tracks_local_and_external_writes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "data.db"
+            db = DatabaseManager(str(path))
+            try:
+                initial = db.change_revision()
+                db.create_conversation("character")
+                local = db.change_revision()
+                self.assertGreater(local[0], initial[0])
+
+                with closing(sqlite3.connect(path)) as other:
+                    other.execute("CREATE TABLE revision_probe (id INTEGER)")
+                external = db.change_revision()
+                self.assertGreater(external[1], local[1])
+            finally:
+                db.close()
+
     def test_attachment_cleanup_queries_only_attachment_payload_columns(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db = DatabaseManager(str(Path(temp_dir) / "data.db"))

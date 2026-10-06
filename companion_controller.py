@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from concurrent.futures import Future
 from datetime import datetime
@@ -38,20 +39,38 @@ class CompanionController(QObject):
     request_received = Signal(object, object, object)
     event_ready = Signal(str, object, object)
     audio_ready = Signal(str, object)
+    client_count_changed = Signal(int)
 
     def __init__(self, window, config, parent=None):
         super().__init__(parent)
         self.window = window
         self.config = config
         self.request_received.connect(self._handle_request)
-        self._last_state_key = ""
+        self.client_count_changed.connect(self._set_client_count)
+        self._last_state_key = b""
+        self._last_state_stamp = None
         self._last_stream_text = ""
         self._last_capabilities_key = ""
         self.active_profile_key = self._active_profile_key()
         self._state_timer = QTimer(self)
         self._state_timer.setInterval(120)
         self._state_timer.timeout.connect(self._publish_changed_state)
-        self._state_timer.start()
+
+    @Slot(int)
+    def _set_client_count(self, count: int):
+        if count > 0:
+            if not self._state_timer.isActive():
+                # The profile may have changed while there were no clients.
+                self.active_profile_key = self._active_profile_key()
+                self._state_timer.start()
+            return
+        self._state_timer.stop()
+        # Release cached revisions and streamed text when the final
+        # subscriber disconnects.
+        self._last_state_key = b""
+        self._last_state_stamp = None
+        self._last_stream_text = ""
+        self._last_capabilities_key = ""
 
     def submit(self, client, request: dict) -> Future:
         future: Future = Future()
@@ -338,27 +357,56 @@ class CompanionController(QObject):
             raise CompanionProtocolError("INVALID_CONVERSATION_ID")
         return result
 
-    def _state_key(self, state: dict) -> str:
+    def _state_key(self, state: dict) -> bytes:
         stable = dict(state)
         stable.pop("streamingText", None)
-        return json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).digest()
+
+    def _state_poll_stamp(self):
+        # DatabaseManager synchronizes this probe with other users of its
+        # SQLite connection. A missing probe falls back to a full snapshot.
+        revision = getattr(self.window._db, "change_revision", None)
+        if revision is None:
+            return None
+        try:
+            db_revision = revision()
+        except Exception:
+            return None
+        window = self.window
+        return (
+            id(window._db),
+            db_revision,
+            self._active_profile_key(),
+            bool(getattr(window, "_is_group_chat", False)),
+            getattr(window, "_conv_id", None),
+            getattr(window, "_character", None),
+            bool(window._generation_busy()),
+            getattr(window, "_visible_stream_text", ""),
+            getattr(window, "_reasoning_stream_text", ""),
+        )
 
     def _publish_changed_state(self):
         profile_key = self._active_profile_key()
         if profile_key != self.active_profile_key:
             self.active_profile_key = profile_key
-            self._last_state_key = ""
+            self._last_state_key = b""
+            self._last_state_stamp = None
             self._last_stream_text = ""
             self.event_ready.emit("profile.changed", {"profileAvailable": False}, None)
-        try:
-            state = self.state_snapshot()
-        except Exception:
-            return
         capabilities = self._capabilities()
         capabilities_key = json.dumps(capabilities, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if capabilities_key != self._last_capabilities_key:
             self._last_capabilities_key = capabilities_key
             self.event_ready.emit("capabilities.changed", capabilities, None)
+        stamp = self._state_poll_stamp()
+        if stamp is not None and stamp == self._last_state_stamp:
+            return
+        try:
+            state = self.state_snapshot()
+        except Exception:
+            return
+        self._last_state_stamp = stamp
         key = self._state_key(state)
         if key != self._last_state_key:
             self._last_state_key = key

@@ -75,7 +75,7 @@
     {
       "id": "others",
       "display": "其他角色",
-      "characters": ["mana", "asuka"]
+      "characters": ["mana", "asuka", "kanata", "viola"]
     }
   ]
 }

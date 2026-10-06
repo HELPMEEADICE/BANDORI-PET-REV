@@ -1311,6 +1311,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         self._conn.commit()
         return cur.lastrowid
 
+    def change_revision(self) -> tuple[int, int]:
+        """Cheap revision for local writes and commits from other connections."""
+        return (
+            self._conn.total_changes,
+            self._conn.execute("PRAGMA data_version").fetchone()[0],
+        )
+
     def get_conversations(self, character: str = "", user_key: str | None = None) -> list[dict]:
         if character:
             where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")

@@ -242,12 +242,13 @@ TOPMOST_INTERACTION_REFRESH_SECONDS = 0.25
 TOPMOST_GUARD_INTERVAL_MS = 1000
 TOPMOST_RECOVERY_DELAYS_MS = (0, 250, 1000, 2500)
 MOUSE_PASSTHROUGH_INTERVAL_MS = 16
+MOUSE_PASSTHROUGH_IDLE_INTERVAL_MS = 125
 PEER_POS_BROADCAST_INTERVAL_MS = 200
 MOUSE_PASSTHROUGH_EDGE_MARGIN = 96
 MOUSE_PASSTHROUGH_HIT_GRACE_SECONDS = 0.08
 MOUSE_PASSTHROUGH_HIT_GRACE_DISTANCE = 12
-LIVE2D_PREWARM_MAX_MOTION_FILES = 96
-LIVE2D_PREWARM_MAX_EXPRESSIONS = 64
+LIVE2D_PREWARM_MAX_MOTION_FILES = 24
+LIVE2D_PREWARM_MAX_EXPRESSIONS = 12
 LIVE2D_PREWARM_STEP_MS = 24
 LIVE2D_PREWARM_WAIT_MS = 25
 STARTUP_POSITION_RESTORE_RETRY_DELAYS_MS = (0, 100, 300, 800, 1600, 3000)
@@ -1444,6 +1445,14 @@ class PetWindow(QWidget):
         if not should_run:
             self._set_mouse_passthrough(False)
 
+    def _set_mouse_passthrough_poll_interval(self, near_window: bool):
+        interval = (
+            MOUSE_PASSTHROUGH_INTERVAL_MS
+            if near_window else MOUSE_PASSTHROUGH_IDLE_INTERVAL_MS
+        )
+        if self._mouse_passthrough_timer.interval() != interval:
+            self._mouse_passthrough_timer.setInterval(interval)
+
     def _tick_mouse_passthrough(self):
         if not self._mouse_passthrough_supported() or not self.isVisible():
             self._set_mouse_passthrough(False)
@@ -1452,9 +1461,19 @@ class PetWindow(QWidget):
             self._set_mouse_passthrough(False)
             return
         if os.name == "nt":
-            self._set_mouse_passthrough(self._should_passthrough_at_native(self._native_cursor_pos()))
+            try:
+                local_pos = self._window_local_pos_from_native_pos(self._native_cursor_pos())
+                self._set_mouse_passthrough_poll_interval(local_pos is not None)
+                passthrough = self._should_passthrough_at_window_local(local_pos)
+            except Exception:
+                passthrough = False
+            self._set_mouse_passthrough(passthrough)
             return
-        self._set_mouse_passthrough(self._should_passthrough_at(QCursor.pos()))
+        cursor_pos = QCursor.pos()
+        self._set_mouse_passthrough_poll_interval(
+            self._passthrough_sample_pos(cursor_pos) is not None
+        )
+        self._set_mouse_passthrough(self._should_passthrough_at(cursor_pos))
 
     def _passthrough_sample_pos(self, global_pos: QPoint):
         geometry = self.geometry()
@@ -1526,6 +1545,9 @@ class PetWindow(QWidget):
         if not self.isVisible():
             return False
         local_pos = self._window_local_pos_from_native_pos(native_pos)
+        return self._should_passthrough_at_window_local(local_pos)
+
+    def _should_passthrough_at_window_local(self, local_pos: QPoint | None) -> bool:
         if local_pos is None:
             return False
         try:
@@ -3680,6 +3702,7 @@ class PetWindow(QWidget):
 
     def _begin_radial_menu_opening(self):
         self._radial_menu_opening = True
+        self._radial_menu_event_timer.setInterval(15)
         self._radial_menu_opening_token += 1
         token = self._radial_menu_opening_token
         QTimer.singleShot(3000, lambda t=token: self._clear_stale_radial_menu_opening(t))
@@ -3698,6 +3721,7 @@ class PetWindow(QWidget):
             self._handle_wayland_radial_menu_command(line)
             return
         self._radial_menu_command_queue.append(line)
+        self._radial_menu_event_timer.setInterval(15)
         interaction_trace(
             "pet",
             "radial_queue",
@@ -3890,6 +3914,12 @@ class PetWindow(QWidget):
             return
         for line in queue.read_available(max_messages=100):
             self._handle_radial_menu_process_line(line)
+        if self._radial_menu_process_ready and not (
+            self._radial_menu_visible
+            or self._radial_menu_opening
+            or self._radial_menu_command_queue
+        ) and self._radial_menu_event_timer.interval() != 150:
+            self._radial_menu_event_timer.setInterval(150)
 
     def _close_radial_menu_ipc(self):
         self._radial_menu_event_timer.stop()

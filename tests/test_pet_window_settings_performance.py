@@ -258,3 +258,31 @@ def test_pixel_startup_does_not_load_live2d_model_first():
 
     assert ("live2d", "anon.zst::live_01/model3.json") not in calls
     assert ("pixel", False) in calls
+
+
+def test_action_prewarm_bounds_parsed_motion_and_expression_caches():
+    motions = ["idle"] + [f"motion_{index}" for index in range(40)]
+    expressions = ["default"] + [f"expression_{index}" for index in range(30)]
+    harness = SimpleNamespace(
+        _live2d_widget=SimpleNamespace(
+            model=SimpleNamespace(
+                modelSetting=SimpleNamespace(getMotionNum=lambda _name: 1)
+            )
+        ),
+        _current_motion_names=lambda: motions,
+        _current_expression_names=lambda: expressions,
+        _current_model_entry=lambda: {
+            "default_motion": "motion_0",
+            "default_expression": "default",
+        },
+        _is_idle_motion_name=PetWindow._is_idle_motion_name,
+        _find_expression_tag=lambda _tag: "",
+    )
+
+    selected_motions = PetWindow._build_live2d_prewarm_motion_queue(harness)
+    selected_expressions = PetWindow._build_live2d_prewarm_expression_queue(harness)
+
+    assert selected_motions[:2] == ["motion_0", "idle"]
+    assert len(selected_motions) == 24
+    assert selected_expressions[0] == "default"
+    assert len(selected_expressions) == 12
