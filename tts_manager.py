@@ -490,9 +490,10 @@ class TTSRequestWorker(_CancelableTTSWorker):
                 payload["temperature"] = max(0.01, min(2.0, float(self._config.get("tts_temperature", 0.9))))
             except (TypeError, ValueError):
                 payload["temperature"] = 0.9
-            prompt_text = self._reference_prompt_text(selected_language)
-            if prompt_text:
-                payload["prompt_text"] = prompt_text
+            if self._config.get("tts_use_reference_text", False):
+                prompt_text = self._reference_prompt_text(selected_language)
+                if prompt_text:
+                    payload["prompt_text"] = prompt_text
             self._apply_qwen_lora(payload)
             speed_applied = self._apply_speed_factor(payload)
 

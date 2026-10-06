@@ -94,6 +94,16 @@ class TTSPageMixin:
         tts_translate_row.addWidget(self._tts_translate_to_selected_language)
         layout.addLayout(tts_translate_row)
 
+        tts_reference_text_row = QHBoxLayout()
+        tts_reference_text_row.setContentsMargins(0, 0, 0, 0)
+        tts_reference_text_label = BodyLabel(_tr("SettingsWindow.tts_use_reference_text", "使用参考文本"), page)
+        self._tts_use_reference_text = SwitchButton(page)
+        self._tts_use_reference_text.setChecked(False)
+        tts_reference_text_row.addWidget(tts_reference_text_label)
+        tts_reference_text_row.addStretch()
+        tts_reference_text_row.addWidget(self._tts_use_reference_text)
+        layout.addLayout(tts_reference_text_row)
+
         tts_test_label = BodyLabel(_tr("SettingsWindow.tts_test_text", default="测试文本"), page)
         layout.addWidget(tts_test_label)
         self._tts_test_text = FluentContextTextEdit(page)
@@ -138,6 +148,7 @@ class TTSPageMixin:
                 "_tts_temperature",
                 "_tts_streaming",
                 "_tts_translate_to_selected_language",
+                "_tts_use_reference_text",
             )
         )
 
@@ -194,6 +205,7 @@ class TTSPageMixin:
             self._tts_temperature.setText(str(self._cfg.get("tts_temperature", 0.9)))
             self._tts_streaming.setChecked(bool(self._cfg.get("tts_streaming", True)))
             self._tts_translate_to_selected_language.setChecked(bool(self._cfg.get("tts_translate_to_selected_language", True)))
+            self._tts_use_reference_text.setChecked(bool(self._cfg.get("tts_use_reference_text", False)))
 
     def _current_tts_config(self, include_llm: bool = False) -> dict:
         try:
@@ -209,6 +221,7 @@ class TTSPageMixin:
             "tts_temperature": temperature,
             "tts_streaming": self._tts_streaming.isChecked(),
             "tts_translate_to_selected_language": self._tts_translate_to_selected_language.isChecked(),
+            "tts_use_reference_text": self._tts_use_reference_text.isChecked(),
         }
         if include_llm and self._cfg:
             for key in (

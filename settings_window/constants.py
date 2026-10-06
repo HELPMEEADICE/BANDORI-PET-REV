@@ -260,6 +260,7 @@ DATA_CONFIG_KEYS = {
         "tts_streaming",
         "tts_temperature",
         "tts_translate_to_selected_language",
+        "tts_use_reference_text",
     ),
     DATA_CATEGORY_ASR: (
         "asr_enabled",

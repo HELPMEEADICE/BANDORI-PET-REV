@@ -438,6 +438,7 @@ DEFAULTS = {
     "tts_streaming": True,
     "tts_temperature": 0.9,
     "tts_translate_to_selected_language": True,
+    "tts_use_reference_text": False,
     "asr_enabled": False,
     "asr_api_url": "http://127.0.0.1:8000/v1/audio/transcriptions",
     "asr_api_key": "",

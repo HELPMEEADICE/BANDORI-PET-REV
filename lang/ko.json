@@ -616,6 +616,7 @@
   "SettingsWindow.tts_temperature": "TTS 온도",
   "SettingsWindow.tts_streaming": "TTS 스트리밍 활성화",
   "SettingsWindow.tts_translate_to_selected_language": "비중국어 TTS를 위해 보조 모델로 선택한 언어로 번역",
+  "SettingsWindow.tts_use_reference_text": "참조 텍스트 사용",
   "SettingsWindow.tts_saved_title": "저장됨",
   "SettingsWindow.tts_saved_content": "TTS 설정이 성공적으로 저장되었습니다.",
   "SettingsWindow.tts_test_text": "테스트 텍스트",

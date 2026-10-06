@@ -616,6 +616,7 @@
   "SettingsWindow.tts_temperature": "TTS Температура",
   "SettingsWindow.tts_streaming": "Включить потоковую передачу TTS",
   "SettingsWindow.tts_translate_to_selected_language": "Перевести на выбранный язык с помощью вспомогательной модели для некитайского языка TTS",
+  "SettingsWindow.tts_use_reference_text": "Использовать референсный текст",
   "SettingsWindow.tts_saved_title": "Сохранено",
   "SettingsWindow.tts_saved_content": "Конфигурация TTS успешно сохранена.",
   "SettingsWindow.tts_test_text": "Тестовый текст",

@@ -42,6 +42,7 @@ TTS_CONFIG_KEYS = (
     "tts_streaming",
     "tts_temperature",
     "tts_translate_to_selected_language",
+    "tts_use_reference_text",
     "llm_api_url",
     "llm_api_key",
     "llm_model_id",

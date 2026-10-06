@@ -616,6 +616,7 @@
   "SettingsWindow.tts_temperature": "TTS Temperatura",
   "SettingsWindow.tts_streaming": "Habilitar transmisión TTS",
   "SettingsWindow.tts_translate_to_selected_language": "Traducir al idioma seleccionado con modelo auxiliar para no chinos TTS",
+  "SettingsWindow.tts_use_reference_text": "Usar texto de referencia",
   "SettingsWindow.tts_saved_title": "Guardado",
   "SettingsWindow.tts_saved_content": "Configuración TTS guardada exitosamente.",
   "SettingsWindow.tts_test_text": "Texto de prueba",

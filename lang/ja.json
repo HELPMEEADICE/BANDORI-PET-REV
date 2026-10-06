@@ -616,6 +616,7 @@
   "SettingsWindow.tts_temperature": "TTS 温度パラメータ",
   "SettingsWindow.tts_streaming": "TTS ストリーミングリクエストを有効化",
   "SettingsWindow.tts_translate_to_selected_language": "非中国語 TTS 時に補助モデルで選択言語に逐次翻訳",
+  "SettingsWindow.tts_use_reference_text": "参照テキストを使用",
   "SettingsWindow.tts_saved_title": "保存完了",
   "SettingsWindow.tts_saved_content": "TTS 設定を保存しました。",
   "SettingsWindow.tts_test_text": "テストテキスト",
