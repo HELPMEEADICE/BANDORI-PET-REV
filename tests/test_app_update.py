@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import shutil
 import subprocess
@@ -52,6 +53,55 @@ class AppUpdateTests(unittest.TestCase):
 
         self.assertEqual("BandoriPet-3.1.0-WIN-AMD64.zip", selected["name"])
 
+    def test_windows_portable_update_selects_published_7z_asset(self):
+        assets = [
+            _asset("BandoriPet-3.2.0-win64.7z"),
+            _asset("BandoriPet-3.2.0-win64.msi"),
+            _asset("BandoriPet-3.2.0-winamd64-setup.exe"),
+        ]
+        assets[0]["digest"] = "sha256:" + "a" * 64
+        release = {"tag_name": "v3.2.0", "assets": assets}
+        with (
+            patch.object(app_update, "_fetch_latest_release", return_value=release),
+            patch.object(app_update, "APP_VERSION", "3.1.0"),
+            patch.object(app_update.sys, "platform", "win32"),
+            patch.object(app_update.platform, "machine", return_value="amd64"),
+        ):
+            info = app_update._check_release_update("portable")
+
+        self.assertTrue(info.can_update)
+        self.assertEqual("BandoriPet-3.2.0-win64.7z", info.asset_name)
+        self.assertEqual("portable_zip", info.action)
+
+    @unittest.skipUnless(importlib.util.find_spec("py7zr"), "py7zr is not installed")
+    def test_portable_7z_is_checked_and_staged_before_launch(self):
+        import py7zr
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "BandoriPet.exe"
+            source.write_bytes(b"new executable")
+            archive_path = root / "update.7z"
+            with py7zr.SevenZipFile(archive_path, "w") as archive:
+                archive.write(source, arcname="BandoriPet/BandoriPet.exe")
+            target = root / "installed"
+            target.mkdir()
+            with (
+                patch.object(app_update.tempfile, "gettempdir", return_value=temp_dir),
+                patch.object(app_update, "app_base_dir", return_value=target),
+                patch.object(app_update, "_ensure_update_space"),
+                patch.object(app_update, "_launch_powershell_script") as launch,
+            ):
+                app_update._launch_portable_zip_updater(archive_path)
+                script = launch.call_args.args[0].read_text(encoding="utf-8")
+                stage = next(root.glob("BandoriPetUpdate-*"))
+                self.assertEqual(
+                    b"new executable", (stage / "BandoriPet" / "BandoriPet.exe").read_bytes()
+                )
+
+        self.assertNotIn("Expand-Archive -LiteralPath $zip", script)
+        self.assertIn("BandoriPet executable was not found", script)
+
     def test_macos_update_selects_matching_arm64_dmg(self):
         assets = [
             _asset("BandoriPet-3.1.1-macos-x86_64.dmg"),
@@ -70,6 +120,54 @@ class AppUpdateTests(unittest.TestCase):
             app_update._asset_action(selected["name"], "macos_app"),
             "install_macos",
         )
+
+    def test_macos_update_uses_newest_release_with_matching_package(self):
+        windows_only = {
+            "tag_name": "v3.2.0",
+            "assets": [_asset("BandoriPet-3.2.0-win64.7z")],
+        }
+        macos_release = {
+            "tag_name": "v3.1.4",
+            "html_url": "https://example.invalid/v3.1.4",
+            "assets": [
+                {**_asset("BandoriPet-3.1.4-macos-arm64.dmg"), "digest": "sha256:" + "a" * 64}
+            ],
+        }
+        with (
+            patch.object(app_update, "APP_VERSION", "3.1.3"),
+            patch.object(app_update, "_fetch_latest_release", return_value=windows_only),
+            patch.object(app_update, "_fetch_recent_releases", return_value=[windows_only, macos_release]),
+            patch.object(app_update.sys, "platform", "darwin"),
+            patch.object(app_update.platform, "machine", return_value="arm64"),
+        ):
+            info = app_update._check_release_update("macos_app")
+
+        self.assertTrue(info.can_update)
+        self.assertEqual("v3.1.4", info.latest_version)
+        self.assertEqual("BandoriPet-3.1.4-macos-arm64.dmg", info.asset_name)
+        self.assertEqual("https://example.invalid/v3.1.4", info.release_url)
+
+    def test_macos_current_platform_release_does_not_offer_windows_only_update(self):
+        windows_only = {
+            "tag_name": "v3.2.0",
+            "assets": [_asset("BandoriPet-3.2.0-win64.7z")],
+        }
+        macos_release = {
+            "tag_name": "v3.1.4",
+            "assets": [_asset("BandoriPet-3.1.4-macos-arm64.dmg")],
+        }
+        with (
+            patch.object(app_update, "APP_VERSION", "3.1.4"),
+            patch.object(app_update, "_fetch_latest_release", return_value=windows_only),
+            patch.object(app_update, "_fetch_recent_releases", return_value=[windows_only, macos_release]),
+            patch.object(app_update.sys, "platform", "darwin"),
+            patch.object(app_update.platform, "machine", return_value="arm64"),
+        ):
+            info = app_update._check_release_update("macos_app")
+
+        self.assertFalse(info.update_available)
+        self.assertFalse(info.can_update)
+        self.assertEqual("v3.1.4", info.latest_version)
 
     def test_macos_update_selects_matching_x86_64_dmg(self):
         assets = [

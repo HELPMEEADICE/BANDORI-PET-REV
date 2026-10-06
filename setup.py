@@ -566,6 +566,7 @@ build_exe_options = {
         "numpy",
         "packaging",
         "platformdirs",
+        "py7zr",
         "plugin_system",
         "psutil",
         "qrcode",
