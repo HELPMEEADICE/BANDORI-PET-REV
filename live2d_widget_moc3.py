@@ -3,7 +3,7 @@ from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectF
 from qt_gl import gl
 
 
-DEFAULT_MOC3_RENDER_SCALE = 1.35
+DEFAULT_MOC3_RENDER_SCALE = 1
 MOC3_BALANCED_SSAA_SCALE = 2
 
 

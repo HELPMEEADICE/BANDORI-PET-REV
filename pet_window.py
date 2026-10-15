@@ -229,6 +229,15 @@ def _set_x11_input_passthrough(window, enabled: bool) -> bool:
 LIVE2D_BASE_WIDTH = 400
 LIVE2D_BASE_HEIGHT = 500
 LIVE2D_MOC3_BASE_HEIGHT = 800
+# Cubism 2 (model.json) window, tuned smaller than the Cubism 3 one: its
+# projection sizes the model from the window width.
+LIVE2D_MOC_BASE_WIDTH = 335
+LIVE2D_MOC_BASE_HEIGHT = LIVE2D_MOC_BASE_WIDTH * 2
+# Every model3.json window is this many times as wide as it is tall.  The height
+# still sets the model size, and the projection is a contain fit, so the extra
+# width only adds transparent margin and keeps props and motions from being
+# clipped at the sides.
+LIVE2D_MOC3_WINDOW_ASPECT = 1.5
 LIVE2D_CONTEXT_IDLE_INTERVAL_MS = 5000
 LIVE2D_DAZE_AFTER_SECONDS = 7 * 60
 LIVE2D_SLEEP_AFTER_SECONDS = 18 * 60
@@ -3179,12 +3188,13 @@ class PetWindow(QWidget):
 
     def _live2d_size(self):
         scale = self._live2d_scale / 100.0
-        base_height = (
-            LIVE2D_MOC3_BASE_HEIGHT
-            if self._live2d_model_format == MODEL_FORMAT_MOC3
-            else LIVE2D_BASE_HEIGHT
+        if self._live2d_model_format == MODEL_FORMAT_MOC3:
+            height = LIVE2D_MOC3_BASE_HEIGHT * scale
+            return int(round(height * LIVE2D_MOC3_WINDOW_ASPECT)), int(round(height))
+        return (
+            int(round(LIVE2D_MOC_BASE_WIDTH * scale)),
+            int(round(LIVE2D_MOC_BASE_HEIGHT * scale)),
         )
-        return int(round(LIVE2D_BASE_WIDTH * scale)), int(round(base_height * scale))
 
     def _set_live2d_model_format(self, model_format: str):
         model_format = str(model_format or "").lower()

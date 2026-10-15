@@ -45,6 +45,25 @@ class DirectRenderPipeline:
 DIRECT_RENDER_PIPELINE = DirectRenderPipeline()
 
 
+# Cubism 2 (``live2d_embed``) keeps one window rect per draw param and restores
+# the GL viewport from it after drawing its clipping masks, so the rect has to be
+# the physical render target.  Only that rect is re-pointed: the renderer's
+# projection depends on the aspect ratio alone and the matrix manager used for
+# drag and hit testing keeps the logical widget size.
+_CUBISM2_RENDER_TARGET_LUA = (
+    b"function(renderer, width, height) "
+    b"if renderer == nil then return false end "
+    b"local model = renderer.model; "
+    b"if model == nil then return false end "
+    b"local live2d_model = model.live2DModel; "
+    b"if live2d_model == nil then return false end "
+    b"local draw_param = live2d_model:getDrawParam(); "
+    b"if draw_param == nil or draw_param.resize == nil then return false end "
+    b"draw_param:resize(width, height); "
+    b"return true end"
+)
+
+
 class _Live2DPerfProbe:
     def __init__(self):
         self.enabled = os.environ.get("BANDORI_LIVE2D_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -110,6 +129,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._ssaa_fbo = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._cubism2_render_target_lua = None
         self._model_logical_size = None
         self._system_scale = 1.0
         
@@ -207,6 +227,37 @@ class Live2DWidgetBase(QOpenGLWidget):
             return 1
         return self._render_pipeline.ssaa_scale(self._quality_profile)
 
+    def _apply_cubism2_render_target(self, width: int, height: int) -> bool:
+        """Point the Cubism 2 draw param at the physical framebuffer.
+
+        ``model.json`` models go through ``live2d_embed``, which has no separate
+        render size: it draws and restores its GL viewport from the draw param
+        window rect.  That rect is the logical widget size, so on a high DPI
+        screen the model was rendered into the lower left corner of the physical
+        framebuffer instead of filling the window.  The projection itself only
+        uses the aspect ratio, so re-pointing the rect keeps the model's position
+        and scale while every pixel is now drawn at the native resolution.
+        """
+
+        model = self._model
+        delegate = getattr(model, "_delegate", None) or model
+        runtime = getattr(delegate, "_module", None)
+        lua = getattr(runtime, "_lua", None)
+        renderer = getattr(delegate, "_renderer", None)
+        if lua is None or renderer is None:
+            return False
+        resize = self._cubism2_render_target_lua
+        if resize is None:
+            try:
+                resize = lua.eval(_CUBISM2_RENDER_TARGET_LUA)
+            except Exception:
+                return False
+            self._cubism2_render_target_lua = resize
+        try:
+            return bool(resize(renderer, max(1, int(width)), max(1, int(height))))
+        except Exception:
+            return False
+
     def _sync_renderer_target_size(self, *, force: bool = False):
         model = self._model
         if not model:
@@ -217,9 +268,13 @@ class Live2DWidgetBase(QOpenGLWidget):
             max(1, int(self._cache_w * self._system_scale) * scale),
             max(1, int(self._cache_h * self._system_scale) * scale),
         )
-        if force or target_size != self._renderer_target_size:
+        if not force and target_size == self._renderer_target_size:
+            return
+        if self._render_pipeline is DIRECT_RENDER_PIPELINE:
+            self._apply_cubism2_render_target(*target_size)
+        else:
             model.ResizeRenderer(*target_size)
-            self._renderer_target_size = target_size
+        self._renderer_target_size = target_size
 
     def _sync_model_logical_size(self, *, force: bool = False) -> bool:
         model = self._model
@@ -358,6 +413,7 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._model = None
         self._render_pipeline = DIRECT_RENDER_PIPELINE
         self._renderer_target_size = None
+        self._cubism2_render_target_lua = None
         self._model_logical_size = None
         self._compact_memory_after_frame = False
         if self._ssaa_fbo is not None:
@@ -1226,16 +1282,32 @@ class Live2DWidgetBase(QOpenGLWidget):
 
     def _apply_lip_sync(self):
         now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
-        target = self._lip_sync_target if now - self._lip_sync_last_ms <= 180 else 0.0
-        form_target = self._lip_sync_form_target if now - self._lip_sync_last_ms <= 180 else 0.0
+        active = (now - self._lip_sync_last_ms) <= 180
+        target = self._lip_sync_target if active else 0.0
+        form_target = self._lip_sync_form_target if active else 0.0
         self._lip_sync_level += (target - self._lip_sync_level) * 0.55
         self._lip_sync_form += (form_target - self._lip_sync_form) * 0.45
         if self._lip_sync_level < 0.01:
             self._lip_sync_level = 0.0
         if abs(self._lip_sync_form) < 0.01:
             self._lip_sync_form = 0.0
-        self._model.SetParameterValue("PARAM_MOUTH_OPEN_Y", self._lip_sync_level, 1.0)
-        self._model.SetParameterValue("PARAM_MOUTH_FORM", self._lip_sync_form, 1.0)
+
+        # 没有 TTS 口型数据时，不覆盖 motion 动画自带的嘴部参数
+        if not active and self._lip_sync_level == 0.0 and self._lip_sync_form == 0.0:
+            return
+
+        for _n in ("ParamMouthOpenY", "PARAM_MOUTH_OPEN_Y"):
+            try:
+                self._model.SetParameterValue(_n, self._lip_sync_level, 1.0)
+                break
+            except Exception:
+                pass
+        for _n in ("ParamMouthForm", "PARAM_MOUTH_FORM"):
+            try:
+                self._model.SetParameterValue(_n, self._lip_sync_form, 1.0)
+                break
+            except Exception:
+                pass
 
     # --------------------------------------------------------------------------
     # Hit testing
