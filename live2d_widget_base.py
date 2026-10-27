@@ -1354,14 +1354,21 @@ class Live2DWidgetBase(QOpenGLWidget):
 
     def _apply_lip_sync(self):
         now = self._hit_clock.elapsed() if self._hit_clock.isValid() else 0
-        target = self._lip_sync_target if now - self._lip_sync_last_ms <= 180 else 0.0
-        form_target = self._lip_sync_form_target if now - self._lip_sync_last_ms <= 180 else 0.0
+        active = now - self._lip_sync_last_ms <= 180
+        target = self._lip_sync_target if active else 0.0
+        form_target = self._lip_sync_form_target if active else 0.0
         self._lip_sync_level += (target - self._lip_sync_level) * 0.55
         self._lip_sync_form += (form_target - self._lip_sync_form) * 0.45
         if self._lip_sync_level < 0.01:
             self._lip_sync_level = 0.0
         if abs(self._lip_sync_form) < 0.01:
             self._lip_sync_form = 0.0
+        if not active and self._lip_sync_level == 0.0 and self._lip_sync_form == 0.0:
+            # Both the Python queue and Cubism 3 keep parameter overrides until
+            # explicitly released. Let motion mouth curves take over again.
+            self._model.ClearParameterValue("PARAM_MOUTH_OPEN_Y")
+            self._model.ClearParameterValue("PARAM_MOUTH_FORM")
+            return
         self._model.SetParameterValue("PARAM_MOUTH_OPEN_Y", self._lip_sync_level, 1.0)
         self._model.SetParameterValue("PARAM_MOUTH_FORM", self._lip_sync_form, 1.0)
 

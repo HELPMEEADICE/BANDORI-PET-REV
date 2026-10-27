@@ -136,8 +136,27 @@ def patch_lua_moc3_physics_zero_delta(module_name: str, chunk: bytes) -> bytes:
     )
 
 
+def patch_lua_moc3_pet_parameter_release(module_name: str, chunk: bytes) -> bytes:
+    if module_name != "live2d_moc3_pet_embed":
+        return chunk
+    if b"function Renderer:clear_parameter(" in chunk:
+        return chunk
+    marker = b"function Renderer:drag(x, y)"
+    release = b'''function Renderer:clear_parameter(param_id)
+    local renderer = self.renderer
+    if renderer ~= nil and renderer.clear_parameter_override ~= nil then
+        pcall(function() renderer:clear_parameter_override(parameter_id(param_id)) end)
+    end
+    return self
+end
+
+'''
+    return chunk.replace(marker, release + marker, 1)
+
+
 def patch_live2d_lua_moc3_module(module_name: str, chunk: bytes) -> bytes:
     chunk = patch_lua_moc3_pet_embed_delta(module_name, chunk)
+    chunk = patch_lua_moc3_pet_parameter_release(module_name, chunk)
     return patch_lua_moc3_physics_zero_delta(module_name, chunk)
 
 

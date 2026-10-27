@@ -148,10 +148,13 @@ def _install_lazy_lua_module_loader(lua: LuaRuntime, root: Path, extra_module_pa
         if module_path is None:
             return None, None
         chunk = module_path.read_bytes()
-        chunk = patch_live2d_lua_module(module_name, chunk)
-        chunk = _patch_lua_gl_loader(module_name, chunk)
-        if extra_module_patch is not None:
-            chunk = extra_module_patch(module_name, chunk)
+        # Release bytecode is patched before compilation. Text replacements
+        # (including newline normalization) can corrupt a binary LuaJIT chunk.
+        if module_path.suffix == ".lua":
+            chunk = patch_live2d_lua_module(module_name, chunk)
+            chunk = _patch_lua_gl_loader(module_name, chunk)
+            if extra_module_patch is not None:
+                chunk = extra_module_patch(module_name, chunk)
         return chunk, ("@" + module_path.as_posix()).encode("utf-8")
 
     lua.globals()[b"__bandori_lazy_lua_module_source"] = load_module_source
@@ -432,6 +435,7 @@ class LuaLive2DRuntimeBase:
         self._drag = None
         self._hit_test = None
         self._set_parameter = None
+        self._clear_parameter = None
         self._set_offset = None
         self._set_scale = None
         self._apply_texture_quality = None
@@ -468,6 +472,7 @@ class LuaLive2DRuntimeBase:
         self._drag = None
         self._hit_test = None
         self._set_parameter = None
+        self._clear_parameter = None
         self._set_offset = None
         self._set_scale = None
         self._apply_texture_quality = None
@@ -523,6 +528,11 @@ class LuaLive2DRuntimeBase:
         self._hit_test = lua.eval(b"function(renderer, x, y) return renderer:hit_test(x, y) end")
         self._set_parameter = lua.eval(
             b"function(renderer, param_id, value, weight) return renderer:set_parameter(param_id, value, weight) end"
+        )
+        self._clear_parameter = lua.eval(
+            b"function(renderer, param_id) "
+            b"if renderer.clear_parameter ~= nil then return renderer:clear_parameter(param_id) end "
+            b"end"
         )
         self._set_offset = lua.eval(b"function(renderer, x, y) return renderer:set_offset(x, y) end")
         self._set_scale = lua.eval(b"function(renderer, scale) return renderer:set_scale(scale) end")
@@ -792,6 +802,14 @@ class LuaLAppModelBase:
 
     def SetParameterValue(self, param_id: str, value: float, weight: float = 1.0):
         self._pending_parameters[str(param_id)] = (str(param_id), float(value), float(weight))
+
+    def ClearParameterValue(self, param_id: str):
+        """Release one host override so model motions can drive it again."""
+        param_id = str(param_id)
+        if self._pending_parameters.pop(param_id, None) is None:
+            return
+        if self._renderer is not None and self._module._clear_parameter is not None:
+            self._module._clear_parameter(self._renderer, param_id.encode("utf-8"))
 
     def HitTest(self, _area_name: str, x: float, y: float):
         if self._renderer is None:
