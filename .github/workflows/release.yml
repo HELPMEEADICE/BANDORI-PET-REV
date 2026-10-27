@@ -93,12 +93,12 @@ jobs:
       - name: Verify native Python architecture
         shell: python
         env:
-          TARGET_ARCH: ${{ matrix.arch }}
+          BANDORIPET_TARGET_ARCH: ${{ matrix.arch }}
         run: |
           import os, platform
           actual = platform.machine().lower()
           actual = {"amd64": "x86_64", "arm64": "aarch64"}.get(actual, actual)
-          assert actual == os.environ["TARGET_ARCH"], actual
+          assert actual == os.environ["BANDORIPET_TARGET_ARCH"], actual
       - name: Install Linux build, GUI and audio libraries
         if: runner.os == 'Linux'
         run: |
@@ -225,29 +225,29 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          TARGET_ARCH: ${{ matrix.arch }}
+          BANDORIPET_TARGET_ARCH: ${{ matrix.arch }}
         run: |
           python setup.py build_msi build_inno
-          python installer/package_release.py windows --target windows --arch $env:TARGET_ARCH
+          python installer/package_release.py windows --target windows --arch $env:BANDORIPET_TARGET_ARCH
       - name: Build Linux AppImage, DEB, RPM and tarball
         if: runner.os == 'Linux'
         env:
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: bash installer/linux/build_packages.sh "$TARGET_ARCH"
+          BANDORIPET_TARGET_ARCH: ${{ matrix.arch }}
+        run: bash installer/linux/build_packages.sh "$BANDORIPET_TARGET_ARCH"
       - name: Build macOS DMG and ZIP
         if: runner.os == 'macOS'
         shell: bash
         env:
           MAC_ARCH: ${{ matrix.mac-arch }}
-          TARGET_ARCH: ${{ matrix.arch }}
+          BANDORIPET_TARGET_ARCH: ${{ matrix.arch }}
         run: |
           BANDORIPET_PYTHON="$(python -c 'import sys; print(sys.executable)')"
           export BANDORIPET_PYTHON
           bash installer/macos/build_dmg.sh "$MAC_ARCH"
           build_arch=AMD64
-          if [[ "$TARGET_ARCH" == aarch64 ]]; then build_arch=ARM64; fi
+          if [[ "$BANDORIPET_TARGET_ARCH" == aarch64 ]]; then build_arch=ARM64; fi
           "BUILD/venv-$MAC_ARCH/bin/python" installer/package_release.py validate-build \
-            --target macos --arch "$TARGET_ARCH" \
+            --target macos --arch "$BANDORIPET_TARGET_ARCH" \
             --directory "BUILD/BANDORI-PET-REV-RELEASE-MACOS-$build_arch"
           version="$(python installer/package_release.py version)"
           mkdir -p BUILD/release
@@ -258,7 +258,7 @@ jobs:
           cp installer/macos/首次打开修复.command installer/macos/首次运行必读.txt "$stage/"
           chmod +x "$stage/首次打开修复.command"
           ditto -c -k --sequesterRsrc "$stage" "BUILD/release/BandoriPet-$version-macos-$MAC_ARCH.zip"
-          python installer/package_release.py checksums --target macos --arch "$TARGET_ARCH"
+          python installer/package_release.py checksums --target macos --arch "$BANDORIPET_TARGET_ARCH"
       - name: Upload installers for this platform
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
