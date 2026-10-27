@@ -259,18 +259,108 @@ jobs:
           chmod +x "$stage/首次打开修复.command"
           ditto -c -k --sequesterRsrc "$stage" "BUILD/release/BandoriPet-$version-macos-$MAC_ARCH.zip"
           python installer/package_release.py checksums --target macos --arch "$BANDORIPET_TARGET_ARCH"
-      - name: Upload installers for this platform
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - name: Resolve individual installer filenames
+        id: assets
+        shell: python
+        env:
+          BANDORIPET_TARGET: ${{ matrix.target }}
+          BANDORIPET_TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          import os, sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path.cwd()))
+          from installer.package_release import installer_names
+
+          names = installer_names(os.environ["BANDORIPET_TARGET"], os.environ["BANDORIPET_TARGET_ARCH"])
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for name in names:
+                  kind = "tarball" if name.endswith(".tar.gz") else Path(name).suffix[1:].lower()
+                  output.write(f"{kind}={name}\n")
+      # archive:false uploads the original file, including portable ZIPs as-is.
+      - name: Upload ZIP
+        if: steps.assets.outputs.zip != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: BandoriPet-${{ needs.prepare.outputs.version }}-${{ matrix.target }}-${{ matrix.arch }}
-          path: BUILD/release/*
+          name: ${{ steps.assets.outputs.zip }}
+          path: BUILD/release/${{ steps.assets.outputs.zip }}
+          archive: false
           if-no-files-found: error
           overwrite: true
-          compression-level: 0
+          retention-days: 30
+      - name: Upload MSI
+        if: steps.assets.outputs.msi != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.msi }}
+          path: BUILD/release/${{ steps.assets.outputs.msi }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload Inno Setup EXE
+        if: steps.assets.outputs.exe != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.exe }}
+          path: BUILD/release/${{ steps.assets.outputs.exe }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload AppImage
+        if: steps.assets.outputs.appimage != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.appimage }}
+          path: BUILD/release/${{ steps.assets.outputs.appimage }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload DEB
+        if: steps.assets.outputs.deb != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.deb }}
+          path: BUILD/release/${{ steps.assets.outputs.deb }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload RPM
+        if: steps.assets.outputs.rpm != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.rpm }}
+          path: BUILD/release/${{ steps.assets.outputs.rpm }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload tarball
+        if: steps.assets.outputs.tarball != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.tarball }}
+          path: BUILD/release/${{ steps.assets.outputs.tarball }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Upload DMG
+        if: steps.assets.outputs.dmg != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ steps.assets.outputs.dmg }}
+          path: BUILD/release/${{ steps.assets.outputs.dmg }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
   collect:
-    name: All installers (Actions download)
+    name: Verify installers and checksums
     needs: [prepare, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -281,25 +371,26 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: BandoriPet-${{ needs.prepare.outputs.version }}-*
           path: BUILD/release
           merge-multiple: true
+          skip-decompress: true
       - name: Verify all 18 installers and generate SHA256SUMS
         run: python installer/package_release.py collect
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: all-installers-${{ needs.prepare.outputs.version }}
-          path: BUILD/release/*
+          name: SHA256SUMS.txt
+          path: BUILD/release/SHA256SUMS.txt
+          archive: false
           if-no-files-found: error
           overwrite: true
-          compression-level: 0
           retention-days: 30
       - name: Add download instructions to the run summary
         run: |
           echo '### Installers ready' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Download **all-installers-${{ needs.prepare.outputs.version }}** from the Artifacts section of this run for all 18 installers and SHA-256 checksums.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'All 18 installers are separate files in the Artifacts section, named after their original filenames. Download the platform, architecture and format you need. SHA256SUMS.txt covers every installer.' >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Attach installers to GitHub Release
@@ -310,10 +401,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: all-installers-${{ needs.prepare.outputs.version }}
+          pattern: BandoriPet-${{ needs.prepare.outputs.version }}-*
           path: installers
+          merge-multiple: true
+          skip-decompress: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: SHA256SUMS.txt
+          path: installers
+          skip-decompress: true
       - name: Upload assets to the triggering Release
         env:
           GH_TOKEN: ${{ github.token }}
