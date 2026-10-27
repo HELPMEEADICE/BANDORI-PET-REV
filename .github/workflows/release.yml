@@ -112,9 +112,14 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          make -C third_party/LuaJIT -j2
-          make -C third_party/LuaJIT install PREFIX="$RUNNER_TEMP/luajit"
-          echo "$RUNNER_TEMP/luajit/bin" >> "$GITHUB_PATH"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            export MACOSX_DEPLOYMENT_TARGET=13.0
+          fi
+          # LuaJIT bakes PREFIX into package.path; use it for both operations.
+          prefix="$RUNNER_TEMP/luajit"
+          make -C third_party/LuaJIT -j2 PREFIX="$prefix"
+          make -C third_party/LuaJIT install PREFIX="$prefix"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
       - name: Build native LuaJIT compiler (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -141,13 +146,54 @@ jobs:
           $luaSource = (Resolve-Path third_party/LuaJIT/src).Path
           $luaSource | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           "LUA_PATH=$luaSource\?.lua;;" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Verify standalone LuaJIT bytecode compiler
+        shell: python
+        run: |
+          import shutil, subprocess, tempfile
+          from pathlib import Path
+
+          compiler = shutil.which("luajit")
+          assert compiler, "LuaJIT compiler is missing from PATH"
+          with tempfile.TemporaryDirectory() as directory:
+              output = Path(directory) / "check.ljbc"
+              subprocess.run([compiler, "-b", "custom_hit_area_state.lua", str(output)], check=True)
+              assert output.read_bytes().startswith(b"\x1bLJ"), "Invalid LuaJIT bytecode"
+      - name: Check out vcpkg for Windows ARM64 OpenSSL
+        if: runner.os == 'Windows' && matrix.arch == 'aarch64'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 5363acb796e576328288fae60c25304e227e9839
+          path: third_party/vcpkg
+          persist-credentials: false
+      - name: Build static OpenSSL for Windows ARM64 cryptography
+        if: runner.os == 'Windows' && matrix.arch == 'aarch64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = (Resolve-Path third_party/vcpkg).Path
+          $env:VCPKG_ROOT = $vcpkgRoot
+          & "$vcpkgRoot/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+          & "$vcpkgRoot/vcpkg.exe" install openssl:arm64-windows-static-md --disable-metrics
+          if ($LASTEXITCODE -ne 0) { throw 'ARM64 OpenSSL compilation failed' }
+          $opensslDir = Join-Path $vcpkgRoot 'installed/arm64-windows-static-md'
+          if (-not (Test-Path "$opensslDir/lib/libcrypto.lib")) { throw 'ARM64 OpenSSL library is missing' }
+          "OPENSSL_DIR=$opensslDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'OPENSSL_STATIC=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Python build and runtime dependencies
         if: runner.os != 'macOS'
+        shell: python
         run: |
-          python -m pip install --upgrade pip wheel setuptools
-          python -m pip install -r requirements.txt cx-Freeze
-          python -m pip install --no-deps -e third_party/PyQt-Fluent-Widgets
-          python -m pip check
+          import subprocess, sys
+
+          for arguments in (
+              ["install", "--upgrade", "pip", "wheel", "setuptools"],
+              ["install", "-r", "requirements.txt", "cx-Freeze"],
+              ["install", "--no-deps", "-e", "third_party/PyQt-Fluent-Widgets"],
+              ["check"],
+          ):
+              subprocess.run([sys.executable, "-m", "pip", *arguments], check=True)
       - name: Verify embedded LuaJIT 2.1 and FFI
         if: runner.os != 'macOS'
         shell: python
