@@ -43,11 +43,8 @@ def validate_version(version=APP_VERSION, tag=None):
 def installer_names(target, arch, version=APP_VERSION):
     prefix = f"BandoriPet-{version}-"
     if target == "windows":
-        suffix = "win64" if arch == "x86_64" else "winarm64"
-        inno_arch = "amd64" if arch == "x86_64" else "arm64"
-        return [prefix + suffix + ext for ext in (".zip", ".msi")] + [
-            prefix + f"win{inno_arch}-setup.exe"
-        ]
+        suffix = "win-x86_64" if arch == "x86_64" else "win-arm64"
+        return [prefix + suffix + ext for ext in (".zip", ".msi", "-setup.exe")]
     if target == "linux":
         return [prefix + f"linux-{arch}" + ext for ext in (".AppImage", ".deb", ".rpm", ".tar.gz")]
     mac_arch = "x86_64" if arch == "x86_64" else "arm64"
@@ -117,10 +114,11 @@ def package_windows(arch, output):
     with zipfile.ZipFile(output / names[0], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for path in sorted(build.rglob("*")):
             archive.write(path, path.relative_to(build).as_posix())
-    # cx_Freeze calls ARM64 win-arm64; public asset names follow existing releases.
+    # Build tools produce their own filenames; publish a consistent architecture suffix.
     msi_arch = "win64" if arch == "x86_64" else "win-arm64"
+    inno_arch = "amd64" if arch == "x86_64" else "arm64"
     shutil.copy2(ROOT / "BUILD" / f"BandoriPet-{APP_VERSION}-{msi_arch}.msi", output / names[1])
-    shutil.copy2(ROOT / "BUILD" / names[2], output / names[2])
+    shutil.copy2(ROOT / "BUILD" / f"BandoriPet-{APP_VERSION}-win{inno_arch}-setup.exe", output / names[2])
 
 
 def main():

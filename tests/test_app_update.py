@@ -24,6 +24,9 @@ def _asset(name: str) -> dict:
 class AppUpdateTests(unittest.TestCase):
     def test_windows_release_packages_select_the_native_architecture(self):
         for channel, suffix64, suffixarm in (
+            ("portable", "win-x86_64.zip", "win-arm64.zip"),
+            ("msi", "win-x86_64.msi", "win-arm64.msi"),
+            ("inno", "win-x86_64-setup.exe", "win-arm64-setup.exe"),
             ("portable", "win64.zip", "winarm64.zip"),
             ("msi", "win64.msi", "winarm64.msi"),
             ("inno", "winamd64-setup.exe", "winarm64-setup.exe"),

@@ -283,8 +283,8 @@ python setup.py build_msi
 - 发布 GitHub Release（包括预发布版）后自动构建，全部成功后将安装包上传到该 Release。
 - 在 **Actions → Build installers → Run workflow** 中选择分支或标签手动构建；
   完成后在该次运行底部 **Artifacts** 按原始文件名分别下载所需安装包，例如
-  `BandoriPet-<版本>-win64.zip`、`BandoriPet-<版本>-win64.msi` 和
-  `BandoriPet-<版本>-winamd64-setup.exe` 是三个独立文件。全部 18 个安装包均
+  `BandoriPet-<版本>-win-x86_64.zip`、`BandoriPet-<版本>-win-x86_64.msi` 和
+  `BandoriPet-<版本>-win-x86_64-setup.exe` 是三个独立文件。全部 18 个安装包均
   单独上传，不再按架构合并压缩；`SHA256SUMS.txt` 也可独立下载。产物保留 30 天。
 
 所有版本号来自 `app_info.py` 的 `APP_VERSION`，必须为 `主版本.次版本.修订号`；
@@ -293,9 +293,9 @@ Release 标签应为同一版本号或加 `v` 前缀（例如 `v3.2.1`）。手�
 
 | 平台 | x86_64 文件名 | aarch64 文件名 |
 |---|---|---|
-| Windows 便携包 | `BandoriPet-<版本>-win64.zip` | `BandoriPet-<版本>-winarm64.zip` |
-| Windows MSI | `BandoriPet-<版本>-win64.msi` | `BandoriPet-<版本>-winarm64.msi` |
-| Windows Inno Setup 6 | `BandoriPet-<版本>-winamd64-setup.exe` | `BandoriPet-<版本>-winarm64-setup.exe` |
+| Windows 便携包 | `BandoriPet-<版本>-win-x86_64.zip` | `BandoriPet-<版本>-win-arm64.zip` |
+| Windows MSI | `BandoriPet-<版本>-win-x86_64.msi` | `BandoriPet-<版本>-win-arm64.msi` |
+| Windows Inno Setup 6 | `BandoriPet-<版本>-win-x86_64-setup.exe` | `BandoriPet-<版本>-win-arm64-setup.exe` |
 | Linux | `BandoriPet-<版本>-linux-x86_64.{AppImage,deb,rpm,tar.gz}` | `BandoriPet-<版本>-linux-aarch64.{AppImage,deb,rpm,tar.gz}` |
 | macOS | `BandoriPet-<版本>-macos-x86_64.{dmg,zip}` | `BandoriPet-<版本>-macos-arm64.{dmg,zip}` |
 

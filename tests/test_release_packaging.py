@@ -7,8 +7,8 @@ import pytest
 from installer import package_release as release
 
 
-def frozen_windows_tree(tmp_path, machine=0x8664):
-    build = tmp_path / "BUILD" / "BANDORI-PET-REV-RELEASE-WIN-AMD64"
+def frozen_windows_tree(tmp_path, machine=0x8664, arch="AMD64"):
+    build = tmp_path / "BUILD" / f"BANDORI-PET-REV-RELEASE-WIN-{arch}"
     build.mkdir(parents=True)
     for name in release.RESOURCES:
         (build / name).write_text("resource", encoding="utf-8")
@@ -38,16 +38,24 @@ def test_invalid_version_or_mismatched_release_fails(version, tag):
         release.validate_version(version, tag)
 
 
-def test_windows_zip_unpacks_at_executable_root_and_preserves_resources(tmp_path, monkeypatch):
-    build = frozen_windows_tree(tmp_path)
+@pytest.mark.parametrize("arch,machine,pe_machine,msi_arch,inno_arch,suffix", [
+    ("x86_64", "AMD64", 0x8664, "win64", "winamd64", "win-x86_64"),
+    ("aarch64", "ARM64", 0xAA64, "win-arm64", "winarm64", "win-arm64"),
+])
+def test_windows_zip_unpacks_at_executable_root_and_preserves_resources(
+    tmp_path, monkeypatch, arch, machine, pe_machine, msi_arch, inno_arch, suffix,
+):
+    build = frozen_windows_tree(tmp_path, machine=pe_machine, arch=machine)
     monkeypatch.setattr(release, "ROOT", tmp_path)
-    monkeypatch.setattr(release.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(release.platform, "machine", lambda: machine)
     version = release.APP_VERSION
-    (tmp_path / "BUILD" / f"BandoriPet-{version}-win64.msi").write_bytes(b"msi")
-    (tmp_path / "BUILD" / f"BandoriPet-{version}-winamd64-setup.exe").write_bytes(b"inno")
+    (tmp_path / "BUILD" / f"BandoriPet-{version}-{msi_arch}.msi").write_bytes(b"msi")
+    (tmp_path / "BUILD" / f"BandoriPet-{version}-{inno_arch}-setup.exe").write_bytes(b"inno")
     output = tmp_path / "installers"
-    release.package_windows("x86_64", output)
-    with zipfile.ZipFile(output / f"BandoriPet-{version}-win64.zip") as archive:
+    release.package_windows(arch, output)
+    assert (output / f"BandoriPet-{version}-{suffix}.msi").read_bytes() == b"msi"
+    assert (output / f"BandoriPet-{version}-{suffix}-setup.exe").read_bytes() == b"inno"
+    with zipfile.ZipFile(output / f"BandoriPet-{version}-{suffix}.zip") as archive:
         assert archive.read("BandoriPet.exe") == (build / "BandoriPet.exe").read_bytes()
         assert archive.read("lib/library.zip") == b"frozen python"
         assert "models/" in archive.namelist()
