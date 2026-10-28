@@ -3,7 +3,7 @@ import os
 import numpy as np
 from PySide6.QtGui import QImage, QPixmap
 
-from ui_helpers import circular_pixmap
+from bandori_ui.ui_helpers import circular_pixmap
 
 from .constants import _AVATAR_PIXMAP_CACHE, _AVATAR_PIXMAP_CACHE_LIMIT
 

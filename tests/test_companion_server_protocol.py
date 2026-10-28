@@ -10,8 +10,8 @@ import aiohttp
 import pytest
 from PySide6.QtCore import QObject, Signal
 
-import companion_security
-from companion_server import CompanionClient, CompanionServer
+import bandori_companion.companion_security as companion_security
+from bandori_companion.companion_server import CompanionClient, CompanionServer
 
 
 class FakeConfig:

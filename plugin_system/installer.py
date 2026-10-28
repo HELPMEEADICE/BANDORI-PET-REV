@@ -15,7 +15,7 @@ from typing import Any
 
 from packaging.version import Version
 
-from public_network import open_public_url
+from bandori_services.public_network import open_public_url
 
 from .models import InstallPreview, PluginError, PluginManifest, ScanReport, SignatureInfo
 from .paths import PluginPaths, PluginStateStore, plugin_paths

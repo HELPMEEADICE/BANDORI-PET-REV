@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from alarm_manager import ReminderScheduler
+from bandori_core.alarm_manager import ReminderScheduler
 
 
 class ReminderSchedulerTest(unittest.TestCase):
@@ -72,7 +72,7 @@ class ReminderSchedulerTest(unittest.TestCase):
         worker.isRunning.return_value = True
         scheduler = SimpleNamespace(_workers=[worker], _ignored_workers={worker})
 
-        with patch("alarm_manager.QTimer.singleShot") as single_shot:
+        with patch("bandori_core.alarm_manager.QTimer.singleShot") as single_shot:
             ReminderScheduler._forget_worker(scheduler, worker)
 
         self.assertEqual([worker], scheduler._workers)
@@ -150,7 +150,7 @@ class ReminderSchedulerTest(unittest.TestCase):
         )
         context = {"kind": "screen_awareness"}
 
-        with patch("alarm_manager.QTimer.singleShot"):
+        with patch("bandori_core.alarm_manager.QTimer.singleShot"):
             ReminderScheduler._on_text_generated(
                 scheduler,
                 worker,
@@ -231,7 +231,7 @@ class ReminderSchedulerTest(unittest.TestCase):
             _start_screen_awareness_capture=Mock(),
         )
 
-        with patch("alarm_manager.local_now", return_value=datetime(2026, 6, 9, 12, 0, 0)):
+        with patch("bandori_core.alarm_manager.local_now", return_value=datetime(2026, 6, 9, 12, 0, 0)):
             self.assertTrue(ReminderScheduler.trigger_screen_awareness_now(scheduler))
 
         scheduler._start_screen_awareness_capture.assert_called_once()

@@ -3,9 +3,9 @@ from pathlib import Path
 
 from chat_window.chat_window import AttachmentImportWorker
 from chat_window.widgets import AuxVisionFallbackWorker
-from network_worker import CancelableNetworkWorker
-from outfit_description import OutfitDescriptionWorker
-from screen_awareness import ScreenAwarenessVisionWorker
+from bandori_services.network_worker import CancelableNetworkWorker
+from bandori_models.outfit_description import OutfitDescriptionWorker
+from bandori_platform.screen_awareness import ScreenAwarenessVisionWorker
 from settings_window.pages.chat_history import _ChatHistoryWorker
 from settings_window.workers import (
     FetchModelsWorker,

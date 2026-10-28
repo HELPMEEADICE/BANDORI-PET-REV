@@ -3,9 +3,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
-import computer_tools
-import local_tools
-from tool_arguments import parse_tool_arguments
+import bandori_tools.computer_tools as computer_tools
+import bandori_tools.local_tools as local_tools
+from bandori_tools.tool_arguments import parse_tool_arguments
 
 
 class LocalToolSafetyTests(unittest.TestCase):
@@ -15,11 +15,11 @@ class LocalToolSafetyTests(unittest.TestCase):
         return [(family, socket.SOCK_STREAM, 6, "", (ip, 443, 0, 0) if family == socket.AF_INET6 else (ip, 443))]
 
     def test_web_fetch_rejects_private_resolved_addresses(self):
-        with patch("local_tools.socket.getaddrinfo", return_value=self._address("192.168.1.5")):
+        with patch("bandori_tools.local_tools.socket.getaddrinfo", return_value=self._address("192.168.1.5")):
             self.assertEqual("", local_tools._normalize_fetch_url("http://example.test/private"))
 
     def test_web_fetch_accepts_public_resolved_addresses(self):
-        with patch("local_tools.socket.getaddrinfo", return_value=self._address("93.184.216.34")):
+        with patch("bandori_tools.local_tools.socket.getaddrinfo", return_value=self._address("93.184.216.34")):
             self.assertEqual(
                 "https://example.com/page",
                 local_tools._normalize_fetch_url("https://example.com/page"),
@@ -45,10 +45,10 @@ class LocalToolSafetyTests(unittest.TestCase):
     def test_invalid_json_never_reaches_side_effecting_tool_handlers(self):
         invalid = '{"value":'
         with (
-            patch("local_tools._run_reminder_tool_call") as reminder,
-            patch("local_tools.call_mcp_tool") as mcp,
-            patch("local_tools.run_computer_tool") as computer,
-            patch("local_tools.web_search") as web_search,
+            patch("bandori_tools.local_tools._run_reminder_tool_call") as reminder,
+            patch("bandori_tools.local_tools.call_mcp_tool") as mcp,
+            patch("bandori_tools.local_tools.run_computer_tool") as computer,
+            patch("bandori_tools.local_tools.web_search") as web_search,
         ):
             results = [
                 local_tools.run_local_tool_call(local_tools.CREATE_ALARM_TOOL_NAME, invalid),
@@ -75,7 +75,7 @@ class LocalToolSafetyTests(unittest.TestCase):
                 self.assertIn("must be a JSON object", result["content"])
 
     def test_valid_json_object_is_dispatched_as_parsed_arguments(self):
-        with patch("local_tools.web_search", return_value="result") as web_search:
+        with patch("bandori_tools.local_tools.web_search", return_value="result") as web_search:
             result = local_tools.run_local_tool_call(
                 local_tools.WEB_SEARCH_TOOL_NAME,
                 '{"query":"Bandori","max_results":2}',
@@ -113,8 +113,8 @@ class LocalToolSafetyTests(unittest.TestCase):
 
     def test_web_tools_tolerate_infinite_result_limits(self):
         with (
-            patch("local_tools.web_search", return_value="search") as web_search,
-            patch("local_tools.web_fetch", return_value="fetch") as web_fetch,
+            patch("bandori_tools.local_tools.web_search", return_value="search") as web_search,
+            patch("bandori_tools.local_tools.web_fetch", return_value="fetch") as web_fetch,
         ):
             search_result = local_tools.run_local_tool_call(
                 local_tools.WEB_SEARCH_TOOL_NAME,
@@ -154,7 +154,7 @@ class LocalToolSafetyTests(unittest.TestCase):
 
     def test_computer_type_limits_text_length(self):
         fake = unittest.mock.Mock()
-        with patch("computer_tools._pyautogui", return_value=fake):
+        with patch("bandori_tools.computer_tools._pyautogui", return_value=fake):
             result = computer_tools.run_computer_tool(
                 "computer_type",
                 {"text": "x" * 100_000},

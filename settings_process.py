@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import (
+from bandori_core.process_utils import (
     app_icon_path,
     bootstrap_app,
     ensure_taskbar_icon_identity,
@@ -17,19 +17,19 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from i18n_manager import detect_system_language, set_language
-from model_manager import ModelManager
+from bandori_core.i18n_manager import detect_system_language, set_language
+from bandori_models.model_manager import ModelManager
 from settings_window import SettingsWindow
-from app_theme import apply_app_theme
-from app_info import APP_NAME
-from live2d_surface_format import configure_live2d_surface_format
-from gpu_acceleration import configure_qt_gpu_acceleration
-from ipc_bus import (
+from bandori_core.app_theme import apply_app_theme
+from bandori_core.app_info import APP_NAME
+from bandori_live2d.live2d_surface_format import configure_live2d_surface_format
+from bandori_platform.gpu_acceleration import configure_qt_gpu_acceleration
+from bandori_core.ipc_bus import (
     attach_main_ipc_queues,
     is_reliable_ipc_line,
     start_ipc_heartbeat,
 )
-from shared_memory_ipc import (
+from bandori_core.shared_memory_ipc import (
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -77,7 +77,7 @@ def main():
     verify_native_wayland_qpa(app)
     install_parent_death_watch(app)
 
-    import macos_patch
+    import bandori_platform.macos_patch as macos_patch
     macos_patch.hide_dock_icon_if_needed()
     app.setApplicationName(f"{APP_NAME}Settings")
     app.setOrganizationName(APP_NAME)

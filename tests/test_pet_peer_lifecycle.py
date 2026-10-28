@@ -1,5 +1,5 @@
-from pet_window import PetWindow
-from shared_memory_ipc import encode_ipc_envelope
+from bandori_ui.pet_window import PetWindow
+from bandori_core.shared_memory_ipc import encode_ipc_envelope
 
 
 class _PeerStateHarness:

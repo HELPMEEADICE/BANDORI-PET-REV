@@ -2,8 +2,8 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-import local_tools
-from reminder_core import create_alarm
+import bandori_tools.local_tools as local_tools
+from bandori_core.reminder_core import create_alarm
 
 
 class _Config:
@@ -37,9 +37,9 @@ class LocalReminderToolSaveSemanticsTest(unittest.TestCase):
         cfg = _Config(False)
         publish = Mock()
         with (
-            patch("config_manager.ConfigManager", return_value=cfg),
-            patch("settings_bus.publish_settings", publish),
-            patch("local_tools._resolve_reminder_character", return_value="kasumi"),
+            patch("bandori_core.config_manager.ConfigManager", return_value=cfg),
+            patch("bandori_core.settings_bus.publish_settings", publish),
+            patch("bandori_tools.local_tools._resolve_reminder_character", return_value="kasumi"),
         ):
             result = local_tools._run_reminder_tool_call(
                 local_tools.CREATE_ALARM_TOOL_NAME,
@@ -53,9 +53,9 @@ class LocalReminderToolSaveSemanticsTest(unittest.TestCase):
         cfg = _Config(False)
         publish = Mock()
         with (
-            patch("config_manager.ConfigManager", return_value=cfg),
-            patch("settings_bus.publish_settings", publish),
-            patch("local_tools._resolve_reminder_character", return_value="kasumi"),
+            patch("bandori_core.config_manager.ConfigManager", return_value=cfg),
+            patch("bandori_core.settings_bus.publish_settings", publish),
+            patch("bandori_tools.local_tools._resolve_reminder_character", return_value="kasumi"),
         ):
             result = local_tools._run_reminder_tool_call(
                 local_tools.START_POMODORO_TOOL_NAME,
@@ -68,9 +68,9 @@ class LocalReminderToolSaveSemanticsTest(unittest.TestCase):
     def test_create_alarm_publish_failure_reports_restart_fallback(self):
         cfg = _Config(True)
         with (
-            patch("config_manager.ConfigManager", return_value=cfg),
-            patch("settings_bus.publish_settings", return_value=False),
-            patch("local_tools._resolve_reminder_character", return_value="kasumi"),
+            patch("bandori_core.config_manager.ConfigManager", return_value=cfg),
+            patch("bandori_core.settings_bus.publish_settings", return_value=False),
+            patch("bandori_tools.local_tools._resolve_reminder_character", return_value="kasumi"),
         ):
             result = local_tools._run_reminder_tool_call(
                 local_tools.CREATE_ALARM_TOOL_NAME,

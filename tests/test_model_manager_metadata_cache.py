@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from model_manager import ModelManager, _MODEL_JSON_CACHE_LIMIT
+from bandori_models.model_manager import ModelManager, _MODEL_JSON_CACHE_LIMIT
 
 
 class ModelManagerMetadataCacheTest(unittest.TestCase):
@@ -13,7 +13,7 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
             "expressions": [{"name": "smile"}, {"name": "angry"}],
         }
 
-        with mock.patch("model_manager.load_virtual_json", return_value=model_json) as load_json:
+        with mock.patch("bandori_models.model_manager.load_virtual_json", return_value=model_json) as load_json:
             self.assertEqual(["idle", "tap"], manager.get_motion_names("kasumi", "live_default"))
             self.assertEqual(["angry", "smile"], manager.get_expression_names("kasumi", "live_default"))
 
@@ -23,7 +23,7 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
         manager = ModelManager(scan_models=False)
         paths = [f"models.zst::costume_{index}/model.json" for index in range(_MODEL_JSON_CACHE_LIMIT + 2)]
 
-        with mock.patch("model_manager.load_virtual_json", side_effect=lambda path: {"path": path}):
+        with mock.patch("bandori_models.model_manager.load_virtual_json", side_effect=lambda path: {"path": path}):
             for path in paths[:_MODEL_JSON_CACHE_LIMIT]:
                 manager._read_model_json(path)
             manager._read_model_json(paths[0])
@@ -41,8 +41,8 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
         manager._character_images = {}
         manager._characters = {}
 
-        with mock.patch("model_manager.models_dir_exists", side_effect=AssertionError("preflight")), \
-             mock.patch("model_manager.model_search_dirs", return_value=[]):
+        with mock.patch("bandori_models.model_manager.models_dir_exists", side_effect=AssertionError("preflight")), \
+             mock.patch("bandori_models.model_manager.model_search_dirs", return_value=[]):
             manager._scan_model_keys()
             manager._scan()
 

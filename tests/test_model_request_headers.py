@@ -2,13 +2,13 @@ import io
 import json
 from unittest.mock import patch
 
-from llm_api_compat import (
+from bandori_llm.llm_api_compat import (
     OPENAI_COMPAT_USER_AGENT,
     openai_compat_headers,
     sanitize_chat_body_for_url,
 )
-from tts_manager import _translate_to_selected_language
-from vision_fallback import analyze_images_with_aux_model
+from bandori_audio.tts_manager import _translate_to_selected_language
+from bandori_llm.vision_fallback import analyze_images_with_aux_model
 
 
 def _json_response(content: str):
@@ -70,7 +70,7 @@ def test_aux_vision_request_uses_compatible_user_agent():
         requests.append((request, timeout))
         return _json_response("用户正在编辑代码。")
 
-    with patch("vision_fallback.urllib.request.urlopen", side_effect=open_url):
+    with patch("bandori_llm.vision_fallback.urllib.request.urlopen", side_effect=open_url):
         result = analyze_images_with_aux_model(
             "https://example.com/v1",
             "secret",
@@ -94,7 +94,7 @@ def test_aux_translation_request_uses_compatible_user_agent():
         "llm_aux_api_key": "secret",
         "llm_aux_model_id": "translation-model",
     }
-    with patch("tts_manager.urllib.request.urlopen", side_effect=open_url):
+    with patch("bandori_audio.tts_manager.urllib.request.urlopen", side_effect=open_url):
         result = _translate_to_selected_language(config, "你好", "English")
 
     assert result == "translation"
@@ -117,7 +117,7 @@ def test_aux_translation_removes_reasoning_before_tts():
         "llm_aux_enable_thinking": True,
     }
 
-    with patch("tts_manager.urllib.request.urlopen", return_value=response):
+    with patch("bandori_audio.tts_manager.urllib.request.urlopen", return_value=response):
         result = _translate_to_selected_language(config, "你好", "English")
 
     assert result == "Hello!"
@@ -131,7 +131,7 @@ def test_aux_translation_removes_generated_action_tags_before_tts():
         "llm_aux_model_id": "translation-model",
     }
 
-    with patch("tts_manager.urllib.request.urlopen", return_value=response):
+    with patch("bandori_audio.tts_manager.urllib.request.urlopen", return_value=response):
         result = _translate_to_selected_language(config, "你好", "English")
 
     assert result == "Hello!"

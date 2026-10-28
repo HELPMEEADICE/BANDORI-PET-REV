@@ -9,10 +9,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QWidget
 
-from chat_config_snapshots import tts_config_snapshot
-from config_manager import ConfigManager
+from bandori_chat.chat_config_snapshots import tts_config_snapshot
+from bandori_core.config_manager import ConfigManager
 from settings_window.pages.tts import TTSPageMixin
-from tts_manager import TTSRequestWorker
+from bandori_audio.tts_manager import TTSRequestWorker
 
 
 class _SettingsHarness(QWidget, TTSPageMixin):
@@ -85,7 +85,7 @@ class TTSReferenceTextTests(unittest.TestCase):
                     errors = []
                     worker.audio_ready.connect(lambda *args: audio.append(args))
                     worker.error.connect(errors.append)
-                    with patch("tts_manager._requests", return_value=SimpleNamespace(Session=lambda: session)), \
+                    with patch("bandori_audio.tts_manager._requests", return_value=SimpleNamespace(Session=lambda: session)), \
                          patch.object(worker, "_reference_audio_path", return_value="reference.wav"), \
                          patch.object(worker, "_reference_prompt_text", return_value="参照テキスト") as reference_text, \
                          patch.object(worker, "_apply_qwen_lora"):
@@ -112,7 +112,7 @@ class TTSReferenceTextTests(unittest.TestCase):
             worker = TTSRequestWorker(0, 1, "text", "current", {
                 "tts_use_reference_text": True, "tts_reference_character": "selected",
             })
-            with patch("tts_manager.app_base_dir", return_value=Path(directory)):
+            with patch("bandori_audio.tts_manager.app_base_dir", return_value=Path(directory)):
                 self.assertEqual("selected text", worker._reference_prompt_text("Japanese"))
                 self.assertEqual("", worker._reference_prompt_text("Chinese"))
                 self.assertEqual("", worker._reference_prompt_text("English"))

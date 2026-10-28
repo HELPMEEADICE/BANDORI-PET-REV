@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from llm_manager import _auto_continue_limit, _prefetch_web_search_context
-from tts_manager import _CancelableTTSWorker, TTSRequestWorker, TTSTranslationWorker
+from bandori_llm.llm_manager import _auto_continue_limit, _prefetch_web_search_context
+from bandori_audio.tts_manager import _CancelableTTSWorker, TTSRequestWorker, TTSTranslationWorker
 
 
 def test_stream_workers_share_auto_continue_and_prefetch_helpers():

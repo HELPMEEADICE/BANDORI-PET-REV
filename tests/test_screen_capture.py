@@ -1,6 +1,6 @@
 import unittest
 
-from screen_capture import _int
+from bandori_platform.screen_capture import _int
 
 
 class ScreenCaptureTest(unittest.TestCase):

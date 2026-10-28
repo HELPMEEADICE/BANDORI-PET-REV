@@ -534,7 +534,7 @@ class BehaviorPageMixin:
         )
 
     def _click_motion_profile_actions(self, name: str, item: dict) -> dict | None:
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
 
         name = str(name or "").strip()
         if not name:
@@ -571,7 +571,7 @@ class BehaviorPageMixin:
         return profile_actions == current_actions
 
     def _matching_click_motion_profile_name(self, item: dict) -> str:
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
 
         if not item:
             return ""
@@ -598,7 +598,7 @@ class BehaviorPageMixin:
         return ""
 
     def _reload_click_motion_profiles(self, select_name: str | None = None):
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, preset_combo_label
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, preset_combo_label
 
         if not hasattr(self, "_click_motion_profile_combo"):
             return
@@ -636,7 +636,7 @@ class BehaviorPageMixin:
                 self._click_motion_profile_name.clear()
 
     def _on_click_motion_profile_selected(self, index: int):
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
 
         if index < 0:
             return
@@ -703,7 +703,7 @@ class BehaviorPageMixin:
             self._click_motion_profile_name.setText(name if name not in BUILTIN_PROFILE_NAMES else "")
 
     def _save_click_motion_profile(self):
-        from click_motion_presets import BUILTIN_PROFILE_NAMES
+        from bandori_live2d.click_motion_presets import BUILTIN_PROFILE_NAMES
 
         if not self._cfg:
             return
@@ -773,7 +773,7 @@ class BehaviorPageMixin:
             return False
 
     def _delete_click_motion_profile(self):
-        from click_motion_presets import BUILTIN_PROFILE_NAMES
+        from bandori_live2d.click_motion_presets import BUILTIN_PROFILE_NAMES
 
         if not self._cfg:
             return
@@ -812,7 +812,7 @@ class BehaviorPageMixin:
             return False
 
     def _apply_click_motion_profile(self):
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
 
         scope = self._current_click_motion_scope()
         item = self._selected_model_item()

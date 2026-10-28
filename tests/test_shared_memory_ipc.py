@@ -6,7 +6,7 @@ def _unique_key(prefix: str) -> str:
 
 
 def test_adaptive_polling_backs_off_and_immediately_recovers():
-    from ipc_bus import AdaptivePollInterval
+    from bandori_core.ipc_bus import AdaptivePollInterval
 
     state = AdaptivePollInterval(
         active_interval_ms=15,
@@ -21,7 +21,7 @@ def test_adaptive_polling_backs_off_and_immediately_recovers():
 
 
 def test_shared_memory_queue_delivers_lines_in_order():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("order")
     writer = SharedMemoryLineQueue.create(key, slot_count=4, slot_size=256)
@@ -38,7 +38,7 @@ def test_shared_memory_queue_delivers_lines_in_order():
 
 
 def test_shared_memory_queue_readers_have_independent_cursors():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("cursors")
     writer = SharedMemoryLineQueue.create(key, slot_count=4, slot_size=256)
@@ -56,7 +56,7 @@ def test_shared_memory_queue_readers_have_independent_cursors():
 
 
 def test_peer_position_batches_keep_only_the_latest_update_per_character():
-    from shared_memory_ipc import (
+    from bandori_core.shared_memory_ipc import (
         coalesce_latest_peer_positions,
         encode_ipc_envelope,
     )
@@ -87,7 +87,7 @@ def test_peer_position_batches_keep_only_the_latest_update_per_character():
 
 
 def test_peer_drag_batches_keep_latest_cumulative_offset_per_session():
-    from shared_memory_ipc import (
+    from bandori_core.shared_memory_ipc import (
         coalesce_latest_peer_positions,
         encode_ipc_envelope,
     )
@@ -112,7 +112,7 @@ def test_peer_drag_batches_keep_latest_cumulative_offset_per_session():
 
 
 def test_shared_memory_queue_overflow_returns_recent_complete_messages():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("overflow")
     writer = SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)
@@ -130,7 +130,7 @@ def test_shared_memory_queue_overflow_returns_recent_complete_messages():
 
 
 def test_reliable_and_lossy_lanes_keep_reliable_commands_during_lossy_overflow():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     lossy_key = _unique_key("lossy-lane")
     reliable_key = _unique_key("reliable-lane")
@@ -157,7 +157,7 @@ def test_reliable_and_lossy_lanes_keep_reliable_commands_during_lossy_overflow()
 
 
 def test_default_shared_memory_queue_accepts_large_settings_payloads():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("large")
     writer = SharedMemoryLineQueue.create(key)
@@ -172,7 +172,7 @@ def test_default_shared_memory_queue_accepts_large_settings_payloads():
 
 
 def test_closed_shared_memory_queue_read_write_are_noops():
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("closed")
     queue = SharedMemoryLineQueue.create(key, slot_count=1, slot_size=128)
@@ -183,7 +183,7 @@ def test_closed_shared_memory_queue_read_write_are_noops():
 
 
 def test_default_shared_memory_queue_stays_below_macos_shared_memory_budget():
-    from shared_memory_ipc import (
+    from bandori_core.shared_memory_ipc import (
         _DEFAULT_SLOT_COUNT,
         _DEFAULT_SLOT_SIZE,
         _queue_memory_size,
@@ -194,7 +194,7 @@ def test_default_shared_memory_queue_stays_below_macos_shared_memory_budget():
 
 
 def test_shared_memory_queue_uses_only_configured_smaller_fallbacks():
-    from shared_memory_ipc import _queue_slot_count_candidates
+    from bandori_core.shared_memory_ipc import _queue_slot_count_candidates
 
     assert _queue_slot_count_candidates(
         32,
@@ -209,12 +209,12 @@ def test_shared_memory_queue_uses_only_configured_smaller_fallbacks():
 
 
 def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
-    from ipc_bus import (
+    from bandori_core.ipc_bus import (
         MAIN_CONTROL_SLOT_COUNT,
         MAIN_IPC_SLOT_SIZE,
         MAIN_RELIABLE_INBOUND_SLOT_COUNT,
     )
-    from shared_memory_ipc import (
+    from bandori_core.shared_memory_ipc import (
         _DEFAULT_SLOT_COUNT,
         _DEFAULT_SLOT_SIZE,
         _queue_memory_size,
@@ -239,9 +239,9 @@ def test_main_and_radial_ipc_fit_macos_shared_memory_budget():
 def test_main_uses_a_separate_control_queue_for_reliable_commands():
     from pathlib import Path
 
-    bus_source = Path("ipc_bus.py").read_text(encoding="utf-8")
+    bus_source = Path("bandori_core/ipc_bus.py").read_text(encoding="utf-8")
     main_source = Path("main.py").read_text(encoding="utf-8")
-    pet_source = Path("pet_window.py").read_text(encoding="utf-8")
+    pet_source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
 
     assert "def ipc_control_queue_key()" in bus_source
     assert "def ipc_reliable_inbound_queue_key()" in bus_source
@@ -253,7 +253,7 @@ def test_main_uses_a_separate_control_queue_for_reliable_commands():
 
 
 def test_reliable_classifier_covers_control_and_user_visible_events():
-    from ipc_bus import is_reliable_ipc_line
+    from bandori_core.ipc_bus import is_reliable_ipc_line
 
     for line in (
         "REGISTER\tPET\tkasumi",
@@ -300,7 +300,7 @@ def test_main_registers_new_ipc_peer_before_touching_heartbeat():
 
 
 def test_offline_character_detection_ignores_overlapping_pet_processes():
-    from ipc_bus import pet_characters_without_active_peers
+    from bandori_core.ipc_bus import pet_characters_without_active_peers
 
     removed = [
         {"kind": "PET", "character": "Kasumi"},
@@ -328,7 +328,7 @@ def test_main_broadcasts_reliable_offline_events_for_unregister_and_timeout():
 
 
 def test_ipc_envelope_round_trips_sender_and_exclusion():
-    from shared_memory_ipc import decode_ipc_envelope, encode_ipc_envelope
+    from bandori_core.shared_memory_ipc import decode_ipc_envelope, encode_ipc_envelope
 
     encoded = encode_ipc_envelope(
         "peer-1",
@@ -347,11 +347,11 @@ def test_internal_process_ipc_no_longer_uses_qt_local_sockets():
     from pathlib import Path
 
     internal_ipc_files = [
-        "ipc_bus.py",
+        "bandori_core/ipc_bus.py",
         "main.py",
         "settings_process.py",
         "chat_process.py",
-        "pet_window.py",
+        "bandori_ui/pet_window.py",
         "radial_menu_process.py",
     ]
 
@@ -411,7 +411,7 @@ def test_create_reclaims_stale_segment_left_by_killed_owner():
     import subprocess
     import sys
 
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("stale")
     # Simulate a force-killed owner: the child creates the queue and exits via
@@ -419,7 +419,7 @@ def test_create_reclaims_stale_segment_left_by_killed_owner():
     # zero attaches (the kernel detaches on death but never removes).
     script = (
         "import os, sys\n"
-        "from shared_memory_ipc import SharedMemoryLineQueue\n"
+            "from bandori_core.shared_memory_ipc import SharedMemoryLineQueue\n"
         f"SharedMemoryLineQueue.create({key!r}, slot_count=2, slot_size=256)\n"
         "os._exit(0)\n"
     )
@@ -445,7 +445,7 @@ def test_create_reclaims_stale_segment_left_by_killed_owner():
 def test_create_does_not_tear_down_live_segment():
     import pytest
 
-    from shared_memory_ipc import SharedMemoryLineQueue
+    from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
     key = _unique_key("live")
     writer = SharedMemoryLineQueue.create(key, slot_count=2, slot_size=256)

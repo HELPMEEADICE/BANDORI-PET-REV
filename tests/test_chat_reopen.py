@@ -8,7 +8,7 @@ from PySide6.QtCore import QProcess, QRect
 
 from chat_process import focus_chat_window
 from chat_window.chat_window import ChatWindow
-from pet_window import PetWindow
+from bandori_ui.pet_window import PetWindow
 
 
 class _RunningProcess:

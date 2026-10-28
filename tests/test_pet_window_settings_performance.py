@@ -1,10 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from pet_window import PetWindow
+from bandori_ui.pet_window import PetWindow
 
 
-SOURCE = Path("pet_window.py").read_text(encoding="utf-8")
+SOURCE = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
 
 
 def _apply_settings_block() -> str:
@@ -135,7 +135,7 @@ def test_action_cache_is_sized_for_every_selected_motion_file_and_expression():
 def test_action_preload_waits_for_background_archive_prefetch(monkeypatch):
     callbacks = []
     monkeypatch.setattr(
-        "pet_window.QTimer",
+        "bandori_ui.pet_window.QTimer",
         SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
     )
 
@@ -166,7 +166,7 @@ def test_action_preload_waits_for_background_archive_prefetch(monkeypatch):
 def test_first_motion_request_is_deferred_instead_of_reading_archive_on_ui_thread(monkeypatch):
     callbacks = []
     monkeypatch.setattr(
-        "pet_window.QTimer",
+        "bandori_ui.pet_window.QTimer",
         SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
     )
     calls = []
@@ -205,7 +205,7 @@ def test_first_motion_request_is_deferred_instead_of_reading_archive_on_ui_threa
 def test_first_expression_request_is_deferred_until_archive_prefetch_finishes(monkeypatch):
     callbacks = []
     monkeypatch.setattr(
-        "pet_window.QTimer",
+        "bandori_ui.pet_window.QTimer",
         SimpleNamespace(singleShot=lambda _delay, callback: callbacks.append(callback)),
     )
     calls = []

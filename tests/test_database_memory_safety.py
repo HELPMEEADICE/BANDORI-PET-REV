@@ -7,10 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import chat_attachment_manager
-import database_manager
-from compact_ai_window import CompactAIWindow
-from database_manager import DatabaseManager
+import bandori_chat.chat_attachment_manager as chat_attachment_manager
+import bandori_core.database_manager as database_manager
+from bandori_chat.compact_ai_window import CompactAIWindow
+from bandori_core.database_manager import DatabaseManager
 
 
 class DatabaseMemorySafetyTests(unittest.TestCase):
@@ -136,7 +136,7 @@ class DatabaseMemorySafetyTests(unittest.TestCase):
             "reason": "fallback",
         }
 
-        with patch("compact_ai_window.store_extracted_memories") as store:
+        with patch("bandori_chat.compact_ai_window.store_extracted_memories") as store:
             CompactAIWindow._on_memory_extraction_finished(
                 harness,
                 worker,

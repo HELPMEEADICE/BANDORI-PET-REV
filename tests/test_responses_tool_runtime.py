@@ -5,13 +5,13 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import ANY, patch
 
-from llm_manager import (
+from bandori_llm.llm_manager import (
     LLMStreamWorker,
     ResponsesStreamWorker,
     _normalize_stream_tool_calls,
     _tool_support_is_required,
 )
-from local_tools import responses_tools
+from bandori_tools.local_tools import responses_tools
 
 
 class ResponsesToolRuntimeTests(unittest.TestCase):
@@ -145,7 +145,7 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
 
         worker._open_response = fake_open
         with patch(
-            "llm_manager.run_local_tool_call",
+            "bandori_llm.llm_manager.run_local_tool_call",
             return_value={"content": "已戳了戳用户。", "extra_messages": []},
         ) as run_tool:
             worker.run()
@@ -190,7 +190,7 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
 
         worker._open_response = fake_open
         with patch(
-            "llm_manager.run_local_tool_call",
+            "bandori_llm.llm_manager.run_local_tool_call",
             return_value={"content": "ok", "extra_messages": []},
         ):
             worker.run()
@@ -411,7 +411,7 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
 
         worker._stream_once = fake_stream_once
         with patch(
-            "llm_manager.run_local_tool_call",
+            "bandori_llm.llm_manager.run_local_tool_call",
             return_value={"content": "search result", "extra_messages": []},
         ) as run_tool:
             worker.run()
@@ -464,7 +464,7 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
 
         worker._open_response = fake_open
         with patch(
-            "llm_manager.run_local_tool_call",
+            "bandori_llm.llm_manager.run_local_tool_call",
             return_value={"content": "search result", "extra_messages": []},
         ) as run_tool:
             worker.run()
@@ -484,7 +484,7 @@ class ResponsesToolRuntimeTests(unittest.TestCase):
     def test_chat_surfaces_do_not_fallback_when_local_tools_are_enabled(self):
         root = Path(__file__).resolve().parents[1]
         full_chat = (root / "chat_window" / "chat_window.py").read_text(encoding="utf-8")
-        compact_chat = (root / "compact_ai_window.py").read_text(encoding="utf-8")
+        compact_chat = (root / "bandori_chat/compact_ai_window.py").read_text(encoding="utf-8")
         old_condition = (
             "self._use_responses_api(api_url) and not web_search "
             "and not web_fetch and not use_reminder_tools"

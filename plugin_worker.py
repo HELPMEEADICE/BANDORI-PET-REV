@@ -6,7 +6,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from process_utils import configure_debug_logging, install_parent_death_watch
+from bandori_core.process_utils import configure_debug_logging, install_parent_death_watch
 
 configure_debug_logging()
 

@@ -1,6 +1,6 @@
 import unittest
 
-from live2d_quality import clamp_live2d_scale, clamp_moc3_visible_height
+from bandori_live2d.live2d_quality import clamp_live2d_scale, clamp_moc3_visible_height
 
 
 class Live2DQualityTest(unittest.TestCase):

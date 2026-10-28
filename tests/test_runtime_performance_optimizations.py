@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 
-from token_usage import (
+from bandori_llm.token_usage import (
     estimate_messages_tokens,
     estimate_text_tokens,
     estimate_untracked_history_usage,
@@ -68,7 +68,7 @@ def test_linear_token_usage_estimator_preserves_legacy_results():
 
 
 def test_pixel_renderer_keeps_only_one_uncompressed_sprite_backing_store():
-    source = Path("pixel_pet_widget.py").read_text(encoding="utf-8")
+    source = Path("bandori_ui/pixel_pet_widget.py").read_text(encoding="utf-8")
 
     assert "self._sheet = QPixmap()" not in source
     assert "pixmap.toImage()" not in source
@@ -78,7 +78,7 @@ def test_pixel_renderer_keeps_only_one_uncompressed_sprite_backing_store():
 def test_pixel_sprite_memory_can_be_released_while_inactive():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
-    from pixel_pet_widget import PixelPetWidget, load_pixel_frames
+    from bandori_ui.pixel_pet_widget import PixelPetWidget, load_pixel_frames
 
     app = QApplication.instance() or QApplication([])
     widget = PixelPetWidget()

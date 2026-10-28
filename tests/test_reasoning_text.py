@@ -1,5 +1,5 @@
-from llm_thinking import split_thinking_text
-from vision_fallback import _strip_thinking_text
+from bandori_llm.llm_thinking import split_thinking_text
+from bandori_llm.vision_fallback import _strip_thinking_text
 
 
 def test_closed_reasoning_tags_are_removed_from_visible_text():

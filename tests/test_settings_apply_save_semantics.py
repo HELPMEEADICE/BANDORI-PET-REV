@@ -331,7 +331,7 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
 
         harness._get_data_open_file_name = mark_opened
         with (
-            patch("chat_runtime.chat_window_is_active", return_value=True),
+            patch("bandori_chat.chat_runtime.chat_window_is_active", return_value=True),
             patch("settings_window.pages.data.InfoBar.warning") as warning_bar,
         ):
             harness._import_chat_database()

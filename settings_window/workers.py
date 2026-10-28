@@ -6,8 +6,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from settings_window.constants import *
-from llm_api_compat import openai_compat_headers
-from network_worker import CancelableNetworkWorker
+from bandori_llm.llm_api_compat import openai_compat_headers
+from bandori_services.network_worker import CancelableNetworkWorker
 
 
 class UpdateCheckWorker(QThread):
@@ -16,7 +16,7 @@ class UpdateCheckWorker(QThread):
 
     def run(self):
         try:
-            from app_update import check_for_updates
+            from bandori_core.app_update import check_for_updates
 
             self.finished.emit(check_for_updates())
         except Exception as exc:
@@ -33,7 +33,7 @@ class UpdateApplyWorker(QThread):
 
     def run(self):
         try:
-            from app_update import apply_update
+            from bandori_core.app_update import apply_update
 
             self.finished.emit(apply_update(self._update_info))
         except Exception as exc:
@@ -50,7 +50,7 @@ class McpConnectionTestWorker(CancelableNetworkWorker):
 
     def run(self):
         try:
-            from mcp_bridge import test_mcp_servers
+            from bandori_tools.mcp_bridge import test_mcp_servers
 
             self._config["_cancel_event"] = self.cancel_event
             success, details = test_mcp_servers(self._config)
@@ -285,7 +285,7 @@ class ModelDetailMetadataWorker(QThread):
             self.error.emit(str(exc))
 
     def _profile_actions(self, name: str, motions: list[str], expressions: list[str]) -> dict | None:
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES, resolve_preset_to_actions
 
         name = str(name or "").strip()
         if not name:
@@ -314,7 +314,7 @@ class ModelDetailMetadataWorker(QThread):
         return profile_actions is not None and profile_actions == actions
 
     def _matching_click_motion_profile_name(self, motions: list[str], expressions: list[str], actions: dict) -> str:
-        from click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
+        from bandori_live2d.click_motion_presets import BUILTIN_CLICK_MOTION_PROFILES, BUILTIN_PROFILE_NAMES
 
         stored_name = str(self._item.get("click_motion_profile_name", "") or "").strip()
         if stored_name:

@@ -1,7 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
-from process_utils import clamp_int
+from bandori_core.process_utils import clamp_int
 
 
 class ASRPageMixin:
@@ -233,7 +233,7 @@ class ASRPageMixin:
         if worker is not None and worker.isRunning():
             return
         try:
-            from asr_manager import ASRLocalServerInstallWorker
+            from bandori_audio.asr_manager import ASRLocalServerInstallWorker
         except Exception as exc:
             InfoBar.error(
                 _tr("SettingsWindow.asr_install_failed_title", default="ASR 安装失败"),
@@ -346,7 +346,7 @@ class ASRPageMixin:
             return
         if not (self._cfg and self._asr_config_widgets_ready()):
             return
-        from asr_manager import ASRRecorderWorker as recorder_class
+        from bandori_audio.asr_manager import ASRRecorderWorker as recorder_class
         self._save_asr_config(show_info=False)
         self._asr_test_recording = True
         self._asr_test_result.setPlainText("")
@@ -375,7 +375,7 @@ class ASRPageMixin:
     def _on_asr_test_audio_ready(self, audio: bytes, media_type: str):
         if self.sender() is not getattr(self, "_asr_test_worker", None):
             return
-        from asr_manager import ASRRequestWorker as request_class
+        from bandori_audio.asr_manager import ASRRequestWorker as request_class
         self._asr_test_result.setPlainText(_tr("SettingsWindow.asr_test_transcribing", default="正在识别..."))
         self._asr_test_request_worker = request_class(audio, media_type, self._current_asr_config(), self)
         self._asr_test_request_worker.text_ready.connect(self._on_asr_test_text_ready)

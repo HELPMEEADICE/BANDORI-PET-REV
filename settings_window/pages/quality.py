@@ -1,7 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
-from music_bounce import MUSIC_BOUNCE_KEY, music_bounce_supported
+from bandori_audio.music_bounce import MUSIC_BOUNCE_KEY, music_bounce_supported
 
 
 class QualityPageMixin:

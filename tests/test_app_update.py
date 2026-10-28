@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
-import app_update
+import bandori_core.app_update as app_update
 
 
 def _asset(name: str) -> dict:

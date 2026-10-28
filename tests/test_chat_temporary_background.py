@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from chat_window.chat_window import ChatWindow
-from database_manager import DatabaseManager
+from bandori_core.database_manager import DatabaseManager
 
 
 class TemporaryBackgroundTests(unittest.TestCase):

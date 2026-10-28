@@ -1,6 +1,6 @@
 import unittest
 
-from llm_manager import COMMON_RULES, build_system_prompt, parse_action_tags
+from bandori_llm.llm_manager import COMMON_RULES, build_system_prompt, parse_action_tags
 
 
 class FakeConfig:

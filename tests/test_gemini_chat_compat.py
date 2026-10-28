@@ -1,6 +1,6 @@
 import unittest
 
-from llm_api_compat import append_google_chat_continuation
+from bandori_llm.llm_api_compat import append_google_chat_continuation
 
 
 class GeminiChatCompatTests(unittest.TestCase):

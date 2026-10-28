@@ -1,7 +1,7 @@
 from PySide6.QtGui import QSurfaceFormat
 
-import live2d_widget_base
-from live2d_widget_base import Live2DWidgetBase
+import bandori_live2d.live2d_widget_base as live2d_widget_base
+from bandori_live2d.live2d_widget_base import Live2DWidgetBase
 
 
 class _VSyncHarness:

@@ -1,8 +1,8 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
-from process_utils import clamp_int
-from token_usage import (
+from bandori_core.process_utils import clamp_int
+from bandori_llm.token_usage import (
     HISTORY_MESSAGE_LIMIT_SLIDER_MAX,
     history_message_limit_from_slider,
     history_message_limit_to_slider,
@@ -1245,7 +1245,7 @@ class LLMPageMixin:
         self._llm_custom_system_prompt.setEnabled(bool(enabled))
 
     def _supports_openai_responses_api(self, api_url: str) -> bool:
-        from llm_api_compat import supports_openai_responses_api
+        from bandori_llm.llm_api_compat import supports_openai_responses_api
 
         return supports_openai_responses_api(api_url)
 

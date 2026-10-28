@@ -1,6 +1,6 @@
 import unittest
 
-from reminder_core import PROACTIVE_CARE_POLICY_CONFIG_KEY
+from bandori_core.reminder_core import PROACTIVE_CARE_POLICY_CONFIG_KEY
 from settings_window.pages.screen_awareness import ScreenAwarenessPageMixin
 
 

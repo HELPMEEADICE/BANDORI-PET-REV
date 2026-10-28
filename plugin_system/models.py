@@ -11,7 +11,7 @@ from typing import Any
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from app_info import APP_VERSION
+from bandori_core.app_info import APP_VERSION
 
 
 PLUGIN_SCHEMA_VERSION = 1

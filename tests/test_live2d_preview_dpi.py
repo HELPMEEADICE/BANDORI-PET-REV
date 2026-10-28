@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 import settings_window.widgets as widgets
 from settings_window.widgets import Live2DPreviewRenderWidget
-from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
+from bandori_live2d.live2d_widget_moc3 import MOC3_RENDER_PIPELINE
 
 
 class _ScaledPreviewWidget(Live2DPreviewRenderWidget):

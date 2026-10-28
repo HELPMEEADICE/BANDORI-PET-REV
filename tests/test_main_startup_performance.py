@@ -9,27 +9,27 @@ def test_main_startup_does_not_import_renderer_or_optional_services_eagerly():
     source = _source("main.py")
     eager_imports = source.split("class AiEventBridge", 1)[0]
 
-    assert "from live2d_widget import Live2DWidget" not in eager_imports
-    assert "from alarm_manager import ReminderScheduler" not in eager_imports
-    assert "from database_manager import DatabaseManager" not in eager_imports
-    assert "from napcat_adapter import NapcatClient" not in eager_imports
+    assert "from bandori_live2d.live2d_widget import Live2DWidget" not in eager_imports
+    assert "from bandori_core.alarm_manager import ReminderScheduler" not in eager_imports
+    assert "from bandori_core.database_manager import DatabaseManager" not in eager_imports
+    assert "from bandori_services.napcat_adapter import NapcatClient" not in eager_imports
 
 
 def test_config_loading_does_not_import_vision_or_outfit_workers():
-    source = _source("config_manager.py")
+    source = _source("bandori_core/config_manager.py")
     eager_imports = source.split("CONFIG_FILE_LOCK_TIMEOUT_SECONDS", 1)[0]
 
-    assert "from screen_awareness import" not in eager_imports
-    assert "from outfit_description import" not in eager_imports
+    assert "from bandori_platform.screen_awareness import" not in eager_imports
+    assert "from bandori_models.outfit_description import" not in eager_imports
 
 
 def test_pet_window_defers_outfit_worker_until_recognition_runs():
-    source = _source("pet_window.py")
+    source = _source("bandori_ui/pet_window.py")
     eager_imports = source.split("_OUTFIT_DESCRIPTION_AUTH_FAILURE_MARKERS", 1)[0]
 
     assert "OutfitDescriptionWorker" not in eager_imports
     assert "image_to_data_url" not in eager_imports
-    assert "from network_worker import" not in eager_imports
+    assert "from bandori_services.network_worker import" not in eager_imports
 
 
 def test_visible_process_starts_before_background_services():
@@ -48,7 +48,7 @@ def test_pet_process_defers_mcp_network_import_until_shutdown():
     source = _source("pet_process.py")
     eager_imports = source.split("def _parse_args", 1)[0]
 
-    assert "from mcp_bridge import close_mcp_clients" not in eager_imports
+    assert "from bandori_tools.mcp_bridge import close_mcp_clients" not in eager_imports
     assert "def close_mcp_clients_on_shutdown():" in source
 
 
@@ -68,17 +68,17 @@ def test_controller_passes_the_known_model_format_to_pet_processes():
 
 
 def test_pet_adapter_defers_luajit_and_imports_only_the_selected_format():
-    adapter_source = _source("live2d_lua_adapter.py")
+    adapter_source = _source("bandori_live2d/live2d_lua_adapter.py")
     eager_imports = adapter_source.split("def _model_manifest_format", 1)[0]
-    widget_eager_imports = _source("live2d_widget.py").split(
+    widget_eager_imports = _source("bandori_live2d/live2d_widget.py").split(
         "def render_pipeline_for_model", 1
     )[0]
     pet_source = _source("pet_process.py")
 
-    assert "from live2d_lua_adapter_base import" not in eager_imports
-    assert "from live2d_lua_adapter_moc import" not in eager_imports
-    assert "from live2d_lua_adapter_moc3 import" not in eager_imports
-    assert "from live2d_widget_moc3 import" not in widget_eager_imports
+    assert "from bandori_live2d.live2d_lua_adapter_base import" not in eager_imports
+    assert "from bandori_live2d.live2d_lua_adapter_moc import" not in eager_imports
+    assert "from bandori_live2d.live2d_lua_adapter_moc3 import" not in eager_imports
+    assert "from bandori_live2d.live2d_widget_moc3 import" not in widget_eager_imports
     assert "live2d_for_format(args.model_format)" in pet_source
     assert "QPixmapCache.setCacheLimit(2048)" in pet_source
 

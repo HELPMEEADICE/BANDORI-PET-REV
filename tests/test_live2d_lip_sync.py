@@ -7,11 +7,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from lupa.luajit21 import LuaRuntime
 
-from live2d_lua_adapter_base import _install_lazy_lua_module_loader
-from live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
-from live2d_lua_adapter_moc3 import LuaLAppModelMOC3, LuaLive2DModuleMOC3
-from live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
-from live2d_widget_base import Live2DWidgetBase
+from bandori_live2d.live2d_lua_adapter_base import _install_lazy_lua_module_loader
+from bandori_live2d.live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
+from bandori_live2d.live2d_lua_adapter_moc3 import LuaLAppModelMOC3, LuaLive2DModuleMOC3
+from bandori_live2d.live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
+from bandori_live2d.live2d_widget_base import Live2DWidgetBase
 
 
 LUA_ROOT = Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua"

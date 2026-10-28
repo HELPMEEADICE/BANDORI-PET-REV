@@ -1,0 +1,134 @@
+from PySide6.QtCore import Signal
+
+from bandori_platform.desktop_state import current_desktop_state
+from bandori_core.i18n_manager import tr as _tr
+from bandori_platform.screen_capture import capture_screenshot_data_url
+from bandori_llm.vision_fallback import analyze_images_with_aux_model
+from bandori_services.network_worker import CancelableNetworkWorker
+from bandori_platform.screen_awareness_config import (
+    SCREEN_AWARENESS_MAX_INTERVAL_MINUTES,
+    SCREEN_AWARENESS_MIN_INTERVAL_MINUTES,
+    SCREEN_AWARENESS_MODEL_MODE_AUX,
+    SCREEN_AWARENESS_MODEL_MODE_MAIN,
+    clamp_screen_awareness_interval,
+    clamp_screen_awareness_screenshot_width,
+    normalize_screen_awareness_model_mode,
+)
+
+_REEXPORTED_CONFIG_NAMES = (
+    SCREEN_AWARENESS_MAX_INTERVAL_MINUTES,
+    SCREEN_AWARENESS_MIN_INTERVAL_MINUTES,
+    SCREEN_AWARENESS_MODEL_MODE_AUX,
+    clamp_screen_awareness_interval,
+)
+
+
+def screen_awareness_aux_config(config) -> tuple[str, str, str]:
+    api_url = str(config.get("llm_aux_api_url", "") or "").strip()
+    api_key = str(config.get("llm_aux_api_key", "") or "").strip()
+    model_id = str(config.get("llm_aux_model_id", "") or "").strip()
+    if not api_url:
+        api_url = str(config.get("llm_api_url", "") or "").strip()
+    if not api_key:
+        api_key = str(config.get("llm_api_key", "") or "").strip()
+    return api_url, api_key, model_id
+
+
+def screen_awareness_desktop_state(config: dict | None = None) -> dict:
+    try:
+        state = current_desktop_state()
+    except Exception:
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    config = config if isinstance(config, dict) else {}
+    keys = [
+        "state",
+        "label",
+        "confidence",
+        "reason",
+        "idle_seconds",
+        "idle_threshold_seconds",
+        "captured_at",
+    ]
+    if bool(config.get("screen_awareness_include_process_name", True)):
+        keys.extend(("process_name", "app_name"))
+    if bool(config.get("screen_awareness_include_window_title", False)):
+        keys.append("foreground_title")
+    return {key: state.get(key) for key in keys if key in state}
+
+
+class ScreenAwarenessVisionWorker(CancelableNetworkWorker):
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self._config = dict(config or {})
+
+    def run(self):
+        try:
+            max_width = clamp_screen_awareness_screenshot_width(
+                self._config.get("screen_awareness_max_screenshot_width", 1920)
+            )
+            data_url, width, height, desktop_width, desktop_height = capture_screenshot_data_url(max_width)
+            metrics = {
+                "image_width": width,
+                "image_height": height,
+                "desktop_width": desktop_width,
+                "desktop_height": desktop_height,
+            }
+            mode = normalize_screen_awareness_model_mode(
+                self._config.get("screen_awareness_model_mode", SCREEN_AWARENESS_MODEL_MODE_MAIN)
+            )
+            result = {
+                "mode": mode,
+                "metrics": metrics,
+                "screen_observation": "",
+                "screen_image_data_url": "",
+                "desktop_state": screen_awareness_desktop_state(self._config),
+            }
+            if mode == SCREEN_AWARENESS_MODEL_MODE_MAIN:
+                result["screen_image_data_url"] = data_url
+            else:
+                try:
+                    api_url, api_key, model_id = screen_awareness_aux_config(self._config)
+                    if not api_url or not api_key or not model_id:
+                        raise RuntimeError(_tr(
+                            "ScreenAwareness.aux_not_configured",
+                            default="屏幕感知已选择辅助模型，但辅助模型未配置完整。",
+                        ))
+                    prompt = _tr(
+                        "ScreenAwareness.vision_prompt",
+                        default=(
+                            "请观察这张桌面截图，客观概括用户当前可能正在做什么。"
+                            "重点包括应用/网页/代码/错误信息/文档/游戏/聊天等可见线索。"
+                            "不要输出隐私敏感细节，不要逐字复述窗口标题或聊天内容；"
+                            "不要角色扮演，不要建议用户做事，只输出 2 到 5 条紧凑观察，用用户当前界面语言回复。"
+                        ),
+                    )
+                    summary = analyze_images_with_aux_model(
+                        api_url,
+                        api_key,
+                        model_id,
+                        [data_url],
+                        prompt,
+                        None,
+                        timeout=120,
+                        worker=self,
+                    )
+                    result["screen_observation"] = str(summary or "").strip()
+                    if not result["screen_observation"]:
+                        raise RuntimeError(_tr(
+                            "ScreenAwareness.empty_observation",
+                            default="辅助模型没有返回屏幕观察结果。",
+                        ))
+                except Exception as exc:
+                    result["mode"] = SCREEN_AWARENESS_MODEL_MODE_MAIN
+                    result["screen_image_data_url"] = data_url
+                    result["aux_fallback_error"] = str(exc)
+            if not self.cancelled():
+                self.finished.emit(result)
+        except Exception as exc:
+            if not self.cancelled():
+                self.error.emit(str(exc))

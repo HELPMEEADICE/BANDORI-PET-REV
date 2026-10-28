@@ -1,6 +1,6 @@
 import unittest
 
-from process_utils import clamp_int
+from bandori_core.process_utils import clamp_int
 
 
 class ProcessUtilsClampTest(unittest.TestCase):

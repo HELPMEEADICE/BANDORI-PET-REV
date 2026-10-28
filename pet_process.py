@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 
-from process_utils import (
+from bandori_core.process_utils import (
     bootstrap_app,
     hidden_subprocess_kwargs,
     install_parent_death_watch,
@@ -19,21 +19,21 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmapCache
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QVBoxLayout
 
-from app_theme import apply_app_theme
-from app_info import APP_NAME, WAYLAND_APP_ID
-from i18n_manager import detect_system_language, set_language
-from live2d_widget import Live2DWidget
-from live2d_lua_adapter import live2d_for_format
-from model_manager import (
+from bandori_core.app_theme import apply_app_theme
+from bandori_core.app_info import APP_NAME, WAYLAND_APP_ID
+from bandori_core.i18n_manager import detect_system_language, set_language
+from bandori_live2d.live2d_widget import Live2DWidget
+from bandori_live2d.live2d_lua_adapter import live2d_for_format
+from bandori_models.model_manager import (
     MODEL_FORMAT_MOC,
     MODEL_FORMAT_MOC3,
     ModelManager,
     models_dir_exists,
     prompt_download_model_resources,
 )
-from pet_window import PetWindow
-from gpu_acceleration import configure_qt_gpu_acceleration
-from tray_utils import load_tray_icon
+from bandori_ui.pet_window import PetWindow
+from bandori_platform.gpu_acceleration import configure_qt_gpu_acceleration
+from bandori_ui.tray_utils import load_tray_icon
 
 
 def _parse_args():
@@ -161,7 +161,7 @@ def main():
         on_parent_death=_make_main_relauncher(args.index, normal_shutdown_requested),
     )
 
-    import macos_patch
+    import bandori_platform.macos_patch as macos_patch
     macos_patch.hide_dock_icon_if_needed()
 
     app.setApplicationName(f"{APP_NAME}-{args.character}")
@@ -295,7 +295,7 @@ def main():
     def close_mcp_clients_on_shutdown():
         # MCP networking is not used while constructing the pet. Import it only
         # if shutdown actually needs to dispose a client created later.
-        from mcp_bridge import close_mcp_clients
+        from bandori_tools.mcp_bridge import close_mcp_clients
 
         close_mcp_clients()
 

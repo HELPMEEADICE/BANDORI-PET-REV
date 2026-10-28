@@ -92,7 +92,7 @@ class SettingsI18nTests(unittest.TestCase):
                 self.assertEqual([], missing)
 
     def test_date_picker_months_follow_current_language(self):
-        from i18n_manager import date_picker_months, current_language, set_language
+        from bandori_core.i18n_manager import date_picker_months, current_language, set_language
 
         original_language = current_language()
         try:
@@ -107,7 +107,7 @@ class SettingsI18nTests(unittest.TestCase):
             set_language(original_language)
 
     def test_chat_history_month_formatter_uses_translated_months(self):
-        from i18n_manager import current_language, set_language
+        from bandori_core.i18n_manager import current_language, set_language
         from settings_window.pages.chat_history import _I18nMonthFormatter
 
         original_language = current_language()
@@ -120,7 +120,7 @@ class SettingsI18nTests(unittest.TestCase):
             set_language(original_language)
 
     def test_normalize_language_handles_region_and_script_codes(self):
-        from i18n_manager import normalize_language
+        from bandori_core.i18n_manager import normalize_language
 
         cases = {
             "zh-Hans-CN": "zh_CN",
@@ -142,7 +142,7 @@ class SettingsI18nTests(unittest.TestCase):
                 self.assertEqual(expected, normalize_language(raw))
 
     def test_detect_system_language_uses_macos_apple_languages(self):
-        from i18n_manager import detect_system_language
+        from bandori_core.i18n_manager import detect_system_language
 
         def fake_defaults(args, **kwargs):
             key = args[-1]
@@ -153,14 +153,14 @@ class SettingsI18nTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, stdout="en_US\n", stderr="")
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
 
-        with patch("i18n_manager.sys.platform", "darwin"), \
-             patch("i18n_manager.subprocess.run", side_effect=fake_defaults), \
-             patch("i18n_manager.locale.getlocale", return_value=(None, None)), \
-             patch("i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
+        with patch("bandori_core.i18n_manager.sys.platform", "darwin"), \
+             patch("bandori_core.i18n_manager.subprocess.run", side_effect=fake_defaults), \
+             patch("bandori_core.i18n_manager.locale.getlocale", return_value=(None, None)), \
+             patch("bandori_core.i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
             self.assertEqual("zh_TW", detect_system_language())
 
     def test_detect_system_language_uses_macos_apple_locale_fallback(self):
-        from i18n_manager import detect_system_language
+        from bandori_core.i18n_manager import detect_system_language
 
         def fake_defaults(args, **kwargs):
             key = args[-1]
@@ -170,10 +170,10 @@ class SettingsI18nTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, stdout="zh_Hans_CN\n", stderr="")
             return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
 
-        with patch("i18n_manager.sys.platform", "darwin"), \
-             patch("i18n_manager.subprocess.run", side_effect=fake_defaults), \
-             patch("i18n_manager.locale.getlocale", return_value=(None, None)), \
-             patch("i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
+        with patch("bandori_core.i18n_manager.sys.platform", "darwin"), \
+             patch("bandori_core.i18n_manager.subprocess.run", side_effect=fake_defaults), \
+             patch("bandori_core.i18n_manager.locale.getlocale", return_value=(None, None)), \
+             patch("bandori_core.i18n_manager.locale.getdefaultlocale", return_value=("en_US", "UTF-8")):
             self.assertEqual("zh_CN", detect_system_language())
 
 

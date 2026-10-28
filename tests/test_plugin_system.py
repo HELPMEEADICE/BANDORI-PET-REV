@@ -29,7 +29,7 @@ from plugin_system.native import NativePluginLoader
 from plugin_system.supervisor import LocalPluginTransport, MAX_STORAGE_BYTES, PluginSupervisor
 from plugin_system.sdk import PluginContext
 from plugin_system.worker_runtime import ManagedPluginRuntime
-from local_tools import chat_completion_tools, run_local_tool_call
+from bandori_tools.local_tools import chat_completion_tools, run_local_tool_call
 
 
 def manifest(version="1.0.0", **overrides):

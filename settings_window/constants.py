@@ -7,7 +7,7 @@ __all__ = []  # will be populated at end of file
 import urllib.request
 from datetime import datetime
 
-import fluent_bootstrap
+import bandori_ui.fluent_bootstrap as fluent_bootstrap
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
@@ -38,19 +38,19 @@ from qfluentwidgets.components.widgets.menu import (
 )
 from qfluentwidgets.common.config import qconfig
 
-from i18n_manager import tr as _tr, set_language, available_languages, current_language, normalize_language
-from llm_api_compat import (
+from bandori_core.i18n_manager import tr as _tr, set_language, available_languages, current_language, normalize_language
+from bandori_llm.llm_api_compat import (
     chat_completions_api_url,
     is_google_generative_language_url,
     models_api_url,
     responses_api_url,
     sanitize_chat_body_for_url,
 )
-from process_utils import app_base_dir, app_icon_path
-from model_manager import MODELS_DIR, ModelManager
-from app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
-from app_update import detect_update_channel
-from app_theme import (
+from bandori_core.process_utils import app_base_dir, app_icon_path
+from bandori_models.model_manager import MODELS_DIR, ModelManager
+from bandori_core.app_info import APP_LICENSE_URL, APP_QQ_GROUP_URL, APP_REPO_URL, APP_VERSION
+from bandori_core.app_update import detect_update_channel
+from bandori_core.app_theme import (
     BANDORI_PRIMARY,
     BANDORI_PRIMARY_HOVER,
     BANDORI_PRIMARY_PRESSED,
@@ -67,9 +67,9 @@ from app_theme import (
     accent_color,
     apply_app_theme,
 )
-from database_manager import DatabaseManager
-from config_manager import BUILTIN_LLM_API_PROFILES, DEFAULT_USER_PROFILE_KEY, make_user_profile_key
-from relationship_memory import (
+from bandori_core.database_manager import DatabaseManager
+from bandori_core.config_manager import BUILTIN_LLM_API_PROFILES, DEFAULT_USER_PROFILE_KEY, make_user_profile_key
+from bandori_core.relationship_memory import (
     GLOBAL_MEMORY_CHARACTER,
     MEMORY_KIND_LABELS,
     affection_label,
@@ -78,7 +78,7 @@ from relationship_memory import (
     role_character_from_user_key,
     user_key_from_config,
 )
-from reminder_core import (
+from bandori_core.reminder_core import (
     ALARM_CONFIG_KEY,
     PROACTIVE_CARE_POLICY_CONFIG_KEY,
     PROACTIVE_COMPANION_CONFIG_KEY,
@@ -99,8 +99,8 @@ from reminder_core import (
     pomodoro_phase_label,
     repeat_days_label,
 )
-from proactive_care_policy import CARE_DESKTOP_STATES, CARE_RULE_MODES
-from win32_dwm import apply_windows_11_border_fix, frame_changed
+from bandori_core.proactive_care_policy import CARE_DESKTOP_STATES, CARE_RULE_MODES
+from bandori_platform.win32_dwm import apply_windows_11_border_fix, frame_changed
 
 TTSPlayer = None
 TTSRequestWorker = None
@@ -118,7 +118,7 @@ def _ensure_settings_tts_available() -> bool:
         return _SETTINGS_TTS_AVAILABLE
     _SETTINGS_TTS_CHECKED = True
     try:
-        from tts_manager import TTSPlayer as player_class, TTSRequestWorker as worker_class
+        from bandori_audio.tts_manager import TTSPlayer as player_class, TTSRequestWorker as worker_class
     except (ImportError, OSError):
         _SETTINGS_TTS_AVAILABLE = False
         return False
@@ -134,7 +134,7 @@ def _ensure_settings_asr_available() -> bool:
         return _SETTINGS_ASR_AVAILABLE
     _SETTINGS_ASR_CHECKED = True
     try:
-        from asr_manager import ASRRecorderWorker as recorder_class, ASRRequestWorker as request_class
+        from bandori_audio.asr_manager import ASRRecorderWorker as recorder_class, ASRRequestWorker as request_class
     except (ImportError, OSError):
         _SETTINGS_ASR_AVAILABLE = False
         return False
@@ -145,12 +145,12 @@ def _ensure_settings_asr_available() -> bool:
 
 import json
 
-from startup_manager import (
+from bandori_core.startup_manager import (
     is_startup_enabled,
     is_supported as is_startup_supported,
     set_startup_enabled,
 )
-from live2d_click_actions import (
+from bandori_live2d.live2d_click_actions import (
     CLICK_MOTION_AUTO,
     CLICK_MOTION_NONE,
     CLICK_MOTION_RANDOM,
@@ -158,7 +158,7 @@ from live2d_click_actions import (
     CLICK_MOTION_SPECIAL_VALUES,
     normalize_click_motion_actions,
 )
-from live2d_quality import (
+from bandori_live2d.live2d_quality import (
     LIVE2D_MOC3_VISIBLE_HEIGHT_MAX,
     LIVE2D_MOC3_VISIBLE_HEIGHT_MIN,
     LIVE2D_SCALE_MAX,
@@ -167,7 +167,7 @@ from live2d_quality import (
     clamp_moc3_visible_height,
     normalize_live2d_quality,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, rounded_avatar_pixmap
+from bandori_ui.ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, rounded_avatar_pixmap
 
 _BG_LIGHT = "#ffffff"
 _BG_DARK = "#1e1e1e"

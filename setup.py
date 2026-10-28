@@ -8,8 +8,8 @@ import sys
 import uuid
 from pathlib import Path
 
-import fluent_bootstrap
-from live2d_lua_source_patch import patch_live2d_lua_module
+import bandori_ui.fluent_bootstrap as fluent_bootstrap
+from bandori_live2d.live2d_lua_source_patch import patch_live2d_lua_module
 from setuptools import Command
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
@@ -19,7 +19,7 @@ from cx_Freeze.command.bdist_mac import bdist_mac
 from cx_Freeze.command.bdist_msi import bdist_msi
 from cx_Freeze.command.build_exe import build_exe
 
-from live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
+from bandori_live2d.live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -59,7 +59,7 @@ for module_name in (
 ):
     importlib.import_module(module_name)
 
-from app_info import APP_NAME, APP_REPO_URL, APP_VERSION  # noqa: E402
+from bandori_core.app_info import APP_NAME, APP_REPO_URL, APP_VERSION  # noqa: E402
 
 
 class BuildExeWithEmptyModels(build_exe):
@@ -572,7 +572,7 @@ lupa_runtime = lupa_luajit_runtime_module()
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["tts_manager", lupa_runtime, *PYOPENGL_PLATFORM_MODULES],
+    "includes": ["bandori_audio.tts_manager", lupa_runtime, *PYOPENGL_PLATFORM_MODULES],
     "packages": [
         "OpenGL",
         "PIL",

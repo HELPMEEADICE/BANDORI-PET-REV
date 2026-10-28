@@ -10,9 +10,9 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
-from model_manager import MODEL_FORMAT_MOC3
-import pet_window as pet_window_module
-from pet_window import LIVE2D_MOC3_BASE_HEIGHT, PetWindow
+from bandori_models.model_manager import MODEL_FORMAT_MOC3
+import bandori_ui.pet_window as pet_window_module
+from bandori_ui.pet_window import LIVE2D_MOC3_BASE_HEIGHT, PetWindow
 
 
 class FakeScreen:

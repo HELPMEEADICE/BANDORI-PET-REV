@@ -15,7 +15,7 @@ class _LazyPreviewGL:
 
     def __getattr__(self, name):
         if self._instance is None:
-            from qt_gl import gl as preview_gl
+            from bandori_platform.qt_gl import gl as preview_gl
 
             self._instance = preview_gl
         return getattr(self._instance, name)
@@ -25,7 +25,7 @@ gl = _LazyPreviewGL()
 
 
 def _render_pipeline_for_model(model):
-    from live2d_widget import render_pipeline_for_model
+    from bandori_live2d.live2d_widget import render_pipeline_for_model
 
     return render_pipeline_for_model(model)
 
@@ -65,7 +65,7 @@ def connect_theme_changed_weak(widget, method_name: str):
 
 
 def configure_live2d_preview_surface_format():
-    from live2d_surface_format import configure_live2d_surface_format
+    from bandori_live2d.live2d_surface_format import configure_live2d_surface_format
 
     configure_live2d_surface_format()
 
@@ -93,8 +93,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self._live2d = module
 
     def set_render_quality(self, profile: str):
-        from live2d_quality import normalize_live2d_quality
-        from platform_patch import set_live2d_texture_quality
+        from bandori_live2d.live2d_quality import normalize_live2d_quality
+        from bandori_platform.platform_patch import set_live2d_texture_quality
 
         profile = normalize_live2d_quality(profile)
         if profile == self._quality_profile:
@@ -134,8 +134,8 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
         self.update()
 
     def _load_model(self, model_json_path: str):
-        from platform_patch import set_live2d_texture_quality
-        from zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
+        from bandori_platform.platform_patch import set_live2d_texture_quality
+        from bandori_models.zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
 
         if not model_json_path or not self._live2d:
             return
@@ -171,7 +171,7 @@ class Live2DPreviewRenderWidget(QOpenGLWidget):
                 self.doneCurrent()
 
     def initializeGL(self):
-        from gpu_acceleration import log_opengl_renderer_once
+        from bandori_platform.gpu_acceleration import log_opengl_renderer_once
 
         if self._live2d:
             self._live2d.glInit()

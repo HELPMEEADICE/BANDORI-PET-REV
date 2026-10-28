@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from database_manager import DatabaseManager
+from bandori_core.database_manager import DatabaseManager
 
 
 class ChatMessageMutationTests(unittest.TestCase):

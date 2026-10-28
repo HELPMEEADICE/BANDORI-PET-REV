@@ -2,11 +2,11 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from llm_manager import LLMStreamWorker, NonStreamWorker, ResponsesStreamWorker
-from asr_manager import ASRRequestWorker
-from tts_manager import TTSRequestWorker, TTSTranslationWorker
-from pet_window import PetWindow
-from network_worker import CancelableNetworkWorker
+from bandori_llm.llm_manager import LLMStreamWorker, NonStreamWorker, ResponsesStreamWorker
+from bandori_audio.asr_manager import ASRRequestWorker
+from bandori_audio.tts_manager import TTSRequestWorker, TTSTranslationWorker
+from bandori_ui.pet_window import PetWindow
+from bandori_services.network_worker import CancelableNetworkWorker
 
 
 class _ClosableResponse:
@@ -68,7 +68,7 @@ class WorkerCancellationTests(unittest.TestCase):
         worker = NonStreamWorker("https://example.com/v1", "key", "model", [])
         worker.cancel()
 
-        with patch("llm_manager.urllib.request.urlopen") as urlopen:
+        with patch("bandori_llm.llm_manager.urllib.request.urlopen") as urlopen:
             self.assertIsNone(worker._open_response(object(), 120))
 
         urlopen.assert_not_called()
@@ -109,7 +109,7 @@ class WorkerCancellationTests(unittest.TestCase):
             return {"content": "done", "extra_messages": []}
 
         worker._stream_once = fake_stream_once
-        with patch("llm_manager.run_local_tool_call", side_effect=fake_tool_call):
+        with patch("bandori_llm.llm_manager.run_local_tool_call", side_effect=fake_tool_call):
             worker.run()
 
         self.assertEqual(calls, ["first"])

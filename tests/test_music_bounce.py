@@ -11,9 +11,9 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
-import music_bounce
-from music_bounce import MusicBounceController, MusicSpring, OutputLevelMonitor
-from pet_window import PetWindow
+import bandori_audio.music_bounce as music_bounce
+from bandori_audio.music_bounce import MusicBounceController, MusicSpring, OutputLevelMonitor
+from bandori_ui.pet_window import PetWindow
 
 
 @pytest.fixture(scope="module")

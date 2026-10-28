@@ -1,4 +1,4 @@
-from pet_window import PetWindow
+from bandori_ui.pet_window import PetWindow
 
 
 class BoundsWidget:

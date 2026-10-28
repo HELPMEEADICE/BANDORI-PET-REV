@@ -12,9 +12,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-import asr_manager
-import tts_manager
-from tts_manager import TTSPlayer
+import bandori_audio.asr_manager as asr_manager
+import bandori_audio.tts_manager as tts_manager
+from bandori_audio.tts_manager import TTSPlayer
 
 
 class AudioRuntimeSafetyTest(unittest.TestCase):
@@ -27,8 +27,8 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
         soundfile = SimpleNamespace(read=Mock(return_value=(np.ones(20, dtype="float32"), 16000)))
 
         with (
-            patch("tts_manager._soundfile", return_value=soundfile),
-            patch("tts_manager._numpy", return_value=np),
+            patch("bandori_audio.tts_manager._soundfile", return_value=soundfile),
+            patch("bandori_audio.tts_manager._numpy", return_value=np),
             patch.object(player, "_ensure_stream", return_value=False),
         ):
             player.enqueue(b"audio", "wav")
@@ -61,7 +61,7 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
         cancelled = threading.Event()
         cancelled.set()
 
-        with patch("asr_manager.subprocess.Popen") as popen:
+        with patch("bandori_audio.asr_manager.subprocess.Popen") as popen:
             with self.assertRaises(asr_manager.ASRInstallCancelled):
                 asr_manager._run_command(
                     ["python", "-m", "pip"],
@@ -82,9 +82,9 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
             server.touch()
             with (
                 patch.object(asr_manager, "ASR_LOCAL_SERVER_DIR", server_dir),
-                patch("asr_manager._local_asr_python", return_value=python),
-                patch("asr_manager._is_local_asr_port_open", side_effect=[False, True]),
-                patch("asr_manager.subprocess.Popen", return_value=process) as popen,
+                patch("bandori_audio.asr_manager._local_asr_python", return_value=python),
+                patch("bandori_audio.asr_manager._is_local_asr_port_open", side_effect=[False, True]),
+                patch("bandori_audio.asr_manager.subprocess.Popen", return_value=process) as popen,
                 patch.dict(os.environ, {"BANDORI_PET_MAIN_PID": "12345"}, clear=False),
             ):
                 ready, _message = asr_manager._launch_local_asr_server_locked()
@@ -94,8 +94,8 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
 
     def test_existing_external_asr_server_is_never_started_or_owned(self):
         with (
-            patch("asr_manager._is_local_asr_port_open", return_value=True),
-            patch("asr_manager.subprocess.Popen") as popen,
+            patch("bandori_audio.asr_manager._is_local_asr_port_open", return_value=True),
+            patch("bandori_audio.asr_manager.subprocess.Popen") as popen,
         ):
             ready, _message = asr_manager._launch_local_asr_server_locked()
 
@@ -108,9 +108,9 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
 
     def test_managed_local_asr_is_started_on_demand(self):
         with (
-            patch("asr_manager._local_asr_python") as local_python,
-            patch("asr_manager.ASR_LOCAL_SERVER_DIR") as server_dir,
-            patch("asr_manager._launch_local_asr_server", return_value=(True, "ready")) as launch,
+            patch("bandori_audio.asr_manager._local_asr_python") as local_python,
+            patch("bandori_audio.asr_manager.ASR_LOCAL_SERVER_DIR") as server_dir,
+            patch("bandori_audio.asr_manager._launch_local_asr_server", return_value=(True, "ready")) as launch,
         ):
             local_python.return_value.exists.return_value = True
             (server_dir / "server.py").exists.return_value = True
@@ -121,7 +121,7 @@ class AudioRuntimeSafetyTest(unittest.TestCase):
         launch.assert_called_once()
 
     def test_external_asr_url_is_not_started_or_owned(self):
-        with patch("asr_manager._launch_local_asr_server") as launch:
+        with patch("bandori_audio.asr_manager._launch_local_asr_server") as launch:
             asr_manager._ensure_managed_local_asr_running(
                 "https://speech.example.com/v1/audio/transcriptions"
             )

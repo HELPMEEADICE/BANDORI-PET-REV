@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import unittest
 
-from proactive_care_policy import (
+from bandori_core.proactive_care_policy import (
     CARE_DESKTOP_STATES,
     evaluate_proactive_care,
     mark_proactive_care_result,

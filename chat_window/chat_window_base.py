@@ -1,6 +1,6 @@
 from PySide6.QtCore import QTimer
 
-from relationship_memory import user_key_from_config
+from bandori_core.relationship_memory import user_key_from_config
 
 
 class ChatWindowMixin:

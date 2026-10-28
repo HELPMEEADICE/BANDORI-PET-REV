@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config_manager import ConfigManager
-from reminder_core import normalize_proactive_companion
-from screen_awareness import (
+from bandori_core.config_manager import ConfigManager
+from bandori_core.reminder_core import normalize_proactive_companion
+from bandori_platform.screen_awareness import (
     SCREEN_AWARENESS_MODEL_MODE_AUX,
     SCREEN_AWARENESS_MODEL_MODE_MAIN,
     ScreenAwarenessVisionWorker,
@@ -50,8 +50,8 @@ class ScreenAwarenessTest(unittest.TestCase):
         worker.error.connect(errors.append)
 
         with (
-            patch("screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
-            patch("screen_awareness.current_desktop_state", return_value={
+            patch("bandori_platform.screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
+            patch("bandori_platform.screen_awareness.current_desktop_state", return_value={
                 "state": "coding",
                 "label": "写代码",
                 "confidence": 0.9,
@@ -62,7 +62,7 @@ class ScreenAwarenessTest(unittest.TestCase):
                 "idle_threshold_seconds": 180,
                 "captured_at": "2026-06-09T02:00:00",
             }),
-            patch("screen_awareness.analyze_images_with_aux_model") as analyze,
+            patch("bandori_platform.screen_awareness.analyze_images_with_aux_model") as analyze,
         ):
             worker.run()
 
@@ -75,7 +75,7 @@ class ScreenAwarenessTest(unittest.TestCase):
         analyze.assert_not_called()
 
     def test_desktop_state_context_privacy_defaults(self):
-        with patch("screen_awareness.current_desktop_state", return_value={
+        with patch("bandori_platform.screen_awareness.current_desktop_state", return_value={
             "state": "coding",
             "label": "写代码",
             "confidence": 0.9,
@@ -96,7 +96,7 @@ class ScreenAwarenessTest(unittest.TestCase):
         self.assertNotIn("process_path", state)
 
     def test_desktop_state_can_hide_process_name(self):
-        with patch("screen_awareness.current_desktop_state", return_value={
+        with patch("bandori_platform.screen_awareness.current_desktop_state", return_value={
             "state": "web",
             "process_name": "chrome.exe",
             "app_name": "Chrome",
@@ -107,7 +107,7 @@ class ScreenAwarenessTest(unittest.TestCase):
         self.assertNotIn("app_name", state)
 
     def test_desktop_state_can_include_window_title(self):
-        with patch("screen_awareness.current_desktop_state", return_value={
+        with patch("bandori_platform.screen_awareness.current_desktop_state", return_value={
             "state": "web",
             "foreground_title": "Example Page",
             "process_name": "chrome.exe",
@@ -131,9 +131,9 @@ class ScreenAwarenessTest(unittest.TestCase):
         worker.error.connect(errors.append)
 
         with (
-            patch("screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
-            patch("screen_awareness.current_desktop_state", return_value={}),
-            patch("screen_awareness.analyze_images_with_aux_model", return_value="用户正在查看代码。") as analyze,
+            patch("bandori_platform.screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
+            patch("bandori_platform.screen_awareness.current_desktop_state", return_value={}),
+            patch("bandori_platform.screen_awareness.analyze_images_with_aux_model", return_value="用户正在查看代码。") as analyze,
         ):
             worker.run()
 
@@ -155,9 +155,9 @@ class ScreenAwarenessTest(unittest.TestCase):
         worker.error.connect(errors.append)
 
         with (
-            patch("screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
-            patch("screen_awareness.current_desktop_state", return_value={}),
-            patch("screen_awareness.analyze_images_with_aux_model", side_effect=RuntimeError("aux unavailable")),
+            patch("bandori_platform.screen_awareness.capture_screenshot_data_url", return_value=("data:image/png;base64,abc", 800, 600, 800, 600)),
+            patch("bandori_platform.screen_awareness.current_desktop_state", return_value={}),
+            patch("bandori_platform.screen_awareness.analyze_images_with_aux_model", side_effect=RuntimeError("aux unavailable")),
         ):
             worker.run()
 

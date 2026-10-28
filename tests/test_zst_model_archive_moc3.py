@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-import zst_model_archive
+import bandori_models.zst_model_archive as zst_model_archive
 
 
 class ZstModelArchiveMoc3Test(unittest.TestCase):

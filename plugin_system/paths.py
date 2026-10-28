@@ -13,7 +13,7 @@ from typing import Any
 
 from platformdirs import user_data_path
 
-from app_info import APP_NAME
+from bandori_core.app_info import APP_NAME
 from .models import PluginError
 
 

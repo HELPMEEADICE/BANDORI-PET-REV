@@ -1,6 +1,6 @@
 import sys
 
-import process_utils
+import bandori_core.process_utils as process_utils
 
 
 def test_existing_windows_shortcut_skips_com_initialization(monkeypatch, tmp_path):

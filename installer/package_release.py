@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from app_info import APP_VERSION  # noqa: E402
+from bandori_core.app_info import APP_VERSION  # noqa: E402
 
 TARGETS = ("windows", "linux", "macos")
 ARCHES = ("x86_64", "aarch64")

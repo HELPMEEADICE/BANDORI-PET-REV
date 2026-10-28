@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from outfit_description import (
+from bandori_models.outfit_description import (
     OutfitDescriptionWorker,
     build_outfit_prompt_context,
     is_outfit_recognition_enabled,
@@ -114,7 +114,7 @@ class OutfitDescriptionTest(unittest.TestCase):
         worker.error.connect(errors.append)
 
         with patch(
-            "outfit_description.analyze_images_with_aux_model",
+            "bandori_models.outfit_description.analyze_images_with_aux_model",
             return_value="白色短袖上衣搭配红色短裙。",
         ) as analyze:
             worker.run()
@@ -142,7 +142,7 @@ class OutfitDescriptionTest(unittest.TestCase):
         worker.finished.connect(lambda description, source: results.append((description, source)))
 
         with patch(
-            "outfit_description.analyze_images_with_aux_model",
+            "bandori_models.outfit_description.analyze_images_with_aux_model",
             side_effect=[RuntimeError("aux unavailable"), "主模型识别结果。"],
         ) as analyze:
             worker.run()
@@ -153,7 +153,7 @@ class OutfitDescriptionTest(unittest.TestCase):
         ])
 
     def test_pet_window_does_not_retry_outfit_description_auth_failures(self):
-        source = Path("pet_window.py").read_text(encoding="utf-8")
+        source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
 
         self.assertIn("def _outfit_description_auth_failed", source)
         self.assertIn("if _outfit_description_auth_failed(message):", source)

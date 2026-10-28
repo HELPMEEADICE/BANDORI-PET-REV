@@ -3,8 +3,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import model_manager
-from model_manager import ModelManager, models_dir_exists
+import bandori_models.model_manager as model_manager
+from bandori_models.model_manager import ModelManager, models_dir_exists
 from settings_window.pages.download_manager import discover_download_model_sources
 
 
@@ -26,7 +26,7 @@ def test_models_dir_exists_ignores_partial_empty_and_unrelated_entries():
         (root / "empty").mkdir()
         (root / "note.txt").write_text("not a model", encoding="utf-8")
 
-        with patch("model_manager.model_search_dirs", return_value=[root]):
+        with patch("bandori_models.model_manager.model_search_dirs", return_value=[root]):
             assert not models_dir_exists()
 
 
@@ -38,7 +38,7 @@ def test_invalid_model_folder_is_not_discovered_or_scanned():
         _write_model(models / "valid" / "default", valid=True)
 
         with (
-            patch("model_manager.model_search_dirs", return_value=[models]),
+            patch("bandori_models.model_manager.model_search_dirs", return_value=[models]),
             patch.object(model_manager, "MODELS_DIR", models),
             patch.object(model_manager, "OUTFIT_JSON", root / "missing-outfit.json"),
             patch.object(model_manager, "BAND_JSON", root / "missing-band.json"),
@@ -59,5 +59,5 @@ def test_missing_texture_does_not_count_as_model_resource():
         _write_model(costume_dir, valid=True)
         (costume_dir / "texture.png").unlink()
 
-        with patch("model_manager.model_search_dirs", return_value=[root / "models"]):
+        with patch("bandori_models.model_manager.model_search_dirs", return_value=[root / "models"]):
             assert not models_dir_exists()

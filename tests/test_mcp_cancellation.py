@@ -6,8 +6,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import mcp_bridge
-from mcp_base import extract_message_from_buffer
+import bandori_tools.mcp_bridge as mcp_bridge
+from bandori_tools.mcp_base import extract_message_from_buffer
 
 
 class McpCancellationTests(unittest.TestCase):
@@ -183,10 +183,10 @@ class McpCancellationTests(unittest.TestCase):
         process = Process()
         reader = Reader()
         with patch(
-            "mcp_bridge._validated_stdio_command",
+            "bandori_tools.mcp_bridge._validated_stdio_command",
             return_value=("server", [], None),
-        ), patch("mcp_bridge.subprocess.Popen", return_value=process), patch(
-            "mcp_bridge.threading.Thread", return_value=reader
+        ), patch("bandori_tools.mcp_bridge.subprocess.Popen", return_value=process), patch(
+            "bandori_tools.mcp_bridge.threading.Thread", return_value=reader
         ), patch.object(
             mcp_bridge.StdioMcpClient,
             "_initialize",
@@ -212,10 +212,10 @@ class McpCancellationTests(unittest.TestCase):
         reader.join.side_effect = RuntimeError("cannot join thread before it is started")
 
         with patch(
-            "mcp_bridge._validated_stdio_command",
+            "bandori_tools.mcp_bridge._validated_stdio_command",
             return_value=("server", [], None),
-        ), patch("mcp_bridge.subprocess.Popen", return_value=process), patch(
-            "mcp_bridge.threading.Thread", return_value=reader
+        ), patch("bandori_tools.mcp_bridge.subprocess.Popen", return_value=process), patch(
+            "bandori_tools.mcp_bridge.threading.Thread", return_value=reader
         ):
             with self.assertRaisesRegex(RuntimeError, "thread start failed"):
                 mcp_bridge.StdioMcpClient({"label": "broken"})
@@ -239,7 +239,7 @@ class McpCancellationTests(unittest.TestCase):
         self.assertEqual(Path(cwd).resolve(), Path(temp_dir).resolve())
 
     def test_http_transport_failure_is_not_retried_as_initialization(self):
-        with patch("mcp_bridge._request_http_json", side_effect=OSError("offline")) as request:
+        with patch("bandori_tools.mcp_bridge._request_http_json", side_effect=OSError("offline")) as request:
             with self.assertRaises(OSError):
                 mcp_bridge._http_request_with_init({"url": "http://localhost"}, "tools/list", {})
 
@@ -251,7 +251,7 @@ class McpCancellationTests(unittest.TestCase):
             {},
             {"result": {"tools": []}},
         ]
-        with patch("mcp_bridge._request_http_json", side_effect=responses) as request:
+        with patch("bandori_tools.mcp_bridge._request_http_json", side_effect=responses) as request:
             response = mcp_bridge._http_request_with_init(
                 {"url": "http://localhost"},
                 "tools/list",
@@ -282,8 +282,8 @@ class McpCancellationTests(unittest.TestCase):
         server = {"enabled": True, "transport": "http", "label": "test"}
 
         with (
-            patch("mcp_bridge._enabled_servers", return_value=[server]),
-            patch("mcp_bridge._list_server_tools", side_effect=InterruptedError),
+            patch("bandori_tools.mcp_bridge._enabled_servers", return_value=[server]),
+            patch("bandori_tools.mcp_bridge._list_server_tools", side_effect=InterruptedError),
         ):
             self.assertEqual(mcp_bridge.mcp_proxy_tools(config), [])
 

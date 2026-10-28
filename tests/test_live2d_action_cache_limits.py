@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from lupa import LuaRuntime
 
-from live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
+from bandori_live2d.live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
 
 
 LUA_ROOT = (Path(__file__).resolve().parents[1] / "third_party" / "Live2D-v2-Lua").as_posix()

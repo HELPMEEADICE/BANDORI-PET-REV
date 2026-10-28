@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config_manager import ConfigManager
+from bandori_core.config_manager import ConfigManager
 
 
 class ConfigSaveResultTests(unittest.TestCase):
@@ -56,8 +56,8 @@ class ConfigSaveResultTests(unittest.TestCase):
             config = ConfigManager(path)
             config.set("language", "ja")
 
-            with patch("config_manager._try_replace_file", return_value=OSError("locked")), \
-                 patch("config_manager.time.sleep", return_value=None):
+            with patch("bandori_core.config_manager._try_replace_file", return_value=OSError("locked")), \
+                 patch("bandori_core.config_manager.time.sleep", return_value=None):
                 result = config.save()
 
             self.assertIs(result, False)

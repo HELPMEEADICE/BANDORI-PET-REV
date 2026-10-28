@@ -19,18 +19,18 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
 )
 
-from i18n_manager import tr as _tr
+from bandori_core.i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, RoundMenu, LineEdit, MessageBoxBase, isDarkTheme
 
-from app_theme import (
+from bandori_core.app_theme import (
     BANDORI_PRIMARY_HOVER,
     BANDORI_PRIMARY_PRESSED,
     BANDORI_PRIMARY_DARK_HOVER,
     BANDORI_PRIMARY_DARK_PRESSED,
     accent_color,
 )
-from vision_fallback import analyze_images_with_aux_model
-from network_worker import CancelableNetworkWorker
+from bandori_llm.vision_fallback import analyze_images_with_aux_model
+from bandori_services.network_worker import CancelableNetworkWorker
 
 from .constants import _HISTORY_ROW_WIDTH, _HISTORY_ROW_HEIGHT, _prepare_fluent_round_menu
 from .scrollbar_style import fluent_scrollbar_style

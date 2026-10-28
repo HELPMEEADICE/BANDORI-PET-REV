@@ -5,8 +5,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-import companion_security
-from companion_security import CompanionSecurityStore
+import bandori_companion.companion_security as companion_security
+from bandori_companion.companion_security import CompanionSecurityStore
 
 
 class FakeConfig:

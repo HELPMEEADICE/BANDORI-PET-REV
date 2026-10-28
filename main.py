@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-from process_utils import (
+from bandori_core.process_utils import (
     bootstrap_app,
     clamp_int,
     cleanup_stale_runtime_locks,
@@ -15,10 +15,10 @@ from process_utils import (
     process_program_and_args,
     set_windows_app_user_model_id,
 )
-from app_info import APP_NAME, APP_VERSION
+from bandori_core.app_info import APP_NAME, APP_VERSION
 
 BASE_DIR, _STARTUP_CONFIG = bootstrap_app()
-from config_manager import DEFAULTS
+from bandori_core.config_manager import DEFAULTS
 APP_AUMID = APP_NAME
 
 from PySide6.QtCore import Qt, QObject, QProcess, QTimer, Signal
@@ -26,19 +26,19 @@ from PySide6.QtGui import QAction, QPixmapCache
 from shiboken6 import isValid
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from model_manager import ModelManager
-from outfit_description_config import (
+from bandori_models.model_manager import ModelManager
+from bandori_models.outfit_description_config import (
     OUTFIT_DESCRIPTIONS_KEY,
     normalize_outfit_descriptions,
     outfit_description_key,
 )
-from i18n_manager import set_language, detect_system_language, tr as _tr
-from app_theme import apply_app_theme
-from live2d_quality import clamp_moc3_visible_height
-from onebot_message import onebot_event_mentions_self
-from tray_utils import keep_tray_icon_visible, load_tray_icon
-from gpu_acceleration import configure_qt_gpu_acceleration
-from ipc_bus import (
+from bandori_core.i18n_manager import set_language, detect_system_language, tr as _tr
+from bandori_core.app_theme import apply_app_theme
+from bandori_live2d.live2d_quality import clamp_moc3_visible_height
+from bandori_services.onebot_message import onebot_event_mentions_self
+from bandori_ui.tray_utils import keep_tray_icon_visible, load_tray_icon
+from bandori_platform.gpu_acceleration import configure_qt_gpu_acceleration
+from bandori_core.ipc_bus import (
     AdaptivePollInterval,
     MAIN_CONTROL_FALLBACK_SLOT_COUNTS,
     MAIN_CONTROL_SLOT_COUNT,
@@ -52,7 +52,7 @@ from ipc_bus import (
     is_reliable_ipc_line,
     pet_characters_without_active_peers,
 )
-from shared_memory_ipc import (
+from bandori_core.shared_memory_ipc import (
     SharedMemoryLineQueue,
     coalesce_latest_peer_positions,
     decode_ipc_envelope,
@@ -128,7 +128,7 @@ def main():
     verify_native_wayland_qpa(app)
     QPixmapCache.setCacheLimit(1024)
 
-    import macos_patch
+    import bandori_platform.macos_patch as macos_patch
     macos_patch.hide_dock_icon_if_needed()
     app.setWindowIcon(load_tray_icon())
     app.setApplicationName(APP_NAME)
@@ -189,7 +189,7 @@ def main():
     char = cfg.get("character", "")
     costume = cfg.get("costume", "")
 
-    from i18n_manager import current_language
+    from bandori_core.i18n_manager import current_language
 
     tray_icon = None
     # Qt 6 on macOS needs the tray QMenu parented to a real QWidget so the
@@ -203,7 +203,7 @@ def main():
         nonlocal tray_icon
         if sys.platform == "darwin":
             try:
-                from macos_status_item import MacOSStatusItem, available as native_status_item_available
+                from bandori_platform.macos_status_item import MacOSStatusItem, available as native_status_item_available
 
                 if native_status_item_available():
                     tray_icon = MacOSStatusItem(
@@ -496,7 +496,7 @@ def main():
                 QTimer.singleShot(50, lambda current=generation: init_reminder_scheduler(current))
                 return
             scheduler.deleteLater()
-        from alarm_manager import ReminderScheduler
+        from bandori_core.alarm_manager import ReminderScheduler
 
         reminder_ref["scheduler"] = ReminderScheduler(
             cfg,
@@ -518,8 +518,8 @@ def main():
         if manager is not None:
             manager.stop()
             manager.deleteLater()
-        from event_db_manager import SpecialEvent
-        from special_event_manager import SpecialEventManager
+        from bandori_core.event_db_manager import SpecialEvent
+        from bandori_core.special_event_manager import SpecialEventManager
 
         manager = SpecialEventManager(parent=app)
 
@@ -571,8 +571,8 @@ def main():
         stop_ai_status_server()
         if not cfg.get("ai_status_port_enabled", False):
             return
-        from ai_status_server import AiStatusHttpServer
-        from local_port_security import ensure_local_port_token
+        from bandori_services.ai_status_server import AiStatusHttpServer
+        from bandori_services.local_port_security import ensure_local_port_token
 
         port = clamp_int(cfg.get("ai_status_port", 38472), 1024, 65535, 38472)
         token = ensure_local_port_token(cfg, "ai_status_token")
@@ -592,7 +592,7 @@ def main():
     def chat_integration_db():
         db = chat_integration_ref.get("db")
         if db is None:
-            from database_manager import DatabaseManager
+            from bandori_core.database_manager import DatabaseManager
 
             db = DatabaseManager()
             chat_integration_ref["db"] = db
@@ -666,8 +666,8 @@ def main():
         stop_chat_integration_server()
         if not cfg.get("chat_integration_enabled", False):
             return
-        from chat_integration_server import ChatIntegrationHttpServer
-        from local_port_security import ensure_local_port_token
+        from bandori_chat.chat_integration_server import ChatIntegrationHttpServer
+        from bandori_services.local_port_security import ensure_local_port_token
 
         port = clamp_int(cfg.get("chat_integration_port", 38473), 1024, 65535, 38473)
         token = ensure_local_port_token(cfg, "chat_integration_token")
@@ -723,7 +723,7 @@ def main():
         stop_napcat_adapter()
         if not cfg.get("napcat_enabled", False):
             return
-        from napcat_adapter import NapcatClient
+        from bandori_services.napcat_adapter import NapcatClient
 
         ws_url = str(cfg.get("napcat_ws_url", "") or "").strip()
         if not ws_url:
@@ -829,7 +829,7 @@ def main():
             _napcat_generate_reply(event)
 
     def _napcat_generate_reply(event: dict):
-        from llm_manager import NonStreamWorker, build_system_prompt, strip_action_tags
+        from bandori_llm.llm_manager import NonStreamWorker, build_system_prompt, strip_action_tags
 
         api_url = str(cfg.get("llm_api_url", "") or "").strip()
         api_key = str(cfg.get("llm_api_key", "") or "").strip()
@@ -1146,7 +1146,7 @@ def main():
         broadcast_ipc_line("SHUTDOWN")
 
     def configured_models():
-        from config_manager import load_configured_models
+        from bandori_core.config_manager import load_configured_models
 
         result = load_configured_models(cfg, mgr)
         if not result and char and costume and mgr.get_model_json_path(char, costume):
@@ -1906,7 +1906,7 @@ def main():
         if not cfg.get("chat_attachment_auto_cleanup_enabled", False):
             return
         try:
-            from chat_attachment_manager import (
+            from bandori_chat.chat_attachment_manager import (
                 clamp_attachment_retention_days,
                 cleanup_chat_attachments,
             )
@@ -1928,7 +1928,7 @@ def main():
     def usage_db():
         db = usage_session_ref.get("db")
         if db is None:
-            from database_manager import DatabaseManager
+            from bandori_core.database_manager import DatabaseManager
 
             db = DatabaseManager()
             usage_session_ref["db"] = db
@@ -1980,7 +1980,7 @@ def main():
 
     def repair_windows_startup_command():
         try:
-            from startup_manager import repair_startup_command
+            from bandori_core.startup_manager import repair_startup_command
 
             repair_startup_command()
         except OSError:

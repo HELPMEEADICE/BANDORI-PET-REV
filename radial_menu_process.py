@@ -4,7 +4,7 @@ import os
 import select
 import sys
 
-from process_utils import (
+from bandori_core.process_utils import (
     app_base_dir,
     configure_debug_logging,
     configure_frozen_runtime_paths,
@@ -24,10 +24,10 @@ from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
-from app_info import APP_NAME
-from ipc_bus import AdaptivePollInterval, radial_command_queue_key, radial_event_queue_key
-from radial_menu import RadialMenu
-from shared_memory_ipc import SharedMemoryLineQueue
+from bandori_core.app_info import APP_NAME
+from bandori_core.ipc_bus import AdaptivePollInterval, radial_command_queue_key, radial_event_queue_key
+from bandori_ui.radial_menu import RadialMenu
+from bandori_core.shared_memory_ipc import SharedMemoryLineQueue
 
 
 _EVENT_QUEUE = None
@@ -134,7 +134,7 @@ def main():
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
 
-    import macos_patch
+    import bandori_platform.macos_patch as macos_patch
     macos_patch.hide_dock_icon_if_needed()
 
     command_queue = None

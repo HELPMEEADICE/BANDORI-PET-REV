@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 from lupa.luajit21 import LuaRuntime
 
-from live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
-from live2d_widget import Live2DWidget
-from live2d_widget_base import DIRECT_RENDER_PIPELINE, Live2DWidgetBase
-from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
+from bandori_live2d.live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
+from bandori_live2d.live2d_widget import Live2DWidget
+from bandori_live2d.live2d_widget_base import DIRECT_RENDER_PIPELINE, Live2DWidgetBase
+from bandori_live2d.live2d_widget_moc3 import MOC3_RENDER_PIPELINE
 
 
 class Live2DMocDpiTest(unittest.TestCase):

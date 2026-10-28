@@ -6,8 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import custom_model_import
-from custom_model_import import CustomModelImportError, import_from_folder
+import bandori_models.custom_model_import as custom_model_import
+from bandori_models.custom_model_import import CustomModelImportError, import_from_folder
 
 
 def _write_model(root: Path, model_path: str = "model.moc", texture_path: str = "textures/texture.png") -> None:

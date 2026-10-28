@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QPoint, QRect
 
-import live2d_widget_base
-from live2d_widget import Live2DWidget
-from pet_window import PetWindow
+import bandori_live2d.live2d_widget_base as live2d_widget_base
+from bandori_live2d.live2d_widget import Live2DWidget
+from bandori_ui.pet_window import PetWindow
 
 
 class _PerfProbe:
@@ -113,14 +113,14 @@ class MousePassthroughTest(unittest.TestCase):
         harness = PassthroughHarness()
         harness.hit = True
 
-        with patch("pet_window.time.monotonic", return_value=10.0):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.0):
             self.assertFalse(harness._should_passthrough_at(QPoint(50, 50)))
 
     def test_transparent_pixel_passes_through_without_geometry_fallback(self):
         harness = PassthroughHarness()
         harness.hit = False
 
-        with patch("pet_window.time.monotonic", return_value=10.0):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.0):
             self.assertTrue(harness._should_passthrough_at(QPoint(50, 50)))
 
     def test_pressed_mouse_button_keeps_window_interactive(self):
@@ -133,23 +133,23 @@ class MousePassthroughTest(unittest.TestCase):
         harness = PassthroughHarness()
         cursor = QPoint(50, 50)
         harness.hit = True
-        with patch("pet_window.time.monotonic", return_value=10.0):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.0):
             self.assertFalse(harness._should_passthrough_at(cursor))
 
         harness.hit = False
-        with patch("pet_window.time.monotonic", return_value=10.04):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.04):
             self.assertFalse(harness._should_passthrough_at(cursor))
-        with patch("pet_window.time.monotonic", return_value=10.09):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.09):
             self.assertTrue(harness._should_passthrough_at(cursor))
 
     def test_moving_off_model_does_not_extend_grace(self):
         harness = PassthroughHarness()
         harness.hit = True
-        with patch("pet_window.time.monotonic", return_value=10.0):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.0):
             self.assertFalse(harness._should_passthrough_at(QPoint(50, 50)))
 
         harness.hit = False
-        with patch("pet_window.time.monotonic", return_value=10.04):
+        with patch("bandori_ui.pet_window.time.monotonic", return_value=10.04):
             self.assertTrue(harness._should_passthrough_at(QPoint(70, 50)))
 
     def test_macos_native_state_overrides_stale_python_cache(self):
@@ -170,8 +170,8 @@ class MousePassthroughTest(unittest.TestCase):
                 return True
 
         with (
-            patch("pet_window.sys.platform", "darwin"),
-            patch("pet_window.macos_patch", MacPatch),
+            patch("bandori_ui.pet_window.sys.platform", "darwin"),
+            patch("bandori_ui.pet_window.macos_patch", MacPatch),
         ):
             harness._set_mouse_passthrough(False)
 
@@ -185,11 +185,11 @@ class MousePassthroughTest(unittest.TestCase):
                 return "xcb"
 
         with (
-            patch("pet_window.os.name", "posix"),
-            patch("pet_window.sys.platform", "linux"),
-            patch("pet_window.QGuiApplication", App),
-            patch("pet_window._xfixes", object(), create=True),
-            patch("pet_window._x11", object()),
+            patch("bandori_ui.pet_window.os.name", "posix"),
+            patch("bandori_ui.pet_window.sys.platform", "linux"),
+            patch("bandori_ui.pet_window.QGuiApplication", App),
+            patch("bandori_ui.pet_window._xfixes", object(), create=True),
+            patch("bandori_ui.pet_window._x11", object()),
         ):
             self.assertTrue(PetWindow._mouse_passthrough_supported())
 
@@ -207,10 +207,10 @@ class MousePassthroughTest(unittest.TestCase):
             return True
 
         with (
-            patch("pet_window.os.name", "posix"),
-            patch("pet_window.sys.platform", "linux"),
-            patch("pet_window.QGuiApplication", App),
-            patch("pet_window._set_x11_input_passthrough", set_shape, create=True),
+            patch("bandori_ui.pet_window.os.name", "posix"),
+            patch("bandori_ui.pet_window.sys.platform", "linux"),
+            patch("bandori_ui.pet_window.QGuiApplication", App),
+            patch("bandori_ui.pet_window._set_x11_input_passthrough", set_shape, create=True),
         ):
             harness._set_mouse_passthrough(True)
             harness._set_mouse_passthrough(False)

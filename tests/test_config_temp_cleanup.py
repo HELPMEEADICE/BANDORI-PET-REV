@@ -4,8 +4,8 @@ import time
 import unittest
 from pathlib import Path
 
-from config_manager import ConfigManager, _config_file_lock, cleanup_stale_config_temp_files
-from database_manager import DatabaseManager
+from bandori_core.config_manager import ConfigManager, _config_file_lock, cleanup_stale_config_temp_files
+from bandori_core.database_manager import DatabaseManager
 
 
 class ConfigTempCleanupTest(unittest.TestCase):

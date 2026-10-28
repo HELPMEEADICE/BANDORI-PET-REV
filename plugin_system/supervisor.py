@@ -17,8 +17,8 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer
 
-from process_utils import app_base_dir, ipc_server_name, process_program_and_args
-from public_network import open_public_url
+from bandori_core.process_utils import app_base_dir, ipc_server_name, process_program_and_args
+from bandori_services.public_network import open_public_url
 
 from .installer import PluginInstaller
 from .models import PluginError, PluginManifest, ScanReport

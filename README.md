@@ -288,7 +288,7 @@ python setup.py build_msi
   `BandoriPet-<版本>-win-x86_64-setup.exe` 是三个独立文件。全部 18 个安装包均
   单独上传，不再按架构合并压缩；`SHA256SUMS.txt` 也可独立下载。产物保留 30 天。
 
-所有版本号来自 `app_info.py` 的 `APP_VERSION`，必须为 `主版本.次版本.修订号`；
+所有版本号来自 `bandori_core/app_info.py` 的 `APP_VERSION`，必须为 `主版本.次版本.修订号`；
 Release 标签应为同一版本号或加 `v` 前缀（例如 `v3.2.1`）。手动构建使用所选
 分支或标签中的版本号，不会自动创建 Release。
 
@@ -361,7 +361,7 @@ python -m pytest tests -q
 | MSI 安装包 | 从 GitHub Release 下载最新 `.msi`，启动安装器完成升级 |
 | macOS App | 按 CPU 架构下载 `.dmg` 或 `.zip`，替换当前 `.app`、重新签名并重启 |
 
-发布新版本时请同步修改 `app_info.py` 中的 `APP_VERSION`，并在 GitHub Release 上传匹配当前平台的资产，例如：
+发布新版本时请同步修改 `bandori_core/app_info.py` 中的 `APP_VERSION`，并在 GitHub Release 上传匹配当前平台的资产，例如：
 
 ```text
 BandoriPet-3.0.1-WIN-AMD64.zip
@@ -374,7 +374,7 @@ BandoriPet-3.0.1-macos-x86_64.dmg
 
 Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Release 的资产，否则已安装客户端会判定为无更新。
 
-如果你要从自己的仓库发布更新，请把 `app_info.py` 里的 `APP_REPOSITORY` 改成发布 Release 的仓库名。
+如果你要从自己的仓库发布更新，请把 `bandori_core/app_info.py` 里的 `APP_REPOSITORY` 改成发布 Release 的仓库名。
 
 ---
 

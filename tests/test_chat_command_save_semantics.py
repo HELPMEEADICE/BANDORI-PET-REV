@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from chat_commands import handle_command
-from reminder_core import ALARM_CONFIG_KEY, POMODORO_CONFIG_KEY
+from bandori_chat.chat_commands import handle_command
+from bandori_core.reminder_core import ALARM_CONFIG_KEY, POMODORO_CONFIG_KEY
 
 
 class _ConfigStub:
@@ -24,7 +24,7 @@ class ChatCommandSaveSemanticsTests(unittest.TestCase):
     def test_toggle_save_false_restores_value_and_does_not_publish(self):
         cfg = _ConfigStub({"llm_show_reasoning": True}, save_result=False)
 
-        with patch("chat_commands._publish") as publish:
+        with patch("bandori_chat.chat_commands._publish") as publish:
             result = handle_command(cfg, "@cot off")
 
         self.assertTrue(cfg.get("llm_show_reasoning"))
@@ -39,7 +39,7 @@ class ChatCommandSaveSemanticsTests(unittest.TestCase):
             POMODORO_CONFIG_KEY: pomodoros,
         }, save_result=False)
 
-        with patch("chat_commands._publish") as publish:
+        with patch("bandori_chat.chat_commands._publish") as publish:
             result = handle_command(cfg, "@pomodoro 2 focus")
 
         self.assertEqual(alarms, cfg.get(ALARM_CONFIG_KEY))
@@ -50,7 +50,7 @@ class ChatCommandSaveSemanticsTests(unittest.TestCase):
     def test_toggle_publish_failure_reports_restart_fallback(self):
         cfg = _ConfigStub({"llm_show_reasoning": True})
 
-        with patch("chat_commands._publish", return_value=False):
+        with patch("bandori_chat.chat_commands._publish", return_value=False):
             result = handle_command(cfg, "@cot off")
 
         self.assertFalse(cfg.get("llm_show_reasoning"))

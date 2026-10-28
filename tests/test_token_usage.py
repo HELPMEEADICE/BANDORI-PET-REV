@@ -2,10 +2,10 @@ import os
 import tempfile
 import unittest
 
-from chat_commands import handle_command
-from database_manager import DatabaseManager
-from llm_manager import LLMStreamWorker, ResponsesStreamWorker
-from token_usage import (
+from bandori_chat.chat_commands import handle_command
+from bandori_core.database_manager import DatabaseManager
+from bandori_llm.llm_manager import LLMStreamWorker, ResponsesStreamWorker
+from bandori_llm.token_usage import (
     estimate_messages_tokens,
     estimate_untracked_history_usage,
     history_message_limit_from_slider,

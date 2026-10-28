@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import startup_manager
+import bandori_core.startup_manager as startup_manager
 
 
 class StartupManagerTests(unittest.TestCase):

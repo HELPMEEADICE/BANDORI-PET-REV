@@ -5,9 +5,9 @@ import subprocess
 import sys
 from typing import Any
 
-from ai_event_bus import publish_ai_event
-from i18n_manager import detect_system_language, set_language, tr as _tr
-from process_utils import app_base_dir, configure_debug_logging, configure_frozen_runtime_paths
+from bandori_core.ai_event_bus import publish_ai_event
+from bandori_core.i18n_manager import detect_system_language, set_language, tr as _tr
+from bandori_core.process_utils import app_base_dir, configure_debug_logging, configure_frozen_runtime_paths
 
 configure_debug_logging()
 configure_frozen_runtime_paths()

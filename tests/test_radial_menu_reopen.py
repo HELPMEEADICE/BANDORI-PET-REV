@@ -9,9 +9,9 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
-import radial_menu as radial_menu_module
-from pet_window import PetWindow
-from radial_menu import RadialMenu
+import bandori_ui.radial_menu as radial_menu_module
+from bandori_ui.pet_window import PetWindow
+from bandori_ui.radial_menu import RadialMenu
 
 
 class _FakeProcess:
@@ -117,7 +117,7 @@ class RadialMenuReopenTest(unittest.TestCase):
             def primaryScreen():
                 raise AssertionError("primary screen fallback should not be used")
 
-        with patch("radial_menu.QGuiApplication", App):
+        with patch("bandori_ui.radial_menu.QGuiApplication", App):
             geometry = RadialMenu._menu_geometry_at(QPoint(-10, 1030), 380, 380)
 
         self.assertEqual(QPoint(-10, 1030), App.requested_point)
@@ -157,8 +157,8 @@ class RadialMenuReopenTest(unittest.TestCase):
 
         masks = []
         with (
-            patch("radial_menu.sys.platform", "linux"),
-            patch("radial_menu.QGuiApplication", App),
+            patch("bandori_ui.radial_menu.sys.platform", "linux"),
+            patch("bandori_ui.radial_menu.QGuiApplication", App),
             patch.object(menu, "setMask", side_effect=masks.append),
         ):
             menu._apply_x11_interactive_mask()
@@ -185,8 +185,8 @@ class RadialMenuReopenTest(unittest.TestCase):
         masks = []
 
         with (
-            patch("radial_menu.sys.platform", "linux"),
-            patch("radial_menu.QGuiApplication", App),
+            patch("bandori_ui.radial_menu.sys.platform", "linux"),
+            patch("bandori_ui.radial_menu.QGuiApplication", App),
             patch.object(menu, "setMask", side_effect=masks.append),
             patch.object(menu, "show"),
             patch.object(menu, "raise_"),
@@ -219,8 +219,8 @@ class RadialMenuReopenTest(unittest.TestCase):
         masks = []
 
         with (
-            patch("radial_menu.sys.platform", "linux"),
-            patch("radial_menu.QGuiApplication", App),
+            patch("bandori_ui.radial_menu.sys.platform", "linux"),
+            patch("bandori_ui.radial_menu.QGuiApplication", App),
             patch.object(menu, "setMask", side_effect=masks.append),
             patch.object(menu, "show"),
             patch.object(menu, "raise_"),
@@ -238,7 +238,7 @@ class RadialMenuReopenTest(unittest.TestCase):
         process = _FakeProcess()
         harness = _RecoveryHarness(process)
 
-        with patch("pet_window.QTimer.singleShot", side_effect=lambda _delay, callback: callback()):
+        with patch("bandori_ui.pet_window.QTimer.singleShot", side_effect=lambda _delay, callback: callback()):
             harness._on_radial_menu_process_finished(process)
 
         self.assertEqual(["SHOW\t{}"], harness._radial_menu_command_queue)
@@ -248,9 +248,9 @@ class RadialMenuReopenTest(unittest.TestCase):
         self.assertTrue(process.deleted)
 
     def test_radial_menu_payload_has_no_ineffective_fps_setting(self):
-        pet_source = Path("pet_window.py").read_text(encoding="utf-8")
+        pet_source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
         process_source = Path("radial_menu_process.py").read_text(encoding="utf-8")
-        menu_source = Path("radial_menu.py").read_text(encoding="utf-8")
+        menu_source = Path("bandori_ui/radial_menu.py").read_text(encoding="utf-8")
 
         payload = pet_source.split("    def _radial_menu_payload", 1)[1].split(
             "    def _ensure_radial_menu_process", 1

@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from process_utils import app_base_dir
+from bandori_core.process_utils import app_base_dir
 from .environment import detect_compositor, is_wayland_session
 
 

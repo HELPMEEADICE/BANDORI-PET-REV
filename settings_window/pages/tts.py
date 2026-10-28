@@ -280,7 +280,7 @@ class TTSPageMixin:
         if not (self._cfg and self._tts_config_widgets_ready()):
             return
 
-        from tts_manager import TTSPlayer as _TTSPlayer, TTSRequestWorker as _TTSRequestWorker
+        from bandori_audio.tts_manager import TTSPlayer as _TTSPlayer, TTSRequestWorker as _TTSRequestWorker
 
         config = self._current_tts_config(include_llm=True)
         test_text = self._tts_test_text.toPlainText().strip()

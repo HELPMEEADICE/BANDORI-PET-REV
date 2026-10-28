@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config_manager import DEFAULTS, ConfigManager
+from bandori_core.config_manager import DEFAULTS, ConfigManager
 
 
 class ConfigLoadSafetyTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class ConfigLoadSafetyTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("config_manager.json.load", side_effect=OSError("busy")):
+            with patch("bandori_core.config_manager.json.load", side_effect=OSError("busy")):
                 with self.assertRaises(OSError):
                     ConfigManager(path)
 

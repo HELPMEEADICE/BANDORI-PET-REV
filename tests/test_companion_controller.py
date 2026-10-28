@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import QCoreApplication
 
-from companion_controller import CompanionController
+from bandori_companion.companion_controller import CompanionController
 
 
 class FakeConfig:

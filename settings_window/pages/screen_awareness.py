@@ -1,7 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
-from screen_awareness import (
+from bandori_platform.screen_awareness import (
     clamp_screen_awareness_interval,
     clamp_screen_awareness_screenshot_width,
 )

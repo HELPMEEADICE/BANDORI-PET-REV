@@ -8,10 +8,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from lupa import LuaRuntime
 
-from live2d_lua_adapter import LuaLive2DModule
-from live2d_lua_adapter_base import MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3
-from live2d_lua_adapter_moc3 import _patch_lua_moc3_pet_embed_delta
-from pet_window import PetWindow
+from bandori_live2d.live2d_lua_adapter import LuaLive2DModule
+from bandori_live2d.live2d_lua_adapter_base import MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3
+from bandori_live2d.live2d_lua_adapter_moc3 import _patch_lua_moc3_pet_embed_delta
+from bandori_ui.pet_window import PetWindow
 
 
 class Moc3MotionLoopingTest(unittest.TestCase):
@@ -25,7 +25,7 @@ class Moc3MotionLoopingTest(unittest.TestCase):
         self.assertEqual(0, moc_runtime.model_requests)
         self.assertEqual(0, moc3_runtime.model_requests)
 
-        with patch("live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC):
+        with patch("bandori_live2d.live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC):
             model = module.LAppModel()
             model.Resize(12, 34)
             model.LoadModelJson("test.model.json")
@@ -41,7 +41,7 @@ class Moc3MotionLoopingTest(unittest.TestCase):
         moc3_runtime = _FakeAdapterRuntime(moc3_model)
         module = LuaLive2DModule(moc_runtime, moc3_runtime)
 
-        with patch("live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC3):
+        with patch("bandori_live2d.live2d_lua_adapter._model_manifest_format", return_value=MODEL_FORMAT_MOC3):
             model = module.LAppModel()
             model.LoadModelJson("test.model3.json")
 
@@ -105,7 +105,7 @@ class Moc3MotionLoopingTest(unittest.TestCase):
         model = _FakeModel(["mtn_smile01_C"])
         harness = _MotionHarness(model)
 
-        with patch("pet_window.QTimer.singleShot"):
+        with patch("bandori_ui.pet_window.QTimer.singleShot"):
             PetWindow._start_click_motion(harness, "mtn_smile01_C")
 
         self.assertEqual(False, model.random_motion_calls[0]["kwargs"].get("loop"))

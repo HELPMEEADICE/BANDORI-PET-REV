@@ -1,7 +1,7 @@
 from datetime import datetime
 import unittest
 
-from reminder_core import normalize_pomodoro, normalize_proactive_item
+from bandori_core.reminder_core import normalize_pomodoro, normalize_proactive_item
 
 
 class ReminderNumericSafetyTest(unittest.TestCase):

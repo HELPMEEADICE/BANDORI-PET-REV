@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-from action_bus import publish_action, publish_lip_sync
-from ai_event_bus import publish_ai_event
-from mcp_base import error, handle_tools_message, iter_input_messages, write_message
-from app_info import APP_NAME
-from process_utils import app_base_dir, configure_debug_logging
+from bandori_core.action_bus import publish_action, publish_lip_sync
+from bandori_core.ai_event_bus import publish_ai_event
+from bandori_tools.mcp_base import error, handle_tools_message, iter_input_messages, write_message
+from bandori_core.app_info import APP_NAME
+from bandori_core.process_utils import app_base_dir, configure_debug_logging
 
 configure_debug_logging()
 

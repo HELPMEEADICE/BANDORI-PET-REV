@@ -2,8 +2,8 @@ import argparse
 import json
 import sys
 
-from ai_event_bus import publish_ai_event
-from process_utils import configure_debug_logging, configure_frozen_runtime_paths
+from bandori_core.ai_event_bus import publish_ai_event
+from bandori_core.process_utils import configure_debug_logging, configure_frozen_runtime_paths
 
 configure_debug_logging()
 configure_frozen_runtime_paths()

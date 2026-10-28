@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-import public_network
+import bandori_services.public_network as public_network
 from chat_window.chat_window import AttachmentImportWorker
 
 
@@ -91,7 +91,7 @@ class PublicNetworkSecurityTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 80)),
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 80)),
         ]
-        with patch("public_network.socket.getaddrinfo", return_value=records):
+        with patch("bandori_services.public_network.socket.getaddrinfo", return_value=records):
             with self.assertRaises(PermissionError):
                 public_network._resolve_public_endpoints("images.example", 80)
 
@@ -99,7 +99,7 @@ class PublicNetworkSecurityTests(unittest.TestCase):
         records = [
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("224.0.0.1", 80)),
         ]
-        with patch("public_network.socket.getaddrinfo", return_value=records):
+        with patch("bandori_services.public_network.socket.getaddrinfo", return_value=records):
             with self.assertRaises(PermissionError):
                 public_network._resolve_public_endpoints("images.example", 80)
 
@@ -110,7 +110,7 @@ class PublicNetworkSecurityTests(unittest.TestCase):
     def test_connects_to_the_exact_validated_endpoint(self):
         endpoint = self._local_endpoint()
         url = f"http://images.example:{self.server.server_port}/image.png"
-        with patch("public_network._resolve_public_endpoints", return_value=(endpoint,)):
+        with patch("bandori_services.public_network._resolve_public_endpoints", return_value=(endpoint,)):
             response, final_url = public_network.open_public_url(url)
             with response:
                 payload = response.read()
@@ -133,7 +133,7 @@ class PublicNetworkSecurityTests(unittest.TestCase):
             return original_resolver(host, port)
 
         url = f"http://images.example:{self.server.server_port}/redirect"
-        with patch("public_network._resolve_public_endpoints", side_effect=resolve):
+        with patch("bandori_services.public_network._resolve_public_endpoints", side_effect=resolve):
             with self.assertRaises(PermissionError):
                 public_network.open_public_url(url)
 

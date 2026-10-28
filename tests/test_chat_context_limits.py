@@ -10,12 +10,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QScrollArea, QWidget
 
 from chat_window.chat_window import ChatWindow
-from compact_ai_window import CompactAIWindow
-from config_manager import DEFAULTS, _normalize_llm_api_profile
-from database_manager import DatabaseManager
-from i18n_manager import current_language, set_language
+from bandori_chat.compact_ai_window import CompactAIWindow
+from bandori_core.config_manager import DEFAULTS, _normalize_llm_api_profile
+from bandori_core.database_manager import DatabaseManager
+from bandori_core.i18n_manager import current_language, set_language
 from settings_window.pages.llm import LLMPageMixin
-from token_usage import history_message_query_limit, normalize_history_message_limit
+from bandori_llm.token_usage import history_message_query_limit, normalize_history_message_limit
 
 
 class _LLMPageHarness(LLMPageMixin, QWidget):
@@ -176,11 +176,11 @@ class ChatContextLimitTests(unittest.TestCase):
             return self._empty_estimate()
 
         with (
-            patch("compact_ai_window.tool_config_snapshot", return_value={}),
-            patch("compact_ai_window.reminder_tools_enabled", return_value=False),
-            patch("compact_ai_window.estimate_llm_request_tokens", return_value=1000),
+            patch("bandori_chat.compact_ai_window.tool_config_snapshot", return_value={}),
+            patch("bandori_chat.compact_ai_window.reminder_tools_enabled", return_value=False),
+            patch("bandori_chat.compact_ai_window.estimate_llm_request_tokens", return_value=1000),
             patch(
-                "compact_ai_window.estimate_untracked_history_usage",
+                "bandori_chat.compact_ai_window.estimate_untracked_history_usage",
                 side_effect=fake_estimate,
             ),
         ):

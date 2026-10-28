@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from i18n_manager import current_language, set_language
+from bandori_core.i18n_manager import current_language, set_language
 from settings_window.constants import BodyLabel, _wrap_label
 from settings_window.pages.chat_integration import ChatIntegrationPageMixin
 

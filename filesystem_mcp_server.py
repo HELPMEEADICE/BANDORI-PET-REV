@@ -2,8 +2,8 @@ import json
 import sys
 from pathlib import Path
 
-from mcp_base import error, handle_tools_message, iter_input_messages, write_message
-from process_utils import clamp_int as _clamp_int, configure_debug_logging
+from bandori_tools.mcp_base import error, handle_tools_message, iter_input_messages, write_message
+from bandori_core.process_utils import clamp_int as _clamp_int, configure_debug_logging
 
 configure_debug_logging()
 

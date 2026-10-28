@@ -2,7 +2,7 @@ from pathlib import Path
 
 from settings_window.constants import *
 from settings_window.workers import ModelPackageDownloadWorker
-from model_manager import BAND_JSON, OUTFIT_JSON, has_valid_model_directory, model_lookup_dirs
+from bandori_models.model_manager import BAND_JSON, OUTFIT_JSON, has_valid_model_directory, model_lookup_dirs
 
 
 def discover_download_model_sources(

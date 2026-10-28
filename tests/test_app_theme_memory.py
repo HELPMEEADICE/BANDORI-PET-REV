@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import app_theme
+import bandori_core.app_theme as app_theme
 
 
 def test_custom_qt_process_can_skip_fluent_theme_import():

@@ -9,11 +9,11 @@ from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QRegion
 from PySide6.QtWidgets import QApplication, QWidget
 
-import live2d_widget_base
-import live2d_widget_moc3
-from live2d_widget_base import DIRECT_RENDER_PIPELINE, Live2DWidgetBase
-from live2d_widget_moc3 import Live2DSSAAFramebuffer
-from pixel_pet_widget import PixelPetWidget
+import bandori_live2d.live2d_widget_base as live2d_widget_base
+import bandori_live2d.live2d_widget_moc3 as live2d_widget_moc3
+from bandori_live2d.live2d_widget_base import DIRECT_RENDER_PIPELINE, Live2DWidgetBase
+from bandori_live2d.live2d_widget_moc3 import Live2DSSAAFramebuffer
+from bandori_ui.pixel_pet_widget import PixelPetWidget
 from tests.test_live2d_draw_failure_circuit_breaker import _FakeGL, _PaintHarness
 
 

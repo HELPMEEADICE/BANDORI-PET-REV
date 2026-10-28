@@ -6,19 +6,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from lupa.luajit21 import LuaRuntime
 
-from live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
-from live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
-from live2d_lua_adapter_moc3 import (
+from bandori_live2d.live2d_lua_adapter_base import LuaLAppModelBase, LuaLive2DRuntimeBase
+from bandori_live2d.live2d_lua_adapter_moc import LuaLAppModelMOC, LuaLive2DModuleMOC
+from bandori_live2d.live2d_lua_adapter_moc3 import (
     LuaLAppModelMOC3,
     LuaLive2DModuleMOC3,
     _patch_lua_moc3_pet_embed_delta,
 )
-from live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
-from live2d_lua_source_patch import patch_live2d_lua_module
-from live2d_widget import Live2DWidget, render_pipeline_for_model
-from live2d_widget_base import DIRECT_RENDER_PIPELINE
-from live2d_widget_moc3 import MOC3_RENDER_PIPELINE
-import live2d_widget_moc3
+from bandori_live2d.live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
+from bandori_live2d.live2d_lua_source_patch import patch_live2d_lua_module
+from bandori_live2d.live2d_widget import Live2DWidget, render_pipeline_for_model
+from bandori_live2d.live2d_widget_base import DIRECT_RENDER_PIPELINE
+from bandori_live2d.live2d_widget_moc3 import MOC3_RENDER_PIPELINE
+import bandori_live2d.live2d_widget_moc3 as live2d_widget_moc3
 
 
 def test_releasing_hidden_model_disposes_renderer_and_runtime_for_reuse():
@@ -105,7 +105,7 @@ def test_live2d_fragment_precision_patch_does_not_touch_unrelated_modules():
 
 
 def test_live2d_widget_has_no_redundant_head_tracking_timer():
-    source = Path("live2d_widget_base.py").read_text(encoding="utf-8")
+    source = Path("bandori_live2d/live2d_widget_base.py").read_text(encoding="utf-8")
 
     assert "_head_track_timer" not in source
     assert "_poll_head_tracking" not in source
@@ -113,7 +113,7 @@ def test_live2d_widget_has_no_redundant_head_tracking_timer():
 
 
 def test_live2d_widget_has_no_temporary_dpi_trace_hooks():
-    source = Path("live2d_widget_base.py").read_text(encoding="utf-8")
+    source = Path("bandori_live2d/live2d_widget_base.py").read_text(encoding="utf-8")
 
     assert "_trace_dpi" not in source
     assert "dpi_trace" not in source

@@ -258,7 +258,7 @@ class DataManagementPageMixin:
     def _load_attachment_file_settings(self):
         if not self._cfg or not hasattr(self, "_attachment_cleanup_mode"):
             return
-        from chat_attachment_manager import clamp_attachment_retention_days
+        from bandori_chat.chat_attachment_manager import clamp_attachment_retention_days
 
         mode = "auto" if bool(
             self._cfg.get("chat_attachment_auto_cleanup_enabled", False)
@@ -280,7 +280,7 @@ class DataManagementPageMixin:
     def _on_attachment_retention_changed(self, *_args):
         if not self._cfg or not hasattr(self, "_attachment_cleanup_mode"):
             return
-        from chat_attachment_manager import (
+        from bandori_chat.chat_attachment_manager import (
             clamp_attachment_retention_days,
             cleanup_chat_attachments,
         )
@@ -317,7 +317,7 @@ class DataManagementPageMixin:
     def _refresh_attachment_file_stats(self):
         if not hasattr(self, "_attachment_files_stats"):
             return
-        from chat_attachment_manager import get_chat_attachment_stats
+        from bandori_chat.chat_attachment_manager import get_chat_attachment_stats
 
         stats = get_chat_attachment_stats()
         self._attachment_files_stats.setText(_tr(
@@ -343,7 +343,7 @@ class DataManagementPageMixin:
         if reply != QMessageBox.StandardButton.Yes:
             return
         try:
-            from chat_attachment_manager import cleanup_chat_attachments
+            from bandori_chat.chat_attachment_manager import cleanup_chat_attachments
 
             result = cleanup_chat_attachments()
         except Exception as exc:
@@ -676,7 +676,7 @@ class DataManagementPageMixin:
         sections = {}
         for section in self._data_sections_for_category(category):
             if section == DATA_CATEGORY_RELATIONSHIP:
-                from database_manager import export_relationship_data
+                from bandori_core.database_manager import export_relationship_data
                 sections[section] = {
                     "relationship": export_relationship_data(),
                 }
@@ -735,7 +735,7 @@ class DataManagementPageMixin:
 
 
     def _sanitized_click_motion_profiles(self, profiles) -> list[dict]:
-        from click_motion_presets import BUILTIN_PROFILE_NAMES
+        from bandori_live2d.click_motion_presets import BUILTIN_PROFILE_NAMES
 
         if not isinstance(profiles, list):
             return []
@@ -773,7 +773,7 @@ class DataManagementPageMixin:
         for section, content in sections.items():
             if section == DATA_CATEGORY_RELATIONSHIP:
                 relationship_data = content.get("relationship", {})
-                from database_manager import import_relationship_data
+                from bandori_core.database_manager import import_relationship_data
                 summary[section] = import_relationship_data(relationship_data)
                 continue
             config_data = content.get("config", {})
@@ -1033,7 +1033,7 @@ class DataManagementPageMixin:
             path += ".db"
 
         try:
-            from database_manager import export_chat_database
+            from bandori_core.database_manager import export_chat_database
 
             summary = export_chat_database(path)
             InfoBar.success(
@@ -1074,7 +1074,7 @@ class DataManagementPageMixin:
             return
 
         try:
-            from database_manager import import_chat_database
+            from bandori_core.database_manager import import_chat_database
 
             summary = import_chat_database(path)
             self._reset_cached_database_managers()
@@ -1100,7 +1100,7 @@ class DataManagementPageMixin:
 
     def _chat_database_import_blocked_by_open_chat(self) -> bool:
         try:
-            from chat_runtime import chat_window_is_active
+            from bandori_chat.chat_runtime import chat_window_is_active
 
             active = chat_window_is_active()
         except Exception:

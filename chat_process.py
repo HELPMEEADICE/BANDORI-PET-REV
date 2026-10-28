@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from process_utils import (
+from bandori_core.process_utils import (
     app_base_dir,
     app_icon_path,
     configure_frozen_runtime_paths,
@@ -27,21 +27,21 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QToolButton
 from shiboken6 import isValid
 
-from app_theme import apply_app_theme
-from app_info import APP_NAME
-from chat_runtime import chat_lock_path
+from bandori_core.app_theme import apply_app_theme
+from bandori_core.app_info import APP_NAME
+from bandori_chat.chat_runtime import chat_lock_path
 from chat_window import ChatWindow
-from config_manager import ConfigManager
-from ipc_bus import (
+from bandori_core.config_manager import ConfigManager
+from bandori_core.ipc_bus import (
     attach_main_ipc_queues,
     is_reliable_ipc_line,
     send_ipc_message,
     start_ipc_heartbeat,
 )
-from i18n_manager import detect_system_language, set_language
-from model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
-from mcp_bridge import close_mcp_clients
-from shared_memory_ipc import (
+from bandori_core.i18n_manager import detect_system_language, set_language
+from bandori_models.model_manager import ModelManager, models_dir_exists, prompt_download_model_resources
+from bandori_tools.mcp_bridge import close_mcp_clients
+from bandori_core.shared_memory_ipc import (
     decode_ipc_envelope,
     encode_ipc_envelope,
     make_peer_id,
@@ -167,7 +167,7 @@ def main():
     normal_window_mode = bool(cfg.get("chat_window_normal_window", False))
 
     if not normal_window_mode:
-        import macos_patch
+        import bandori_platform.macos_patch as macos_patch
         macos_patch.hide_dock_icon_if_needed()
     app.setApplicationName("BandoriPetChat")
     app.setApplicationDisplayName("BandoriPet Chat")
@@ -206,8 +206,8 @@ def main():
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     window.closed.connect(app.quit)
 
-    from companion_controller import CompanionController
-    from companion_server import CompanionServer
+    from bandori_companion.companion_controller import CompanionController
+    from bandori_companion.companion_server import CompanionServer
 
     companion_controller = CompanionController(window, cfg, window)
     window._companion_controller = companion_controller

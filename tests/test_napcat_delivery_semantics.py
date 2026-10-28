@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import QUrlQuery
 
-from napcat_adapter import NapcatClient
-from onebot_message import onebot_event_mentions_self
+from bandori_services.napcat_adapter import NapcatClient
+from bandori_services.onebot_message import onebot_event_mentions_self
 
 
 class NapcatDeliverySemanticsTest(unittest.TestCase):

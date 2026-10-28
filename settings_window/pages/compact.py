@@ -1,6 +1,6 @@
 import secrets
 
-from process_utils import clamp_int
+from bandori_core.process_utils import clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *

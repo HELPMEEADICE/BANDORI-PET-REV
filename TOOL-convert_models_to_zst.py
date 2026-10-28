@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 import zstandard as zstd
-from zst_model_archive import INDEX_MEMBER
+from bandori_models.zst_model_archive import INDEX_MEMBER
 
 _print_lock = threading.Lock()
 

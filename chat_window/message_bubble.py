@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (
     QGraphicsColorizeEffect, QPlainTextEdit,
 )
 
-from i18n_manager import tr as _tr
+from bandori_core.i18n_manager import tr as _tr
 from qfluentwidgets import FluentIcon, isDarkTheme
 
-from app_theme import (
+from bandori_core.app_theme import (
     BANDORI_PRIMARY,
     BANDORI_PRIMARY_DARK,
 )

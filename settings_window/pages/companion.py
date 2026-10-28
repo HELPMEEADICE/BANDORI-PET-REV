@@ -9,8 +9,8 @@ from datetime import datetime
 
 from qfluentwidgets import TextEdit as FluentTextEdit
 
-from companion_security import CompanionSecurityStore, local_host_candidates
-from config_manager import DEFAULT_USER_PROFILE_KEY
+from bandori_companion.companion_security import CompanionSecurityStore, local_host_candidates
+from bandori_core.config_manager import DEFAULT_USER_PROFILE_KEY
 from settings_window.constants import *
 from settings_window.widgets import *
 

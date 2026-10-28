@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-import asr_manager
+import bandori_audio.asr_manager as asr_manager
 
 
 class ASRPythonDetectionTest(unittest.TestCase):

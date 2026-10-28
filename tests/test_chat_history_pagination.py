@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from database_manager import DatabaseManager
+from bandori_core.database_manager import DatabaseManager
 from settings_window.pages.chat_history import ChatHistoryModel, ChatHistoryPageMixin
 
 

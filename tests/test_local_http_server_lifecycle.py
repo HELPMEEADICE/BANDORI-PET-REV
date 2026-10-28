@@ -4,11 +4,11 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from local_port_security import ensure_local_port_token
+from bandori_services.local_port_security import ensure_local_port_token
 
 
 def test_local_http_request_threads_do_not_block_server_close():
-    from local_http_server import LocalThreadingHTTPServer
+    from bandori_services.local_http_server import LocalThreadingHTTPServer
 
     assert LocalThreadingHTTPServer.daemon_threads is True
 
@@ -17,7 +17,7 @@ def test_missing_local_port_token_is_generated_and_persisted():
     config = Mock()
     config.get.return_value = ""
 
-    with patch("local_port_security.secrets.token_urlsafe", return_value="generated-token"):
+    with patch("bandori_services.local_port_security.secrets.token_urlsafe", return_value="generated-token"):
         token = ensure_local_port_token(config, "chat_integration_token")
 
     assert token == "generated-token"
@@ -37,15 +37,15 @@ def test_existing_local_port_token_is_reused():
 
 
 def test_local_http_request_body_reads_have_a_timeout():
-    base_source = Path("local_http_server.py").read_text(encoding="utf-8")
+    base_source = Path("bandori_services/local_http_server.py").read_text(encoding="utf-8")
     assert "self.connection.settimeout(" in base_source
-    for file_name in ("ai_status_server.py", "chat_integration_server.py"):
+    for file_name in ("bandori_services/ai_status_server.py", "bandori_chat/chat_integration_server.py"):
         source = Path(file_name).read_text(encoding="utf-8")
         assert "except TimeoutError:" in source
 
 
 def test_shared_http_base_preserves_auth_and_cors_behavior():
-    from ai_status_server import AiStatusHttpServer
+    from bandori_services.ai_status_server import AiStatusHttpServer
 
     events = []
     server = AiStatusHttpServer(0, "secret", events.append)

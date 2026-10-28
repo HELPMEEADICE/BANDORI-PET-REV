@@ -1,6 +1,6 @@
 import unittest
 
-from compact_ai_window import _font_size_from_config, _opacity_alpha
+from bandori_chat.compact_ai_window import _font_size_from_config, _opacity_alpha
 
 
 class CompactAiConfigTest(unittest.TestCase):

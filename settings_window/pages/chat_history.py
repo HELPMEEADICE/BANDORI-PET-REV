@@ -18,10 +18,10 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import DatePicker, ListView, ProgressRing
 from qfluentwidgets.components.date_time.picker_base import PickerColumnFormatter
 
-from i18n_manager import date_picker_months
+from bandori_core.i18n_manager import date_picker_months
 from settings_window.constants import *
 from settings_window.widgets import *
-from network_worker import delete_thread_when_stopped
+from bandori_services.network_worker import delete_thread_when_stopped
 
 
 class _I18nMonthFormatter(PickerColumnFormatter):

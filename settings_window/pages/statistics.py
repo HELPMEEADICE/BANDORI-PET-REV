@@ -480,7 +480,7 @@ class StatisticsPageMixin:
 
     def _get_stats_db(self):
         if self._stats_db is None:
-            from database_manager import DatabaseManager
+            from bandori_core.database_manager import DatabaseManager
             self._stats_db = DatabaseManager()
         return self._stats_db
 

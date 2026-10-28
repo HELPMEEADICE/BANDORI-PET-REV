@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from pet_window import PetWindow
+from bandori_ui.pet_window import PetWindow
 
 
 class PetRuntimeSaveSemanticsTest(unittest.TestCase):

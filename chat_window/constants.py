@@ -2,8 +2,8 @@ from PySide6.QtCore import Qt, QTimer, QRectF
 from PySide6.QtGui import QPainterPath, QRegion
 from PySide6.QtWidgets import QMenu
 
-from app_theme import BANDORI_PRIMARY, BANDORI_PRIMARY_SOFT, BANDORI_PRIMARY_SOFT_DARK
-from win32_dwm import apply_windows_11_border_fix, frame_changed
+from bandori_core.app_theme import BANDORI_PRIMARY, BANDORI_PRIMARY_SOFT, BANDORI_PRIMARY_SOFT_DARK
+from bandori_platform.win32_dwm import apply_windows_11_border_fix, frame_changed
 
 
 _BG_LIGHT = "#f5f7fb"

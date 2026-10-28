@@ -6,15 +6,15 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QLockFile
 
-import chat_runtime
+import bandori_chat.chat_runtime as chat_runtime
 
 
 class ChatRuntimeLockTests(unittest.TestCase):
     def test_chat_lock_path_uses_ipc_server_name(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
-                patch("chat_runtime.app_runtime_dir", return_value=Path(temp_dir)),
-                patch("chat_runtime.ipc_server_name", return_value="Bandori Pet/Test"),
+                patch("bandori_chat.chat_runtime.app_runtime_dir", return_value=Path(temp_dir)),
+                patch("bandori_chat.chat_runtime.ipc_server_name", return_value="Bandori Pet/Test"),
             ):
                 path = chat_runtime.chat_lock_path()
 
@@ -23,8 +23,8 @@ class ChatRuntimeLockTests(unittest.TestCase):
     def test_chat_window_is_active_when_lock_is_held(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
-                patch("chat_runtime.app_runtime_dir", return_value=Path(temp_dir)),
-                patch("chat_runtime.ipc_server_name", return_value="BandoriPet-test"),
+                patch("bandori_chat.chat_runtime.app_runtime_dir", return_value=Path(temp_dir)),
+                patch("bandori_chat.chat_runtime.ipc_server_name", return_value="BandoriPet-test"),
             ):
                 lock = QLockFile(str(chat_runtime.chat_lock_path()))
                 self.assertTrue(lock.tryLock(0))

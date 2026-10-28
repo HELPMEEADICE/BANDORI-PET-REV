@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from lupa.luajit21 import LuaRuntime
 
-from live2d_lua_adapter_moc3 import _patch_lua_moc3_module
+from bandori_live2d.live2d_lua_adapter_moc3 import _patch_lua_moc3_module
 
 
 def _physics_zero_delta_probe():

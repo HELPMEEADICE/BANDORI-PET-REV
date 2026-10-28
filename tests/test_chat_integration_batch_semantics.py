@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from chat_integration_server import _prepare_chat_event_batch
+from bandori_chat.chat_integration_server import _prepare_chat_event_batch
 
 
 class ChatIntegrationBatchSemanticsTest(unittest.TestCase):

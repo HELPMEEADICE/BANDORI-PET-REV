@@ -3,11 +3,11 @@ import time
 
 _DETAIL_IMAGE_PIXMAP_CACHE_LIMIT = 8
 
-from process_utils import app_data_dir, clamp_int
+from bandori_core.process_utils import app_data_dir, clamp_int
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
-from custom_model_import import (
+from bandori_models.custom_model_import import (
     CustomModelImportError,
     delete_custom_character,
     import_from_folder,
@@ -262,8 +262,8 @@ class SettingsWindow(
         self._refresh_model_list()
 
     def _load_configured_models(self) -> list[dict]:
-        from config_manager import load_configured_models
-        from live2d_click_actions import normalize_click_motion_actions
+        from bandori_core.config_manager import load_configured_models
+        from bandori_live2d.live2d_click_actions import normalize_click_motion_actions
 
         def _enrich(entry: dict) -> dict:
             self._restore_model_action_profile(entry, prefer_existing=True)
@@ -564,7 +564,7 @@ class SettingsWindow(
         if self._live2d:
             return self._live2d
         try:
-            from live2d_lua_adapter import live2d
+            from bandori_live2d.live2d_lua_adapter import live2d
 
             self._live2d = live2d
             self._owns_live2d = True

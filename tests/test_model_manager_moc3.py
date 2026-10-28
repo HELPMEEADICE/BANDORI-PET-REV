@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import model_manager
-from model_manager import ModelManager
+import bandori_models.model_manager as model_manager
+from bandori_models.model_manager import ModelManager
 
 
 def _write_model3(root: Path, name: str = "test.model3.json") -> Path:

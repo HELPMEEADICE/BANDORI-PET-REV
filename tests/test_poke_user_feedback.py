@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QPoint
 
-from pet_window import (
+from bandori_ui.pet_window import (
     POKE_USER_BADGE_DURATION_MS,
     POKE_USER_WINDOW_SHAKE_INTENSITY,
     PetWindow,

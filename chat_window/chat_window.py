@@ -1,4 +1,4 @@
-import fluent_bootstrap
+import bandori_ui.fluent_bootstrap as fluent_bootstrap
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
 
@@ -16,19 +16,19 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
-from i18n_manager import tr as _tr
+from bandori_core.i18n_manager import tr as _tr
 from qfluentwidgets import Action, BodyLabel, StrongBodyLabel, FluentIcon, ProgressBar, TransparentToolButton, isDarkTheme
 from qfluentwidgets.common.config import qconfig
-from process_utils import app_base_dir, app_data_dir
-from network_worker import CancelableNetworkWorker
-from public_network import open_public_url
-from app_theme import (
+from bandori_core.process_utils import app_base_dir, app_data_dir
+from bandori_services.network_worker import CancelableNetworkWorker
+from bandori_services.public_network import open_public_url
+from bandori_core.app_theme import (
     BANDORI_PRIMARY_SOFT,
     BANDORI_PRIMARY_SOFT_DARK_HOVER,
     accent_color,
 )
-from ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, CommandCompleter, is_interrupt_command
-from win32_dwm import apply_windows_11_border_fix
+from bandori_ui.ui_helpers import AVATAR_EXTENSIONS, FluentContextTextEdit, CommandCompleter, is_interrupt_command
+from bandori_platform.win32_dwm import apply_windows_11_border_fix
 
 import base64
 import mimetypes
@@ -44,35 +44,35 @@ import re
 from pathlib import Path
 
 if sys.platform == "darwin":
-    import macos_patch
+    import bandori_platform.macos_patch as macos_patch
 else:
     macos_patch = None
 
-from llm_manager import (
+from bandori_llm.llm_manager import (
     build_system_prompt, current_time_instruction, LLMStreamWorker, ResponsesStreamWorker, NonStreamWorker,
     consume_stream_action_tags, merged_action_tags, parse_action_tags, strip_action_tags, extract_inline_search_sources,
     estimate_llm_request_tokens,
 )
-from emotion_behavior import emotion_tts_rate, infer_emotion_behavior
-from llm_api_compat import append_google_chat_continuation, chat_completions_api_url, use_responses_api
-from llm_error_hints import format_llm_error_message
-from chat_config_snapshots import (
+from bandori_core.emotion_behavior import emotion_tts_rate, infer_emotion_behavior
+from bandori_llm.llm_api_compat import append_google_chat_continuation, chat_completions_api_url, use_responses_api
+from bandori_llm.llm_error_hints import format_llm_error_message
+from bandori_chat.chat_config_snapshots import (
     asr_config_snapshot,
     memory_extraction_api_config,
     tool_config_snapshot,
     tts_config_snapshot,
 )
-from local_tools import reminder_tools_enabled
-from chat_commands import handle_command as _handle_chat_command
-from chat_attachment_manager import chat_attachment_dir
-from token_usage import (
+from bandori_tools.local_tools import reminder_tools_enabled
+from bandori_chat.chat_commands import handle_command as _handle_chat_command
+from bandori_chat.chat_attachment_manager import chat_attachment_dir
+from bandori_llm.token_usage import (
     estimate_messages_tokens,
     estimate_untracked_history_usage,
     history_message_query_limit,
     normalize_history_message_limit,
 )
-from tts_common import clean_tts_payload
-from tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
+from bandori_audio.tts_common import clean_tts_payload
+from bandori_audio.tts_manager import TTSPlayer, TTSRequestWorker, TTSTranslationWorker, flush_tts_sentence, is_tts_enabled
 from .chat_window_base import ChatWindowMixin
 _TTS_AVAILABLE = True
 
@@ -119,14 +119,14 @@ class _PluginToolInvoker(QObject):
             request["event"].set()
 
 try:
-    from asr_manager import ASRRecorderWorker, ASRRequestWorker
+    from bandori_audio.asr_manager import ASRRecorderWorker, ASRRequestWorker
     _ASR_AVAILABLE = True
 except (ImportError, OSError):
     _ASR_AVAILABLE = False
     ASRRecorderWorker = None
     ASRRequestWorker = None
 
-from relationship_memory import (
+from bandori_core.relationship_memory import (
     GLOBAL_MEMORY_CHARACTER,
     analyze_interaction,
     build_memory_extraction_messages,
@@ -135,7 +135,7 @@ from relationship_memory import (
     parse_relationship_analysis_response,
     store_extracted_memories,
 )
-from action_bus import publish_action, publish_emotion_behavior, publish_lip_sync, publish_user_poke
+from bandori_core.action_bus import publish_action, publish_emotion_behavior, publish_lip_sync, publish_user_poke
 
 from .constants import (
     _BG_LIGHT, _BG_DARK,
@@ -574,7 +574,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
         self._normal_window_mode = bool(self._cfg.get("chat_window_normal_window", False)) if self._cfg else False
         self._chat_window_always_on_top = bool(self._cfg.get("chat_window_always_on_top", False)) if self._cfg else False
 
-        from database_manager import DatabaseManager
+        from bandori_core.database_manager import DatabaseManager
         self._db = DatabaseManager()
         self._assign_legacy_chat_history()
         if not self._is_group_chat:
@@ -4531,7 +4531,7 @@ class ChatWindow(ChatWindowMixin, QWidget):
                 self._show_local_assistant_message(_tr("ChatWindow.set_mood_hint", "请输入 0-100 的心情数值。例如：@当前心情 75（数值越高心情越好）"))
                 return
             value = max(0, min(100, value))
-            from relationship_memory import mood_from_intensity, MOOD_LABELS
+            from bandori_core.relationship_memory import mood_from_intensity, MOOD_LABELS
             mood_key = mood_from_intensity(value)
             label = MOOD_LABELS[mood_key]
             for character in self._memory_target_characters():

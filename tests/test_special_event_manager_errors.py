@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from special_event_manager import SpecialEventManager
+from bandori_core.special_event_manager import SpecialEventManager
 
 
 class SpecialEventManagerErrorTest(unittest.TestCase):
@@ -17,9 +17,9 @@ class SpecialEventManagerErrorTest(unittest.TestCase):
         )
 
         with (
-            patch("special_event_manager.QDate.currentDate", return_value="today"),
-            patch("special_event_manager.time.monotonic", side_effect=[100.0, 120.0]),
-            patch("special_event_manager._log.exception") as log_exception,
+            patch("bandori_core.special_event_manager.QDate.currentDate", return_value="today"),
+            patch("bandori_core.special_event_manager.time.monotonic", side_effect=[100.0, 120.0]),
+            patch("bandori_core.special_event_manager._log.exception") as log_exception,
         ):
             SpecialEventManager._check_events(scheduler)
             SpecialEventManager._check_events(scheduler)
@@ -38,7 +38,7 @@ class SpecialEventManagerErrorTest(unittest.TestCase):
             _schedule_next_check=Mock(),
         )
 
-        with patch("special_event_manager.QDate.currentDate", return_value="today"):
+        with patch("bandori_core.special_event_manager.QDate.currentDate", return_value="today"):
             SpecialEventManager._check_events(scheduler)
 
         self.assertIsNone(scheduler._last_error_log_at)
