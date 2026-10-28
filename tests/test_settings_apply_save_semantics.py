@@ -123,6 +123,7 @@ class _ApplyHarness(QWidget):
     _current_theme_setting = SettingsWindow._current_theme_setting
     _current_vsync_setting = SettingsWindow._current_vsync_setting
     _current_gpu_acceleration_setting = SettingsWindow._current_gpu_acceleration_setting
+    _current_music_bounce_setting = SettingsWindow._current_music_bounce_setting
 
     def __init__(self):
         super().__init__()
@@ -374,6 +375,24 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
         self.assertTrue(harness.closed)
         self.assertEqual(1, len(harness.settings_payloads))
         self.assertEqual([("kasumi", "default")], harness.model_payloads)
+
+    def test_music_bounce_is_preserved_when_display_page_was_not_opened(self):
+        harness = _ApplyHarness()
+        harness._cfg.data["music_bounce_enabled"] = True
+
+        harness._on_apply()
+
+        self.assertTrue(harness._cfg.get("music_bounce_enabled"))
+        self.assertTrue(harness.settings_payloads[0]["music_bounce_enabled"])
+
+    def test_music_bounce_switch_is_saved_and_sent_to_running_pets(self):
+        harness = _ApplyHarness()
+        harness._music_bounce_switch = _SwitchStub(True)
+
+        harness._on_apply()
+
+        self.assertTrue(harness._cfg.get("music_bounce_enabled"))
+        self.assertTrue(harness.settings_payloads[0]["music_bounce_enabled"])
 
     def test_language_save_false_keeps_session_language_and_selector(self):
         harness = _LanguageHarness()

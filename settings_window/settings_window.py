@@ -3134,6 +3134,7 @@ class SettingsWindow(
             "dark_theme": self._current_theme_setting(),
             "vsync": self._current_vsync_setting(),
             "gpu_acceleration": self._current_gpu_acceleration_setting(),
+            "music_bounce_enabled": self._current_music_bounce_setting(),
             "game_topmost": self._game_topmost_switch.isChecked(),
             "obs_window_capture_compatible": self._obs_window_capture_compatible_switch.isChecked(),
             "chat_window_normal_window": self._chat_window_normal_window_switch.isChecked(),
@@ -3201,6 +3202,7 @@ class SettingsWindow(
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])
             self._cfg.set("gpu_acceleration", settings["gpu_acceleration"])
+            self._cfg.set("music_bounce_enabled", settings["music_bounce_enabled"])
             self._cfg.set("game_topmost", settings["game_topmost"])
             self._cfg.set(
                 "obs_window_capture_compatible",

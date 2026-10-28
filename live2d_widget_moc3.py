@@ -41,6 +41,7 @@ class Live2DSSAAFramebuffer:
         height: int,
         clear_color,
         source_crop_height: int | None = None,
+        vertical_scale: float = 1.0,
     ) -> bool:
         if self._fbo is None:
             return False
@@ -65,7 +66,7 @@ class Live2DSSAAFramebuffer:
                 0,
                 0,
                 width,
-                height,
+                max(1, round(height * vertical_scale)),
                 gl.GL_COLOR_BUFFER_BIT,
                 gl.GL_LINEAR,
             )

@@ -1277,6 +1277,7 @@ def main():
             ("dark_theme", "dark", False),
             ("vsync", "vsync", True),
             ("gpu_acceleration", "gpu_acceleration", True),
+            ("music_bounce_enabled", "music_bounce_enabled", False),
             ("game_topmost", "game_topmost", False),
             ("obs_window_capture_compatible", "obs_window_capture_compatible", False),
             ("chat_window_normal_window", "chat_window_normal_window", False),
@@ -1472,6 +1473,7 @@ def main():
         _pet_window_keys = (
             "fps", "opacity", "vsync", "game_topmost", "obs_window_capture_compatible",
             "chat_window_normal_window", "hide_live2d_model",
+            "music_bounce_enabled",
             "live2d_idle_actions_enabled", "live2d_random_actions_enabled", "live2d_head_tracking_enabled",
             "live2d_mutual_gaze_enabled", "move_all_roles_together",
             "birthday_tray_notifications_enabled",

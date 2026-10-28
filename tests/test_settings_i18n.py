@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LANG_DIR = ROOT / "lang"
 
 RECENT_SETTINGS_KEYS = {
+    "SettingsWindow.music_bounce",
+    "SettingsWindow.music_bounce_hint",
+    "SettingsWindow.music_bounce_unsupported",
     "SettingsWindow.poke_feedback_section",
     "SettingsWindow.poke_feedback_hint",
     "SettingsWindow.poke_motion_follow_head",

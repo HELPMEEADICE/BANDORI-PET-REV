@@ -364,6 +364,7 @@ DATA_CONFIG_KEYS = {
         "dark_theme",
         "vsync",
         "gpu_acceleration",
+        "music_bounce_enabled",
         "game_topmost",
         "obs_window_capture_compatible",
         "chat_window_normal_window",

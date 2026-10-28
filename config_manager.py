@@ -281,6 +281,7 @@ DEFAULTS = {
     "opacity": 1.0,
     "dark_theme": "follow_system",
     "vsync": True,
+    "music_bounce_enabled": False,
     "gpu_acceleration": True,
     "game_topmost": False,
     "obs_window_capture_compatible": False,

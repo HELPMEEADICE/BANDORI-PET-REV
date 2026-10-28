@@ -1,6 +1,7 @@
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
+from music_bounce import MUSIC_BOUNCE_KEY, music_bounce_supported
 
 
 class QualityPageMixin:
@@ -27,6 +28,26 @@ class QualityPageMixin:
         subtitle.setObjectName("DisplayPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+
+        bounce_label = BodyLabel(_tr("SettingsWindow.music_bounce"), page)
+        self._music_bounce_switch = SwitchButton(page)
+        self._music_bounce_switch.setChecked(
+            bool(self._cfg.get(MUSIC_BOUNCE_KEY, False)) if self._cfg else False
+        )
+        self._music_bounce_switch.setEnabled(music_bounce_supported())
+        bounce_row = QHBoxLayout()
+        bounce_row.setContentsMargins(0, 0, 0, 0)
+        bounce_row.setSpacing(10)
+        bounce_row.addWidget(bounce_label)
+        bounce_row.addStretch()
+        bounce_row.addWidget(self._music_bounce_switch)
+        layout.addLayout(bounce_row)
+        bounce_hint = BodyLabel(_tr(
+            "SettingsWindow.music_bounce_hint" if music_bounce_supported()
+            else "SettingsWindow.music_bounce_unsupported"
+        ), page)
+        bounce_hint.setWordWrap(True)
+        layout.addWidget(bounce_hint)
 
         quality_label = BodyLabel(_tr("SettingsWindow.quality_profile"), page)
         layout.addWidget(quality_label)
@@ -222,6 +243,11 @@ class QualityPageMixin:
         profile = self._quality_combo.itemData(index)
         self._live2d_quality = normalize_live2d_quality(profile)
         self._quality_detail.setText(self._quality_detail_text(self._live2d_quality))
+
+    def _current_music_bounce_setting(self) -> bool:
+        if hasattr(self, "_music_bounce_switch"):
+            return self._music_bounce_switch.isChecked()
+        return bool(self._cfg.get(MUSIC_BOUNCE_KEY, False)) if self._cfg else False
 
     def _on_gpu_acceleration_changed(self, checked: bool):
         self._gpu_acceleration = bool(checked)

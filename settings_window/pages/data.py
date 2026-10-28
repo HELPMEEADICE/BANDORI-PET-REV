@@ -531,6 +531,7 @@ class DataManagementPageMixin:
             self._cfg.set("dark_theme", self._theme_combo.currentData())
             self._cfg.set("vsync", self._current_vsync_setting())
             self._cfg.set("gpu_acceleration", self._current_gpu_acceleration_setting())
+            self._cfg.set("music_bounce_enabled", self._current_music_bounce_setting())
             self._cfg.set("game_topmost", self._game_topmost_switch.isChecked())
             self._cfg.set(
                 "obs_window_capture_compatible",
@@ -926,6 +927,8 @@ class DataManagementPageMixin:
 
 
     def _refresh_side_and_quality_widgets(self):
+        if hasattr(self, "_music_bounce_switch"):
+            self._music_bounce_switch.setChecked(bool(self._cfg.get("music_bounce_enabled", False)))
         if hasattr(self, "_quality_combo"):
             for index in range(self._quality_combo.count()):
                 if self._quality_combo.itemData(index) == self._live2d_quality:

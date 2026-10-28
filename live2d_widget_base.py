@@ -1,4 +1,5 @@
 import ctypes
+import math
 import os
 import sys
 import time
@@ -44,7 +45,10 @@ class DirectRenderPipeline:
         return 1
 
     def create_framebuffer(self):
-        return None
+        # The same offscreen blit also handles music squash/stretch for MOC.
+        from live2d_widget_moc3 import Live2DSSAAFramebuffer
+
+        return Live2DSSAAFramebuffer()
 
 
 DIRECT_RENDER_PIPELINE = DirectRenderPipeline()
@@ -121,6 +125,8 @@ class Live2DWidgetBase(QOpenGLWidget):
         self._moc3_leg_crop_enabled = False
         self._moc3_visible_height = LIVE2D_MOC3_VISIBLE_HEIGHT_MIN
         self._moc3_crop_fallback_reported = False
+        self._music_vertical_scale = 1.0
+        self._music_rendered_scale = 1.0
         
         self._dragging = False
         self._system_move_active = False
@@ -550,6 +556,28 @@ class Live2DWidgetBase(QOpenGLWidget):
         except Exception as exc:
             print(f"Failed to update Live2D model scale: {exc}", file=sys.stderr)
 
+    def set_music_vertical_scale(self, scale: float):
+        scale = float(scale)
+        scale = max(0.65, min(1.20, scale)) if math.isfinite(scale) else 1.0
+        if scale == self._music_vertical_scale:
+            return
+        self._music_vertical_scale = scale
+        self._static_render_done = False
+        self.update()
+
+    def _music_unscale_y(self, y):
+        scale = getattr(self, "_music_rendered_scale", 1.0)
+        if scale == 1.0:
+            return y
+        return self._cache_h + (y - self._cache_h) / scale
+
+    def _music_scale_bounds(self, bounds):
+        scale = getattr(self, "_music_rendered_scale", 1.0)
+        if bounds is None or scale == 1.0:
+            return bounds
+        x0, x1, y0, y1 = bounds
+        return x0, x1, self._cache_h + (y0 - self._cache_h) * scale, self._cache_h + (y1 - self._cache_h) * scale
+
     # --------------------------------------------------------------------------
     # Model loading
     # --------------------------------------------------------------------------
@@ -922,7 +950,7 @@ class Live2DWidgetBase(QOpenGLWidget):
             local_x = self._cache_w_half + dx * factor
             local_y = self._cache_h_half + dy * factor
             
-        self._model.Drag(local_x, local_y)
+        self._model.Drag(local_x, Live2DWidgetBase._music_unscale_y(self, local_y))
         self._perf_probe.add("head_track", self._perf_probe.now() - t0)
 
     def _track_current_head_target(self):
@@ -1100,10 +1128,11 @@ class Live2DWidgetBase(QOpenGLWidget):
         target_h = max(1, int(self._cache_h * self._system_scale))
         gl.glViewport(0, 0, target_w, target_h)
         ssaa_scale = self._render_ssaa_scale()
+        music_scale = getattr(self, "_music_vertical_scale", 1.0)
         render_h = Live2DWidgetBase._moc3_render_target_height(self, target_h)
         crop_active = render_h > target_h
         using_ssaa = False
-        if ssaa_scale > 1:
+        if ssaa_scale > 1 or music_scale != 1.0:
             try:
                 if self._ssaa_fbo is None:
                     self._ssaa_fbo = self._render_pipeline.create_framebuffer()
@@ -1142,12 +1171,14 @@ class Live2DWidgetBase(QOpenGLWidget):
             if using_ssaa:
                 self._ssaa_fbo.release()
                 crop_source_height = target_h * ssaa_scale if crop_active else None
+                stretch_options = {"vertical_scale": music_scale} if music_scale != 1.0 else {}
                 if not self._ssaa_fbo.blit_to_default(
                     self.defaultFramebufferObject(),
                     target_w,
                     target_h,
                     self._clear_color,
                     source_crop_height=crop_source_height,
+                    **stretch_options,
                 ):
                     if crop_active:
                         self._request_moc3_crop_fallback()
@@ -1159,6 +1190,11 @@ class Live2DWidgetBase(QOpenGLWidget):
                         target_h,
                         self._clear_color,
                     )
+                    self._music_rendered_scale = 1.0
+                else:
+                    self._music_rendered_scale = music_scale
+            else:
+                self._music_rendered_scale = 1.0
             if getattr(self, "_compact_memory_after_frame", False):
                 Live2DWidgetBase._compact_live2d_memory(self)
                 self._compact_memory_after_frame = False
@@ -1401,11 +1437,11 @@ class Live2DWidgetBase(QOpenGLWidget):
     def hit_area_bounds(self, area_name: str):
         area_name = (area_name or "").strip().lower()
         if not area_name or self._custom_hit_areas is None: return None
-        return self._custom_hit_areas.bounds_for(area_name)
+        return Live2DWidgetBase._music_scale_bounds(self, self._custom_hit_areas.bounds_for(area_name))
 
     def hit_area_union_bounds(self):
         if self._custom_hit_areas is None: return None
-        return self._custom_hit_areas.union_bounds()
+        return Live2DWidgetBase._music_scale_bounds(self, self._custom_hit_areas.union_bounds())
 
     def _is_model_hit_at(self, x: float, y: float) -> bool:
         if not self._model: return False
@@ -1453,11 +1489,11 @@ class Live2DWidgetBase(QOpenGLWidget):
 
     def _sdk_hit_area_name_at(self, x: float, y: float) -> str:
         if not self._has_sdk_hit_areas(): return ""
-        return (self._model.HitTest("", x, y) or "").strip().lower()
+        return (self._model.HitTest("", x, Live2DWidgetBase._music_unscale_y(self, y)) or "").strip().lower()
 
     def _custom_hit_area_name_at(self, x: float, y: float) -> str:
         if self._custom_hit_areas is None: return ""
-        return self._custom_hit_areas.hit_test_name(x, y).strip().lower()
+        return self._custom_hit_areas.hit_test_name(x, Live2DWidgetBase._music_unscale_y(self, y)).strip().lower()
 
     def _reset_hit_stability(self):
         self._last_confirmed_hit_ms = -1000

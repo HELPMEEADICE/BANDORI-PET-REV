@@ -38,6 +38,7 @@ from live2d_quality import (
 )
 from live2d_widget import DEFAULT_HIT_ALPHA_THRESHOLD, DEFAULT_LIP_SYNC_MAX_OPEN, Live2DWidget
 from model_manager import MODEL_FORMAT_MOC3, ModelManager
+from music_bounce import MUSIC_BOUNCE_KEY, MusicBounceController
 from outfit_description_config import (
     OUTFIT_DESCRIPTIONS_KEY,
     OUTFIT_RECOGNITION_ENABLED_KEY,
@@ -587,6 +588,28 @@ class PetWindow(QWidget):
         self._radial_menu_prewarm_timer.start()
 
         self.setWindowOpacity(self._opacity)
+        self._music_bounce = MusicBounceController(
+            self, self._music_bounce_allowed, self._apply_music_bounce_scale
+        )
+        self._music_bounce.set_enabled(bool(self._cfg.get(MUSIC_BOUNCE_KEY, False)))
+
+    def _apply_music_bounce_scale(self, scale):
+        self._live2d_widget.set_music_vertical_scale(scale)
+        self._pixel_widget.set_music_vertical_scale(scale)
+
+    def _music_bounce_allowed(self):
+        return (
+            self._show_pos_set
+            and not self._startup_position_restore_pending
+            and not self._restoring_saved_position
+            and not self._is_pet_dragging()
+            and not self._active_peer_drag_id
+            and not self._peer_drag_states
+            and not self._emotion_window_animating
+            and not self._radial_menu_visible
+            and not self._radial_menu_opening
+            and (self._pixel_mode or not (self._hide_live2d_model or self._user_hidden_live2d_model))
+        )
 
     def _init_ui(self):
         flags = (
@@ -1935,6 +1958,9 @@ class PetWindow(QWidget):
             self._completed_peer_drag_sessions.pop(next(iter(self._completed_peer_drag_sessions)))
 
     def _on_peer_drag_started(self):
+        bounce = getattr(self, "_music_bounce", None)
+        if bounce is not None:
+            bounce.reset()
         controller = getattr(self, "_surface_controller", None)
         if (
             controller is not None
@@ -3133,6 +3159,8 @@ class PetWindow(QWidget):
             self._compact_ai_window.reset_position_offset()
         if "fps" in data:
             self.set_fps(data["fps"])
+        if MUSIC_BOUNCE_KEY in data:
+            self._music_bounce.set_enabled(data[MUSIC_BOUNCE_KEY])
         if "opacity" in data:
             self.set_opacity(data["opacity"])
         if "dark_theme" in data:
@@ -4860,6 +4888,9 @@ class PetWindow(QWidget):
     def _play_emotion_window_feedback(self, kind: str, intensity: int):
         if kind not in {"back", "forward", "hop", "shake", "wobble", "settle"}:
             return
+        bounce = getattr(self, "_music_bounce", None)
+        if bounce is not None:
+            bounce.reset()
         current = self.pos()
         if kind in {"forward", "back"} and self._live2d_widget._drag_locked:
             return

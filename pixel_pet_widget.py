@@ -1,8 +1,9 @@
 import json
+import math
 import random
 
 from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPainter
+from PySide6.QtGui import QImage, QMouseEvent, QPainter, QRegion, QTransform
 from PySide6.QtWidgets import QApplication, QWidget
 
 from process_utils import app_base_dir
@@ -65,6 +66,7 @@ class PixelPetWidget(QWidget):
         self._waiting_for_target = False
         self._hovering = False
         self._hit_alpha_threshold = 8
+        self._music_vertical_scale = 1.0
         self._input_region_cache = {}
         self._hit_probe_offsets = (
             (0, 0),
@@ -125,6 +127,27 @@ class PixelPetWidget(QWidget):
         elif self.isVisible() and not self._wander_timer.isActive():
             self._choose_wander_target()
             self._wander_timer.start()
+
+    def set_music_vertical_scale(self, scale: float):
+        scale = float(scale)
+        scale = max(0.65, min(1.20, scale)) if math.isfinite(scale) else 1.0
+        if scale == self._music_vertical_scale:
+            return
+        self._music_vertical_scale = scale
+        self.update()
+        self.frame_changed.emit()
+
+    def _music_unscale_y(self, y):
+        return self.height() + (y - self.height()) / self._music_vertical_scale
+
+    def _music_input_region(self, region):
+        if self._music_vertical_scale == 1.0:
+            return QRegion(region)
+        transform = QTransform()
+        transform.translate(0, self.height())
+        transform.scale(1.0, self._music_vertical_scale)
+        transform.translate(0, -self.height())
+        return transform.map(region).intersected(QRegion(self.rect()))
 
     def _finish_window_drag(self):
         was_dragging = self._dragging or self._system_move_active
@@ -306,6 +329,12 @@ class PixelPetWidget(QWidget):
         source = QRect(frame * self._frame_w, row * self._frame_h, self._frame_w, self._frame_h)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.translate(0, self.height())
+        painter.scale(1.0, self._music_vertical_scale)
+        painter.translate(0, -self.height())
         painter.drawImage(self.rect(), self._sheet_image, source)
 
     def is_sprite_hit_at_global(self, global_pos: QPoint) -> bool:
@@ -353,7 +382,7 @@ class PixelPetWidget(QWidget):
         if cached is not None:
             from PySide6.QtGui import QRegion
 
-            return QRegion(cached)
+            return self._music_input_region(cached)
         region = qimage_frame_region(
             self._sheet_image,
             source,
@@ -365,9 +394,12 @@ class PixelPetWidget(QWidget):
         self._input_region_cache[cache_key] = region
         from PySide6.QtGui import QRegion
 
-        return QRegion(region)
+        return self._music_input_region(region)
 
     def _sprite_alpha_at(self, local_x: int, local_y: int) -> int:
+        local_y = math.floor(self._music_unscale_y(local_y))
+        if not (0 <= local_x < self._frame_w and 0 <= local_y < self._frame_h):
+            return 0
         anim = self._frames.get(self._animation, {})
         row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
         frame = max(0, min(self._frame_index, self._total_cols - 1))
@@ -378,18 +410,9 @@ class PixelPetWidget(QWidget):
         return (self._sheet_image.pixel(x, y) >> 24) & 0xff
 
     def _sprite_alpha_near(self, local_x: int, local_y: int) -> int:
-        anim = self._frames.get(self._animation, {})
-        row = max(0, min(int(anim.get("row", 0) or 0), self._total_rows - 1))
-        frame = max(0, min(self._frame_index, self._total_cols - 1))
-        base_x = frame * self._frame_w
-        base_y = row * self._frame_h
         alpha = 0
         for dx, dy in self._hit_probe_offsets:
-            x = base_x + local_x + dx
-            y = base_y + local_y + dy
-            if x < 0 or y < 0 or x >= self._sheet_image.width() or y >= self._sheet_image.height():
-                continue
-            alpha = max(alpha, (self._sheet_image.pixel(x, y) >> 24) & 0xff)
+            alpha = max(alpha, self._sprite_alpha_at(local_x + dx, local_y + dy))
             if alpha > self._hit_alpha_threshold:
                 break
         return alpha
