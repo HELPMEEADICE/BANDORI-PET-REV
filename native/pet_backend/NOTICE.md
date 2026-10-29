@@ -6,7 +6,7 @@ This code is distributed under GPL-3.0-only, as is BANDORI-PET-REV.
 See ../../LICENSE.
 
 Neocari is included as a Git submodule at
-bae7610a67d846ae7d2b8286fd6062e6a64e451d.
+f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc.
 https://github.com/HELPMEEADICE/Neocari
 It is GPL-3.0-only and retains the original Mocari MIT notice in LICENSES/.
 See vendor/neocari/LICENSE and vendor/neocari/LICENSES/.

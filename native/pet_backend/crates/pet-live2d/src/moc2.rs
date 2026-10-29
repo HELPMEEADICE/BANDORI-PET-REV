@@ -88,17 +88,17 @@ impl Moc2Adapter {
     /// expressions, physics and pose.
     pub fn update(&mut self, delta_seconds: f32) -> bool {
         let mouth = self.mouth_open.take();
-        self.model.runtime_mut().set_drag(self.drag.0, self.drag.1);
-        if self.model.update(delta_seconds).is_none() {
-            return false;
-        }
-        if let Some(value) = mouth.filter(|v| *v > 0.0) {
-            let runtime = self.model.runtime_mut();
-            runtime.set_parameter("PARAM_MOUTH_OPEN_Y", value);
-            runtime.set_parameter("PARAM_MOUTH_FORM", self.mouth_form);
-            return runtime.update_meshes().is_some();
-        }
-        true
+        let mouth_form = self.mouth_form;
+        let runtime = self.model.runtime_mut();
+        runtime.set_drag(self.drag.0, self.drag.1);
+        runtime
+            .update_with_parameters(delta_seconds, |runtime| {
+                if let Some(value) = mouth.filter(|v| *v > 0.0) {
+                    runtime.set_parameter("PARAM_MOUTH_OPEN_Y", value);
+                    runtime.set_parameter("PARAM_MOUTH_FORM", mouth_form);
+                }
+            })
+            .is_some()
     }
 
     /// Plays the first motion of a group.

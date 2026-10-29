@@ -55,6 +55,28 @@ python tools/smoke_native_backend.py --character kasumi --model models/kasumi.zs
 
 `test_native_backend.py` 启动真实 Rust 进程，检查双向共享内存、控制通道、Unicode、设置兼容、口型命令、关闭及配置只读约束；无需模型。Linux 使用 `xvfb-run` 提供测试显示服务。GPU 冒烟工具需要本地模型和图形桌面，会输出启动帧及运行中的 GPU 帧，并在安装了 psutil 时确认原生进程没有加载 Qt/Python/LuaJIT。
 
+## 渲染性能基准
+
+动画顶点按连续变化的网格合并上传，未变化的网格仍跳过；遮罩计划在边界变化时复用分组，只在显隐或拓扑变化时重建。`.moc` 的口型覆盖在物理和姿态之后、网格求值之前应用，避免同一帧重复求值。
+
+使用已解压的模型运行基准，输出 JSON 中的动画求值和网格上传准备耗时（微秒）：
+
+```sh
+cargo run --release --manifest-path native/pet_backend/Cargo.toml --example render_benchmark --locked -- path/to/model.json 600
+cargo run --release --manifest-path native/pet_backend/Cargo.toml --example render_benchmark --locked -- path/to/model.model3.json 600 .runtime/render-benchmark
+```
+
+基准预热 120 帧，再采样指定帧数，包含默认动作、追踪、物理及周期口型，关闭随机眨眼。GPU 提交和等待、几何校验、可选截图均不计时。指定截图目录后，在第 120、300、600 帧比较持续更新的 GPU 缓冲区与全新上传的 RGBA 像素，必须逐字节一致。该指标衡量 CPU 帧准备开销，不代表最终呈现 FPS。
+
+2026-10-29 在 NVIDIA GeForce RTX 5080 Laptop GPU 上，将同一基准分别编译到原始代码（主仓库 `2ecef8c`、Neocari `bae7610`）和优化代码，交替运行三轮，每轮采样 600 帧。以下是三轮中位耗时的中位数：
+
+| 模型 | 网格 / 顶点 | 动画求值：优化前 → 后 | 上传准备：优化前 → 后 | 上传准备降幅 |
+| --- | --- | --- | --- | --- |
+| Kasumi `live_default`（moc） | 124 / 5,085 | 260.6 → 159.8 µs | 179.6 → 63.2 µs | 64.8% |
+| Anon `casual_spring_01`（moc3） | 352 / 9,190 | 1,418.7 → 1,438.1 µs | 669.1 → 345.6 µs | 48.3% |
+
+两种模型的全程几何校验值及三个抽样帧的 RGBA 像素在优化前后均一致。moc3 动画求值路径没有改动，表中的小幅波动保留原始测量结果；实际收益随模型、驱动及硬件而变化。
+
 ## 来源与许可
 
-原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `bae7610a67d846ae7d2b8286fd6062e6a64e451d`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。
+原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。

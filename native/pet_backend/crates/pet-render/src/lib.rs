@@ -342,6 +342,7 @@ fn choose_present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::Presen
 pub struct ModelGpu {
     mesh_buffers: WgpuMeshBuffers,
     textures: Vec<WgpuTexture>,
+    clipping_plan: WgpuClippingPlan,
     clipping: WgpuClippingResources,
     mask_target: WgpuMaskRenderTarget,
     transform: WgpuTransform,
@@ -372,7 +373,10 @@ impl ModelGpu {
                 .map_err(|error| RenderError::Texture(error.to_string()))?;
             uploaded.push(uploaded_texture);
         }
-        let clipping = build_clipping(gpu, renderer, &mesh_buffers)?;
+        let clipping_plan = prepare_clipping_plan(&mesh_buffers)?;
+        let clipping = renderer
+            .create_clipping_resources(&gpu.device, &clipping_plan)
+            .map_err(|error| RenderError::Clipping(format!("{error:?}")))?;
         let mask_target = renderer
             .create_mask_render_target(&gpu.device, MASK_TEXTURE_SIZE)
             .map_err(|error| RenderError::Texture(error.to_string()))?;
@@ -381,6 +385,7 @@ impl ModelGpu {
         Ok(Self {
             mesh_buffers,
             textures: uploaded,
+            clipping_plan,
             clipping,
             mask_target,
             transform,
@@ -398,7 +403,7 @@ impl ModelGpu {
         match self.mesh_buffers.update_drawables(&gpu.queue, meshes) {
             Ok(update) => {
                 if update.bounds_changed() || update.visibility_changed() {
-                    self.rebuild_clipping(gpu, renderer)?;
+                    self.update_clipping(gpu, renderer, update.visibility_changed())?;
                 }
                 Ok(())
             }
@@ -406,7 +411,7 @@ impl ModelGpu {
                 self.mesh_buffers = WgpuMeshBuffers::from_drawables(&gpu.device, meshes)
                     .ok_or(RenderError::MeshUpload)?;
                 self.drawable_count = self.mesh_buffers.drawables().len();
-                self.rebuild_clipping(gpu, renderer)
+                self.update_clipping(gpu, renderer, true)
             }
         }
     }
@@ -418,19 +423,28 @@ impl ModelGpu {
         }
     }
 
-    fn rebuild_clipping(
+    fn update_clipping(
         &mut self,
         gpu: &Gpu,
         renderer: &WgpuLive2dRenderer,
+        regroup: bool,
     ) -> Result<(), RenderError> {
-        let mut plan = WgpuClippingPlan::from_mesh_buffers(&self.mesh_buffers);
-        plan.prepare_single_texture_masks(&self.mesh_buffers)
+        // update_drawables validates mask topology before changing GPU data.
+        // Bounds-only animation can reuse the groups and their allocations;
+        // visibility changes and buffer replacement must regroup the plan.
+        if regroup {
+            self.clipping_plan = WgpuClippingPlan::from_mesh_buffers(&self.mesh_buffers);
+        }
+        self.clipping_plan
+            .prepare_single_texture_masks(&self.mesh_buffers)
             .map_err(|error| RenderError::Clipping(format!("{error:?}")))?;
         if !renderer
-            .update_clipping_resources(&gpu.queue, &mut self.clipping, &plan)
+            .update_clipping_resources(&gpu.queue, &mut self.clipping, &self.clipping_plan)
             .map_err(|error| RenderError::Clipping(format!("{error:?}")))?
         {
-            self.clipping = build_clipping(gpu, renderer, &self.mesh_buffers)?;
+            self.clipping = renderer
+                .create_clipping_resources(&gpu.device, &self.clipping_plan)
+                .map_err(|error| RenderError::Clipping(format!("{error:?}")))?;
         }
         Ok(())
     }
@@ -444,19 +458,19 @@ impl ModelGpu {
     pub fn texture_count(&self) -> usize {
         self.textures.len()
     }
+
+    /// Reads the uploaded model into straight-alpha RGBA pixels without a window.
+    pub fn capture_rgba(&self, gpu: &Gpu, width: u32, height: u32) -> Result<Vec<u8>, RenderError> {
+        let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);
+        render_model_offscreen(gpu, &renderer, self, width, height)
+    }
 }
 
-fn build_clipping(
-    gpu: &Gpu,
-    renderer: &WgpuLive2dRenderer,
-    mesh_buffers: &WgpuMeshBuffers,
-) -> Result<WgpuClippingResources, RenderError> {
+fn prepare_clipping_plan(mesh_buffers: &WgpuMeshBuffers) -> Result<WgpuClippingPlan, RenderError> {
     let mut plan = WgpuClippingPlan::from_mesh_buffers(mesh_buffers);
     plan.prepare_single_texture_masks(mesh_buffers)
         .map_err(|error| RenderError::Clipping(format!("{error:?}")))?;
-    renderer
-        .create_clipping_resources(&gpu.device, &plan)
-        .map_err(|error| RenderError::Clipping(format!("{error:?}")))
+    Ok(plan)
 }
 
 /// Renders a single transparent preview without creating a native window.
@@ -847,8 +861,7 @@ impl SceneRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, RenderError> {
-        let renderer = WgpuLive2dRenderer::new(&self.gpu.device, wgpu::TextureFormat::Rgba8Unorm);
-        render_model_offscreen(&self.gpu, &renderer, model, width, height)
+        model.capture_rgba(&self.gpu, width, height)
     }
 
     /// Creates the GPU (or shares `gpu`) and configures a surface for `window`.
@@ -1221,6 +1234,88 @@ fn scale_dim(value: u32, quality: f32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn clipping_scene(frame: usize) -> Vec<Moc3DrawableMesh> {
+        (0..4)
+            .map(|i| {
+                let shift = frame as f32 * 0.01;
+                Moc3DrawableMesh::from_parts(
+                    0,
+                    0,
+                    if (i == 0 && frame == 2)
+                        || (i == 2 && frame == 3)
+                        || (i % 2 == 0 && frame == 4)
+                    {
+                        0.0
+                    } else {
+                        1.0
+                    },
+                    i as f32,
+                    vec![
+                        Moc3DrawableVertex::new([-0.5 + shift, -0.5], [0.0, 1.0]),
+                        Moc3DrawableVertex::new([0.5, -0.5 + shift], [1.0, 1.0]),
+                        Moc3DrawableVertex::new([shift, 0.5], [0.5, 0.0]),
+                    ],
+                    vec![0, 1, 2],
+                    if i % 2 == 0 { vec![1] } else { vec![] },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cached_clipping_matches_rebuilt_plans_through_visibility_and_topology_changes() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::NOOP,
+            backend_options: wgpu::BackendOptions {
+                noop: wgpu::NoopBackendOptions {
+                    enable: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let gpu = Gpu::new_from(instance, true, None).unwrap();
+        let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);
+        let mut model = ModelGpu::new(
+            &gpu,
+            &renderer,
+            &clipping_scene(0),
+            &[],
+            Matrix44::identity(),
+        )
+        .unwrap();
+        for frame in 1..6 {
+            let mut meshes = clipping_scene(frame);
+            if frame == 5 {
+                meshes[0] = Moc3DrawableMesh::from_parts(
+                    0,
+                    0,
+                    1.0,
+                    0.0,
+                    meshes[0].vertices().to_vec(),
+                    vec![0, 1, 2],
+                    vec![3],
+                );
+            }
+            model.update_meshes(&gpu, &renderer, &meshes).unwrap();
+            let rebuilt = prepare_clipping_plan(&model.mesh_buffers).unwrap();
+            assert_eq!(model.clipping_plan, rebuilt, "frame {frame}");
+            for context in rebuilt.contexts() {
+                for &index in context.drawable_indices() {
+                    assert_eq!(
+                        model
+                            .clipping
+                            .context_for_drawable(index)
+                            .unwrap()
+                            .drawable_indices(),
+                        context.drawable_indices()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn alpha_mode_prefers_premultiplied() {

@@ -27,7 +27,7 @@ pet-window = { path = "crates/pet-window" }
 pet-util = { path = "crates/pet-util" }
 
 # Live2D runtime: Cubism 2 `.moc` + Cubism 3/4/5 `.moc3`, pure Rust, GPL-3.0-only.
-# Git submodule pinned to bae7610a67d846ae7d2b8286fd6062e6a64e451d.
+# Git submodule pinned to f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc.
 neocari = { path = "vendor/neocari", features = ["wgpu"], default-features = false }
 
 wgpu = "30"
@@ -111,3 +111,4 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+wgpu.workspace = true
