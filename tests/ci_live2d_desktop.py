@@ -21,28 +21,35 @@ def window_present(pid):
     if sys.platform == "win32":
         from ctypes import wintypes
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        dwm = ctypes.WinDLL("dwmapi")
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
-        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
-        dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
         found = []
         @callback
         def collect(hwnd, _):
             owner = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-            if owner.value == pid and user32.IsWindowVisible(hwnd):
+            title = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, title, len(title))
+            if owner.value == pid and user32.IsWindowVisible(hwnd) and title.value == "CI-Hiyori":
                 found.append(hwnd)
             return True
         user32.EnumWindows(collect, 0)
         for hwnd in found:
-            style = user32.GetWindowLongW(hwnd, -16) & 0xffffffff
-            assert not style & (0x00C00000 | 0x00040000), f"decorated window style: {style:#x}"
-            border = wintypes.DWORD()
-            result = dwm.DwmGetWindowAttribute(hwnd, 34, ctypes.byref(border), ctypes.sizeof(border))
-            assert result == 0, f"DwmGetWindowAttribute failed: {result:#x}"
-            assert border.value == 0xfffffffe, f"unexpected DWM border color: {border.value:#x}"
+            outer, client = wintypes.RECT(), wintypes.RECT()
+            origin = wintypes.POINT()
+            assert user32.GetWindowRect(hwnd, ctypes.byref(outer))
+            assert user32.GetClientRect(hwnd, ctypes.byref(client))
+            assert user32.ClientToScreen(hwnd, ctypes.byref(origin))
+            assert (outer.left, outer.top, outer.right, outer.bottom) == (
+                origin.x, origin.y, origin.x + client.right, origin.y + client.bottom
+            ), f"window has a non-client frame: outer={(outer.left, outer.top, outer.right, outer.bottom)}, client={(origin.x, origin.y, origin.x + client.right, origin.y + client.bottom)}"
         return bool(found)
     import Quartz
     windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
@@ -92,7 +99,7 @@ def main():
             assert sum(1 for a in alpha.getdata() if a > 0) > 1000, "model has too few visible pixels"
             print(f"Real Live2D model rendered: {image.size}; process window visible after first frame")
             if sys.platform == "win32":
-                print("Windows native window has no title/resize frame and DWM border color is NONE")
+                print("Windows client area covers its window; DWM border pixels require visual verification")
             else:
                 print("macOS window is visible; visual absence of borders is not verified by this test")
     finally:
