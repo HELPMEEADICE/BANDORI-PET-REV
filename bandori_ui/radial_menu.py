@@ -494,21 +494,27 @@ class RadialMenu(QWidget):
 
     @staticmethod
     def _bounded_menu_geometry(center: QPoint, width: int, height: int,
-                               available: QRect) -> QRect:
+                               available: QRect, content_bounds: QRect | None = None) -> QRect:
+        bounds = content_bounds if content_bounds is not None else QRect(0, 0, width, height)
         x = center.x() - width // 2
         y = center.y() - height // 2
-        max_x = max(available.left(), available.x() + available.width() - width)
-        max_y = max(available.top(), available.y() + available.height() - height)
-        x = min(max(x, available.left()), max_x)
-        y = min(max(y, available.top()), max_y)
+        min_x = available.left() - bounds.left()
+        min_y = available.top() - bounds.top()
+        max_x = max(min_x, available.x() + available.width() - bounds.x() - bounds.width())
+        max_y = max(min_y, available.y() + available.height() - bounds.y() - bounds.height())
+        x = min(max(x, min_x), max_x)
+        y = min(max(y, min_y), max_y)
         return QRect(x, y, width, height)
 
     @classmethod
-    def _menu_geometry_at(cls, center: QPoint, width: int, height: int) -> QRect:
+    def _menu_geometry_at(cls, center: QPoint, width: int, height: int,
+                          content_bounds: QRect | None = None) -> QRect:
         screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
         if screen is None:
             return QRect(center.x() - width // 2, center.y() - height // 2, width, height)
-        return cls._bounded_menu_geometry(center, width, height, screen.availableGeometry())
+        return cls._bounded_menu_geometry(
+            center, width, height, screen.availableGeometry(), content_bounds,
+        )
 
     def show_at(self, center: QPoint):
         n = len(self._items)
@@ -536,6 +542,22 @@ class RadialMenu(QWidget):
 
         total_w = self._radius * 2 + 80 * 2
         total_h = self._radius * 2 + 80 * 2
+        menu_center = QPoint(total_w // 2, total_h // 2)
+        content_bounds = QRect(menu_center.x() - 40, menu_center.y() - 40, 80, 80)
+        for i, item in enumerate(self._items):
+            angle = -math.pi / 2 + (2 * math.pi * i / n)
+            dx = int(self._radius * math.cos(angle))
+            dy = int(self._radius * math.sin(angle))
+            item.end_offset = QPoint(dx, dy)
+            item.start_offset = QPoint(0, 0)
+            item_bounds = item.widget.rect().translated(
+                menu_center.x() + dx - item.widget.width() // 2,
+                menu_center.y() + dy - item.widget.height() // 2,
+            )
+            content_bounds = content_bounds.united(item_bounds)
+
+        # Keep the buttons on screen without treating the transparent animation
+        # padding as content. Three-item menus also have extra space below them.
         if self._full_output_overlay and self._surface_controller is not None:
             from wayland.types import SurfacePlacement, SurfaceRole
 
@@ -559,7 +581,10 @@ class RadialMenu(QWidget):
                 available.height(),
             )
             self.resize(available.size())
-            self._menu_center = center - available.topLeft()
+            geometry = self._bounded_menu_geometry(
+                center, total_w, total_h, available, content_bounds,
+            )
+            self._menu_center = geometry.topLeft() + menu_center - available.topLeft()
             self._surface_controller.register_surface(
                 self,
                 SurfaceRole.RADIAL_OVERLAY,
@@ -573,19 +598,13 @@ class RadialMenu(QWidget):
                 QRegion(self.rect()),
             )
         else:
-            geometry = self._menu_geometry_at(center, total_w, total_h)
+            geometry = self._menu_geometry_at(center, total_w, total_h, content_bounds)
             self.setGeometry(geometry)
             self._menu_center = QPoint(total_w // 2, total_h // 2)
 
         menu_center = self._center_point()
 
-        for i, item in enumerate(self._items):
-            angle = -math.pi / 2 + (2 * math.pi * i / n)
-            dx = int(self._radius * math.cos(angle))
-            dy = int(self._radius * math.sin(angle))
-            item.end_offset = QPoint(dx, dy)
-            item.start_offset = QPoint(0, 0)
-
+        for item in self._items:
             item.widget.move(
                 menu_center.x() - item.widget.width() // 2,
                 menu_center.y() - item.widget.height() // 2,
