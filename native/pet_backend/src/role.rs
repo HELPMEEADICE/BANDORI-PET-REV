@@ -171,7 +171,7 @@ impl Role {
             .map(|monitor| monitor.scale_factor())
             .unwrap_or(1.0);
         let monitors = placement::monitors_for_scale(dpr);
-        let scale = config.effective_scale_percent(dpr);
+        let scale = config.effective_scale_percent();
         let (width, height) = layout.window_size(scale, dpr);
         let primary = monitors.iter().find(|monitor| monitor.is_primary).cloned();
         let mut stored = entry.window_placement.clone();
@@ -421,7 +421,7 @@ impl Role {
 
     /// Rebuilds the window for a scale change (RebuildWindow apply level).
     pub fn apply_scale(&mut self, config: &Config, dpr: f64) -> RoleResult<()> {
-        let scale = config.effective_scale_percent(dpr);
+        let scale = config.effective_scale_percent();
         self.layout = layout_for_model(&self.model, self.bounds, config, &self.entry);
         let (width, height) = self.layout.window_size(scale, dpr);
         let (x, y, current_width, current_height) = self.window_rect().unwrap_or((
@@ -1033,7 +1033,7 @@ impl Role {
         let bounds = content_size(model.meshes()).ok_or(RoleError::NoBounds)?;
         let layout = layout_for_model(&model, bounds, config, entry);
         let dpr = self.window.scale_factor();
-        let scale = config.effective_scale_percent(dpr);
+        let scale = config.effective_scale_percent();
         let (width, height) = layout.window_size(scale, dpr);
         let matrix = layout.matrix(model.flips_y());
         let model_gpu = self

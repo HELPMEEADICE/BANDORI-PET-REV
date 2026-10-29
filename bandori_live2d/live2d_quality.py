@@ -1,8 +1,5 @@
 from typing import Any
 
-from PySide6.QtWidgets import QApplication
-
-
 LIVE2D_SCALE_MIN = 25
 LIVE2D_SCALE_MAX = 500
 LIVE2D_MOC3_BASE_HEIGHT = 800
@@ -36,16 +33,14 @@ def clamp_moc3_visible_height(value: Any, default: int = LIVE2D_MOC3_VISIBLE_HEI
     return max(LIVE2D_MOC3_VISIBLE_HEIGHT_MIN, min(LIVE2D_MOC3_VISIBLE_HEIGHT_MAX, height))
 
 
-def clamp_live2d_scale(value: Any, default: int = 100, use_device_pixel_ratio_default: bool = False) -> int:
+def clamp_live2d_scale(value: Any, default: int = 100) -> int:
+    """Resolve model zoom independently of the renderer's DPI conversion."""
     try:
         pct = int(round(float(value)))
     except (TypeError, ValueError, OverflowError):
-        pct = 0 if use_device_pixel_ratio_default else default
+        pct = default
     if pct <= 0:
-        if use_device_pixel_ratio_default:
-            screen = QApplication.primaryScreen()
-            ratio = screen.devicePixelRatio() if screen else 1.0
-            pct = int(round(ratio * 100))
-        else:
-            pct = default
+        # Older configs stored 0 for automatic scaling. DPI is applied once by
+        # the native window layout, so the model zoom still defaults to 100%.
+        pct = default
     return max(LIVE2D_SCALE_MIN, min(LIVE2D_SCALE_MAX, pct))

@@ -219,6 +219,41 @@ mod tests {
     }
 
     #[test]
+    fn default_zoom_applies_dpi_once_for_live2d_and_pixel_models() {
+        let bounds = Bounds {
+            min_x: -0.5,
+            min_y: -1.0,
+            max_x: 0.5,
+            max_y: 1.0,
+        };
+        for layout in [
+            ModelLayout::new(bounds, Some(0.4), ModelFormat::Moc),
+            ModelLayout::new(bounds, Some(0.4), ModelFormat::Moc3),
+            ModelLayout::pixel(bounds),
+        ] {
+            for config in [
+                pet_config::Config::default(),
+                pet_config::Config {
+                    live2d_scale: 0,
+                    ..Default::default()
+                },
+                pet_config::Config {
+                    live2d_scale: 200,
+                    ..Default::default()
+                },
+            ] {
+                let (base_width, base_height) =
+                    layout.window_size(config.effective_scale_percent(), 1.0);
+                for dpr in [1.0, 1.25, 1.5, 2.0, 3.0] {
+                    let (width, height) = layout.window_size(config.effective_scale_percent(), dpr);
+                    assert!((width as f64 - base_width as f64 * dpr).abs() <= 1.0);
+                    assert!((height as f64 - base_height as f64 * dpr).abs() <= 1.0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn face_scale_matches_across_coordinate_systems_and_body_lengths() {
         for (bounds, face, format, flip_y) in [
             (

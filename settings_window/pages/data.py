@@ -869,8 +869,7 @@ class DataManagementPageMixin:
             self._selected_list_character = self._current_char or self._configured_models[0]["character"]
         self._live2d_quality = normalize_live2d_quality(self._cfg.get("live2d_quality", "balanced"))
         self._live2d_scale = clamp_live2d_scale(
-            self._cfg.get("live2d_scale", 0),
-            use_device_pixel_ratio_default=True,
+            self._cfg.get("live2d_scale", 100),
         )
         self._moc3_leg_crop_enabled = bool(
             self._cfg.get("moc3_leg_crop_enabled", False)

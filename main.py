@@ -1310,8 +1310,7 @@ def main():
             ("poke_expression", "poke_expression", ""),
             ("birthday_tray_notifications_enabled", "birthday_tray_notifications_enabled", True),
             ("live2d_quality", "live2d_quality", "balanced"),
-            # 0 is the canonical "auto" sentinel (clamp_live2d_scale resolves it);
-            # source it from DEFAULTS so this path never drifts from config_manager.
+            # Model zoom defaults to 100%; the native layout applies screen DPI.
             ("live2d_scale", "live2d_scale", DEFAULTS["live2d_scale"]),
             ("moc3_leg_crop_enabled", "moc3_leg_crop_enabled", DEFAULTS["moc3_leg_crop_enabled"]),
             ("moc3_visible_height", "moc3_visible_height", DEFAULTS["moc3_visible_height"]),

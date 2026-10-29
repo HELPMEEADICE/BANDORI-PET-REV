@@ -291,7 +291,7 @@ class QualityPageMixin:
         self._moc3_visible_height_input.setText(str(self._moc3_visible_height))
 
     def _set_live2d_scale_controls(self, value: int):
-        value = clamp_live2d_scale(value, use_device_pixel_ratio_default=True)
+        value = clamp_live2d_scale(value)
         self._live2d_scale = value
         self._live2d_scale_input.blockSignals(True)
         self._live2d_scale_slider.setValue(value)

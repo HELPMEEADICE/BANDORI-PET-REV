@@ -14,6 +14,8 @@ python main.py
 
 源码运行自动查找 `native/pet_backend/target/release/`、`target/debug/`；发行包从主程序目录查找 `bandori-pet-native[.exe]`。`BANDORI_PET_NATIVE` 可以指定可执行文件。找不到后端时会提示构建命令，不会退回 Qt 宠物窗口。`pet_process.py` 是兼容命令行入口，实际启动的仍是 Rust 后端。
 
+模型缩放默认 `100%`，与系统显示缩放独立。旧配置的 `live2d_scale: 0` 也按 `100%` 处理；系统 DPI 只在窗口尺寸转换为物理像素时应用一次，避免在 200% 显示缩放下重复放大。手动设置的模型缩放比例继续保留。
+
 Windows 宠物窗口使用 DirectX 12 + DirectComposition，显式使用预乘 alpha 合成；关闭 GPU 加速时使用 DX12 软件适配器。窗口创建时设置 `WS_EX_NOREDIRECTIONBITMAP`，避免透明部分露出黑色窗口底图，并在鼠标穿透、显示和 OBS 样式切换时保留该标志。Vulkan 和普通 DX12 HWND 交换链不能保证 Windows 11 上的透明合成，因此不再用作 Windows 宠物窗口的呈现路径；离屏预览仍可使用 Vulkan。
 
 macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 XWayland；原来的 Qt layer-shell 宠物窗口不参与渲染。原生 Wayland 窗口定位与层级协议尚未接入 Rust 后端。此处与原来的 [Qt Wayland 指南](WAYLAND_NATIVE.md) 不同，应以本文为准。

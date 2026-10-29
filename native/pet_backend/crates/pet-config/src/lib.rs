@@ -39,8 +39,10 @@ pub mod bounds {
     pub const OPACITY_MIN: f32 = 0.2;
     /// Fully opaque.
     pub const OPACITY_MAX: f32 = 1.0;
-    /// `live2d_scale` of 0 means "unset, derive from DPR × 100".
+    /// Legacy unset value, resolved to the default model zoom.
     pub const SCALE_UNSET: u32 = 0;
+    /// Default model zoom; screen DPI is applied separately by the window layout.
+    pub const SCALE_DEFAULT: u32 = 100;
     /// Minimum explicit model scale in percent.
     pub const SCALE_MIN: u32 = 25;
     /// Maximum model scale in percent.

@@ -387,7 +387,7 @@ pub struct Config {
     pub opacity: f32,
     /// Render quality tier.
     pub live2d_quality: Live2dQuality,
-    /// Model scale in percent, `0` = derive from DPR.
+    /// Model zoom in percent, independent of DPI; legacy `0` defaults to 100%.
     pub live2d_scale: u32,
     /// Alpha threshold (0–255) for CPU hit testing.
     pub live2d_hit_alpha_threshold: u8,
@@ -450,7 +450,7 @@ impl Default for Config {
             gpu_acceleration: true,
             opacity: bounds::OPACITY_MAX,
             live2d_quality: Live2dQuality::Balanced,
-            live2d_scale: bounds::SCALE_UNSET,
+            live2d_scale: bounds::SCALE_DEFAULT,
             live2d_hit_alpha_threshold: 8,
 
             game_topmost: false,
@@ -568,10 +568,10 @@ impl Config {
         self.models.iter_mut().find(|entry| entry.is_usable())
     }
 
-    /// Applies the effective model scale (spec §3.2: `0` means DPR × 100).
-    pub fn effective_scale_percent(&self, device_pixel_ratio: f64) -> f32 {
+    /// Resolves model zoom without applying the window's DPI conversion.
+    pub fn effective_scale_percent(&self) -> f32 {
         if self.live2d_scale == bounds::SCALE_UNSET {
-            (device_pixel_ratio * 100.0).clamp(25.0, 500.0) as f32
+            bounds::SCALE_DEFAULT as f32
         } else {
             self.live2d_scale
                 .clamp(bounds::SCALE_MIN, bounds::SCALE_MAX) as f32
@@ -621,6 +621,7 @@ mod tests {
         let config: Config = serde_json::from_str("{}").expect("parse");
         assert_eq!(config.fps, 120);
         assert_eq!(config.opacity, 1.0);
+        assert_eq!(config.live2d_scale, 100);
         assert!(config.click_motion_actions.contains_key("head"));
         assert_eq!(config.click_motion_actions.len(), 7);
         assert!(!config.live2d_idle_actions_enabled);
@@ -656,12 +657,18 @@ mod tests {
     }
 
     #[test]
-    fn scale_zero_follows_dpr() {
+    fn model_zoom_defaults_to_100_and_preserves_explicit_values() {
         let mut config = Config::default();
-        assert!((config.effective_scale_percent(1.5) - 150.0).abs() < f32::EPSILON);
+        assert_eq!(config.effective_scale_percent(), 100.0);
+        config.live2d_scale = 0;
+        assert_eq!(config.effective_scale_percent(), 100.0);
         config.live2d_scale = 125;
-        assert!((config.effective_scale_percent(1.5) - 125.0).abs() < f32::EPSILON);
+        assert_eq!(config.effective_scale_percent(), 125.0);
+        config.live2d_scale = 200;
+        assert_eq!(config.effective_scale_percent(), 200.0);
+        config.live2d_scale = 1;
+        assert_eq!(config.effective_scale_percent(), 25.0);
         config.live2d_scale = 9999;
-        assert!((config.effective_scale_percent(1.0) - 500.0).abs() < f32::EPSILON);
+        assert_eq!(config.effective_scale_percent(), 500.0);
     }
 }
