@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "Inconnu",
   "SettingsWindow.side_settings": "Paramètres",
   "SettingsWindow.side_fps": "Taux de rafraîchissement (FPS)",
+  "SettingsWindow.show_fps": "Afficher les FPS",
   "SettingsWindow.fps_value": "{v} FPS",
   "SettingsWindow.side_opacity": "Opacité",
   "SettingsWindow.opacity_value": "{v}%",

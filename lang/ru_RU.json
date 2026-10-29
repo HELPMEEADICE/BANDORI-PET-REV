@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "Неизвестно",
   "SettingsWindow.side_settings": "Настройки",
   "SettingsWindow.side_fps": "Частота обновления (FPS)",
+  "SettingsWindow.show_fps": "Показывать FPS",
   "SettingsWindow.fps_value": "{v} FPS",
   "SettingsWindow.side_opacity": "Непрозрачность",
   "SettingsWindow.opacity_value": "{v}%",

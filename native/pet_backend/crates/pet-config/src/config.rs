@@ -377,6 +377,8 @@ pub struct Config {
 
     /// Target frame rate (30–240).
     pub fps: u32,
+    /// Display the measured FPS in the model window.
+    pub show_fps: bool,
     /// Whether the surface uses vsync presentation.
     pub vsync: bool,
     /// GPU acceleration switch; only read at process start.
@@ -443,6 +445,7 @@ impl Default for Config {
             dark_theme: DarkTheme::System,
 
             fps: 120,
+            show_fps: false,
             vsync: true,
             gpu_acceleration: true,
             opacity: bounds::OPACITY_MAX,

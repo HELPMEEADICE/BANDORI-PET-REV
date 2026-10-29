@@ -1289,6 +1289,7 @@ def main():
         nonlocal char, costume
         _SETTINGS_MAP = (
             ("fps", "fps", 120),
+            ("show_fps", "show_fps", False),
             ("opacity", "opacity", 1.0),
             ("dark_theme", "dark", False),
             ("vsync", "vsync", True),
@@ -1487,7 +1488,7 @@ def main():
             apply_app_theme(dark, include_fluent=False)
             cfg.set("dark_theme", dark)
         _pet_window_keys = (
-            "fps", "opacity", "vsync", "game_topmost", "obs_window_capture_compatible",
+            "fps", "show_fps", "opacity", "vsync", "game_topmost", "obs_window_capture_compatible",
             "chat_window_normal_window", "hide_live2d_model",
             "music_bounce_enabled",
             "live2d_idle_actions_enabled", "live2d_random_actions_enabled", "live2d_head_tracking_enabled",

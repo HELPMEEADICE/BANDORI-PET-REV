@@ -13,11 +13,14 @@
 //! * window opacity without `WS_EX_LAYERED` colour-key hacks,
 //! * a place to pre-multiply if a machine only offers `PostMultiplied` surfaces.
 
+mod fps;
+
 use std::sync::Arc;
+use std::time::Instant;
 
 use neocari::assets::DecodedTexture;
 use neocari::core::Matrix44;
-use neocari::moc3::Moc3DrawableMesh;
+use neocari::moc3::{Moc3DrawableMesh, Moc3DrawableVertex};
 use neocari::render::wgpu::{
     preferred_surface_format, WgpuClippingPlan, WgpuClippingResources, WgpuLive2dRenderer,
     WgpuMaskRenderTarget, WgpuMeshBuffers, WgpuTexture, WgpuTransform,
@@ -763,6 +766,60 @@ impl Intermediate {
     }
 }
 
+struct FpsOverlay {
+    buffers: WgpuMeshBuffers,
+    texture: WgpuTexture,
+    transform: WgpuTransform,
+    size: (u32, u32),
+    dpr: f64,
+}
+
+impl FpsOverlay {
+    fn new(
+        gpu: &Gpu,
+        renderer: &WgpuLive2dRenderer,
+        size: (u32, u32),
+        dpr: f64,
+        text: &str,
+    ) -> Result<Self, RenderError> {
+        let (width, height, pixels) = fps::rasterize(text);
+        let texture = renderer
+            .create_rgba8_texture(&gpu.device, &gpu.queue, width, height, &pixels)
+            .map_err(|e| RenderError::Texture(e.to_string()))?;
+        let scale = dpr.max(1.0) as f32;
+        let x = 6.0 * scale;
+        let y = 6.0 * scale;
+        let left = x / size.0 as f32 * 2.0 - 1.0;
+        let right = (x + width as f32 * scale) / size.0 as f32 * 2.0 - 1.0;
+        let top = 1.0 - y / size.1 as f32 * 2.0;
+        let bottom = 1.0 - (y + height as f32 * scale) / size.1 as f32 * 2.0;
+        let mesh = Moc3DrawableMesh::from_parts(
+            0,
+            0,
+            1.0,
+            0.0,
+            vec![
+                Moc3DrawableVertex::new([left, top], [0.0, 0.0]),
+                Moc3DrawableVertex::new([right, top], [1.0, 0.0]),
+                Moc3DrawableVertex::new([right, bottom], [1.0, 1.0]),
+                Moc3DrawableVertex::new([left, bottom], [0.0, 1.0]),
+            ],
+            vec![0, 1, 2, 0, 2, 3],
+            Vec::new(),
+        );
+        let buffers =
+            WgpuMeshBuffers::from_drawables(&gpu.device, &[mesh]).ok_or(RenderError::MeshUpload)?;
+        let transform = renderer.create_transform(&gpu.device, &Matrix44::identity());
+        Ok(Self {
+            buffers,
+            texture,
+            transform,
+            size,
+            dpr,
+        })
+    }
+}
+
 /// One role window's renderer: swapchain, blit, intermediate target.
 pub struct SceneRenderer {
     gpu: Arc<Gpu>,
@@ -778,6 +835,8 @@ pub struct SceneRenderer {
     consecutive_failures: u32,
     fused: bool,
     frames: u64,
+    fps_meter: Option<fps::FpsMeter>,
+    fps_overlay: Option<FpsOverlay>,
 }
 
 impl SceneRenderer {
@@ -833,6 +892,8 @@ impl SceneRenderer {
             consecutive_failures: 0,
             fused: false,
             frames: 0,
+            fps_meter: None,
+            fps_overlay: None,
         })
     }
 
@@ -870,6 +931,8 @@ impl SceneRenderer {
             consecutive_failures: 0,
             fused: false,
             frames: 0,
+            fps_meter: None,
+            fps_overlay: None,
         })
     }
 
@@ -950,6 +1013,14 @@ impl SceneRenderer {
         );
     }
 
+    /// Shows or hides the measured frame rate.
+    pub fn set_show_fps(&mut self, enabled: bool) {
+        if enabled != self.fps_meter.is_some() {
+            self.fps_meter = enabled.then(|| fps::FpsMeter::new(Instant::now()));
+            self.fps_overlay = None;
+        }
+    }
+
     /// Applies window opacity (multiplied into the blit).
     pub fn set_opacity(&mut self, opacity: f32) {
         self.opacity = opacity.clamp(0.0, 1.0);
@@ -982,11 +1053,35 @@ impl SceneRenderer {
         if self.fused {
             return Ok(());
         }
+        if let Some(meter) = &self.fps_meter {
+            let size = self.surface.size();
+            let dpr = self.surface.dpr();
+            if self
+                .fps_overlay
+                .as_ref()
+                .is_none_or(|overlay| overlay.size != size || overlay.dpr != dpr)
+            {
+                self.fps_overlay = Some(FpsOverlay::new(
+                    &self.gpu,
+                    &self.renderer,
+                    size,
+                    dpr,
+                    &meter.text,
+                )?);
+            }
+        }
         let result = self.render_inner(model);
         match &result {
             Ok(()) => {
                 self.consecutive_failures = 0;
                 self.frames += 1;
+                if self
+                    .fps_meter
+                    .as_mut()
+                    .is_some_and(|meter| meter.record(Instant::now()))
+                {
+                    self.fps_overlay = None;
+                }
             }
             Err(error) => {
                 self.consecutive_failures += 1;
@@ -1073,6 +1168,16 @@ impl SceneRenderer {
                     &model.transform,
                 )
                 .map_err(|error| RenderError::Draw(error.to_string()))?;
+            if let Some(overlay) = &self.fps_overlay {
+                self.renderer
+                    .draw_with_textures_and_transform(
+                        &mut pass,
+                        &overlay.buffers,
+                        std::slice::from_ref(&overlay.texture),
+                        &overlay.transform,
+                    )
+                    .map_err(|error| RenderError::Draw(error.to_string()))?;
+            }
         }
 
         // Pass 2: blit to the swapchain (scale + opacity).

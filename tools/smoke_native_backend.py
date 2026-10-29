@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--character", default="kasumi")
     parser.add_argument("--costume", default="smoke-test")
     parser.add_argument("--pixel", action="store_true")
+    parser.add_argument("--show-fps", action="store_true")
     parser.add_argument("--output", default=str(ROOT / ".runtime" / "neocari-smoke.png"))
     args = parser.parse_args()
     queues = [SharedMemoryLineQueue.create("native-smoke-" + uuid.uuid4().hex, slot_count=32) for _ in range(4)]
@@ -35,7 +36,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix="bandori-native-smoke-") as directory:
             config = Path(directory) / "config.json"
             model = {"character": args.character, "costume": args.costume, "path": args.model, "pet_mode": "pixel" if args.pixel else "live2d"}
-            config.write_text(json.dumps({"models": [model], "fps": 60, "live2d_scale": 70, "drag_locked": False}), encoding="utf-8")
+            config.write_text(json.dumps({"models": [model], "fps": 60, "show_fps": args.show_fps, "live2d_scale": 70, "drag_locked": False}), encoding="utf-8")
             program, arguments = native_program_and_args(ROOT, args.character, args.costume, args.model, config_path=config, data_dir=ROOT)
             for flag, queue in zip(["--inbound", "--reliable-inbound", "--broadcast", "--control"], queues):
                 arguments[arguments.index(flag) + 1] = str(queue_file_path(queue.key))

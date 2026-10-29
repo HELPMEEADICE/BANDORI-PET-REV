@@ -96,3 +96,18 @@ pub fn translate(raw: &Value, character: &str, costume: &str, path: &str) -> (Co
     }
     (config, entry)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_fps_config_is_loaded_and_updated_independently() {
+        let (default, _) = translate(&json!({}), "test", "default", "test.moc3");
+        assert!(!default.show_fps);
+        let (enabled, _) = translate(&json!({"show_fps": true}), "test", "default", "test.moc3");
+        assert!(enabled.show_fps);
+        let (disabled, _) = translate(&json!({"show_fps": false}), "test", "default", "test.moc3");
+        assert!(!disabled.show_fps);
+    }
+}

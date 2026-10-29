@@ -402,6 +402,7 @@ impl Role {
 
     /// Applies instant-level settings (fps handled by the loop, opacity/quality here).
     pub fn apply_display_settings(&mut self, config: &Config) {
+        self.renderer.set_show_fps(config.show_fps);
         self.renderer.set_opacity(config.opacity);
         let quality = config.live2d_quality.resolution_scale();
         if (self.renderer.quality() - quality).abs() > f32::EPSILON {

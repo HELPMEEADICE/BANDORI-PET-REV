@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "未知",
   "SettingsWindow.side_settings": "设置",
   "SettingsWindow.side_fps": "刷新率（FPS）",
+  "SettingsWindow.show_fps": "显示 FPS",
   "SettingsWindow.fps_value": "{v}帧",
   "SettingsWindow.side_opacity": "不透明度",
   "SettingsWindow.opacity_value": "{v}%",

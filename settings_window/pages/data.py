@@ -527,6 +527,7 @@ class DataManagementPageMixin:
             self._save_screen_awareness_config(show_info=False, emit_update=False)
         if hasattr(self, "_opacity_slider"):
             self._cfg.set("fps", self._current_fps_setting())
+            self._cfg.set("show_fps", self._current_show_fps_setting())
             self._cfg.set("opacity", self._opacity_slider.value() / 100.0)
             self._cfg.set("dark_theme", self._theme_combo.currentData())
             self._cfg.set("vsync", self._current_vsync_setting())
@@ -927,6 +928,8 @@ class DataManagementPageMixin:
 
 
     def _refresh_side_and_quality_widgets(self):
+        if hasattr(self, "_show_fps_switch"):
+            self._show_fps_switch.setChecked(bool(self._cfg.get("show_fps", False)))
         if hasattr(self, "_music_bounce_switch"):
             self._music_bounce_switch.setChecked(bool(self._cfg.get("music_bounce_enabled", False)))
         if hasattr(self, "_quality_combo"):

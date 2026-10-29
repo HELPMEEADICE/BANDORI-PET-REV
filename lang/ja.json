@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "不明",
   "SettingsWindow.side_settings": "設定",
   "SettingsWindow.side_fps": "リフレッシュレート（FPS）",
+  "SettingsWindow.show_fps": "FPS を表示",
   "SettingsWindow.fps_value": "{v} FPS",
   "SettingsWindow.side_opacity": "不透明度",
   "SettingsWindow.opacity_value": "{v}%",

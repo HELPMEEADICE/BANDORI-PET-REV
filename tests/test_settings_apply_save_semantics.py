@@ -119,6 +119,7 @@ class _ApplyHarness(QWidget):
 
     _on_apply = SettingsWindow._on_apply
     _current_fps_setting = SettingsWindow._current_fps_setting
+    _current_show_fps_setting = SettingsWindow._current_show_fps_setting
     _current_opacity_setting = SettingsWindow._current_opacity_setting
     _current_theme_setting = SettingsWindow._current_theme_setting
     _current_vsync_setting = SettingsWindow._current_vsync_setting
@@ -375,6 +376,25 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
         self.assertTrue(harness.closed)
         self.assertEqual(1, len(harness.settings_payloads))
         self.assertEqual([("kasumi", "default")], harness.model_payloads)
+
+    def test_show_fps_is_preserved_when_display_page_was_not_opened(self):
+        harness = _ApplyHarness()
+        harness._cfg.data["show_fps"] = True
+
+        harness._on_apply()
+
+        self.assertTrue(harness._cfg.get("show_fps"))
+        self.assertTrue(harness.settings_payloads[0]["show_fps"])
+
+    def test_show_fps_switch_is_saved_and_sent_to_running_pets(self):
+        harness = _ApplyHarness()
+        harness._cfg.data["show_fps"] = True
+        harness._show_fps_switch = _SwitchStub(False)
+
+        harness._on_apply()
+
+        self.assertFalse(harness._cfg.get("show_fps"))
+        self.assertFalse(harness.settings_payloads[0]["show_fps"])
 
     def test_music_bounce_is_preserved_when_display_page_was_not_opened(self):
         harness = _ApplyHarness()

@@ -93,6 +93,17 @@ class QualityPageMixin:
         layout.addWidget(self._fps_slider)
         layout.addWidget(self._fps_value)
 
+        show_fps_label = BodyLabel(_tr("SettingsWindow.show_fps"), page)
+        self._show_fps_switch = SwitchButton(page)
+        self._show_fps_switch.setChecked(bool(self._cfg.get("show_fps", False)) if self._cfg else False)
+        show_fps_row = QHBoxLayout()
+        show_fps_row.setContentsMargins(0, 0, 0, 0)
+        show_fps_row.setSpacing(10)
+        show_fps_row.addWidget(show_fps_label)
+        show_fps_row.addStretch()
+        show_fps_row.addWidget(self._show_fps_switch)
+        layout.addLayout(show_fps_row)
+
         vsync_label = BodyLabel(_tr("SettingsWindow.side_vsync"), page)
         self._vsync_switch = SwitchButton(page)
         self._vsync_switch.setChecked(self._vsync)
@@ -243,6 +254,11 @@ class QualityPageMixin:
         profile = self._quality_combo.itemData(index)
         self._live2d_quality = normalize_live2d_quality(profile)
         self._quality_detail.setText(self._quality_detail_text(self._live2d_quality))
+
+    def _current_show_fps_setting(self) -> bool:
+        if hasattr(self, "_show_fps_switch"):
+            return self._show_fps_switch.isChecked()
+        return bool(self._cfg.get("show_fps", False)) if self._cfg else False
 
     def _current_music_bounce_setting(self) -> bool:
         if hasattr(self, "_music_bounce_switch"):

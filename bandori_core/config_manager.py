@@ -278,6 +278,7 @@ DEFAULTS = {
     "model_action_settings": {},
     "language": "",
     "fps": 120,
+    "show_fps": False,
     "opacity": 1.0,
     "dark_theme": "follow_system",
     "vsync": True,

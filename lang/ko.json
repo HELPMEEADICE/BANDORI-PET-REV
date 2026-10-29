@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "알 수 없음",
   "SettingsWindow.side_settings": "설정",
   "SettingsWindow.side_fps": "재생률 (FPS)",
+  "SettingsWindow.show_fps": "FPS 표시",
   "SettingsWindow.fps_value": "{v} FPS",
   "SettingsWindow.side_opacity": "투명도",
   "SettingsWindow.opacity_value": "{v}%",

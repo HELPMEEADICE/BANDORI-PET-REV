@@ -360,6 +360,7 @@ DATA_CONFIG_KEYS = {
     DATA_CATEGORY_MISC: (
         "language",
         "fps",
+        "show_fps",
         "opacity",
         "dark_theme",
         "vsync",

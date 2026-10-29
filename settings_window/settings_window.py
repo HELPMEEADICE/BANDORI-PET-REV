@@ -3130,6 +3130,7 @@ class SettingsWindow(
             "costume": self._selected_costume,
             "language": current_language(),
             "fps": self._current_fps_setting(),
+            "show_fps": self._current_show_fps_setting(),
             "opacity": self._current_opacity_setting(),
             "dark_theme": self._current_theme_setting(),
             "vsync": self._current_vsync_setting(),
@@ -3198,6 +3199,7 @@ class SettingsWindow(
         if self._cfg:
             self._cfg.set("language", settings["language"])
             self._cfg.set("fps", settings["fps"])
+            self._cfg.set("show_fps", settings["show_fps"])
             self._cfg.set("opacity", settings["opacity"])
             self._cfg.set("dark_theme", settings["dark_theme"])
             self._cfg.set("vsync", settings["vsync"])

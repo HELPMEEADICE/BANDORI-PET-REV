@@ -693,6 +693,7 @@
   "SettingsWindow.update_channel_unknown": "Desconocido",
   "SettingsWindow.side_settings": "Configuración",
   "SettingsWindow.side_fps": "Frecuencia de actualización (FPS)",
+  "SettingsWindow.show_fps": "Mostrar FPS",
   "SettingsWindow.fps_value": "{v} FPS",
   "SettingsWindow.side_opacity": "Opacidad",
   "SettingsWindow.opacity_value": "{v}%",
