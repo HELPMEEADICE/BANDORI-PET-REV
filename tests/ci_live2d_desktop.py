@@ -62,6 +62,7 @@ def main():
     snapshot = ROOT / "live2d-ci-snapshot.png"
     queues = [SharedMemoryLineQueue.create("ci-live2d-" + uuid.uuid4().hex, slot_count=32) for _ in range(4)]
     process = None
+    stderr_file = tempfile.TemporaryFile()
     try:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "config.json"
@@ -74,7 +75,7 @@ def main():
             env = os.environ.copy()
             env["BANDORI_PET_SNAPSHOT"] = str(snapshot)
             env["RUST_LOG"] = "info"
-            process = subprocess.Popen([str(binary), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            process = subprocess.Popen([str(binary), *args], stdout=subprocess.DEVNULL, stderr=stderr_file, env=env)
             ready = False
             deadline = time.monotonic() + 70
             while time.monotonic() < deadline:
@@ -96,7 +97,7 @@ def main():
             image = Image.open(snapshot).convert("RGBA")
             alpha = image.getchannel("A")
             assert alpha.getextrema()[0] == 0 and alpha.getextrema()[1] > 0, "snapshot must contain transparent and visible pixels"
-            assert sum(1 for a in alpha.getdata() if a > 0) > 1000, "model has too few visible pixels"
+            assert sum(alpha.histogram()[1:]) > 1000, "model has too few visible pixels"
             print(f"Real Live2D model rendered: {image.size}; process window visible after first frame")
             if sys.platform == "win32":
                 print("Windows client area covers its window; DWM border pixels require visual verification")
@@ -106,11 +107,13 @@ def main():
         if process is not None:
             process.terminate()
             try:
-                _, stderr = process.communicate(timeout=10)
+                process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
-                _, stderr = process.communicate()
-            print(stderr.decode(errors="replace"))
+                process.wait()
+            stderr_file.seek(0)
+            print(stderr_file.read().decode(errors="replace"))
+        stderr_file.close()
         for queue in queues:
             queue.close()
 
