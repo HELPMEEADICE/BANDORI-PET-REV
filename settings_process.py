@@ -3,6 +3,11 @@ import json
 import os
 import sys
 
+# Fluent's image helpers import NumPy/SciPy. Small UI operations do not need
+# their large default BLAS thread pools; configure them before bootstrap imports.
+for _thread_env in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_thread_env, "1")
+
 from bandori_core.process_utils import (
     app_icon_path,
     bootstrap_app,

@@ -6,6 +6,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from settings_window.constants import *
+from settings_window.images import read_scaled_image
 from bandori_llm.llm_api_compat import openai_compat_headers
 from bandori_services.network_worker import CancelableNetworkWorker
 
@@ -220,12 +221,13 @@ class ModelPackageDownloadWorker(QThread):
 
 
 class ModelDetailImageWorker(QThread):
-    finished = Signal(dict)
+    image_loaded = Signal(dict)
 
-    def __init__(self, model_manager, character: str, parent=None):
+    def __init__(self, model_manager, character: str, parent=None, image_size=None):
         super().__init__(parent)
         self._model_manager = model_manager
         self._character = str(character or "")
+        self._image_size = image_size or QSize(400, 260)
 
     def run(self):
         path = self._model_manager.get_character_image_path(self._character)
@@ -234,15 +236,17 @@ class ModelDetailImageWorker(QThread):
         data = self._model_manager.get_character_image_data(self._character)
         if self.isInterruptionRequested():
             return
-        self.finished.emit({
+        image = read_scaled_image(path, data, self._image_size)
+        if self.isInterruptionRequested():
+            return
+        self.image_loaded.emit({
             "character": self._character,
-            "path": path,
-            "data": data,
+            "image": image,
         })
 
 
 class ModelDetailMetadataWorker(QThread):
-    finished = Signal(dict)
+    metadata_loaded = Signal(dict)
     error = Signal(str)
 
     def __init__(self, model_manager, item: dict, custom_profiles: list[dict] | None = None, parent=None):
@@ -273,7 +277,7 @@ class ModelDetailMetadataWorker(QThread):
             )
             if self.isInterruptionRequested():
                 return
-            self.finished.emit({
+            self.metadata_loaded.emit({
                 "character": character,
                 "costume": costume,
                 "motions": motions,

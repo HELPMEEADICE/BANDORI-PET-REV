@@ -5,6 +5,53 @@ import warnings
 from PySide6.QtGui import QAction
 
 from settings_window.constants import *
+from settings_window.images import read_scaled_image
+
+
+class PageRefreshTimer(QTimer):
+    """Refresh a page only while its window is visible and not minimized."""
+
+    def __init__(self, page: QWidget, interval_ms: int, refresh):
+        super().__init__(page)
+        self._page = page
+        self._window = None
+        self._refresh_interval = interval_ms
+        self._refresh = refresh
+        self.setInterval(interval_ms)
+        self.timeout.connect(self._refresh_visible_page)
+        page.installEventFilter(self)
+        self._sync_visibility()
+
+    def _sync_visibility(self):
+        window = self._page.window()
+        if window is not self._window:
+            if self._window is not None and self._window is not self._page:
+                self._window.removeEventFilter(self)
+            self._window = window
+            if window is not self._page:
+                window.installEventFilter(self)
+        if self._page.isVisible() and not window.isMinimized():
+            if not self.isActive():
+                # Defer the first refresh until page construction/show has finished.
+                self.start(0)
+        else:
+            self.stop()
+
+    def _refresh_visible_page(self):
+        if not self._page.isVisible() or self._page.window().isMinimized():
+            self.stop()
+            return
+        self.setInterval(self._refresh_interval)
+        self._refresh()
+
+    def eventFilter(self, watched, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Hide:
+            self.stop()
+        elif event_type in (QEvent.Type.Show, QEvent.Type.WindowStateChange,
+                            QEvent.Type.ParentChange):
+            self._sync_visibility()
+        return super().eventFilter(watched, event)
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -654,19 +701,15 @@ class CharacterCard(CardWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        image = QPixmap(image_path) if image_path else QPixmap()
-        if image.isNull() and image_data:
-            image.loadFromData(image_data)
+        dpr = self.devicePixelRatioF()
+        image = QPixmap.fromImage(read_scaled_image(
+            image_path, image_data, QSize(round(188 * dpr), round(260 * dpr)),
+        ))
+        image.setDevicePixelRatio(dpr)
         if not image.isNull():
             image_label = QLabel(self)
             image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            image_label.setPixmap(
-                image.scaled(
-                    188, 260,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+            image_label.setPixmap(image)
             layout.addWidget(image_label, 1)
 
         name_label = StrongBodyLabel(display_name, self)

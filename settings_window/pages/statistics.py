@@ -1,7 +1,9 @@
-from PySide6.QtCharts import (
-    QChart, QChartView, QLineSeries, QBarSeries, QBarSet,
-    QValueAxis, QBarCategoryAxis, QDateTimeAxis,
-)
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PySide6.QtCharts import QBarSet, QChart, QChartView, QDateTimeAxis, QLineSeries
 from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, QDateTime
 from PySide6.QtGui import QColor, QPainter, QPen, QCursor, QFont, QBrush
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QToolTip
@@ -68,6 +70,8 @@ def _chart_time_label(value: str) -> str:
 
 
 def _make_datetime_axis(values: list[str]) -> QDateTimeAxis:
+    from PySide6.QtCharts import QDateTimeAxis
+
     axis_x = QDateTimeAxis()
     points = [_chart_x(value) for value in values]
     if points:
@@ -84,6 +88,8 @@ def _make_datetime_axis(values: list[str]) -> QDateTimeAxis:
 
 
 def _make_empty_chart(title: str, hint: str) -> QChart:
+    from PySide6.QtCharts import QBarCategoryAxis, QChart, QValueAxis
+
     chart = QChart()
     chart.setTitle(title)
     axis_x = QBarCategoryAxis()
@@ -98,6 +104,14 @@ def _make_empty_chart(title: str, hint: str) -> QChart:
     chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
     chart.legend().setVisible(False)
     return chart
+
+
+def _replace_chart(view: QChartView, chart: QChart):
+    # QChartView releases ownership of the old chart without deleting it.
+    previous = view.chart()
+    view.setChart(chart)
+    if previous is not None and previous is not chart:
+        previous.deleteLater()
 
 
 def _connect_line_tooltip(series: QLineSeries, labels: list[str], suffix: str = ""):
@@ -342,6 +356,8 @@ class _StatCard(QFrame):
 class StatisticsPageMixin:
 
     def _build_statistics_page(self):
+        from PySide6.QtCharts import QChartView
+
         page = self._make_theme_widget(QWidget())
         page.setObjectName("statisticsPage")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -436,17 +452,14 @@ class StatisticsPageMixin:
         layout.addStretch()
 
         self._stats_db = None
-        self._stats_refresh_timer = QTimer(page)
-        self._stats_refresh_timer.setInterval(60_000)
-        self._stats_refresh_timer.timeout.connect(self._refresh_statistics)
-        self._stats_refresh_timer.start()
+        self._stats_refresh_timer = PageRefreshTimer(page, 60_000, self._refresh_statistics)
 
         self._style_statistics_page(page)
         self._refresh_chart_themes()
         self._connect_theme_changed(lambda: self._style_statistics_page(page))
         self._connect_theme_changed(self._refresh_chart_themes)
 
-        QTimer.singleShot(0, self._populate_character_combo)
+        self._populate_character_combo()
         return page
 
     def _style_statistics_page(self, page: QWidget):
@@ -476,7 +489,6 @@ class StatisticsPageMixin:
             self._stats_char_combo.setCurrentIndex(0)
         self._stats_char_combo.blockSignals(False)
         self._stats_char_combo.currentIndexChanged.connect(self._refresh_statistics)
-        self._refresh_statistics()
 
     def _get_stats_db(self):
         if self._stats_db is None:
@@ -505,6 +517,8 @@ class StatisticsPageMixin:
         self._stat_cards["usage_total"].set_value(_format_duration(db.get_usage_all_time()))
 
     def _refresh_affection_chart(self, db, character: str, days: int, user_key: str = ""):
+        from PySide6.QtCharts import QChart, QLineSeries, QValueAxis
+
         no_char_hint = _tr("SettingsWindow.statistics_select_char_hint", default="请在下方选择角色")
         no_data_hint = _tr("SettingsWindow.statistics_no_affection_data", default="暂无好感度变化记录")
         trend_title = _tr("SettingsWindow.statistics_affection_trend", default="好感度趋势")
@@ -512,13 +526,13 @@ class StatisticsPageMixin:
         if not character:
             chart = _make_empty_chart(trend_title, no_char_hint)
             self._apply_chart_theme(chart)
-            self._affection_chart_view.setChart(chart)
+            _replace_chart(self._affection_chart_view, chart)
             return
         events = db.get_mood_events_for_chart(character, days, user_key)
         if not events:
             chart = _make_empty_chart(trend_title, no_data_hint)
             self._apply_chart_theme(chart)
-            self._affection_chart_view.setChart(chart)
+            _replace_chart(self._affection_chart_view, chart)
             return
 
         affection_series = QLineSeries()
@@ -575,13 +589,15 @@ class StatisticsPageMixin:
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
         self._apply_chart_theme(chart)
-        self._affection_chart_view.setChart(chart)
+        _replace_chart(self._affection_chart_view, chart)
 
     def _refresh_heatmap(self, db, user_key: str = ""):
         grid = db.get_hourly_heatmap(7, user_key)
         self._heatmap_widget.set_data(grid)
 
     def _refresh_char_messages_chart(self, db, days: int, user_key: str = ""):
+        from PySide6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QValueAxis
+
         chart_title = _tr("SettingsWindow.statistics_chat_per_character", default="各角色对话量")
         no_data_hint = _tr("SettingsWindow.statistics_no_messages", default="暂无对话记录")
 
@@ -589,7 +605,7 @@ class StatisticsPageMixin:
         if not per_char:
             chart = _make_empty_chart(chart_title, no_data_hint)
             self._apply_chart_theme(chart)
-            self._char_messages_chart_view.setChart(chart)
+            _replace_chart(self._char_messages_chart_view, chart)
             return
 
         top = per_char[:10]
@@ -631,9 +647,11 @@ class StatisticsPageMixin:
         _connect_bar_tooltip(bar_set, full_names)
 
         self._apply_chart_theme(chart)
-        self._char_messages_chart_view.setChart(chart)
+        _replace_chart(self._char_messages_chart_view, chart)
 
     def _refresh_daily_msg_chart(self, db, days: int, user_key: str = ""):
+        from PySide6.QtCharts import QChart, QLineSeries, QValueAxis
+
         chart_title = _tr("SettingsWindow.statistics_daily_messages", default="每日消息趋势")
         no_data_hint = _tr("SettingsWindow.statistics_no_messages", default="暂无对话记录")
 
@@ -642,7 +660,7 @@ class StatisticsPageMixin:
         if not daily:
             chart = _make_empty_chart(chart_title, no_data_hint)
             self._apply_chart_theme(chart)
-            self._daily_msg_chart_view.setChart(chart)
+            _replace_chart(self._daily_msg_chart_view, chart)
             return
 
         series = QLineSeries()
@@ -675,9 +693,11 @@ class StatisticsPageMixin:
 
         chart.legend().setVisible(False)
         self._apply_chart_theme(chart)
-        self._daily_msg_chart_view.setChart(chart)
+        _replace_chart(self._daily_msg_chart_view, chart)
 
     def _refresh_daily_usage_chart(self, db, days: int):
+        from PySide6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QValueAxis
+
         chart_title = _tr("SettingsWindow.statistics_daily_usage", default="每日使用时长")
         no_data_hint = _tr("SettingsWindow.statistics_no_usage", default="暂无使用记录")
 
@@ -686,7 +706,7 @@ class StatisticsPageMixin:
         if not daily:
             chart = _make_empty_chart(chart_title, no_data_hint)
             self._apply_chart_theme(chart)
-            self._daily_usage_chart_view.setChart(chart)
+            _replace_chart(self._daily_usage_chart_view, chart)
             return
 
         bar_set = QBarSet(_tr("StatisticsPage.duration_minutes", default="分钟"))
@@ -729,9 +749,11 @@ class StatisticsPageMixin:
 
         chart.legend().setVisible(False)
         self._apply_chart_theme(chart)
-        self._daily_usage_chart_view.setChart(chart)
+        _replace_chart(self._daily_usage_chart_view, chart)
 
     def _apply_chart_theme(self, chart: QChart):
+        from PySide6.QtCharts import QValueAxis
+
         dark = isDarkTheme()
         if dark:
             chart_bg = QColor("#1e1e1e")

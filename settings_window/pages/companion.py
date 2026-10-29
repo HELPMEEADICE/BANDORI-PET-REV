@@ -111,10 +111,9 @@ class CompanionPageMixin:
         layout.addStretch()
 
         self._load_companion_config()
-        self._companion_status_timer = QTimer(page)
-        self._companion_status_timer.setInterval(3000)
-        self._companion_status_timer.timeout.connect(self._refresh_companion_service_status)
-        self._companion_status_timer.start()
+        self._companion_status_timer = PageRefreshTimer(
+            page, 3000, self._refresh_companion_service_status,
+        )
         return page
 
     def _load_companion_config(self):

@@ -4,6 +4,7 @@ import time
 _DETAIL_IMAGE_PIXMAP_CACHE_LIMIT = 8
 
 from bandori_core.process_utils import app_data_dir, clamp_int
+from bandori_services.network_worker import delete_thread_when_stopped
 from settings_window.constants import *
 from settings_window.widgets import *
 from settings_window.workers import *
@@ -613,10 +614,28 @@ class SettingsWindow(
 
     def showEvent(self, event):
         super().showEvent(event)
+        if getattr(self, "_model_detail_suspended", False):
+            self._model_detail_suspended = False
+            if self._current_page == "characters" and not self._selecting_model:
+                self._show_model_detail()
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
             QTimer.singleShot(80, self._play_entrance)
             QTimer.singleShot(120, lambda: self._animate_indicator(self._current_page))
+
+    def hideEvent(self, event):
+        self._model_detail_suspended = True
+        self._model_detail_image_request_id += 1
+        self._model_detail_metadata_request_id += 1
+        self._model_detail_metadata_timer.stop()
+        self._pending_model_detail_metadata_item = None
+        for attr in ("_model_detail_image_worker", "_model_detail_metadata_worker"):
+            self._retire_settings_worker(getattr(self, attr, None))
+            setattr(self, attr, None)
+        self._detail_image_pixmap_cache.clear()
+        self._detail_image.clear()
+        self._dispose_live2d_preview()
+        super().hideEvent(event)
 
     def _play_entrance(self):
         effect = QGraphicsOpacityEffect(self)
@@ -2289,13 +2308,22 @@ class SettingsWindow(
             cache[character] = pixmap
             return pixmap
 
-        pixmap = QPixmap(self._model_manager.get_character_image_path(character))
-        image_data = self._model_manager.get_character_image_data(character)
-        if pixmap.isNull() and image_data:
-            pixmap.loadFromData(image_data)
+        pixmap = QPixmap.fromImage(read_scaled_image(
+            self._model_manager.get_character_image_path(character),
+            self._model_manager.get_character_image_data(character),
+            self._detail_image_decode_size(),
+        ))
         result = pixmap if not pixmap.isNull() else None
         self._cache_detail_character_pixmap(character, result)
         return result
+
+    def _detail_image_decode_size(self):
+        label = getattr(self, "_detail_image", None)
+        if label is None:
+            return QSize(400, 260)
+        size = label.size()
+        dpr = self.devicePixelRatioF()
+        return QSize(round(size.width() * dpr), round(size.height() * dpr))
 
     def _cache_detail_character_pixmap(self, character: str, pixmap):
         cache = self._detail_image_pixmap_cache
@@ -2305,6 +2333,12 @@ class SettingsWindow(
             cache.pop(next(iter(cache)))
 
     def _queue_model_detail_image_load(self, character: str):
+        self._model_detail_image_request_id = getattr(self, "_model_detail_image_request_id", 0) + 1
+        request_id = self._model_detail_image_request_id
+        previous_worker = getattr(self, "_model_detail_image_worker", None)
+        if previous_worker is not None:
+            self._retire_settings_worker(previous_worker)
+
         cache = getattr(self, "_detail_image_pixmap_cache", {})
         if character in cache:
             pixmap = cache.pop(character)
@@ -2312,26 +2346,18 @@ class SettingsWindow(
             self._show_model_detail_pixmap(character, pixmap)
             return
 
-        self._model_detail_image_request_id = getattr(self, "_model_detail_image_request_id", 0) + 1
-        request_id = self._model_detail_image_request_id
-        previous_worker = getattr(self, "_model_detail_image_worker", None)
-        if previous_worker is not None:
-            self._retire_settings_worker(previous_worker)
-
-        worker = ModelDetailImageWorker(self._model_manager, character, parent=self)
+        worker = ModelDetailImageWorker(
+            self._model_manager, character, parent=self,
+            image_size=self._detail_image_decode_size(),
+        )
         self._model_detail_image_worker = worker
-        worker.finished.connect(
+        worker.image_loaded.connect(
             lambda result, rid=request_id, w=worker: self._on_model_detail_image_loaded(rid, w, result)
         )
-        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._on_model_detail_worker_completed(w))
         worker.start()
 
     def _on_model_detail_image_loaded(self, request_id: int, worker, result: dict):
-        self._retired_settings_workers = [
-            item for item in self._retired_settings_workers if item is not worker
-        ]
-        if getattr(self, "_model_detail_image_worker", None) is worker:
-            self._model_detail_image_worker = None
         if request_id != getattr(self, "_model_detail_image_request_id", 0):
             return
         character = str(result.get("character", "") or "")
@@ -2339,24 +2365,32 @@ class SettingsWindow(
         if not item or item.get("character") != character:
             return
 
-        pixmap = QPixmap(str(result.get("path", "") or ""))
-        image_data = result.get("data", b"")
-        if pixmap.isNull() and image_data:
-            pixmap.loadFromData(image_data)
+        pixmap = QPixmap.fromImage(result["image"])
         pixmap = pixmap if not pixmap.isNull() else None
         self._cache_detail_character_pixmap(character, pixmap)
         self._show_model_detail_pixmap(character, pixmap)
+
+    def _on_model_detail_worker_completed(self, worker):
+        for attr in ("_model_detail_image_worker", "_model_detail_metadata_worker"):
+            if getattr(self, attr, None) is worker:
+                setattr(self, attr, None)
+        self._retired_settings_workers = [
+            item for item in self._retired_settings_workers if item is not worker
+        ]
+        delete_thread_when_stopped(worker)
 
     def _show_model_detail_pixmap(self, character: str, pixmap):
         item = self._selected_model_item()
         if not item or item.get("character") != character:
             return
         if pixmap is not None and not pixmap.isNull():
-            self._detail_image.setPixmap(pixmap.scaled(
-                self._detail_image.size(),
+            scaled = pixmap.scaled(
+                self._detail_image_decode_size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
-            ))
+            )
+            scaled.setDevicePixelRatio(self.devicePixelRatioF())
+            self._detail_image.setPixmap(scaled)
         else:
             self._detail_image.setText(self._model_manager.get_display_name(character))
 
@@ -2394,8 +2428,8 @@ class SettingsWindow(
     def _start_model_detail_metadata_load(self, item: dict):
         request_id = getattr(self, "_model_detail_metadata_request_id", 0)
         previous_worker = getattr(self, "_model_detail_metadata_worker", None)
-        if previous_worker is not None and previous_worker.isRunning():
-            previous_worker.requestInterruption()
+        if previous_worker is not None:
+            self._retire_settings_worker(previous_worker)
         custom_profiles = self._cfg.get_click_motion_profiles() if self._cfg else []
         worker = ModelDetailMetadataWorker(
             self._model_manager,
@@ -2404,19 +2438,16 @@ class SettingsWindow(
             parent=self,
         )
         self._model_detail_metadata_worker = worker
-        worker.finished.connect(
+        worker.metadata_loaded.connect(
             lambda metadata, rid=request_id, w=worker: self._on_model_detail_metadata_loaded(rid, w, metadata)
         )
         worker.error.connect(
             lambda error, rid=request_id, w=worker: self._on_model_detail_metadata_failed(rid, w, error)
         )
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._on_model_detail_worker_completed(w))
         worker.start()
 
     def _on_model_detail_metadata_loaded(self, request_id: int, worker, metadata: dict):
-        if getattr(self, "_model_detail_metadata_worker", None) is worker:
-            self._model_detail_metadata_worker = None
         if request_id != self._model_detail_metadata_request_id:
             return
         item = self._selected_model_item()
@@ -2435,8 +2466,6 @@ class SettingsWindow(
         )
 
     def _on_model_detail_metadata_failed(self, request_id: int, worker, error: str):
-        if getattr(self, "_model_detail_metadata_worker", None) is worker:
-            self._model_detail_metadata_worker = None
         if request_id != self._model_detail_metadata_request_id:
             return
         print(f"Failed to load model detail metadata: {error}")
