@@ -356,14 +356,25 @@ impl Role {
         let click_through = role.should_be_click_through(config, 0);
         role.set_click_through(click_through);
 
+        // On macOS CAMetalLayer may not provide a drawable for an ordered-out
+        // window. Order it in and let AppKit process that change before drawing.
+        #[cfg(target_os = "macos")]
+        {
+            if !role.hidden && !role.hide_live2d_model {
+                pet_window::macos::set_visible(&role.window, true);
+            }
+            role.window.request_redraw();
+        }
         // Present the first frame *before* showing the window: a hidden winit
         // window receives no WM_PAINT, so waiting for `RedrawRequested` would
         // deadlock the very first frame (spec: first frame before everything else).
+        #[cfg(not(target_os = "macos"))]
         let presented = role.render();
         #[cfg(windows)]
         if let Some(hwnd) = win32::hwnd_of(&role.window) {
             win32::reassert_topmost(hwnd);
         }
+        #[cfg(not(target_os = "macos"))]
         if !presented {
             warn!("first frame was not presented; the window may need a redraw");
             role.window.request_redraw();
