@@ -14,7 +14,9 @@ python main.py
 
 源码运行自动查找 `native/pet_backend/target/release/`、`target/debug/`；发行包从主程序目录查找 `bandori-pet-native[.exe]`。`BANDORI_PET_NATIVE` 可以指定可执行文件。找不到后端时会提示构建命令，不会退回 Qt 宠物窗口。`pet_process.py` 是兼容命令行入口，实际启动的仍是 Rust 后端。
 
-Windows 使用 Vulkan / DirectX 12，macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 XWayland；原来的 Qt layer-shell 宠物窗口不参与渲染。原生 Wayland 窗口定位与层级协议尚未接入 Rust 后端。此处与原来的 [Qt Wayland 指南](WAYLAND_NATIVE.md) 不同，应以本文为准。
+Windows 宠物窗口使用 DirectX 12 + DirectComposition，显式使用预乘 alpha 合成；关闭 GPU 加速时使用 DX12 软件适配器。窗口创建时设置 `WS_EX_NOREDIRECTIONBITMAP`，避免透明部分露出黑色窗口底图，并在鼠标穿透、显示和 OBS 样式切换时保留该标志。Vulkan 和普通 DX12 HWND 交换链不能保证 Windows 11 上的透明合成，因此不再用作 Windows 宠物窗口的呈现路径；离屏预览仍可使用 Vulkan。
+
+macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 XWayland；原来的 Qt layer-shell 宠物窗口不参与渲染。原生 Wayland 窗口定位与层级协议尚未接入 Rust 后端。此处与原来的 [Qt Wayland 指南](WAYLAND_NATIVE.md) 不同，应以本文为准。
 
 `setup.py build` 会先构建 release 后端并将其和许可文件复制到发行目录。安装包校验包含该可执行文件；macOS / Linux / Windows 构建工作流会拉取固定的 Neocari 子模块。
 
@@ -53,6 +55,14 @@ python tools/smoke_native_backend.py --character kasumi --model models/kasumi.zs
 ```
 
 `test_native_backend.py` 启动真实 Rust 进程，检查双向共享内存、控制通道、Unicode、设置兼容、口型命令、关闭及配置只读约束；无需模型。Linux 使用 `xvfb-run` 提供测试显示服务。GPU 冒烟工具需要本地模型和图形桌面，会输出启动帧及运行中的 GPU 帧，并在安装了 psutil 时确认原生进程没有加载 Qt/Python/LuaJIT。
+
+Windows 图形桌面可额外运行真实 DX12 透明交换链回归测试，覆盖首次呈现、调整大小、垂直同步切换、交换链重建、透明度和鼠标穿透切换：
+
+```sh
+cargo test --manifest-path native/pet_backend/Cargo.toml -p pet-render --locked windows_surface_uses_direct_composition_across_reconfiguration -- --ignored
+```
+
+该测试验证 GPU 呈现路径，不能替代 Windows 11 上的桌面合成目视检查；还应分别检查 Live2D / 像素模式的透明背景、半透明边缘、拖动、隐藏后重新显示和 OBS 捕获兼容开关。
 
 ## 渲染性能基准
 

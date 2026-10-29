@@ -46,6 +46,9 @@ pub enum RenderError {
     /// The surface cannot present.
     #[error("surface unsupported by adapter")]
     UnsupportedSurface,
+    /// The adapter cannot composite a transparent window.
+    #[error("surface does not support transparent alpha compositing")]
+    UnsupportedTransparency,
     /// Surface texture acquisition failed.
     #[error("failed to acquire surface texture: {0}")]
     Acquire(String),
@@ -94,6 +97,15 @@ impl Gpu {
         allow_hardware: bool,
         window: Option<Arc<Window>>,
     ) -> Result<(Self, Option<wgpu::Surface<'static>>), RenderError> {
+        // Windows pets need an explicitly alpha-composited DirectComposition
+        // swapchain. Vulkan WSI may expose only Opaque/Inherit, and the default
+        // DX12 HWND swapchain ignores alpha entirely. Both can turn transparent
+        // pixels black on Windows 11, even when winit requests transparency.
+        #[cfg(windows)]
+        if window.is_some() {
+            return Self::create_on_backends(allow_hardware, window, wgpu::Backends::DX12);
+        }
+
         // wgpu sorts by device class, with Vulkan first for equal classes on
         // Windows. A Vulkan discrete GPU (or a requested CPU adapter) already
         // wins that search. Avoid initializing DX12/GL and their driver heaps
@@ -115,10 +127,20 @@ impl Gpu {
         window: Option<Arc<Window>>,
         backends: wgpu::Backends,
     ) -> Result<(Self, Option<wgpu::Surface<'static>>), RenderError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let descriptor = wgpu::InstanceDescriptor {
             backends,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        };
+        #[cfg(windows)]
+        let descriptor = {
+            let mut descriptor = descriptor;
+            if window.is_some() {
+                descriptor.backend_options.dx12.presentation_system =
+                    wgpu::Dx12SwapchainKind::DxgiFromVisual;
+            }
+            descriptor
+        };
+        let instance = wgpu::Instance::new(descriptor);
         let surface = window
             .map(|window| instance.create_surface(window))
             .transpose()
@@ -220,7 +242,8 @@ impl Surface {
             .ok_or(RenderError::UnsupportedSurface)?;
         config.format = preferred_surface_format(&capabilities.formats)
             .ok_or(RenderError::UnsupportedSurface)?;
-        let alpha_mode = choose_alpha_mode(&capabilities.alpha_modes);
+        let alpha_mode = choose_alpha_mode(&capabilities.alpha_modes)
+            .ok_or(RenderError::UnsupportedTransparency)?;
         config.alpha_mode = alpha_mode;
         config.present_mode = choose_present_mode(&capabilities.present_modes, vsync);
         config.desired_maximum_frame_latency = 3;
@@ -312,14 +335,16 @@ impl Surface {
     }
 }
 
-fn choose_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlphaMode {
-    if modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
-        wgpu::CompositeAlphaMode::PreMultiplied
-    } else if modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied) {
-        wgpu::CompositeAlphaMode::PostMultiplied
-    } else {
-        wgpu::CompositeAlphaMode::Auto
-    }
+fn choose_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> Option<wgpu::CompositeAlphaMode> {
+    // Auto may select Opaque and silently discard the transparent clear colour.
+    // Inherit is useful on platforms where winit configures native visual alpha.
+    [
+        wgpu::CompositeAlphaMode::PreMultiplied,
+        wgpu::CompositeAlphaMode::PostMultiplied,
+        wgpu::CompositeAlphaMode::Inherit,
+    ]
+    .into_iter()
+    .find(|mode| modes.contains(mode))
 }
 
 fn choose_present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
@@ -1324,16 +1349,75 @@ mod tests {
                 wgpu::CompositeAlphaMode::Opaque,
                 wgpu::CompositeAlphaMode::PreMultiplied
             ]),
-            wgpu::CompositeAlphaMode::PreMultiplied
+            Some(wgpu::CompositeAlphaMode::PreMultiplied)
         );
         assert_eq!(
             choose_alpha_mode(&[wgpu::CompositeAlphaMode::PostMultiplied]),
-            wgpu::CompositeAlphaMode::PostMultiplied
+            Some(wgpu::CompositeAlphaMode::PostMultiplied)
         );
         assert_eq!(
-            choose_alpha_mode(&[wgpu::CompositeAlphaMode::Opaque]),
-            wgpu::CompositeAlphaMode::Auto
+            choose_alpha_mode(&[wgpu::CompositeAlphaMode::Inherit]),
+            Some(wgpu::CompositeAlphaMode::Inherit)
         );
+    }
+
+    #[test]
+    fn opaque_only_surfaces_do_not_silently_disable_transparency() {
+        assert_eq!(choose_alpha_mode(&[wgpu::CompositeAlphaMode::Opaque]), None);
+        assert_eq!(choose_alpha_mode(&[wgpu::CompositeAlphaMode::Auto]), None);
+        assert_eq!(choose_alpha_mode(&[]), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires a Windows desktop and a DX12 adapter"]
+    fn windows_surface_uses_direct_composition_across_reconfiguration() {
+        use winit::event_loop::EventLoop;
+        use winit::platform::windows::{EventLoopBuilderExtWindows, WindowAttributesExtWindows};
+
+        let event_loop = EventLoop::builder().with_any_thread(true).build().unwrap();
+        for allow_hardware in [true, false] {
+            // This test owns a hidden HWND without running an application event loop.
+            #[allow(deprecated)]
+            let window = Arc::new(
+                event_loop
+                    .create_window(
+                        Window::default_attributes()
+                            .with_visible(false)
+                            .with_decorations(false)
+                            .with_transparent(true)
+                            .with_no_redirection_bitmap(true)
+                            .with_inner_size(PhysicalSize::new(64, 64)),
+                    )
+                    .unwrap(),
+            );
+            let mut renderer =
+                SceneRenderer::new(Arc::clone(&window), true, 1.0, 1.0, allow_hardware).unwrap();
+            assert_eq!(renderer.gpu.adapter_info.backend, wgpu::Backend::Dx12);
+            if !allow_hardware {
+                assert_eq!(renderer.gpu.adapter_info.device_type, wgpu::DeviceType::Cpu);
+            }
+            assert_eq!(
+                renderer.alpha_mode(),
+                wgpu::CompositeAlphaMode::PreMultiplied
+            );
+            let model = renderer
+                .upload_model(&[], &[], Matrix44::identity())
+                .unwrap();
+            renderer.render(&model).unwrap();
+            renderer.resize(PhysicalSize::new(96, 80), 1.0);
+            renderer.set_vsync(false);
+            renderer.surface.recreate(&renderer.gpu);
+            renderer.set_opacity(0.5);
+            for hittest in [false, true, false] {
+                window.set_cursor_hittest(hittest).unwrap();
+                renderer.render(&model).unwrap();
+            }
+            assert_eq!(
+                renderer.alpha_mode(),
+                wgpu::CompositeAlphaMode::PreMultiplied
+            );
+        }
     }
 
     #[test]

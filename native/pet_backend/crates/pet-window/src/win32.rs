@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, MA_NOACTIVATE, STYLESTRUCT, SWP_FRAMECHANGED,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
     WM_MOUSEACTIVATE, WM_NCDESTROY, WM_STYLECHANGING, WS_EX_APPWINDOW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -69,7 +69,12 @@ unsafe extern "system" fn pet_subclass_proc(
             // flag changes. Amend its proposed style before Windows applies it;
             // reapplying afterwards leaves a taskbar/focus race.
             if let Some(styles) = unsafe { (lparam.0 as *mut STYLESTRUCT).as_mut() } {
-                styles.styleNew = overlay_ex_style(styles.styleNew, style_flags);
+                // NOREDIRECTIONBITMAP must be set at creation. Preserve it for
+                // DirectComposition pets without adding it to WGL/GDI popups.
+                styles.styleNew = overlay_ex_style(
+                    styles.styleNew | (styles.styleOld & WS_EX_NOREDIRECTIONBITMAP.0),
+                    style_flags,
+                );
             }
             return LRESULT(0);
         }
@@ -295,10 +300,17 @@ mod tests {
     struct TestWindow(HWND);
 
     impl TestWindow {
-        fn new() -> Self {
+        fn new(no_redirection_bitmap: bool) -> Self {
             Self(unsafe {
                 CreateWindowExW(
-                    WS_EX_APPWINDOW,
+                    // Like winit, set this at creation: Windows rejects adding
+                    // NOREDIRECTIONBITMAP later through SetWindowLongPtrW.
+                    WS_EX_APPWINDOW
+                        | if no_redirection_bitmap {
+                            WS_EX_NOREDIRECTIONBITMAP
+                        } else {
+                            Default::default()
+                        },
                     w!("STATIC"),
                     w!("pet-style-regression"),
                     WS_POPUP,
@@ -324,7 +336,7 @@ mod tests {
 
     #[test]
     fn pet_styles_survive_replacement_without_freezing_cursor_hit_testing() {
-        let window = TestWindow::new();
+        let window = TestWindow::new(true);
         apply_pet_style(window.0, false).unwrap();
         for passthrough in [true, false, true] {
             // Simulate winit replacing the complete style from its cached flags.
@@ -335,6 +347,7 @@ mod tests {
             let actual = ex_style(window.0) as u32;
             assert_ne!(actual & WS_EX_NOACTIVATE.0, 0);
             assert_ne!(actual & WS_EX_LAYERED.0, 0);
+            assert_ne!(actual & WS_EX_NOREDIRECTIONBITMAP.0, 0);
             assert_ne!(actual & WS_EX_TOOLWINDOW.0, 0);
             assert_ne!(actual & WS_EX_ACCEPTFILES.0, 0);
             assert_eq!(actual & WS_EX_APPWINDOW.0, 0);
@@ -344,13 +357,14 @@ mod tests {
 
     #[test]
     fn obs_updates_existing_style_guard_and_mouse_clicks_do_not_activate() {
-        let window = TestWindow::new();
+        let window = TestWindow::new(true);
         for obs in [false, true, false] {
             apply_pet_style(window.0, obs).unwrap();
             unsafe { SetWindowLongPtrW(window.0, GWL_EXSTYLE, WS_EX_ACCEPTFILES.0 as isize) };
             let actual = ex_style(window.0) as u32;
             assert_ne!(actual & WS_EX_NOACTIVATE.0, 0);
             assert_ne!(actual & WS_EX_LAYERED.0, 0);
+            assert_ne!(actual & WS_EX_NOREDIRECTIONBITMAP.0, 0);
             assert_eq!(actual & WS_EX_APPWINDOW.0 != 0, obs);
             assert_eq!(actual & WS_EX_TOOLWINDOW.0 != 0, !obs);
             let activation = unsafe { SendMessageW(window.0, WM_MOUSEACTIVATE, None, None) };
@@ -360,7 +374,7 @@ mod tests {
 
     #[test]
     fn shaped_popup_keeps_native_presentation_styles_after_winit_replacement() {
-        let window = TestWindow::new();
+        let window = TestWindow::new(false);
         apply_pet_style(window.0, false).unwrap();
         apply_popup_style(window.0).unwrap();
         for proposed in [
@@ -374,7 +388,11 @@ mod tests {
             assert_ne!(actual & WS_EX_NOACTIVATE.0, 0);
             assert_ne!(actual & WS_EX_TOOLWINDOW.0, 0);
             assert_eq!(
-                actual & (WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0 | WS_EX_APPWINDOW.0),
+                actual
+                    & (WS_EX_LAYERED.0
+                        | WS_EX_TRANSPARENT.0
+                        | WS_EX_NOREDIRECTIONBITMAP.0
+                        | WS_EX_APPWINDOW.0),
                 0
             );
             assert_eq!(

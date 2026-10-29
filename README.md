@@ -48,7 +48,7 @@ QQ群：1033517952
 
 - **Python 3.10+**、**Rust stable**（构建原生后端）；宠物与预览共用 Neocari，Lua 插件继续使用 LuaJIT 2.1
 - Windows、macOS、Linux（宠物窗口使用 X11 / XWayland）
-- 支持 Vulkan / DirectX 12 / Metal 的显卡；Qt 设置预览需要 OpenGL 3.3+
+- Windows 宠物窗口需要 DirectX 12（支持软件适配器）；Linux 使用 Vulkan，macOS 使用 Metal
 - 宠物进程已使用 Neocari + wgpu 原生渲染，通过共享内存与主程序通信。构建、协议和平台范围见 [Neocari 后端说明](docs/NEOCARI_BACKEND.md)。
 
 ### 2. 克隆仓库

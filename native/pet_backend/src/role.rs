@@ -222,7 +222,11 @@ impl Role {
             .with_inner_size(PhysicalSize::new(width, height))
             .with_position(PhysicalPosition::new(decision.x, decision.y));
         #[cfg(windows)]
-        let attributes = attributes.with_skip_taskbar(true);
+        let attributes = attributes
+            .with_skip_taskbar(true)
+            // DirectComposition supplies the entire visual. A redirected HWND
+            // bitmap underneath it can show through as black on Windows 11.
+            .with_no_redirection_bitmap(true);
         #[cfg(target_os = "linux")]
         let attributes = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};
