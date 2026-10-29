@@ -32,7 +32,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libx11-dev libxrandr-dev xvfb
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxrandr-dev xvfb
       - name: Check formatting
         run: cargo fmt --manifest-path native/pet_backend/Cargo.toml --all -- --check
       - name: Check and lint all targets
