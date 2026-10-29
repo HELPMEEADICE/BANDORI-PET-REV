@@ -180,6 +180,7 @@ if [ "$bad" -ne 0 ]; then
   exit 1
 fi
 test -x "$APP/Contents/MacOS/bandori-pet-native"
+test -s "$APP/Contents/MacOS/libpet_assets.dylib"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 # ---------------------------------------------------------------------------

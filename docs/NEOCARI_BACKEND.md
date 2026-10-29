@@ -8,7 +8,7 @@
 
 ```sh
 git submodule update --init --recursive
-cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked
+cargo build --release --manifest-path native/pet_backend/Cargo.toml -p bandori-pet-native -p pet-assets --locked
 python main.py
 ```
 
@@ -23,6 +23,14 @@ macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 
 macOS 在请求首帧之前先以不抢焦点的方式显示透明窗口。当前锁定的 wgpu Metal 后端会拒绝为尚未显示的窗口获取 drawable，因此不能套用 Windows 的“首帧成功后才显示”顺序。窗口暂时被遮挡、AppKit 可见状态尚未更新或获取帧超时时，跳过该帧并继续重试，不计入渲染失败熔断；主动隐藏的角色停止绘制，恢复显示后继续渲染。
 
 `setup.py build` 会先构建 release 后端并将其和许可文件复制到发行目录。安装包校验包含该可执行文件；macOS / Linux / Windows 构建工作流会拉取固定的 Neocari 子模块。
+
+## 归档资源服务
+
+`pet-assets` 同时构建 Rust 库和本地动态库（Windows 的 `pet_assets.dll`、Linux 的 `libpet_assets.so`、macOS 的 `libpet_assets.dylib`）。Python 的 `zst_model_archive.py` 通过带版本的 ctypes 接口调用同一套归档枚举、虚拟路径校验、资源批量读取与缓存逻辑；Python 保留角色展示信息、目录/归档合并顺序和界面接口。`BANDORI_PET_ASSETS` 可指定动态库路径。源码从 Cargo 的 release/debug 目录加载，发行包携带动态库。
+
+资源缓存按归档绝对路径、大小与纳秒修改时间失效，最多保留 512 项、64 MiB。单资源上限为 64 MiB，首个 tar 成员中的 `.bandori_zst_index.json` 上限为 4 MiB，非法索引回退到顺序枚举。内存中的枚举结果另有 32 个归档、16 MiB 路径文本限制。模型 JSON 的 Python 解析结果也检查归档版本，角色目录的持久化扫描结果继续保持现有格式。
+
+`load_archive_resources(archive, members)` 将同一归档中所有缺失资源合并为一次顺序扫描，返回批次总大小上限为 64 MiB；预取接口不返回资源副本，只保留受 LRU 限制的缓存。角色头像与默认服装 JSON 会一起预取。路径穿越、绝对成员路径、Windows 盘符、链接及替代数据流路径不会作为资源读取。普通 zstd tar 没有成员随机访问能力，缓存未命中的批次仍需从头顺序解压，内嵌文件名索引只加速枚举。
 
 ## 进程边界
 

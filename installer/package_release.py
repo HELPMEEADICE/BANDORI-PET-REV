@@ -26,6 +26,7 @@ RESOURCES = (
     "characters", "events", "lang", "outfit.json", "pixels",
 )
 USER_DATA = ("config.json", "data.db", "data.db-shm", "data.db-wal", "chat_attachments")
+ASSET_LIBRARIES = {"windows": "pet_assets.dll", "linux": "libpet_assets.so", "macos": "libpet_assets.dylib"}
 
 
 def validate_version(version=APP_VERSION, tag=None):
@@ -63,6 +64,9 @@ def validate_build(directory, target, arch):
             raise ValueError(f"User data must not be packaged: {name}")
     if any((directory / "models").iterdir()):
         raise ValueError("The packaged models directory must be empty")
+    assets_library = directory / ASSET_LIBRARIES[target]
+    if not assets_library.is_file() or assets_library.stat().st_size == 0:
+        raise ValueError(f"Missing pet-assets library: {assets_library}")
     for name in EXECUTABLES:
         path = directory / (name + (".exe" if target == "windows" else ""))
         with path.open("rb") as binary:

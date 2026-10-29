@@ -1,7 +1,5 @@
 //! The `models/<archive>.zst::<costume>/model.json` virtual path syntax.
 
-use std::path::{Path, PathBuf};
-
 /// Separator between the archive path and the member path.
 pub const SEP: &str = "::";
 
@@ -67,22 +65,6 @@ impl ModelPath {
             .next()
             .filter(|part| !part.is_empty())
     }
-
-    /// Resolves the archive against the installation root.
-    pub fn archive_path(&self, root: &Path) -> PathBuf {
-        let normalized = self.archive.replace('\\', "/");
-        let candidate = PathBuf::from(&normalized);
-        if candidate.is_absolute() {
-            candidate
-        } else {
-            root.join(candidate)
-        }
-    }
-
-    /// `true` when the member is a Cubism 3/4/5 `*.model3.json`.
-    pub fn is_moc3(&self) -> bool {
-        self.member.to_ascii_lowercase().ends_with(".model3.json")
-    }
 }
 
 /// Normalizes an archive member path, rejecting absolute paths and `..`.
@@ -93,30 +75,18 @@ impl ModelPath {
 /// everywhere even though only Windows parses it as absolute.
 pub fn normalize_member(member: &str) -> Result<String, VirtualPathError> {
     let unified = member.replace('\\', "/");
+    let unified = unified.trim_start_matches("./");
     // Root-relative `/x`, UNC and device paths (`//server/share`, `\\?\C:`,
     // `\\.\C:`) and Windows drive prefixes (`C:`, `C:/x`, `C:x`).
-    if unified.starts_with('/') || has_windows_drive_prefix(&unified) {
+    if unified.starts_with('/')
+        || unified.contains([':', '\0'])
+        || unified
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
+    {
         return Err(VirtualPathError::UnsafeMember(member.to_owned()));
     }
-    let mut parts = Vec::new();
-    for component in unified.split('/') {
-        match component {
-            "" | "." => continue,
-            ".." => return Err(VirtualPathError::UnsafeMember(member.to_owned())),
-            part => parts.push(part),
-        }
-    }
-    if parts.is_empty() {
-        return Err(VirtualPathError::UnsafeMember(member.to_owned()));
-    }
-    Ok(parts.join("/"))
-}
-
-/// `true` for `C:`, `C:/x` and `C:x`: a Windows drive prefix is absolute or
-/// drive-relative and never a valid archive member, on any host.
-fn has_windows_drive_prefix(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+    Ok(unified.to_owned())
 }
 
 #[cfg(test)]
@@ -129,20 +99,10 @@ mod tests {
         assert_eq!(path.archive, "models/kasumi.zst");
         assert_eq!(path.member, "live_event_295_ur/model.json");
         assert_eq!(path.costume(), Some("live_event_295_ur"));
-        assert!(!path.is_moc3());
         assert_eq!(
             path.to_spec(),
             "models/kasumi.zst::live_event_295_ur/model.json"
         );
-    }
-
-    #[test]
-    fn detects_moc3_members() {
-        let path = ModelPath::parse(
-            "models/anon.zst::casual_spring_01/adv_live2d_anon_002_casual_spring_01.model3.json",
-        )
-        .unwrap();
-        assert!(path.is_moc3());
     }
 
     #[test]

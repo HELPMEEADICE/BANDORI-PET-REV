@@ -38,7 +38,7 @@ jobs:
       - name: Check and lint all targets
         run: cargo clippy --manifest-path native/pet_backend/Cargo.toml --workspace --all-targets --locked -- -D warnings
       - name: Build standalone pet
-        run: cargo build --manifest-path native/pet_backend/Cargo.toml --locked
+        run: cargo build --manifest-path native/pet_backend/Cargo.toml -p bandori-pet-native -p pet-assets --locked
       - name: Test native components
         run: cargo test --manifest-path native/pet_backend/Cargo.toml --workspace --all-targets --locked
       - name: Test X11 window integration
@@ -51,7 +51,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install IPC test dependencies
-        run: python -m pip install pytest
+        run: python -m pip install pytest zstandard
+      - name: Test Python archive bridge
+        run: python -m pytest tests/test_native_assets.py -q
       - name: Test Python to Rust shared memory
         shell: bash
         run: |

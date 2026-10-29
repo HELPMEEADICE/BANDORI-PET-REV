@@ -13,10 +13,11 @@ from bandori_core.process_utils import app_base_dir, app_data_dir
 from bandori_models.zst_model_archive import (
     VIRTUAL_SEP,
     is_virtual_path,
-    list_archive_files,
     load_virtual_bytes,
     load_virtual_json,
-    make_virtual_path,
+    prefetch_virtual_resources,
+    scan_model_archive,
+    virtual_resource_revision,
 )
 
 BASE_DIR = app_base_dir()
@@ -216,8 +217,8 @@ class ModelManager:
                     image_path = cached_result.get("image_path", "")
                 else:
                     try:
-                        files = list_archive_files(entry)
-                        image_path = self._find_archive_character_image(entry, files, character)
+                        result = scan_model_archive(entry)
+                        image_path = result.get("image_path", "") if result else ""
                     except Exception:
                         image_path = ""
                 if image_path:
@@ -396,38 +397,11 @@ class ModelManager:
             self._merge_character_costumes(char_name, costumes, override=override)
 
     def _read_model_archive(self, archive_path: Path):
-        char_name = archive_path.stem
         try:
-            files = list_archive_files(archive_path)
+            return scan_model_archive(archive_path)
         except Exception as exc:
             print(f"Failed to scan model archive {archive_path}: {exc}")
             return None
-
-        archive_resolved = str(archive_path.resolve())
-        costumes = []
-        model_paths = []
-        for member in files:
-            if not self._is_model_manifest_name(member):
-                continue
-            parent = member.rsplit("/", 1)[0] if "/" in member else ""
-            costume_id = parent.rsplit("/", 1)[-1] if parent else "default"
-            model_path = f"{archive_resolved}{VIRTUAL_SEP}{member}"
-            costumes.append({
-                "id": costume_id,
-                "path": model_path,
-                "format": MODEL_FORMAT_MOC3 if member.lower().endswith(".model3.json") else MODEL_FORMAT_MOC,
-            })
-            model_paths.append((char_name, costume_id, model_path))
-
-        image_path = self._find_archive_character_image(archive_path, files, char_name)
-        if not costumes:
-            return None
-        return {
-            "character": char_name,
-            "costumes": sorted(costumes, key=lambda item: item["id"]),
-            "image_path": image_path,
-            "model_paths": model_paths,
-        }
 
     def _apply_archive_scan_result(self, result: dict):
         for char_name, costume_id, model_path in result["model_paths"]:
@@ -554,6 +528,15 @@ class ModelManager:
         image_path = self._character_images.get(character, "")
         if not is_virtual_path(image_path):
             return b""
+        model_path = self._model_paths.get((character, self.get_default_costume(character)), "")
+        if is_virtual_path(model_path):
+            try:
+                # The picker needs the portrait now and the default costume's
+                # metadata next. Rust groups both reads into one archive pass.
+                prefetch_virtual_resources([image_path, model_path])
+            except (OSError, ValueError, KeyError, RuntimeError):
+                # Optional metadata must not prevent a valid portrait loading.
+                pass
         try:
             return load_virtual_bytes(image_path)
         except Exception as exc:
@@ -567,25 +550,6 @@ class ModelManager:
             if path.exists():
                 return str(path.resolve())
         return ""
-
-    @staticmethod
-    def _find_archive_character_image(archive_path: Path, files: list[str], character: str) -> str:
-        candidates = []
-        for ext in ("png", "jpg", "webp"):
-            candidates.extend([
-                f"character.{ext}",
-                f"{character}/character.{ext}",
-            ])
-        file_set = set(files)
-        for candidate in candidates:
-            if candidate in file_set:
-                return make_virtual_path(archive_path, candidate)
-        return ""
-
-    @staticmethod
-    def _is_model_manifest_name(path: str) -> bool:
-        name = Path(str(path).replace("\\", "/")).name.lower()
-        return name == "model.json" or name.endswith(".model3.json")
 
     @classmethod
     def _find_model_manifest(cls, costume_dir: Path) -> Path | None:
@@ -656,15 +620,20 @@ class ModelManager:
         return self._model_format_from_path(path)
 
     def _read_model_json(self, path: str) -> dict:
+        if is_virtual_path(path):
+            revision = virtual_resource_revision(path)
+        else:
+            stat = Path(path).stat()
+            revision = (stat.st_size, stat.st_mtime_ns)
         cached = self._model_json_cache.get(path)
-        if cached is not None:
+        if cached is not None and cached[0] == revision:
             self._model_json_cache.move_to_end(path)
-            return cached
+            return cached[1]
         if is_virtual_path(path):
             data = load_virtual_json(path)
         else:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
-        self._model_json_cache[path] = data
+        self._model_json_cache[path] = (revision, data)
         while len(self._model_json_cache) > _MODEL_JSON_CACHE_LIMIT:
             self._model_json_cache.popitem(last=False)
         return data

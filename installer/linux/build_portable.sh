@@ -74,6 +74,7 @@ for name in "${required_executables[@]}"; do
 done
 
 required_resources=(
+    libpet_assets.so
     .bandoripet-managed-files
     audio_reference
     band.json

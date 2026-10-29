@@ -72,7 +72,7 @@ class BuildExeWithEmptyModels(build_exe):
             elif obsolete.exists():
                 obsolete.unlink()
         manifest = BASE_DIR / "native" / "pet_backend" / "Cargo.toml"
-        rust_args = ["cargo", "build", "--release", "--locked", "--manifest-path", str(manifest)]
+        rust_args = ["cargo", "build", "--release", "--locked", "--manifest-path", str(manifest), "-p", "bandori-pet-native", "-p", "pet-assets"]
         native_output = manifest.parent / "target"
         if sys.platform == "darwin":
             rust_arch = "aarch64" if release_arch_name() == "ARM64" else "x86_64"
@@ -87,6 +87,8 @@ class BuildExeWithEmptyModels(build_exe):
         native_name = "bandori-pet-native" + (".exe" if sys.platform == "win32" else "")
         native_binary = native_output / "release" / native_name
         shutil.copy2(native_binary, build_dir / native_name)
+        assets_name = "pet_assets.dll" if sys.platform == "win32" else "libpet_assets.dylib" if sys.platform == "darwin" else "libpet_assets.so"
+        shutil.copy2(native_output / "release" / assets_name, build_dir / assets_name)
         native_licenses = build_dir / "licenses" / "neocari"
         native_licenses.mkdir(parents=True, exist_ok=True)
         upstream = manifest.parent / "vendor" / "neocari"
@@ -267,6 +269,9 @@ class BuildMacWithResourceLinks(bdist_mac):
         native_source = Path(self.resources_dir) / "bandori-pet-native"
         if native_source.is_file():
             self.execute(shutil.move, (str(native_source), str(Path(self.bin_dir) / "bandori-pet-native")), msg="placing Neocari in Contents/MacOS")
+        assets_source = Path(self.resources_dir) / "libpet_assets.dylib"
+        if assets_source.is_file():
+            self.execute(shutil.move, (str(assets_source), str(Path(self.bin_dir) / "libpet_assets.dylib")), msg="placing pet-assets in Contents/MacOS")
         self._link_root_resource_files()
         if self.codesign_identity:
             self._codesign(self.bundle_dir)

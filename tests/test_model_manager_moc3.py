@@ -1,11 +1,27 @@
 import json
+import io
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import zstandard
+
 import bandori_models.model_manager as model_manager
 from bandori_models.model_manager import ModelManager
+
+
+def _write_indexed_archive(path: Path, member: str):
+    with path.open("wb") as output, zstandard.ZstdCompressor().stream_writer(output) as encoder:
+        with tarfile.open(fileobj=encoder, mode="w|") as archive:
+            for name, content in [
+                (".bandori_zst_index.json", json.dumps({"files": [member]}).encode()),
+                (member, b"invalid JSON; discovery only inspects names"),
+            ]:
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
 
 
 def _write_model3(root: Path, name: str = "test.model3.json") -> Path:
@@ -101,11 +117,10 @@ class ModelManagerMoc3Test(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             archive = root / "anon.zst"
-            archive.write_bytes(b"archive")
             model_member = "live_01/test.model3.json"
+            _write_indexed_archive(archive, model_member)
 
-            with patch.object(model_manager, "list_archive_files", return_value=[model_member]):
-                result = ModelManager(scan_models=False)._read_model_archive(archive)
+            result = ModelManager(scan_models=False)._read_model_archive(archive)
 
             model_path = f"{archive.resolve()}::{model_member}"
             self.assertEqual({
@@ -119,11 +134,10 @@ class ModelManagerMoc3Test(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             archive = root / "anon.zst"
-            archive.write_bytes(b"archive")
             model_member = "live_01/model.json"
+            _write_indexed_archive(archive, model_member)
 
             with (
-                patch.object(model_manager, "list_archive_files", return_value=[model_member]),
                 patch.object(model_manager, "load_virtual_json", side_effect=AssertionError("archive model json was read")) as load_json,
             ):
                 result = ModelManager(scan_models=False)._read_model_archive(archive)

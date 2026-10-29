@@ -15,6 +15,7 @@ def frozen_windows_tree(tmp_path, machine=0x8664, arch="AMD64"):
     (build / "models").mkdir()
     (build / "lib").mkdir()
     (build / "lib" / "library.zip").write_bytes(b"frozen python")
+    (build / "pet_assets.dll").write_bytes(b"archive library")
     header = bytearray(70)
     header[:2] = b"MZ"
     struct.pack_into("<I", header, 60, 64)
@@ -88,6 +89,13 @@ def test_packaging_rejects_retired_renderer_but_keeps_plugin_runtime(tmp_path):
     release.validate_build(build, "windows", "x86_64")
     (build / "custom_hit_area_state.ljbc").write_bytes(b"obsolete renderer")
     with pytest.raises(ValueError, match="Retired renderer"):
+        release.validate_build(build, "windows", "x86_64")
+
+
+def test_packaging_requires_native_archive_library(tmp_path):
+    build = frozen_windows_tree(tmp_path)
+    (build / "pet_assets.dll").unlink()
+    with pytest.raises(ValueError, match="pet-assets library"):
         release.validate_build(build, "windows", "x86_64")
 
 

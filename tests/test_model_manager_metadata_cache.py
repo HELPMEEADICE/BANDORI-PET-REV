@@ -13,7 +13,7 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
             "expressions": [{"name": "smile"}, {"name": "angry"}],
         }
 
-        with mock.patch("bandori_models.model_manager.load_virtual_json", return_value=model_json) as load_json:
+        with mock.patch("bandori_models.model_manager.virtual_resource_revision", return_value="stable"), mock.patch("bandori_models.model_manager.load_virtual_json", return_value=model_json) as load_json:
             self.assertEqual(["idle", "tap"], manager.get_motion_names("kasumi", "live_default"))
             self.assertEqual(["angry", "smile"], manager.get_expression_names("kasumi", "live_default"))
 
@@ -23,7 +23,7 @@ class ModelManagerMetadataCacheTest(unittest.TestCase):
         manager = ModelManager(scan_models=False)
         paths = [f"models.zst::costume_{index}/model.json" for index in range(_MODEL_JSON_CACHE_LIMIT + 2)]
 
-        with mock.patch("bandori_models.model_manager.load_virtual_json", side_effect=lambda path: {"path": path}):
+        with mock.patch("bandori_models.model_manager.virtual_resource_revision", return_value="stable"), mock.patch("bandori_models.model_manager.load_virtual_json", side_effect=lambda path: {"path": path}):
             for path in paths[:_MODEL_JSON_CACHE_LIMIT]:
                 manager._read_model_json(path)
             manager._read_model_json(paths[0])

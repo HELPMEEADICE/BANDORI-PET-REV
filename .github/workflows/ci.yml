@@ -162,6 +162,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          submodules: recursive
       # These sources are ignored by Git but required by the runtime tests.
       # Keep revisions fixed so upstream changes do not break unrelated PRs.
       - name: Check out PySide6 Fluent Widgets
@@ -193,6 +194,12 @@ jobs:
           python -m pip check
       - name: Verify Lua plugin runtime
         run: python -c "from lupa.luajit21 import LuaRuntime; print(LuaRuntime().eval('jit.version'))"
+      - name: Build Rust archive library
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-assets --locked
       - name: Run regression tests
         shell: bash
         run: |

@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Seek};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,7 +13,9 @@ use pet_config::ModelFormat;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+use crate::archive::{entry_name, open_archive, read_entry_bytes};
 use crate::virtual_path::{normalize_member, ModelPath};
+use crate::{ArchiveRevision, MAX_MEMBER_BYTES};
 
 /// Default number of costumes kept on disk (spec §2.2).
 pub const DEFAULT_CAPACITY: usize = 8;
@@ -44,6 +45,9 @@ pub enum CacheError {
     /// Tar parse failure.
     #[error("tar error: {0}")]
     Tar(String),
+    /// A member or returned batch exceeded the configured byte limit.
+    #[error("archive resource too large: {0}")]
+    TooLarge(String),
 }
 
 /// A costume that exists on disk and can be handed to Neocari.
@@ -73,6 +77,7 @@ struct LruState {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Stamp {
+    archive_path: PathBuf,
     archive_size: u64,
     archive_mtime_ns: u128,
     costume: String,
@@ -168,13 +173,14 @@ impl ModelCache {
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
             .ok_or_else(|| CacheError::Path(spec.to_owned()))?;
-        let (size, mtime_ns) = archive_stamp(&archive)?;
+        let revision = ArchiveRevision::read(&archive)?;
         let target_dir = self.cache_root.join(&stem).join(costume);
 
         let stamp_path = target_dir.join(STAMP_FILE);
         let expected = Stamp {
-            archive_size: size,
-            archive_mtime_ns: mtime_ns,
+            archive_path: fs::canonicalize(&archive).map_err(|e| CacheError::Io(e.to_string()))?,
+            archive_size: revision.size,
+            archive_mtime_ns: revision.mtime_ns,
             costume: costume.to_owned(),
         };
         let current = read_stamp(&stamp_path);
@@ -240,17 +246,18 @@ impl ModelCache {
     pub fn extract_member(&self, spec: &str) -> Result<PathBuf, CacheError> {
         let model_path =
             ModelPath::parse(spec).map_err(|error| CacheError::Path(error.to_string()))?;
-        let archive = model_path.archive_path(&self.models_root);
+        let archive = self.archive_path(&model_path);
         let stem = archive
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
             .ok_or_else(|| CacheError::Path(spec.to_owned()))?;
         let target = self.cache_root.join(&stem).join(&model_path.member);
-        let (size, mtime_ns) = archive_stamp(&archive)?;
+        let revision = ArchiveRevision::read(&archive)?;
         let stamp_path = target.with_extension("member-stamp.json");
         let expected = Stamp {
-            archive_size: size,
-            archive_mtime_ns: mtime_ns,
+            archive_path: fs::canonicalize(&archive).map_err(|e| CacheError::Io(e.to_string()))?,
+            archive_size: revision.size,
+            archive_mtime_ns: revision.mtime_ns,
             costume: model_path.member.clone(),
         };
         if target.exists() && read_stamp(&stamp_path).as_ref() == Some(&expected) {
@@ -274,13 +281,9 @@ impl ModelCache {
         prefix: &str,
         destination: &Path,
     ) -> Result<(), CacheError> {
-        let prefix =
-            normalize_member(prefix).map_err(|error| CacheError::Path(error.to_string()))?;
-        let file = fs::File::open(archive_path)
-            .map_err(|error| CacheError::Io(format!("{}: {error}", archive_path.display())))?;
-        let decoder = zstd::stream::read::Decoder::new(file)
-            .map_err(|error| CacheError::Zstd(error.to_string()))?;
-        let mut tar = tar::Archive::new(decoder);
+        let prefix = normalize_member(prefix.trim_end_matches('/'))
+            .map_err(|error| CacheError::Path(error.to_string()))?;
+        let mut tar = open_archive(archive_path)?;
         let entries = tar
             .entries()
             .map_err(|error| CacheError::Tar(error.to_string()))?;
@@ -288,20 +291,16 @@ impl ModelCache {
         let mut extracted = 0usize;
         for entry in entries {
             let mut entry = entry.map_err(|error| CacheError::Tar(error.to_string()))?;
-            let raw_path = entry
-                .path()
-                .map_err(|error| CacheError::Tar(error.to_string()))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            if !member_matches(&raw_path, &prefix) {
+            let Some(relative) = entry_name(&entry)? else {
+                continue;
+            };
+            if !member_matches(&relative, &prefix) {
                 continue;
             }
             if !entry.header().entry_type().is_file() {
                 // Directories are recreated implicitly; symlinks are refused.
                 continue;
             }
-            let relative =
-                normalize_member(&raw_path).map_err(|error| CacheError::Path(error.to_string()))?;
             let relative_path = PathBuf::from(relative);
             if relative_path.components().any(|component| {
                 matches!(
@@ -319,10 +318,7 @@ impl ModelCache {
                 fs::create_dir_all(parent)
                     .map_err(|error| CacheError::Io(format!("{}: {error}", parent.display())))?;
             }
-            let mut buffer = Vec::new();
-            entry
-                .read_to_end(&mut buffer)
-                .map_err(|error| CacheError::Io(error.to_string()))?;
+            let buffer = read_entry_bytes(&mut entry, MAX_MEMBER_BYTES)?;
             fs::write(&destination_path, &buffer).map_err(|error| {
                 CacheError::Io(format!("{}: {error}", destination_path.display()))
             })?;
@@ -423,18 +419,6 @@ fn member_matches(raw_path: &str, prefix: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn archive_stamp(archive: &Path) -> Result<(u64, u128), CacheError> {
-    let metadata = fs::metadata(archive)
-        .map_err(|error| CacheError::Io(format!("{}: {error}", archive.display())))?;
-    let mtime = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    Ok((metadata.len(), mtime))
-}
-
 fn read_stamp(path: &Path) -> Option<Stamp> {
     let raw = fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
@@ -455,35 +439,6 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
-}
-
-/// Reads a file from inside an archive without extracting it (used for
-/// `character.png` thumbnails when only the bytes are needed).
-pub fn read_member_bytes<R: Read + Seek>(
-    tar: &mut tar::Archive<R>,
-    member: &str,
-) -> Result<Option<Vec<u8>>, CacheError> {
-    let member = normalize_member(member).map_err(|error| CacheError::Path(error.to_string()))?;
-    let entries = tar
-        .entries()
-        .map_err(|error| CacheError::Tar(error.to_string()))?;
-    for entry in entries {
-        let mut entry = entry.map_err(|error| CacheError::Tar(error.to_string()))?;
-        let path = entry
-            .path()
-            .map_err(|error| CacheError::Tar(error.to_string()))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        if path != member {
-            continue;
-        }
-        let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|error| CacheError::Io(error.to_string()))?;
-        return Ok(Some(bytes));
-    }
-    Ok(None)
 }
 
 #[cfg(test)]
@@ -609,6 +564,36 @@ mod tests {
         assert!(fs::read_to_string(&resolved.model_path)
             .unwrap()
             .contains("\"v\":2"));
+    }
+
+    #[test]
+    fn same_stem_archives_with_identical_stats_have_distinct_stamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundled = dir.path().join("bundled");
+        let user = dir.path().join("user");
+        fs::create_dir_all(&bundled).unwrap();
+        fs::create_dir_all(&user).unwrap();
+        let original = build_archive(&bundled, "kasumi", &[("live/model.json", "original")]);
+        let replacement = user.join("kasumi.zst");
+        fs::copy(&original, &replacement).unwrap();
+        let timestamp = UNIX_EPOCH + std::time::Duration::from_secs(100);
+        for archive in [&original, &replacement] {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(archive)
+                .unwrap()
+                .set_modified(timestamp)
+                .unwrap();
+        }
+        let cache = ModelCache::new(dir.path().join("cache"), &bundled);
+        let resolved = cache
+            .resolve(&format!("{}::live/model.json", original.display()))
+            .unwrap();
+        fs::write(&resolved.model_path, "stale").unwrap();
+        let resolved = cache
+            .resolve(&format!("{}::live/model.json", replacement.display()))
+            .unwrap();
+        assert_eq!(fs::read_to_string(resolved.model_path).unwrap(), "original");
     }
 
     #[test]

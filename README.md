@@ -56,7 +56,7 @@ QQ群：1033517952
 ```bash
 git clone --recurse-submodules https://github.com/HELPMEEADICE/BANDORI-PET-REV.git
 cd BANDORI-PET-REV
-cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked
+cargo build --release --manifest-path native/pet_backend/Cargo.toml -p bandori-pet-native -p pet-assets --locked
 ```
 
 ### 3. 下载模型文件（必需！）

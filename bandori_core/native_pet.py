@@ -26,7 +26,8 @@ def native_executable(base_dir) -> Path:
             return candidate.resolve()
     raise FileNotFoundError(
         "Neocari pet backend is missing. Run: "
-        "cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked"
+        "cargo build --release --manifest-path native/pet_backend/Cargo.toml "
+        "-p bandori-pet-native -p pet-assets --locked"
     )
 
 

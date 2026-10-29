@@ -65,7 +65,7 @@ def test_lightweight_model_scan_reuses_archive_cache_for_character_images():
 
         with (
             patch("bandori_models.model_manager.model_search_dirs", return_value=[root]),
-            patch("bandori_models.model_manager.list_archive_files", side_effect=AssertionError("archive was reopened")),
+            patch("bandori_models.model_manager.scan_model_archive", side_effect=AssertionError("archive was reopened")),
         ):
             manager = ModelManager(scan_models=False)
 

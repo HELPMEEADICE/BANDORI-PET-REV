@@ -141,7 +141,7 @@ PY
 
 echo
 git submodule update --init --recursive
-cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked
+cargo build --release --manifest-path native/pet_backend/Cargo.toml -p bandori-pet-native -p pet-assets --locked
 
 echo "Source dependencies are ready. Start BandoriPet with:"
 echo "  $PYTHON main.py"
