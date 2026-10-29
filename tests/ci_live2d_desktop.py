@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
-from PIL import Image
+from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -17,12 +18,22 @@ from bandori_core.native_pet import native_executable, native_program_and_args
 from bandori_core.shared_memory_ipc import SharedMemoryLineQueue, decode_ipc_envelope
 
 
+def capture_screen(path):
+    """Capture the complete runner desktop, including decorations and background."""
+    try:
+        screen = ImageGrab.grab(all_screens=True) if sys.platform == "win32" else ImageGrab.grab()
+        screen.save(path)
+        print(f"Full desktop screenshot: {path.name} {screen.size}", flush=True)
+        return True
+    except Exception as error:
+        print(f"Full desktop screenshot failed: {error}", flush=True)
+        return False
+
+
 def window_present(pid):
     if sys.platform == "win32":
         from ctypes import wintypes
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
-        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user32.IsWindowVisible.argtypes = [wintypes.HWND]
@@ -58,11 +69,19 @@ def window_present(pid):
 
 def main():
     import tempfile
+    if sys.platform == "win32":
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     model = ROOT / "native/pet_backend/vendor/neocari/assets/models/Hiyori/Hiyori.model3.json"
     snapshot = ROOT / "live2d-ci-snapshot.png"
     queues = [SharedMemoryLineQueue.create("ci-live2d-" + uuid.uuid4().hex, slot_count=32) for _ in range(4)]
     process = None
     stderr_file = tempfile.TemporaryFile()
+    screen_dir = ROOT / "live2d-ci-screens"
+    screen_dir.mkdir(exist_ok=True)
+    stop_capture = threading.Event()
+    capture_thread = None
     try:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "config.json"
@@ -76,6 +95,14 @@ def main():
             env["BANDORI_PET_SNAPSHOT"] = str(snapshot)
             env["RUST_LOG"] = "info"
             process = subprocess.Popen([str(binary), *args], stdout=subprocess.DEVNULL, stderr=stderr_file, env=env)
+            def capture_during_startup():
+                index = 0
+                while not stop_capture.is_set():
+                    capture_screen(screen_dir / f"startup-{index % 4}.png")
+                    index += 1
+                    stop_capture.wait(0.5)
+            capture_thread = threading.Thread(target=capture_during_startup, daemon=True)
+            capture_thread.start()
             ready = False
             deadline = time.monotonic() + 70
             while time.monotonic() < deadline:
@@ -98,12 +125,18 @@ def main():
             alpha = image.getchannel("A")
             assert alpha.getextrema()[0] == 0 and alpha.getextrema()[1] > 0, "snapshot must contain transparent and visible pixels"
             assert sum(alpha.histogram()[1:]) > 1000, "model has too few visible pixels"
+            time.sleep(0.5)  # Allow the desktop compositor to display the presented frame.
+            assert capture_screen(screen_dir / "visible-window.png"), "full desktop screenshot failed"
             print(f"Real Live2D model rendered: {image.size}; process window visible after first frame")
             if sys.platform == "win32":
                 print("Windows client area covers its window; DWM border pixels require visual verification")
             else:
                 print("macOS window is visible; visual absence of borders is not verified by this test")
     finally:
+        stop_capture.set()
+        if capture_thread is not None:
+            capture_thread.join(timeout=10)
+        capture_screen(screen_dir / "test-end.png")
         if process is not None:
             process.terminate()
             try:
