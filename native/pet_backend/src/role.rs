@@ -564,6 +564,29 @@ impl Role {
         })
     }
 
+    /// Preserve the click's native coordinate space across the Qt IPC boundary.
+    pub fn context_menu_position(&self) -> Option<serde_json::Value> {
+        let (x, y) = self.cursor_global()?;
+        #[cfg(target_os = "macos")]
+        {
+            // AppKit and Qt share desktop points; our cursor helper multiplies
+            // all desktop coordinates by this window's backing scale.
+            let scale = self.window.scale_factor();
+            Some(serde_json::json!({"x": x as f64 / scale, "y": y as f64 / scale}))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let monitors = placement::monitors_for_scale(self.window.scale_factor());
+            let mut position =
+                serde_json::json!({"x":x, "y":y, "coordinate_space":"native_physical"});
+            if let Some(monitor) = placement::monitor_at(&monitors, (x as i32, y as i32)) {
+                position["screen_name"] = serde_json::json!(monitor.name);
+                position["screen_geometry"] = serde_json::json!(monitor.geometry);
+            }
+            Some(position)
+        }
+    }
+
     /// Remembers that the user interacted (resets idle timers).
     pub fn note_interaction(&mut self, now: f64) {
         self.behavior.note_interaction(now);

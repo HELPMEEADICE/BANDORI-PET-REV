@@ -295,7 +295,10 @@ class NativePetServices(QObject):
             if action == "pixel" and not (app_base_dir() / "pixels" / (char + ".webp")).is_file():
                 continue
             items.append({"action": action, "label": tr("PetWindow.radial_" + action), "glyph": glyph, "color": color, "enabled": True})
-        payload = {"x": int(position.get("x", 0)), "y": int(position.get("y", 0)), "locked": bool(self.cfg.get("drag_locked", False)), "items": items}
+        # The menu process converts the captured native point with its own Qt
+        # screen geometry. Keep the monitor metadata through this relay.
+        payload = dict(position)
+        payload.update(locked=bool(self.cfg.get("drag_locked", False)), items=items)
         state["pending"] = "SHOW\t" + json.dumps(payload, ensure_ascii=False)
 
     def _menu_finished(self, char, state):

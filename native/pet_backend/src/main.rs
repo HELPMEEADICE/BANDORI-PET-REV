@@ -639,8 +639,8 @@ impl ApplicationHandler for App {
             } => {
                 if let Some(cursor) = role.cursor_local() {
                     if role.hit_test(cursor, self.config.live2d_hit_alpha_threshold, now_ms) {
-                        if let Some((x, y)) = role.cursor_global() {
-                            self.emit("context_menu", json!({"x":x,"y":y}));
+                        if let Some(position) = role.context_menu_position() {
+                            self.emit("context_menu", position);
                         }
                     }
                 }

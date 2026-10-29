@@ -94,3 +94,14 @@ def test_music_silence_keeps_native_model_at_its_original_scale(services, monkey
     data = json.loads(broadcast.call_args.args[0].split("\t", 1)[1])
     assert data["command"] == "music_scale"
     assert data["scale"] == 1.0
+
+
+def test_menu_relay_preserves_the_native_click_monitor(services):
+    service, _, _ = services
+    state = {"pending": None, "commands": Mock(), "process": Mock()}
+    service._menus["kasumi"] = state
+    position = {"x": 2720, "y": 600, "coordinate_space": "native_physical",
+                "screen_name": "secondary", "screen_geometry": [1920, 0, 2560, 1440]}
+    service.show_menu("kasumi", position)
+    payload = json.loads(state["pending"].split("\t", 1)[1])
+    assert {key: payload[key] for key in position} == position

@@ -21,7 +21,7 @@ configure_native_wayland()
 BASE_DIR = str(app_base_dir())
 
 from PySide6.QtCore import QPoint, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QCursor, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from bandori_core.app_info import APP_NAME
@@ -59,6 +59,36 @@ def _item_color(item: dict) -> QColor | None:
     if len(color_values) != 3:
         return None
     return QColor(int(color_values[0]), int(color_values[1]), int(color_values[2]))
+
+
+def _menu_position(payload: dict) -> QPoint:
+    x, y = float(payload.get("x", 0)), float(payload.get("y", 0))
+    if payload.get("coordinate_space") != "native_physical":
+        # Legacy Qt callers and AppKit already supply desktop logical points.
+        return QPoint(round(x), round(y))
+    native = payload.get("screen_geometry")
+    if not isinstance(native, list) or len(native) != 4 or native[2] <= 0 or native[3] <= 0:
+        return QCursor.pos()
+    screens = QGuiApplication.screens()
+    name = str(payload.get("screen_name", "")).casefold()
+    screen = next((s for s in screens if name and s.name().casefold() == name), None)
+    if screen is None:
+        # XWayland and native Qt may give the same output different names.
+        candidates = [s for s in screens if (s.geometry().x(), s.geometry().y()) == tuple(native[:2])]
+        if len(candidates) == 1:
+            screen = candidates[0]
+        elif len(screens) == 1:
+            screen = screens[0]
+    if screen is None:
+        # An output may have been disconnected while the menu was starting.
+        return QCursor.pos()
+    geometry = screen.geometry()
+    # Transform offsets within the clicked output, preserving its Qt origin.
+    # Dividing the whole desktop point by DPR moves mixed-DPI secondary screens.
+    return QPoint(
+        geometry.x() + round((x - native[0]) * geometry.width() / native[2]),
+        geometry.y() + round((y - native[1]) * geometry.height() / native[3]),
+    )
 
 
 def _build_menu(payload: dict, actions: list[str], emit_action=_emit) -> RadialMenu:
@@ -226,7 +256,7 @@ def main():
             return
         if menu._is_showing:
             menu.dismiss()
-        menu.show_at(QPoint(int(payload.get("x", 0)), int(payload.get("y", 0))))
+        menu.show_at(_menu_position(payload))
         _emit("STATE\tOPEN")
 
     def close_menu():
