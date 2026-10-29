@@ -1,0 +1,17 @@
+[package]
+name = "pet-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pet-config.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zstd.workspace = true
+tar.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

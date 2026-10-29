@@ -58,6 +58,7 @@ echo "Building BandoriPet $VERSION for Linux $REQUESTED_ARCH"
 
 required_executables=(
     BandoriPet
+    bandori-pet-native
     pet_process
     radial_menu_process
     settings_process

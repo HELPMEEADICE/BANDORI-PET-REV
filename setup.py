@@ -64,10 +64,30 @@ from bandori_core.app_info import APP_NAME, APP_REPO_URL, APP_VERSION  # noqa: E
 
 class BuildExeWithEmptyModels(build_exe):
     def run(self):
+        manifest = BASE_DIR / "native" / "pet_backend" / "Cargo.toml"
+        rust_args = ["cargo", "build", "--release", "--locked", "--manifest-path", str(manifest)]
+        native_output = manifest.parent / "target"
+        if sys.platform == "darwin":
+            rust_arch = "aarch64" if release_arch_name() == "ARM64" else "x86_64"
+            rust_target = rust_arch + "-apple-darwin"
+            if shutil.which("rustup"):
+                subprocess.run(["rustup", "target", "add", rust_target], check=True)
+            rust_args.extend(["--target", rust_target])
+            native_output /= rust_target
+        subprocess.run(rust_args, check=True)
         super().run()
         if BYTECODE_BUILD_DIR.exists():
             shutil.rmtree(BYTECODE_BUILD_DIR)
         build_dir = Path(self.build_exe)
+        native_name = "bandori-pet-native" + (".exe" if sys.platform == "win32" else "")
+        native_binary = native_output / "release" / native_name
+        shutil.copy2(native_binary, build_dir / native_name)
+        native_licenses = build_dir / "licenses" / "neocari"
+        native_licenses.mkdir(parents=True, exist_ok=True)
+        upstream = manifest.parent / "vendor" / "neocari"
+        shutil.copy2(upstream / "LICENSE", native_licenses / "LICENSE")
+        shutil.copytree(upstream / "LICENSES", native_licenses / "LICENSES", dirs_exist_ok=True)
+        shutil.copy2(manifest.parent / "NOTICE.md", native_licenses / "NOTICE.md")
         pyside_source = Path(importlib.import_module("PySide6").__file__).resolve().parent
         pyside_icu_names = {
             path.name.casefold()
@@ -239,6 +259,9 @@ class BuildMacWithResourceLinks(bdist_mac):
 
     def run(self):
         super().run()
+        native_source = Path(self.resources_dir) / "bandori-pet-native"
+        if native_source.is_file():
+            self.execute(shutil.move, (str(native_source), str(Path(self.bin_dir) / "bandori-pet-native")), msg="placing Neocari in Contents/MacOS")
         self._link_root_resource_files()
         if self.codesign_identity:
             self._codesign(self.bundle_dir)

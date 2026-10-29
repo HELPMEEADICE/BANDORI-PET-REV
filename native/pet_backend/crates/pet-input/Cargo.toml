@@ -1,0 +1,13 @@
+[package]
+name = "pet-input"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CPU hit testing (triangle + texture alpha), region classification, name matching."
+
+[dependencies]
+pet-config.workspace = true
+pet-util.workspace = true
+neocari.workspace = true
+tracing.workspace = true

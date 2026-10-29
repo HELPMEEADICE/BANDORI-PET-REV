@@ -19,7 +19,7 @@ TARGETS = ("windows", "linux", "macos")
 ARCHES = ("x86_64", "aarch64")
 EXECUTABLES = (
     "BandoriPet", "pet_process", "radial_menu_process", "settings_process",
-    "chat_process", "plugin_worker", "bandori-ai-event", "bandori-codex-runner",
+    "chat_process", "plugin_worker", "bandori-ai-event", "bandori-codex-runner", "bandori-pet-native",
 )
 RESOURCES = (
     ".bandoripet-managed-files", "audio_reference", "band.json", "band_logo",

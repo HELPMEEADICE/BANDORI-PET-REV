@@ -1,0 +1,56 @@
+name: Neocari pet backend
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Install X11 dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libx11-dev libxrandr-dev xvfb
+      - name: Check formatting
+        run: cargo fmt --manifest-path native/pet_backend/Cargo.toml --all -- --check
+      - name: Check and lint all targets
+        run: cargo clippy --manifest-path native/pet_backend/Cargo.toml --workspace --all-targets --locked -- -D warnings
+      - name: Build standalone pet
+        run: cargo build --manifest-path native/pet_backend/Cargo.toml --locked
+      - name: Test native components
+        run: cargo test --manifest-path native/pet_backend/Cargo.toml --workspace --all-targets --locked
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install IPC test dependencies
+        run: python -m pip install pytest
+      - name: Test Python to Rust shared memory
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a python -m pytest tests/test_native_backend.py tests/test_shared_memory_ipc.py -q
+          else
+            python -m pytest tests/test_native_backend.py -q
+          fi

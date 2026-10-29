@@ -1,0 +1,17 @@
+[package]
+name = "pet-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Render orchestration: mask pass + main pass, clipping lifetime, quality scaling."
+
+[dependencies]
+pet-config.workspace = true
+neocari.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+pollster.workspace = true
+bytemuck = { version = "1", features = ["derive"] }

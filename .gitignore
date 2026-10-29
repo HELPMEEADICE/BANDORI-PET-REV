@@ -33,3 +33,6 @@ config.json.*
 *.7z
 *.rar
 *.log
+
+/native/pet_backend/target/
+/.cache/

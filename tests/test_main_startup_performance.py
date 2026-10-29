@@ -49,7 +49,7 @@ def test_pet_process_defers_mcp_network_import_until_shutdown():
     eager_imports = source.split("def _parse_args", 1)[0]
 
     assert "from bandori_tools.mcp_bridge import close_mcp_clients" not in eager_imports
-    assert "def close_mcp_clients_on_shutdown():" in source
+    assert "mcp_bridge" not in source
 
 
 def test_non_fluent_processes_skip_the_fluent_theme_graph():
@@ -57,14 +57,14 @@ def test_non_fluent_processes_skip_the_fluent_theme_graph():
     pet_source = _source("pet_process.py")
 
     assert 'apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)' in main_source
-    assert 'apply_app_theme(cfg.get("dark_theme", False), include_fluent=False)' in pet_source
+    assert "app_theme" not in pet_source
 
 
 def test_controller_passes_the_known_model_format_to_pet_processes():
     source = _source("main.py")
 
-    assert 'model_format = mgr.get_model_format(' in source
-    assert '"--model-format", model_format' in source
+    assert "native_program_and_args(" in source
+    assert '"pet_process.py"' not in source
 
 
 def test_pet_adapter_defers_luajit_and_imports_only_the_selected_format():
@@ -79,8 +79,8 @@ def test_pet_adapter_defers_luajit_and_imports_only_the_selected_format():
     assert "from bandori_live2d.live2d_lua_adapter_moc import" not in eager_imports
     assert "from bandori_live2d.live2d_lua_adapter_moc3 import" not in eager_imports
     assert "from bandori_live2d.live2d_widget_moc3 import" not in widget_eager_imports
-    assert "live2d_for_format(args.model_format)" in pet_source
-    assert "QPixmapCache.setCacheLimit(2048)" in pet_source
+    assert "live2d_for_format" not in pet_source
+    assert "QPixmapCache" not in pet_source
 
 
 def test_controller_limits_duplicated_qt_pixmap_cache():

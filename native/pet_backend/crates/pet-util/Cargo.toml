@@ -1,0 +1,12 @@
+[package]
+name = "pet-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Small shared helpers: deterministic RNG, easing, time-of-day."
+
+[dependencies]
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

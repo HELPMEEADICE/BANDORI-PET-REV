@@ -1,0 +1,17 @@
+[package]
+name = "pet-live2d"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Neocari wrapper: moc/moc3 model adapters, motion/expression assembly."
+
+[dependencies]
+pet-config.workspace = true
+pet-util.workspace = true
+neocari.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }

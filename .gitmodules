@@ -1,0 +1,3 @@
+[submodule "native/pet_backend/vendor/neocari"]
+	path = native/pet_backend/vendor/neocari
+	url = https://github.com/HELPMEEADICE/Neocari.git

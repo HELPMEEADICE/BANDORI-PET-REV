@@ -1,0 +1,9 @@
+[package]
+name = "pet-i18n"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Compiled-in UI languages and string catalogue for the pet and its settings window."
+
+[dependencies]

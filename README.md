@@ -47,21 +47,22 @@ QQ群：1033517952
 
 ### 1. 环境要求
 
-- **Python 3.10+** & **LuaJIT 2.1+**
-- Windows, macOS, Linux（Wayland 原生支持 Plasma 6、GNOME 46+、Hyprland）
-- 支持 OpenGL 3.3+ 的显卡（核显也能跑）
-- Live2D 默认启用 Qt 硬件 OpenGL/GPU 加速；如需排查驱动问题，可设置 `BANDORI_GPU_ACCELERATION=0` 临时切换到软件渲染。
+- **Python 3.10+**、**Rust stable**（构建原生后端）；设置预览仍需要 LuaJIT 2.1
+- Windows、macOS、Linux（宠物窗口使用 X11 / XWayland）
+- 支持 Vulkan / DirectX 12 / Metal 的显卡；Qt 设置预览需要 OpenGL 3.3+
+- 宠物进程已使用 Neocari + wgpu 原生渲染，通过共享内存与主程序通信。构建、协议和平台范围见 [Neocari 后端说明](docs/NEOCARI_BACKEND.md)。
 
 ### 2. 克隆仓库
 
 ```bash
-git clone https://github.com/HELPMEEADICE/BANDORI-PET-REV.git
+git clone --recurse-submodules https://github.com/HELPMEEADICE/BANDORI-PET-REV.git
 cd BANDORI-PET-REV
+cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked
 ```
 
 ### 3. 下载模型文件（必需！）
 
-> 💡 **推荐：zstd 压缩流格式模型包**（~900MB，流式加载无需解压到磁盘，性能损失极低）
+> 💡 **推荐：zstd 压缩格式模型包**（~900MB，原生后端按服装解压并缓存）
 >
 > | 下载渠道 | 链接 |
 > |----------|------|
@@ -116,12 +117,7 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-> **Wayland 用户：** Plasma/Hyprland 的 layer-shell 桥必须与系统 Qt/PySide6
-> 使用完全相同的 Qt minor，不能使用 PyPI PySide6 wheel。请改用
-> `requirements-linux-wayland.txt` 并按照
-> [原生 Wayland 运行指南](docs/WAYLAND_NATIVE.md) 安装 Qt Wayland、
-> LayerShellQt、KWin/GNOME 伴侣及构建桥接。应用在 Wayland 会话中不会回退到
-> XWayland。
+> **Wayland 用户：** 原生宠物后端目前使用 XWayland。设置和聊天仍使用 Qt。宠物窗口不再使用旧版 Qt layer-shell 桥；具体要求见 [Neocari 后端说明](docs/NEOCARI_BACKEND.md)。
 
 **第三方依赖（从源码编译时需要）：**
 

@@ -1,4 +1,5 @@
 import threading
+import json
 
 from bandori_core.process_utils import ipc_server_name
 from bandori_core.shared_memory_ipc import (
@@ -84,6 +85,13 @@ def is_control_ipc_line(line: str) -> bool:
 
 def is_reliable_ipc_line(line: str) -> bool:
     normalized = normalize_ipc_line(line)
+    if normalized.startswith("NATIVE_CONTROL\t"):
+        try:
+            command = json.loads(normalized.split("\t", 1)[1])
+        except (ValueError, IndexError):
+            command = None
+        if isinstance(command, dict) and command.get("command") == "music_scale":
+            return False
     return is_control_ipc_line(normalized) or normalized.startswith((
         "REGISTER\t",
         "UNREGISTER\t",
@@ -98,6 +106,9 @@ def is_reliable_ipc_line(line: str) -> bool:
         "POKE_USER\t",
         "CHAT_EVENT\t",
         "REMINDER_EVENT\t",
+        "NATIVE_EVENT\t",
+        "NATIVE_CONTROL\t",
+        "OUTFIT_DESCRIPTION\t",
     ))
 
 

@@ -426,7 +426,12 @@ def main():
             if queue is not None:
                 queue.close()
 
+    native_services_ref = {}
+
     def broadcast_ipc_line(line: str, exclude_peer_id: str = ""):
+        services = native_services_ref.get("services")
+        if services is not None:
+            services.handle_line(line)
         reliable = is_reliable_ipc_line(line)
         with ipc_ref["lock"]:
             queue = ipc_ref.get("control") if reliable else ipc_ref.get("outbound")
@@ -1082,7 +1087,18 @@ def main():
         if line.startswith("UNREGISTER\t"):
             unregister_ipc_peer(source_peer_id)
             return
-        if line.startswith("ACTION\t") or line.startswith("LIP\t"):
+        if line.startswith("NATIVE_EVENT\t"):
+            if is_registered_pet_peer(source_peer_id):
+                try:
+                    event = json.loads(line.split("\t", 1)[1])
+                except (ValueError, IndexError):
+                    return
+                services = native_services_ref.get("services")
+                if services is not None:
+                    services.handle_event(event)
+        elif line.startswith("EMOTION\t") or line.startswith("NATIVE_CONTROL\t"):
+            broadcast_ipc_line(line)
+        elif line.startswith("ACTION\t") or line.startswith("LIP\t"):
             broadcast_ipc_line(line)
         elif line.startswith("POKE_USER\t"):
             broadcast_ipc_line(line)
@@ -1500,14 +1516,9 @@ def main():
             path = mgr.get_model_json_path(selected_char, selected_costume)
             if path:
                 models.append({"character": selected_char, "costume": selected_costume, "path": path})
-        group_characters = []
-        seen_group_characters = set()
-        for model in models:
-            model_char = model.get("character", "")
-            if model_char and model_char not in seen_group_characters:
-                group_characters.append(model_char)
-                seen_group_characters.add(model_char)
-        group_characters_arg = json.dumps(group_characters, ensure_ascii=False)
+        services = native_services_ref.get("services")
+        if services is not None:
+            services.configure_models(models)
         old_processes = [
             process
             for process in list(pet_window_ref.get("processes", []))
@@ -1517,17 +1528,15 @@ def main():
         pet_window_ref["processes"] = []
         for idx, model in enumerate(models):
             process = QProcess(app)
-            model_format = mgr.get_model_format(
-                model["character"], model["costume"]
-            )
-            program, arguments = process_program_and_args(BASE_DIR, "pet_process.py", [
-                "--character", model["character"],
-                "--costume", model["costume"],
-                "--model-path", model["path"],
-                "--model-format", model_format,
-                "--index", str(idx),
-                "--group-characters", group_characters_arg,
-            ])
+            from bandori_core.native_pet import native_program_and_args
+            try:
+                program, arguments = native_program_and_args(
+                    BASE_DIR, model["character"], model["costume"], model["path"], index=idx,
+                )
+            except OSError as exc:
+                QMessageBox.critical(None, APP_NAME, str(exc))
+                process.deleteLater()
+                continue
             process.setProgram(program)
             process.setArguments(arguments)
             process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
@@ -1758,6 +1767,11 @@ def main():
         settings_process_ref["stdout_buffer"] = ""
         process.setWorkingDirectory(BASE_DIR)
         process.start()
+
+    from bandori_ui.native_pet_services import NativePetServices
+    native_services_ref["services"] = NativePetServices(
+        app, cfg, mgr, broadcast_ipc_line, handle_open_settings_request,
+    )
 
     model_valid = bool(
         char and costume

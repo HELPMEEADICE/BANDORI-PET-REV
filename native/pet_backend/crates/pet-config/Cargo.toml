@@ -1,0 +1,14 @@
+[package]
+name = "pet-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Configuration schema, defaults, validation, atomic write, migration, extras preservation."
+
+[dependencies]
+pet-i18n.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

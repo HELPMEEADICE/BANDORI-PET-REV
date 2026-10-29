@@ -1,0 +1,13 @@
+[package]
+name = "pet-behavior"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Idle/random/approach state machines, head tracking, mutual gaze, window motion."
+
+[dependencies]
+pet-config.workspace = true
+pet-input.workspace = true
+pet-util.workspace = true
+tracing.workspace = true

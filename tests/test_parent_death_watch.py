@@ -12,24 +12,20 @@ def test_parent_death_watch_uses_windows_process_handle():
     assert "BandoriPetParentDeathWatch" in source
 
 
-def test_pet_process_restarts_main_on_abnormal_parent_exit():
-    source = Path("pet_process.py").read_text(encoding="utf-8")
-
-    assert "install_parent_death_watch(" in source
-    assert "on_parent_death=_make_main_relauncher(args.index, normal_shutdown_requested)" in source
-    assert 'env.pop("BANDORI_PET_IPC_SERVER_NAME", None)' in source
-    assert 'process_program_and_args(BASE_DIR, "main.py", [])' in source
-    assert "if index != 0 or normal_shutdown_requested.is_set() or restarted.is_set():" in source
+def test_native_pet_watches_parent_and_restarts_main_only_for_primary_role():
+    source = Path("native/pet_backend/src/main.rs").read_text(encoding="utf-8")
+    assert "!parent_alive(self.args.parent)" in source
+    assert "self.args.index == 0" in source
+    assert 'env_remove("BANDORI_PET_IPC_SERVER_NAME")' in source
+    assert "GetExitCodeProcess" in source
 
 
-def test_pet_shutdown_ipc_disables_parent_restart():
-    process_source = Path("pet_process.py").read_text(encoding="utf-8")
-    window_source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
-
-    assert "on_shutdown_requested=normal_shutdown_requested.set" in process_source
-    assert "on_shutdown_requested=None" in window_source
-    assert "self._on_shutdown_requested = on_shutdown_requested" in window_source
-    assert "if callable(self._on_shutdown_requested):" in window_source
+def test_native_shutdown_runs_before_parent_death_relaunch():
+    source = Path("native/pet_backend/src/main.rs").read_text(encoding="utf-8")
+    shutdown = source.index("if self.shutdown")
+    parent = source.index("!parent_alive(self.args.parent)")
+    assert shutdown < parent
+    assert '"SHUTDOWN" => self.shutdown = true' in source
 
 
 def test_windows_tray_icon_gets_periodic_reshow_timer():

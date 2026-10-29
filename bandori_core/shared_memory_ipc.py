@@ -7,7 +7,7 @@ import struct
 import uuid
 from dataclasses import dataclass
 
-from PySide6.QtCore import QSharedMemory
+from bandori_core.mapped_memory import MappedMemory
 
 
 _MAGIC = b"BDIPC01!"
@@ -40,14 +40,6 @@ def _queue_slot_count_candidates(
         if count < candidates[0] and count not in candidates:
             candidates.append(count)
     return candidates
-
-
-def _reclaim_stale_segment(key: str) -> bool:
-    memory = QSharedMemory(key)
-    if not memory.attach():
-        return False
-    memory.detach()
-    return True
 
 
 @dataclass(frozen=True)
@@ -146,7 +138,7 @@ def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
 
 
 class SharedMemoryLineQueue:
-    def __init__(self, key: str, memory: QSharedMemory, *, slot_count: int, slot_size: int, cursor: int):
+    def __init__(self, key: str, memory: MappedMemory, *, slot_count: int, slot_size: int, cursor: int):
         self.key = key
         self.slot_count = int(slot_count)
         self.slot_size = int(slot_size)
@@ -177,12 +169,9 @@ class SharedMemoryLineQueue:
 
         errors = []
         for candidate_count in candidates:
-            memory = QSharedMemory(key)
+            memory = MappedMemory(key)
             size = _queue_memory_size(candidate_count, slot_size)
             created = memory.create(size)
-            if not created and memory.error() == QSharedMemory.SharedMemoryError.AlreadyExists and _reclaim_stale_segment(key):
-                memory = QSharedMemory(key)
-                created = memory.create(size)
             if created:
                 queue = cls(key, memory, slot_count=candidate_count, slot_size=slot_size, cursor=0)
                 queue._initialize()
@@ -192,12 +181,13 @@ class SharedMemoryLineQueue:
 
     @classmethod
     def attach(cls, key: str, *, start_at_tail: bool = True) -> "SharedMemoryLineQueue":
-        memory = QSharedMemory(key)
+        memory = MappedMemory(key)
         if not memory.attach():
             raise RuntimeError(f"Failed to attach shared memory '{key}': {memory.errorString()}")
         queue = cls(key, memory, slot_count=1, slot_size=64, cursor=0)
-        magic, _version, slot_count, slot_size, next_seq = queue._read_header_locked()
-        if magic != _MAGIC:
+        magic, version, slot_count, slot_size, next_seq = queue._read_header_locked()
+        if (magic != _MAGIC or version != _VERSION or slot_count < 1 or slot_size < 64
+                or _queue_memory_size(slot_count, slot_size) != len(memory.data())):
             memory.detach()
             raise RuntimeError(f"Shared memory '{key}' is not a Bandori IPC queue")
         queue.slot_count = slot_count
