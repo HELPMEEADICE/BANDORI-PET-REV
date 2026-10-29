@@ -46,7 +46,7 @@ x86_64 包必须用一个能以 x86_64 运行的 Python（通过 Rosetta 的 `ar
 
 ## 完整打包步骤（推荐用脚本，一条命令到底）
 
-[`build_dmg.sh`](build_dmg.sh) 把"建独立 venv → 装依赖（含从源码编译的 lupa）→
+[`build_dmg.sh`](build_dmg.sh) 把"建独立 venv → 装依赖（含LuaJIT 插件运行时）→
 `bdist_mac` → 架构自检 → 组 dmg"全包了，并按架构命名产物：
 
 ```bash
@@ -79,29 +79,9 @@ arch -x86_64 python setup.py bdist_mac   # x86_64（须用 x86_64/universal2 的
 
 产物在 `BUILD/` 下，形如 `BUILD/BandoriPet.app`。
 
-### 2. 自查 LuaJIT 是否打进去了（重要）
+### 2. 检查原生后端
 
-应用依赖 `lupa.luajit21`（LuaJIT 引擎），漏掉会导致 Live2D 启动崩溃：
-
-```bash
-find BUILD/*.app -ipath '*luajit21*'   # 必须有输出
-find BUILD/*.app -ipath '*lua5*so'     # 应为空（已在 setup.py 排除多余引擎）
-```
-
-第一条没输出就别往下走，检查 `setup.py` 里 `packages` 是否含 `"lupa"`。
-
-接着验证**代码签名是否完整**（关键，否则经 dmg 分发后双击会静默无反应）：
-
-```bash
-codesign --verify --deep --strict --verbose=2 BUILD/dist/BandoriPet.app
-# 必须看到 "valid on disk" 且 "satisfies its Designated Requirement"
-```
-
-> 背景：cx_Freeze 会在加资源符号链接**之前**就签名，破坏封印。`setup.py` 的
-> `BuildMacWithResourceLinks._adhoc_resign()` 已在所有文件就位后补一次 ad-hoc
-> 重签来修复。若这条验证报 "code has no resources but signature indicates they
-> must be present"，说明重签没生效，别出包 —— 手动补一刀：
-> `codesign --force --deep --sign - BUILD/dist/BandoriPet.app`
+确认应用内存在可执行文件 `Contents/MacOS/bandori-pet-native`，并运行 `codesign --verify --deep --strict` 验证签名。
 
 ### 3. 组装并生成 dmg（含辅助文件）
 

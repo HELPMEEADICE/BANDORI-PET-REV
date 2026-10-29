@@ -1,6 +1,6 @@
 # Neocari 宠物后端
 
-主程序直接启动 `bandori-pet-native`，每个角色一个 Rust 进程。该进程使用 Neocari 加载 `.moc` / `.moc3`，通过 wgpu 和 winit 绘制透明窗口；像素角色也使用同一套原生 GPU 渲染与透明度命中检测。宠物进程不加载 Python、Qt、OpenGL Widgets、LuaJIT 或 Cubism Core。设置页的 Live2D 预览仍使用现有 Qt 实现。
+主程序直接启动 `bandori-pet-native`，每个角色一个 Rust 进程。该进程使用 Neocari 加载 `.moc` / `.moc3`，通过 wgpu 和 winit 绘制透明窗口；像素角色也使用同一套原生 GPU 渲染与透明度命中检测。宠物进程不加载 Python、Qt、OpenGL Widgets、LuaJIT 或 Cubism Core。设置预览由 Neocari 离屏生成 PNG，Qt 仅显示图像。
 
 ## 构建和运行
 
@@ -22,11 +22,10 @@ Windows 使用 Vulkan / DirectX 12，macOS 使用 Metal。Linux 宠物窗口使�
 
 - Rust：模型及纹理、动作/表情/物理/眨眼/呼吸、TTS 口型、头部追踪与角色对视、区域点击、拖动、联动拖动、DPI/缩放/裁腿、音乐形变、透明区域穿透、置顶和 OBS 窗口样式。
 - Python 主进程：托盘、设置、聊天、径向菜单、紧凑对话框、插件服务、输出音量采样、服装识别任务及配置持久化。这些界面不会进入宠物进程。
-- 设置进程：继续持有 Qt 模型预览。
+- 设置进程：异步调用 Neocari 离屏预览命令，由 Qt 显示 PNG；不加载旧渲染运行时。
 
 Rust 只读启动配置，并接收 `SETTINGS` 增量更新；位置变化回报主程序，由主程序加载最新配置并只修改对应角色的几何字段。避免多个语言的进程同时覆写 `config.json`。保留已有模型路径、服装动作方案以及 `.zst::member` 路径，归档按服装解压到 `.cache/neocari/`。
 
-`bandori_ui/pet_window.py` 保留用于旧实现的行为回归测试与迁移参考；主程序和兼容启动器均不再导入它，也没有 Qt 宠物回退路径。
 
 ## 共享内存协议
 
@@ -80,3 +79,5 @@ cargo run --release --manifest-path native/pet_backend/Cargo.toml --example rend
 ## 来源与许可
 
 原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。
+
+Lua 插件仍使用 `lupa.luajit21`；安装包保留该插件运行时。旧 Live2D Lua 适配器、命中区域脚本、字节码编译和渲染源码打包已移除。

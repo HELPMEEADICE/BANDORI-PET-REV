@@ -37,7 +37,7 @@ python bandori_codex_runner.py -- "帮我总结这个项目的结构"
 指定工作目录：
 
 ```powershell
-python bandori_codex_runner.py --workdir . -- "解释 bandori_ui/pet_window.py 的事件流"
+python bandori_codex_runner.py --workdir . -- "解释 bandori_ui/native_pet_services.py 的事件流"
 ```
 
 给 Codex 传参数时，把参数放在 wrapper 的 `--` 后面：
@@ -75,7 +75,7 @@ http://127.0.0.1:38472/ai-events
   "source": "codex",
   "state": "thinking",
   "title": "正在分析项目",
-  "text": "读取 bandori_ui/pet_window.py...",
+  "text": "读取 bandori_ui/native_pet_services.py...",
   "progress": 0.35,
   "action": "thinking",
   "ttl_ms": 4500

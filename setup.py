@@ -9,7 +9,6 @@ import uuid
 from pathlib import Path
 
 import bandori_ui.fluent_bootstrap as fluent_bootstrap
-from bandori_live2d.live2d_lua_source_patch import patch_live2d_lua_module
 from setuptools import Command
 
 fluent_bootstrap.prefer_local_pyside6_fluent_widgets()
@@ -19,11 +18,9 @@ from cx_Freeze.command.bdist_mac import bdist_mac
 from cx_Freeze.command.bdist_msi import bdist_msi
 from cx_Freeze.command.build_exe import build_exe
 
-from bandori_live2d.live2d_lua_moc3_source_patch import patch_live2d_lua_moc3_module
 
 
 BASE_DIR = Path(__file__).resolve().parent
-BYTECODE_BUILD_DIR = BASE_DIR / "BUILD" / ".luajit-bytecode"
 # Windows Installer database strings are not reliably installable when authored
 # as UTF-8 (65001). The bundled resources contain Chinese filenames, so use the
 # Simplified Chinese ANSI code page by default and allow CI to override it.
@@ -64,6 +61,16 @@ from bandori_core.app_info import APP_NAME, APP_REPO_URL, APP_VERSION  # noqa: E
 
 class BuildExeWithEmptyModels(build_exe):
     def run(self):
+        # Incremental builds must not retain the retired renderer's resources.
+        output = Path(self.build_exe).resolve()
+        for relative in ("third_party/Live2D-v2-Lua", "custom_hit_area_state.ljbc", "live2d_platform_manager_override.ljbc"):
+            obsolete = (output / relative).resolve()
+            if not obsolete.is_relative_to(output):
+                raise RuntimeError("Retired renderer cleanup escaped the build directory")
+            if obsolete.is_dir():
+                shutil.rmtree(obsolete)
+            elif obsolete.exists():
+                obsolete.unlink()
         manifest = BASE_DIR / "native" / "pet_backend" / "Cargo.toml"
         rust_args = ["cargo", "build", "--release", "--locked", "--manifest-path", str(manifest)]
         native_output = manifest.parent / "target"
@@ -76,8 +83,6 @@ class BuildExeWithEmptyModels(build_exe):
             native_output /= rust_target
         subprocess.run(rust_args, check=True)
         super().run()
-        if BYTECODE_BUILD_DIR.exists():
-            shutil.rmtree(BYTECODE_BUILD_DIR)
         build_dir = Path(self.build_exe)
         native_name = "bandori-pet-native" + (".exe" if sys.platform == "win32" else "")
         native_binary = native_output / "release" / native_name
@@ -290,8 +295,6 @@ class BuildMacWithResourceLinks(bdist_mac):
             "logo.ico",
             "band.json",
             "outfit.json",
-            "custom_hit_area_state.ljbc",
-            "live2d_platform_manager_override.ljbc",
         ):
             source = Path(self.resources_dir) / filename
             origin = Path(self.bin_dir) / filename
@@ -434,83 +437,6 @@ def include_package_dir(package_name: str, dest_path: str | None = None) -> tupl
     return str(package_dir), dest_path or f"lib/{package_name}"
 
 
-def _luajit_executable() -> str:
-    luajit = shutil.which("luajit")
-    if luajit:
-        return luajit
-    raise RuntimeError("luajit executable was not found in PATH")
-
-
-def _compiled_lua_include(path: str, dest_path: str | None = None) -> tuple[str, str] | None:
-    src = BASE_DIR / path
-    if not src.exists():
-        return None
-
-    relative = Path(dest_path or path)
-    compiled_dest = relative.with_suffix(".ljbc")
-    compiled_src = BYTECODE_BUILD_DIR / compiled_dest
-    compiled_src.parent.mkdir(parents=True, exist_ok=True)
-
-    compile_src = src
-    live2d_root = BASE_DIR / "third_party" / "Live2D-v2-Lua"
-    if src.is_relative_to(live2d_root):
-        module_path = src.relative_to(live2d_root).with_suffix("")
-        module_parts = list(module_path.parts)
-        if module_parts and module_parts[-1] == "init":
-            module_parts.pop()
-        module_name = ".".join(module_parts)
-        source = src.read_bytes()
-        patched = patch_live2d_lua_module(module_name, source)
-        patched = patch_live2d_lua_moc3_module(module_name, patched)
-        if patched != source:
-            compile_src = BYTECODE_BUILD_DIR / ".patched-source" / src.relative_to(BASE_DIR)
-            compile_src.parent.mkdir(parents=True, exist_ok=True)
-            if not compile_src.exists() or compile_src.read_bytes() != patched:
-                compile_src.write_bytes(patched)
-
-    if (
-        not compiled_src.exists()
-        or src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns
-        or compile_src.stat().st_mtime_ns > compiled_src.stat().st_mtime_ns
-    ):
-        subprocess.run(
-            [_luajit_executable(), "-b", str(compile_src), str(compiled_src)],
-            check=True,
-            cwd=BASE_DIR,
-        )
-
-    return str(compiled_src), compiled_dest.as_posix()
-
-
-def _live2d_lua_include_files() -> list[tuple[str, str]]:
-    root = BASE_DIR / "third_party" / "Live2D-v2-Lua"
-    if not root.is_dir():
-        return []
-    exclude_dirs = {".git", "examples", "resources", "test-data"}
-    exclude_files = {
-        "render_frames.lua",
-        "simple.lua",
-        "main.lua",
-    }
-    result = []
-    for entry in sorted(root.rglob("*")):
-        if any(p.name in exclude_dirs for p in entry.parents):
-            continue
-        if not entry.is_file():
-            continue
-        rel = entry.relative_to(root)
-        if rel.name in exclude_files and rel.parent == Path("."):
-            continue
-        dest = "third_party/Live2D-v2-Lua/" + rel.as_posix()
-        if entry.suffix == ".lua":
-            compiled = _compiled_lua_include(str(entry.relative_to(BASE_DIR)), dest)
-            if compiled is not None:
-                result.append(compiled)
-            continue
-        result.append((str(entry), dest))
-    return result
-
-
 def release_platform_name() -> str:
     if sys.platform == "win32":
         return "WIN"
@@ -558,44 +484,21 @@ def _mac_iconfile() -> str | None:
     return str(iconfile) if iconfile.exists() else None
 
 
-def lupa_luajit_runtime_module() -> str:
-    name = "lupa.luajit21"
-    spec = importlib.util.find_spec(name)
-    if spec is None:
-        raise RuntimeError("lupa.luajit21 is required but is not installed.")
-    try:
-        module = __import__(name, fromlist=["LuaRuntime"])
-        lua = module.LuaRuntime()
-        lua.execute('assert(require("ffi"))')
-    except Exception as exc:
-        raise RuntimeError(
-            "lupa.luajit21 must be available and built with LuaJIT FFI. "
-            "On macOS, reinstall it with: "
-            "LUPA_NO_BUNDLE=true pip install --no-binary lupa --force-reinstall lupa. "
-            f"Error: {exc}"
-        ) from exc
-    return name
-
-
 include_files = [
     include_if_exists("logo.ico"),
     include_if_exists("band.json"),
     include_if_exists("outfit.json"),
-    _compiled_lua_include("custom_hit_area_state.lua"),
-    _compiled_lua_include("live2d_platform_manager_override.lua"),
     *(include_if_exists(dirname) for dirname in INNO_RESOURCE_DIRS),
     include_package_subdir("_sounddevice_data", "portaudio-binaries"),
     include_package_dir("_soundfile_data"),
 ]
 
-include_files.extend(_live2d_lua_include_files())
 include_files = [item for item in include_files if item is not None]
-lupa_runtime = lupa_luajit_runtime_module()
 
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["bandori_audio.tts_manager", lupa_runtime, *PYOPENGL_PLATFORM_MODULES],
+    "includes": ["bandori_audio.tts_manager", "lupa.luajit21"],
     "packages": [
         "OpenGL",
         "PIL",

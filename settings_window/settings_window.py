@@ -564,7 +564,7 @@ class SettingsWindow(
         if self._live2d:
             return self._live2d
         try:
-            from bandori_live2d.live2d_lua_adapter import live2d
+            from bandori_core.native_pet import preview_module as live2d
 
             self._live2d = live2d
             self._owns_live2d = True

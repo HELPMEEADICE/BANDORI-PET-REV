@@ -5,14 +5,6 @@ def _source(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def test_main_startup_does_not_import_renderer_or_optional_services_eagerly():
-    source = _source("main.py")
-    eager_imports = source.split("class AiEventBridge", 1)[0]
-
-    assert "from bandori_live2d.live2d_widget import Live2DWidget" not in eager_imports
-    assert "from bandori_core.alarm_manager import ReminderScheduler" not in eager_imports
-    assert "from bandori_core.database_manager import DatabaseManager" not in eager_imports
-    assert "from bandori_services.napcat_adapter import NapcatClient" not in eager_imports
 
 
 def test_config_loading_does_not_import_vision_or_outfit_workers():
@@ -23,13 +15,6 @@ def test_config_loading_does_not_import_vision_or_outfit_workers():
     assert "from bandori_models.outfit_description import" not in eager_imports
 
 
-def test_pet_window_defers_outfit_worker_until_recognition_runs():
-    source = _source("bandori_ui/pet_window.py")
-    eager_imports = source.split("_OUTFIT_DESCRIPTION_AUTH_FAILURE_MARKERS", 1)[0]
-
-    assert "OutfitDescriptionWorker" not in eager_imports
-    assert "image_to_data_url" not in eager_imports
-    assert "from bandori_services.network_worker import" not in eager_imports
 
 
 def test_visible_process_starts_before_background_services():
@@ -67,20 +52,6 @@ def test_controller_passes_the_known_model_format_to_pet_processes():
     assert '"pet_process.py"' not in source
 
 
-def test_pet_adapter_defers_luajit_and_imports_only_the_selected_format():
-    adapter_source = _source("bandori_live2d/live2d_lua_adapter.py")
-    eager_imports = adapter_source.split("def _model_manifest_format", 1)[0]
-    widget_eager_imports = _source("bandori_live2d/live2d_widget.py").split(
-        "def render_pipeline_for_model", 1
-    )[0]
-    pet_source = _source("pet_process.py")
-
-    assert "from bandori_live2d.live2d_lua_adapter_base import" not in eager_imports
-    assert "from bandori_live2d.live2d_lua_adapter_moc import" not in eager_imports
-    assert "from bandori_live2d.live2d_lua_adapter_moc3 import" not in eager_imports
-    assert "from bandori_live2d.live2d_widget_moc3 import" not in widget_eager_imports
-    assert "live2d_for_format" not in pet_source
-    assert "QPixmapCache" not in pet_source
 
 
 def test_controller_limits_duplicated_qt_pixmap_cache():

@@ -662,7 +662,7 @@
   "SettingsWindow.about_links": "プロジェクト GitHub：<a href=\"{repo}\">{repo}</a><br>ライセンス：<a href=\"{license}\">GPLv3 / LICENSE</a>",
   "SettingsWindow.about_open_repo": "GitHub を開く",
   "SettingsWindow.about_open_license": "ライセンスを表示",
-  "SettingsWindow.about_tech": "技術スタック：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Live2D-v2-Lua、PyOpenGL。",
+  "SettingsWindow.about_tech": "技術スタック：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Neocari、wgpu。",
   "SettingsWindow.about_qq_group": "QQグループ: {qq_group}",
   "SettingsWindow.about_open_qq_group": "QQグループに参加",
   "SettingsWindow.about_version": "現在のバージョン：{version}",

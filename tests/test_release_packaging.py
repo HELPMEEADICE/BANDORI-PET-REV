@@ -81,6 +81,16 @@ def test_packaging_rejects_wrong_architecture_and_bundled_models(tmp_path):
         release.validate_build(build, "windows", "aarch64")
 
 
+def test_packaging_rejects_retired_renderer_but_keeps_plugin_runtime(tmp_path):
+    build = frozen_windows_tree(tmp_path)
+    (build / "lib" / "lupa").mkdir()
+    (build / "lib" / "lupa" / "luajit21.pyd").write_bytes(b"plugin runtime")
+    release.validate_build(build, "windows", "x86_64")
+    (build / "custom_hit_area_state.ljbc").write_bytes(b"obsolete renderer")
+    with pytest.raises(ValueError, match="Retired renderer"):
+        release.validate_build(build, "windows", "x86_64")
+
+
 def test_checksums_cover_installer_bytes_and_require_every_format(tmp_path):
     names = ["application.zip", "application.msi", "application-setup.exe"]
     for name in names:

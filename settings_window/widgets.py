@@ -2,32 +2,9 @@ import sys
 import weakref
 import warnings
 
-from PySide6.QtGui import QAction, QOpenGLContext
-from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtGui import QAction
 
 from settings_window.constants import *
-
-
-class _LazyPreviewGL:
-    """Load PyOpenGL only when the user opens a Live2D preview."""
-
-    _instance = None
-
-    def __getattr__(self, name):
-        if self._instance is None:
-            from bandori_platform.qt_gl import gl as preview_gl
-
-            self._instance = preview_gl
-        return getattr(self._instance, name)
-
-
-gl = _LazyPreviewGL()
-
-
-def _render_pipeline_for_model(model):
-    from bandori_live2d.live2d_widget import render_pipeline_for_model
-
-    return render_pipeline_for_model(model)
 
 
 def connect_theme_changed_weak(widget, method_name: str):
@@ -64,227 +41,107 @@ def connect_theme_changed_weak(widget, method_name: str):
     return connection
 
 
-def configure_live2d_preview_surface_format():
-    from bandori_live2d.live2d_surface_format import configure_live2d_surface_format
-
-    configure_live2d_surface_format()
-
-
-class Live2DPreviewRenderWidget(QOpenGLWidget):
+class Live2DPreviewRenderWidget(QLabel):
+    """Display an asynchronously rendered Neocari frame without a GL context."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._live2d = None
-        self._model = None
+        import tempfile
+        from PySide6.QtCore import QProcess
+        self._directory = tempfile.TemporaryDirectory(prefix="bandori-preview-")
+        self._process = QProcess(self)
+        self._process.finished.connect(self._finished)
+        self._process.errorOccurred.connect(self._failed)
         self._model_path = ""
-        self._pending_model = ""
-        self._quality_profile = "balanced"
-        self._clear_color = (1.0, 1.0, 1.0, 1.0)
-        self._initialized_gl = False
-        self._static_render_done = False
-        self._render_w = 1
-        self._render_h = 1
-        self._render_pipeline = _render_pipeline_for_model(None)
-        self._renderer_target_size = None
-        self._ssaa_fbo = None
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        self.setAutoFillBackground(False)
+        self._pixmap = None
+        self._serial = 0
+        self._active_serial = 0
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(80, 100)
+        process, directory = self._process, self._directory
+        def cleanup(*_):
+            if process.state() != QProcess.ProcessState.NotRunning:
+                process.kill()
+                process.waitForFinished(1000)
+            directory.cleanup()
+        self.destroyed.connect(cleanup)
+        self._timeout = QTimer(self)
+        self._timeout.setSingleShot(True)
+        self._timeout.setInterval(20000)
+        self._timeout.timeout.connect(self._process.kill)
 
     def set_live2d_module(self, module):
-        self._live2d = module
+        pass
 
-    def set_render_quality(self, profile: str):
-        from bandori_live2d.live2d_quality import normalize_live2d_quality
-        from bandori_platform.platform_patch import set_live2d_texture_quality
+    def set_render_quality(self, profile):
+        pass
 
-        profile = normalize_live2d_quality(profile)
-        if profile == self._quality_profile:
+    def set_static_render(self, enabled):
+        pass
+
+    def set_clear_color(self, r, g, b, a):
+        self.setStyleSheet(f"background-color: rgb({int(r*255)}, {int(g*255)}, {int(b*255)});")
+
+    def set_model_path(self, path):
+        from PySide6.QtCore import QProcess
+        self._serial += 1
+        self._model_path = path
+        self._pixmap = None
+        self.clear()
+        if self._process.state() != QProcess.ProcessState.NotRunning:
+            self._process.kill()
+            return  # finished() starts the latest pending request.
+        self._start()
+
+    def _start(self):
+        from pathlib import Path
+        from bandori_core.native_pet import native_executable
+        from bandori_core.process_utils import app_base_dir, app_data_dir
+        if not self._model_path:
             return
-        self._quality_profile = profile
-        set_live2d_texture_quality(profile)
-        if self._model and self._live2d:
-            self.makeCurrent()
-            try:
-                self._model.ApplyTextureQuality(profile)
-                if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
-                    self._ssaa_fbo.dispose()
-                self._sync_renderer_target_size(force=True)
-            finally:
-                self.doneCurrent()
-            self._static_render_done = False
-            self.update()
+        self._active_serial = self._serial
+        self._output = str(Path(self._directory.name) / f"frame-{self._serial}.png")
+        try:
+            program = str(native_executable(app_base_dir()))
+        except OSError as exc:
+            self.setText(str(exc))
+            return
+        self._process.setProgram(program)
+        self._process.setArguments(["--render-preview", self._model_path, "--output", self._output, "--root", str(app_data_dir())])
+        self._process.start()
+        self._timeout.start()
 
-    def set_static_render(self, enabled: bool):
-        self._static_render_done = False
-        self.update()
+    def _finished(self, code, status):
+        self._timeout.stop()
+        if self._active_serial != self._serial:
+            self._start()
+            return
+        if code == 0:
+            self._pixmap = QPixmap(self._output)
+            self._rescale()
+        else:
+            self._failed()
 
-    def set_clear_color(self, r: float, g: float, b: float, a: float):
-        self._clear_color = (r, g, b, a)
-        self._static_render_done = False
-        self.update()
+    def _failed(self, *_):
+        self._timeout.stop()
+        self.setText(_tr("SettingsWindow.preview_failed_title"))
+        self.setToolTip(bytes(self._process.readAllStandardError()).decode("utf-8", errors="replace"))
 
-    def set_model_path(self, model_json_path: str):
-        self._pending_model = model_json_path
-        self._static_render_done = False
-        if self._initialized_gl:
-            self._load_model(model_json_path)
-            self.update()
+    def _rescale(self):
+        if self._pixmap is not None:
+            self.setPixmap(self._pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale()
 
     def render_once(self):
-        self._static_render_done = False
-        self.update()
+        self._rescale()
 
-    def _load_model(self, model_json_path: str):
-        from bandori_platform.platform_patch import set_live2d_texture_quality
-        from bandori_models.zst_model_archive import clear_virtual_byte_cache, is_virtual_path, prefetch_virtual_model_resources
-
-        if not model_json_path or not self._live2d:
-            return
-        already_current = QOpenGLContext.currentContext() == self.context()
-        if not already_current:
-            self.makeCurrent()
-        try:
-            virtual = is_virtual_path(model_json_path)
-            if virtual:
-                clear_virtual_byte_cache()
-                prefetch_virtual_model_resources(model_json_path)
-            set_live2d_texture_quality(self._quality_profile)
-            self._dispose_model()
-            model = self._live2d.LAppModel()
-            try:
-                model.LoadModelJson(model_json_path)
-            finally:
-                if virtual:
-                    clear_virtual_byte_cache()
-            self._model = model
-            self._render_pipeline = _render_pipeline_for_model(model)
-            self._render_pipeline.prepare_model(model)
-            if self._render_ssaa_scale() <= 1 and self._ssaa_fbo is not None:
-                self._ssaa_fbo.dispose()
-            self._model_path = model_json_path
-            self._sync_render_size(force=True)
-        except Exception as e:
-            print(f"Failed to load Live2D preview model: {e}", file=sys.stderr)
-            self._dispose_model()
-            self._model_path = ""
-        finally:
-            if not already_current:
-                self.doneCurrent()
-
-    def initializeGL(self):
-        from bandori_platform.gpu_acceleration import log_opengl_renderer_once
-
-        if self._live2d:
-            self._live2d.glInit()
-        gl.glDisable(gl.GL_DEPTH_TEST)
-        gl.glDisable(gl.GL_DITHER)
-        log_opengl_renderer_once(gl, prefix="[GPU Preview]")
-        self._initialized_gl = True
-        if self._pending_model:
-            self._load_model(self._pending_model)
-        self.update()
-
-    def resizeGL(self, w: int, h: int):
-        self._sync_render_size(w, h, force=True)
-
-    def _physical_render_size(self, w: int | None = None, h: int | None = None) -> tuple[int, int]:
-        if w is None:
-            w = self.width()
-        if h is None:
-            h = self.height()
-        scale = max(1.0, float(self.devicePixelRatioF()))
-        return max(1, int(w * scale)), max(1, int(h * scale))
-
-    def _sync_render_size(self, w: int | None = None, h: int | None = None, *, force: bool = False):
-        render_w, render_h = self._physical_render_size(w, h)
-        changed = force or render_w != self._render_w or render_h != self._render_h
-        self._render_w, self._render_h = render_w, render_h
-        if self._model and changed:
-            self._model.Resize(render_w, render_h)
-            self._sync_renderer_target_size(force=True)
-            self._static_render_done = False
-        gl.glViewport(0, 0, render_w, render_h)
-
-    def _render_ssaa_scale(self) -> int:
-        if not self._model:
-            return 1
-        return self._render_pipeline.ssaa_scale(self._quality_profile)
-
-    def _sync_renderer_target_size(self, *, force: bool = False):
-        model = self._model
-        if not model or getattr(model, "renderer_format", "") != "moc3":
-            self._renderer_target_size = None
-            return
-        scale = self._render_ssaa_scale()
-        target_size = (self._render_w * scale, self._render_h * scale)
-        if force or target_size != self._renderer_target_size:
-            model.ResizeRenderer(*target_size)
-            self._renderer_target_size = target_size
-
-    def _dispose_model(self):
-        model = self._model
-        self._model = None
-        self._render_pipeline = _render_pipeline_for_model(None)
-        self._renderer_target_size = None
-        if self._ssaa_fbo is not None:
-            self._ssaa_fbo.dispose()
-            self._ssaa_fbo = None
-        if model is not None:
-            dispose = getattr(model, "_dispose_renderer", None)
-            if callable(dispose):
-                try:
-                    dispose()
-                except Exception:
-                    pass
-
-    def closeEvent(self, event):
-        if self._initialized_gl:
-            self.makeCurrent()
-            try:
-                self._dispose_model()
-                if self._ssaa_fbo is not None:
-                    self._ssaa_fbo.dispose()
-            finally:
-                self.doneCurrent()
-        super().closeEvent(event)
-
-    def paintGL(self):
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.defaultFramebufferObject())
-        gl.glEnable(gl.GL_BLEND)
-        gl.glBlendEquationSeparate(gl.GL_FUNC_ADD, gl.GL_FUNC_ADD)
-        gl.glClearColor(*self._clear_color)
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        if not self._model:
-            return
-        self._sync_render_size()
-        if self._static_render_done:
-            return
-        ssaa_scale = self._render_ssaa_scale()
-        if ssaa_scale > 1 and self._ssaa_fbo is None:
-            self._ssaa_fbo = self._render_pipeline.create_framebuffer()
-        using_ssaa = (
-            ssaa_scale > 1
-            and self._ssaa_fbo is not None
-            and self._ssaa_fbo.bind(self._render_w * ssaa_scale, self._render_h * ssaa_scale)
-        )
-        if using_ssaa:
-            gl.glViewport(0, 0, self._render_w * ssaa_scale, self._render_h * ssaa_scale)
-            gl.glClearColor(*self._clear_color)
-            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
-        try:
-            self._model.Draw()
-        finally:
-            if using_ssaa:
-                self._ssaa_fbo.release()
-        if using_ssaa:
-            if not self._ssaa_fbo.blit_to_default(self.defaultFramebufferObject(), self._render_w, self._render_h, self._clear_color):
-                self._ssaa_fbo.draw_direct_to_default(
-                    self._model,
-                    self.defaultFramebufferObject(),
-                    self._render_w,
-                    self._render_h,
-                    self._clear_color,
-                )
-        self._static_render_done = True
+    def dispose(self):
+        self._timeout.stop()
+        self._model_path = ""
+        self._serial += 1
+        self._process.kill()
 
 
 class FluentContextLineEdit(QLineEdit):
@@ -1168,7 +1025,6 @@ class Live2DPreviewBubble(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(26, 10, 10, 10)
-        configure_live2d_preview_surface_format()
         self._live2d_widget = Live2DPreviewRenderWidget(self)
         self._live2d_widget.set_live2d_module(live2d_module)
         self._live2d_widget.set_render_quality(quality_profile)

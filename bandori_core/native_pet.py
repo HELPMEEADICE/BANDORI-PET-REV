@@ -48,3 +48,10 @@ def native_program_and_args(base_dir, character, costume, model_path, *, config_
     ):
         args.extend([flag, str(queue_file_path(key))])
     return str(native_executable(base_dir)), args
+
+
+class _PreviewModule:
+    def dispose(self):
+        pass
+
+preview_module = _PreviewModule()

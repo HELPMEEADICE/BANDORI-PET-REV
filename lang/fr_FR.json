@@ -662,7 +662,7 @@
   "SettingsWindow.about_links": "Projet GitHub : <a href=\"{repo}\">{repo}</a><br>Licence : <a href=\"{license}\">GPLv3 / LICENSE</a>",
   "SettingsWindow.about_open_repo": "Ouvrir GitHub",
   "SettingsWindow.about_open_license": "Afficher la licence",
-  "SettingsWindow.about_tech": "Pile technologique : PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Live2D-v2-Lua et PyOpenGL.",
+  "SettingsWindow.about_tech": "Pile technologique : PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Neocari et wgpu.",
   "SettingsWindow.about_qq_group": "Groupe QQ : {qq_group}",
   "SettingsWindow.about_open_qq_group": "Rejoignez le groupe QQ",
   "SettingsWindow.about_version": "Version actuelle : {version}",

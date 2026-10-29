@@ -662,7 +662,7 @@
   "SettingsWindow.about_links": "프로젝트 GitHub: <a href=\"{repo}\">{repo}</a><br>라이선스: <a href=\"{license}\">GPLv3 / LICENSE</a>",
   "SettingsWindow.about_open_repo": "GitHub 열기",
   "SettingsWindow.about_open_license": "라이선스 보기",
-  "SettingsWindow.about_tech": "기술 스택: PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Live2D-v2-Lua 및 PyOpenGL.",
+  "SettingsWindow.about_tech": "기술 스택: PySide6, PyQt-Fluent-Widgets, Live2D Cubism, Neocari 및 wgpu.",
   "SettingsWindow.about_qq_group": "QQ 그룹: {qq_group}",
   "SettingsWindow.about_open_qq_group": "QQ 그룹 참여",
   "SettingsWindow.about_version": "버전",

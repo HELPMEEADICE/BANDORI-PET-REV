@@ -62,15 +62,13 @@ if ! xcrun --find clang >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "▶ Applying the Live2D in-memory image loader patch"
-"$PYTHON" installer/macos/patch_live2d_image_loader.py
 
 echo "▶ Installing Python dependencies into the active venv"
 "$PYTHON" -m pip install --upgrade pip wheel setuptools Cython
 "$PYTHON" -m pip install -r requirements.txt
 
 # PyPI macOS wheels do not provide the lupa.luajit21 module required by the
-# Live2D runtime. Build lupa again from source after enabling bundled LuaJIT
+# managed plugin runtime. Build lupa again from source after enabling bundled LuaJIT
 # 2.1 and excluding LuaJIT 2.0 on Apple Silicon.
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bandoripet-lupa.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -142,5 +140,8 @@ print("  OK:", lua.eval("jit.version"))
 PY
 
 echo
+git submodule update --init --recursive
+cargo build --release --manifest-path native/pet_backend/Cargo.toml --locked
+
 echo "Source dependencies are ready. Start BandoriPet with:"
 echo "  $PYTHON main.py"

@@ -67,15 +67,12 @@ else
     exit 1; }
 fi
 
-VERSION="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;sys.path.insert(0,".");import app_info;print(app_info.APP_VERSION)')"
+VERSION="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;sys.path.insert(0,".");from bandori_core.app_info import APP_VERSION;print(APP_VERSION)')"
 PYVER="$("${ARCHRUN[@]}" "$PYTHON" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
 echo "▶ 架构=$ARCH  Python=$PYTHON (3.x=$PYVER)  版本=$VERSION"
 
-echo "▶ 复核 Live2D Lua 图片字节流加载补丁"
-"${ARCHRUN[@]}" "$PYTHON" installer/macos/patch_live2d_image_loader.py
-
 # ---------------------------------------------------------------------------
-# 2. 为该架构建独立 venv，安装依赖（含从源码编译、带 LuaJIT FFI 的 lupa）
+# 2. 为该架构建独立 venv，安装依赖（含 LuaJIT 插件运行时）
 # ---------------------------------------------------------------------------
 VENV="$ROOT/BUILD/venv-$ARCH"
 echo "▶ 重建虚拟环境 $VENV"
@@ -182,9 +179,7 @@ if [ "$bad" -ne 0 ]; then
   echo "有 $bad 个二进制不是纯 $ARCH 架构，停止打包。" >&2
   exit 1
 fi
-# LuaJIT 自查（漏了会导致 Live2D 启动崩溃）
-find "$APP" -ipath '*luajit21*' | grep -q . || {
-  echo "包内找不到 lupa.luajit21，停止打包。" >&2; exit 1; }
+test -x "$APP/Contents/MacOS/bandori-pet-native"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 # ---------------------------------------------------------------------------

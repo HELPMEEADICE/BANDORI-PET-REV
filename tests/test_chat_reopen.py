@@ -8,7 +8,6 @@ from PySide6.QtCore import QProcess, QRect
 
 from chat_process import focus_chat_window
 from chat_window.chat_window import ChatWindow
-from bandori_ui.pet_window import PetWindow
 
 
 class _RunningProcess:
@@ -16,17 +15,6 @@ class _RunningProcess:
         return QProcess.ProcessState.Running
 
 
-class _PetChatHarness:
-    _open_chat = PetWindow._open_chat
-
-    def __init__(self):
-        self._chat_process = _RunningProcess()
-        self._current_char = "rana"
-        self.ipc_lines = []
-
-    def _send_ipc(self, line: str) -> bool:
-        self.ipc_lines.append(line)
-        return True
 
 
 class _WindowAnim:
@@ -141,12 +129,6 @@ class _EmptyPrivateList:
 
 
 class ChatReopenTest(unittest.TestCase):
-    def test_pet_reopening_running_chat_sends_focus_request(self):
-        harness = _PetChatHarness()
-
-        harness._open_chat()
-
-        self.assertEqual(["FOCUS_CHAT\trana"], harness.ipc_lines)
 
     def test_focus_restores_chat_window_deferred_close_state(self):
         harness = _ChatWindowHarness()

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from bandori_llm.llm_manager import LLMStreamWorker, NonStreamWorker, ResponsesStreamWorker
 from bandori_audio.asr_manager import ASRRequestWorker
 from bandori_audio.tts_manager import TTSRequestWorker, TTSTranslationWorker
-from bandori_ui.pet_window import PetWindow
 from bandori_services.network_worker import CancelableNetworkWorker
 
 
@@ -114,25 +113,6 @@ class WorkerCancellationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["first"])
 
-    def test_compact_window_is_not_deleted_before_close_is_accepted(self):
-        class _Window:
-            def __init__(self):
-                self.close_calls = 0
-
-            def close(self):
-                self.close_calls += 1
-                return False
-
-            def deleteLater(self):
-                raise AssertionError("window was deleted while close was deferred")
-
-        window = _Window()
-        harness = SimpleNamespace(_compact_ai_window=window)
-
-        PetWindow._close_compact_ai_window(harness)
-
-        self.assertIs(harness._compact_ai_window, window)
-        self.assertEqual(window.close_calls, 1)
 
 
 if __name__ == "__main__":

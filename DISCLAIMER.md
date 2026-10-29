@@ -64,10 +64,9 @@ BandoriPet **与以下任何实体均无任何关联、授权、赞助或背书�
 
 本项目使用以下第三方组件，这些组件有其独立的许可条款和责任范围：
 
-- [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua) — 自研 LuaJIT 渲染核心
 - [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) — Fluent Design UI 组件库
 - [PySide6 / Qt](https://www.qt.io/) — GUI 框架
-- [lupa](https://github.com/scoder/lupa) — Python ↔ LuaJIT 桥接
+- [lupa](https://github.com/scoder/lupa) — LuaJIT 插件运行时
 - 其他详见 [requirements.txt](requirements.txt) 及 [README.md](README.md)
 
 上述组件的功能、安全性及合规性由各自作者及社区维护，**本项目作者不对第三方组件的问题承担责任**。

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 import bandori_audio.music_bounce as music_bounce
 from bandori_audio.music_bounce import MusicBounceController, MusicSpring, OutputLevelMonitor
-from bandori_ui.pet_window import PetWindow
 
 
 @pytest.fixture(scope="module")
@@ -246,13 +245,3 @@ def test_destroying_window_stops_audio_worker(app, monkeypatch):
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     monitor.stop.assert_called_once()
-
-
-def test_pet_applies_vertical_scale_to_both_renderers():
-    live2d, pixel = Mock(), Mock()
-    pet = SimpleNamespace(_live2d_widget=live2d, _pixel_widget=pixel)
-    PetWindow._apply_music_bounce_scale(pet, 0.8)
-    live2d.set_music_vertical_scale.assert_called_once_with(0.8)
-    pixel.set_music_vertical_scale.assert_called_once_with(0.8)
-
-

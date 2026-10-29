@@ -52,6 +52,9 @@ def installer_names(target, arch, version=APP_VERSION):
 
 
 def validate_build(directory, target, arch):
+    for relative in ("third_party/Live2D-v2-Lua", "custom_hit_area_state.ljbc", "live2d_platform_manager_override.ljbc"):
+        if (directory / relative).exists():
+            raise ValueError(f"Retired renderer payload must not be packaged: {relative}")
     for name in (*RESOURCES, "models"):
         if not (directory / name).exists():
             raise ValueError(f"Missing frozen resource: {directory / name}")
@@ -78,15 +81,6 @@ def validate_build(directory, target, arch):
                     raise ValueError(f"Wrong ELF architecture: {path}")
                 if not os.access(path, os.X_OK):
                     raise ValueError(f"Missing executable permission: {path}")
-    # The standalone LuaJIT compiler and lupa must agree on the bytecode format.
-    bytecode_files = list(directory.rglob("*.ljbc"))
-    if bytecode_files:
-        from lupa.luajit21 import LuaRuntime
-
-        lua = LuaRuntime(encoding=None)
-        check = lua.eval(b"function(s) local f,e = loadstring(s); assert(f,e) end")
-        for path in bytecode_files:
-            check(path.read_bytes())
 
 
 def write_checksums(directory, names, filename):

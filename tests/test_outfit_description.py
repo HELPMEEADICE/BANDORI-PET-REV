@@ -152,11 +152,6 @@ class OutfitDescriptionTest(unittest.TestCase):
             call.args[2] for call in analyze.call_args_list
         ])
 
-    def test_pet_window_does_not_retry_outfit_description_auth_failures(self):
-        source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
-
-        self.assertIn("def _outfit_description_auth_failed", source)
-        self.assertIn("if _outfit_description_auth_failed(message):", source)
 
 
 if __name__ == "__main__":

@@ -791,6 +791,28 @@ fn main() {
         .with_writer(std::io::stderr)
         .init();
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let command: Vec<String> = std::env::args().collect();
+        if command.get(1).is_some_and(|arg| arg == "--render-preview") {
+            let path = command.get(2).ok_or("missing preview model")?;
+            let option = |flag: &str| {
+                command
+                    .iter()
+                    .position(|arg| arg == flag)
+                    .and_then(|index| command.get(index + 1))
+            };
+            let output = option("--output").ok_or("missing preview output")?;
+            let root = PathBuf::from(option("--root").map(String::as_str).unwrap_or("."));
+            let cache = ModelCache::new(root.join(".cache/neocari"), root.join("models"));
+            let resolved = cache.resolve(path)?;
+            let model = pet_live2d::ModelHandle::load(&resolved.model_path)?;
+            let bounds = pet_window::content_size(model.meshes()).ok_or("model has no bounds")?;
+            let matrix = pet_window::fit_matrix(bounds, 0.95, model.flips_y());
+            let width = (720.0 * bounds.aspect()).clamp(1.0, 2048.0) as u32;
+            let rgba =
+                pet_render::render_preview(model.meshes(), model.textures(), matrix, width, 720)?;
+            image::save_buffer(output, &rgba, width, 720, image::ColorType::Rgba8)?;
+            return Ok(());
+        }
         let args = Args::parse().map_err(std::io::Error::other)?;
         let mut app = App::new(args)?;
         let mut builder = EventLoop::builder();

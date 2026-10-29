@@ -241,15 +241,15 @@ def test_main_uses_a_separate_control_queue_for_reliable_commands():
 
     bus_source = Path("bandori_core/ipc_bus.py").read_text(encoding="utf-8")
     main_source = Path("main.py").read_text(encoding="utf-8")
-    pet_source = Path("bandori_ui/pet_window.py").read_text(encoding="utf-8")
+    pet_source = Path("native/pet_backend/src/ipc.rs").read_text(encoding="utf-8")
 
     assert "def ipc_control_queue_key()" in bus_source
     assert "def ipc_reliable_inbound_queue_key()" in bus_source
     assert "def is_reliable_ipc_line" in bus_source
     assert 'ipc_ref.get("control")' in main_source
     assert 'ipc_ref.get("reliable_inbound")' in main_source
-    assert '"_ipc_control_queue"' in pet_source
-    assert '"_ipc_reliable_inbound_queue"' in pet_source
+    assert "control: Queue" in pet_source
+    assert "reliable: Queue" in pet_source
 
 
 def test_reliable_classifier_covers_control_and_user_visible_events():
@@ -351,7 +351,7 @@ def test_internal_process_ipc_no_longer_uses_qt_local_sockets():
         "main.py",
         "settings_process.py",
         "chat_process.py",
-        "bandori_ui/pet_window.py",
+        "native/pet_backend/src/ipc.rs",
         "radial_menu_process.py",
     ]
 

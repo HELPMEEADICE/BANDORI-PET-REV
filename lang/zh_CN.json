@@ -662,7 +662,7 @@
   "SettingsWindow.about_links": "项目 GitHub：<a href=\"{repo}\">{repo}</a><br>许可证：<a href=\"{license}\">GPLv3 / LICENSE</a>",
   "SettingsWindow.about_open_repo": "打开 GitHub",
   "SettingsWindow.about_open_license": "查看许可证",
-  "SettingsWindow.about_tech": "技术栈：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Live2D-v2-Lua、PyOpenGL。",
+  "SettingsWindow.about_tech": "技术栈：PySide6、PyQt-Fluent-Widgets、Live2D Cubism、Neocari、wgpu。",
   "SettingsWindow.about_qq_group": "交流QQ群：{qq_group}",
   "SettingsWindow.about_open_qq_group": "加入QQ群",
   "SettingsWindow.about_version": "当前版本：{version}",

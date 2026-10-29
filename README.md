@@ -6,7 +6,6 @@
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/HELPMEEADICE/BANDORI-PET-REV?color=yellow"></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/HELPMEEADICE/BANDORI-PET-REV?color=orange"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white"></a>
-  <a href="https://luajit.org/"><img alt="LuaJIT" src="https://img.shields.io/badge/LuaJIT-2.1+-000080?logo=lua&logoColor=white"></a>
   <a href="https://www.live2d.com/"><img alt="Live2D" src="https://img.shields.io/badge/Live2D-Cubism%20v2-EE82EE?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNy45M2MtMy45NS0uNDktNy0zLjg1LTctNy45M3MzLjA1LTcuNDQgNy03LjkzdjE1Ljg2em0yLTE1Ljg2YzMuOTUuNDkgNyAzLjg1IDcgNy45M3MtMy4wNSA3LjQ0LTcgNy45M1Y0LjA3eiIvPjwvc3ZnPg=="></a>
   <a href="https://github.com/HELPMEEADICE/BANDORI-PET-REV"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/HELPMEEADICE/BANDORI-PET-REV?color=green"></a>
 </p>
@@ -27,7 +26,7 @@ QQ群：1033517952
 
 ## ✨ 特性
 
-- ⚡ **自研 LuaJIT 渲染核心** — 基于 [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua)（作者 [@HELPMEEADICE](https://github.com/HELPMEEADICE)），纯 LuaJIT 实现，性能相较原 live2d-py 提升 **6 倍+**（30fps → 180fps+），支持头部追踪、拖拽移动、点击互动，老婆会跟着你的鼠标转头！
+- ⚡ **Neocari 原生渲染** — Rust + wgpu，支持模型动作、表情、物理与口型。
 - 💬 **LLM 角色扮演 + 好感度记忆系统** — 接入大语言模型，每个角色都有专属 System Prompt，支持中日英多语言 + 动作标签。交互越多角色越了解你，好感度影响情绪和回复风格，支持人设方案保存/切换。
 - 🎨 **像素风桌面宠物** — 也可以切成像素小人的形态，CPU 友好，可爱不减！
 - 🎵 **节奏蹦迪** — 在“设置 → 显示设置”开启，角色就会跟随 Windows 默认播放设备的音乐像弹簧一样纵向压缩、拉伸，重拍压扁、拉伸回弹带余振；宽度与窗口位置不变，支持 Live2D 和像素模式，拖动时暂停，安静后恢复原比例。默认关闭，无需额外依赖。
@@ -47,7 +46,7 @@ QQ群：1033517952
 
 ### 1. 环境要求
 
-- **Python 3.10+**、**Rust stable**（构建原生后端）；设置预览仍需要 LuaJIT 2.1
+- **Python 3.10+**、**Rust stable**（构建原生后端）；宠物与预览共用 Neocari，Lua 插件继续使用 LuaJIT 2.1
 - Windows、macOS、Linux（宠物窗口使用 X11 / XWayland）
 - 支持 Vulkan / DirectX 12 / Metal 的显卡；Qt 设置预览需要 OpenGL 3.3+
 - 宠物进程已使用 Neocari + wgpu 原生渲染，通过共享内存与主程序通信。构建、协议和平台范围见 [Neocari 后端说明](docs/NEOCARI_BACKEND.md)。
@@ -128,22 +127,12 @@ mkdir third_party
 git clone -b PySide6 --single-branch https://github.com/zhiyiYo/PyQt-Fluent-Widgets.git third_party/PyQt-Fluent-Widgets
 pip install -e third_party/PyQt-Fluent-Widgets
 
-# Live2D-v2-Lua（自研 LuaJIT Live2D 渲染核心，无需 pip install）
-git clone https://github.com/EasyLive2D/Live2D-v2-Lua.git third_party/Live2D-v2-Lua
+# 原生渲染器通过 Git 子模块获取
 ```
 
 **Python 包（macOS 源码运行）：**
 
-macOS 的 PyPI `lupa` wheel 不包含 Live2D 所需的 `lupa.luajit21`。完成上述第三方
-依赖安装并激活虚拟环境后，使用专用脚本安装常规依赖、编译 LuaJIT 2.1，并为
-Live2D-v2-Lua 应用图片字节流补丁：
-
-```bash
-bash installer/macos/install_source_dependencies.sh
-```
-
-脚本最后显示 `OK: LuaJIT 2.1...` 才表示安装成功。请勿使用 `sudo`，否则可能使
-虚拟环境或 `config.json` 变成 root 所有。
+macOS 使用 `installer/macos/install_source_dependencies.sh` 安装依赖并构建原生后端。
 
 ### 5. 启动！
 
@@ -297,7 +286,7 @@ Release 标签应为同一版本号或加 `v` 前缀（例如 `v3.2.1`）。手�
 | macOS | `BandoriPet-<版本>-macos-x86_64.{dmg,zip}` | `BandoriPet-<版本>-macos-arm64.{dmg,zip}` |
 
 六个目标分别在对应架构的 GitHub 托管 Runner 上原生构建，使用 Python 3.13。
-构建工具、Qt 和 LuaJIT Python 绑定版本固定在
+构建工具、Qt 和LuaJIT 插件运行时版本固定在
 [`installer/build-constraints.txt`](installer/build-constraints.txt)，第三方源码版本
 固定在工作流中；Windows 显式安装 Inno Setup 6.7.3。
 
@@ -314,7 +303,7 @@ Linux 原生 Wayland 桥及桌面伴侣仍需按 [Wayland 指南](docs/WAYLAND_N
 
 - Python 3.10–3.14：编译检查所有 Git 跟踪的 `.py` 文件，包含测试和安装脚本。
 - Ruff：检查语法、非法控制流和未定义名称等基础问题，规则见 `ruff.toml`。
-- LuaJIT 2.1：使用 `luajit -b` 编译所有 Git 跟踪的 `.lua` 文件，包含插件示例。
+- LuaJIT：检查 Lua 插件示例语法。
 - 校验所有 Git 跟踪的 JSON 资源、插件清单及 Bash、PowerShell、JavaScript
   脚本语法，并用
   [actionlint](https://github.com/rhysd/actionlint) 校验工作流。
@@ -379,8 +368,7 @@ Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Rel
 | 技术 | 用途 |
 |------|------|
 | **PySide6** | Qt for Python 主框架 |
-| **Live2D-v2-Lua** | 自研 LuaJIT Live2D v2 渲染核心（替代 live2d-py，性能提升 6x+） |
-| **lupa** | Python ↔ LuaJIT FFI 桥接 |
+| **lupa** | LuaJIT 插件运行时 |
 | **PyQt-Fluent-Widgets** | Win11 风格 Fluent Design 组件库 |
 | **PyOpenGL** | OpenGL 渲染后端 |
 | **cx_Freeze** | 打包为独立 exe |
@@ -401,7 +389,6 @@ Release 标签必须高于旧版 `APP_VERSION`；不要只替换同一版本 Rel
 
 - [Live2D Cubism SDK](https://www.live2d.com/)
 - [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets)
-- [Live2D-v2-Lua](https://github.com/EasyLive2D/Live2D-v2-Lua) — 自研 LuaJIT 渲染核心
 - 所有为 BanG Dream! 角色模型做出贡献的同人作者们 💙
 
 ## ⭐ Star History
