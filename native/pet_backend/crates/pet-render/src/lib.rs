@@ -317,12 +317,15 @@ impl Surface {
         self.surface.configure(&gpu.device, &self.config);
     }
 
-    fn acquire(&self) -> Result<wgpu::SurfaceTexture, RenderError> {
+    fn acquire(&self) -> Result<Option<wgpu::SurfaceTexture>, RenderError> {
         match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(frame),
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(frame),
+            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some(frame)),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(Some(frame)),
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                Err(RenderError::Acquire("timed out".to_owned()))
+                // AppKit's occlusion state can lag behind orderFront, and a
+                // covered window may stay occluded indefinitely. Neither is a
+                // draw failure; keep the renderer available for the next frame.
+                Ok(None)
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 Err(RenderError::Acquire("outdated".to_owned()))
@@ -1086,10 +1089,11 @@ impl SceneRenderer {
         ModelGpu::new(&self.gpu, &self.renderer, meshes, textures, matrix)
     }
 
-    /// Renders one frame of `model` into the swapchain.
-    pub fn render(&mut self, model: &ModelGpu) -> Result<(), RenderError> {
+    /// Renders one frame of `model` into the swapchain. Returns `false` when
+    /// no frame was presented (occlusion, a temporary timeout, or a fused renderer).
+    pub fn render(&mut self, model: &ModelGpu) -> Result<bool, RenderError> {
         if self.fused {
-            return Ok(());
+            return Ok(false);
         }
         if let Some(meter) = &self.fps_meter {
             let size = self.surface.size();
@@ -1110,7 +1114,7 @@ impl SceneRenderer {
         }
         let result = self.render_inner(model);
         match &result {
-            Ok(()) => {
+            Ok(true) => {
                 self.consecutive_failures = 0;
                 self.frames += 1;
                 if self
@@ -1121,6 +1125,7 @@ impl SceneRenderer {
                     self.fps_overlay = None;
                 }
             }
+            Ok(false) => {}
             Err(error) => {
                 self.consecutive_failures += 1;
                 warn!(%error, failures = self.consecutive_failures, "frame failed");
@@ -1138,8 +1143,10 @@ impl SceneRenderer {
         result
     }
 
-    fn render_inner(&mut self, model: &ModelGpu) -> Result<(), RenderError> {
-        let frame = self.surface.acquire()?;
+    fn render_inner(&mut self, model: &ModelGpu) -> Result<bool, RenderError> {
+        let Some(frame) = self.surface.acquire()? else {
+            return Ok(false);
+        };
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1243,7 +1250,7 @@ impl SceneRenderer {
 
         self.gpu.queue.submit([encoder.finish()]);
         self.gpu.queue.present(frame);
-        Ok(())
+        Ok(true)
     }
 
     /// Intermediate target size (for the quality indicator).
@@ -1404,14 +1411,14 @@ mod tests {
             let model = renderer
                 .upload_model(&[], &[], Matrix44::identity())
                 .unwrap();
-            renderer.render(&model).unwrap();
+            assert!(renderer.render(&model).unwrap());
             renderer.resize(PhysicalSize::new(96, 80), 1.0);
             renderer.set_vsync(false);
             renderer.surface.recreate(&renderer.gpu);
             renderer.set_opacity(0.5);
             for hittest in [false, true, false] {
                 window.set_cursor_hittest(hittest).unwrap();
-                renderer.render(&model).unwrap();
+                assert!(renderer.render(&model).unwrap());
             }
             assert_eq!(
                 renderer.alpha_mode(),

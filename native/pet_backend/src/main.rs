@@ -741,7 +741,7 @@ impl ApplicationHandler for App {
                 role.advance_model(dt);
                 role.poll_passthrough(&self.config, self.started.elapsed().as_millis() as u64);
                 role.guard_topmost(self.config.game_topmost);
-                role.window.request_redraw();
+                role.request_redraw();
                 if role.renderer.is_fused() {
                     self.fatal = Some("GPU rendering stopped after repeated draw failures".into());
                     self.shutdown = true;

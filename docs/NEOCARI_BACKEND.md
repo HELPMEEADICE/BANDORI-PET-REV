@@ -18,6 +18,8 @@ Windows 宠物窗口使用 DirectX 12 + DirectComposition，显式使用预乘 a
 
 macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 XWayland；原来的 Qt layer-shell 宠物窗口不参与渲染。原生 Wayland 窗口定位与层级协议尚未接入 Rust 后端。此处与原来的 [Qt Wayland 指南](WAYLAND_NATIVE.md) 不同，应以本文为准。
 
+macOS 在请求首帧之前先以不抢焦点的方式显示透明窗口。当前锁定的 wgpu Metal 后端会拒绝为尚未显示的窗口获取 drawable，因此不能套用 Windows 的“首帧成功后才显示”顺序。窗口暂时被遮挡、AppKit 可见状态尚未更新或获取帧超时时，跳过该帧并继续重试，不计入渲染失败熔断；主动隐藏的角色停止绘制，恢复显示后继续渲染。
+
 `setup.py build` 会先构建 release 后端并将其和许可文件复制到发行目录。安装包校验包含该可执行文件；macOS / Linux / Windows 构建工作流会拉取固定的 Neocari 子模块。
 
 ## 进程边界
@@ -63,6 +65,12 @@ cargo test --manifest-path native/pet_backend/Cargo.toml -p pet-render --locked 
 ```
 
 该测试验证 GPU 呈现路径，不能替代 Windows 11 上的桌面合成目视检查；还应分别检查 Live2D / 像素模式的透明背景、半透明边缘、拖动、隐藏后重新显示和 OBS 捕获兼容开关。
+
+图形桌面还可运行无需下载模型的窗口生命周期回归：生成临时像素角色，验证启动首帧、隐藏后恢复、以隐藏状态启动再开启显示。macOS 额外验证真实 Metal 遮挡状态连续超过熔断阈值后仍能恢复呈现；原生后端 CI 的 macOS 任务会自动运行该检查。
+
+```sh
+cargo run --manifest-path native/pet_backend/Cargo.toml --example window_smoke --locked
+```
 
 ## 渲染性能基准
 

@@ -360,16 +360,16 @@ impl Role {
         let click_through = role.should_be_click_through(config, 0);
         role.set_click_through(click_through);
 
-        // Present the first frame *before* showing the window: a hidden winit
-        // window receives no WM_PAINT, so waiting for `RedrawRequested` would
-        // deadlock the very first frame (spec: first frame before everything else).
+        // Windows needs a frame before showing its hidden HWND. On macOS,
+        // apply_display_settings has already ordered the window front: Metal
+        // cannot acquire a drawable until AppKit reports it as visible.
         let presented = role.render();
         #[cfg(windows)]
         if let Some(hwnd) = win32::hwnd_of(&role.window) {
             win32::reassert_topmost(hwnd);
         }
-        if !presented {
-            warn!("first frame was not presented; the window may need a redraw");
+        if !presented && !role.hide_live2d_model {
+            warn!("first frame was not presented; retrying when the surface is ready");
             role.window.request_redraw();
         }
         Ok(role)
@@ -535,19 +535,29 @@ impl Role {
         }
     }
 
+    /// Schedules a frame, retrying startup directly while a hidden window may
+    /// not yet receive redraw events (including an initially hidden role).
+    pub fn request_redraw(&mut self) {
+        if !self.first_frame_done {
+            self.render();
+        }
+        self.window.request_redraw();
+    }
+
     /// Renders one frame.
     pub fn render(&mut self) -> bool {
-        if self.hidden || self.renderer.is_fused() {
+        if self.hidden || self.hide_live2d_model || self.renderer.is_fused() {
             return false;
         }
         match self.renderer.render(&self.model_gpu) {
-            Ok(()) => {
+            Ok(true) => {
                 if !self.first_frame_done {
                     self.first_frame_done = true;
                     self.sync_visibility();
                 }
                 true
             }
+            Ok(false) => false,
             Err(error) => {
                 error!(%error, "render failed");
                 false
@@ -939,7 +949,9 @@ impl Role {
         #[cfg(target_os = "macos")]
         pet_window::macos::set_visible(
             &self.window,
-            self.first_frame_done && !self.hidden && !self.hide_live2d_model,
+            // Ordering the transparent, borderless window front must precede
+            // its first drawable. Waiting for first_frame_done deadlocks Metal.
+            !self.hidden && !self.hide_live2d_model,
         );
         #[cfg(not(target_os = "macos"))]
         self.window
