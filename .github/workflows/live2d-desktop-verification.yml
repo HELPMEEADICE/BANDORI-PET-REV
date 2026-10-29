@@ -1,0 +1,42 @@
+name: Live2D desktop verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/live2d-ci-verification]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-11-arm, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build Rust backend
+        run: cargo build --manifest-path native/pet_backend/Cargo.toml --locked
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python -m pip install pillow
+          if [[ "$RUNNER_OS" == macOS ]]; then python -m pip install pyobjc-framework-Quartz; fi
+      - name: Run model and desktop window smoke test
+        run: python tests/ci_live2d_desktop.py
+      - name: Upload model snapshot
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live2d-snapshot-${{ matrix.os }}
+          path: live2d-ci-snapshot.png
+          if-no-files-found: warn
