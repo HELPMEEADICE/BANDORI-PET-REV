@@ -37,6 +37,9 @@ def _load_library():
             root / name,
             target / "release" / name,
             target / "debug" / name,
+            # Building only the renderer leaves dependency cdylibs in deps/.
+            target / "release" / "deps" / name,
+            target / "debug" / "deps" / name,
         ]
         for candidate in candidates:
             if not candidate.is_file():

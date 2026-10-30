@@ -26,7 +26,7 @@ macOS 在请求首帧之前先以不抢焦点的方式显示透明窗口。当�
 
 ## 归档资源服务
 
-`pet-assets` 同时构建 Rust 库和本地动态库（Windows 的 `pet_assets.dll`、Linux 的 `libpet_assets.so`、macOS 的 `libpet_assets.dylib`）。Python 的 `zst_model_archive.py` 通过带版本的 ctypes 接口调用同一套归档枚举、虚拟路径校验、资源批量读取与缓存逻辑；Python 保留角色展示信息、目录/归档合并顺序和界面接口。`BANDORI_PET_ASSETS` 可指定动态库路径。源码从 Cargo 的 release/debug 目录加载，发行包携带动态库。
+`pet-assets` 同时构建 Rust 库和本地动态库（Windows 的 `pet_assets.dll`、Linux 的 `libpet_assets.so`、macOS 的 `libpet_assets.dylib`）。Python 的 `zst_model_archive.py` 通过带版本的 ctypes 接口调用同一套归档枚举、虚拟路径校验、资源批量读取与缓存逻辑；Python 保留角色展示信息、目录/归档合并顺序和界面接口。`BANDORI_PET_ASSETS` 可指定动态库路径。源码从 Cargo 的 release/debug 目录加载，也支持仅构建渲染器时生成在对应 `deps/` 目录中的动态库；发行包携带动态库。
 
 资源缓存按归档绝对路径、大小与纳秒修改时间失效，最多保留 512 项、64 MiB。单资源上限为 64 MiB，首个 tar 成员中的 `.bandori_zst_index.json` 上限为 4 MiB，非法索引回退到顺序枚举。内存中的枚举结果另有 32 个归档、16 MiB 路径文本限制。模型 JSON 的 Python 解析结果也检查归档版本，角色目录的持久化扫描结果继续保持现有格式。
 
