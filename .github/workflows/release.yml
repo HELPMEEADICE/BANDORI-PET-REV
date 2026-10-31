@@ -50,8 +50,8 @@ jobs:
           - { target: windows, arch: aarch64, os: windows-11-arm, python-arch: arm64, msvc-arch: arm64 }
           - { target: linux, arch: x86_64, os: ubuntu-24.04, python-arch: x64 }
           - { target: linux, arch: aarch64, os: ubuntu-24.04-arm, python-arch: arm64 }
-          - { target: macos, arch: x86_64, os: macos-15-intel, python-arch: x64, mac-arch: x86_64 }
-          - { target: macos, arch: aarch64, os: macos-14, python-arch: arm64, mac-arch: arm64 }
+          - { target: macos, arch: x86_64, os: macos-26-intel, python-arch: x64, mac-arch: x86_64 }
+          - { target: macos, arch: aarch64, os: macos-latest, python-arch: arm64, mac-arch: arm64 }
     env:
       PIP_CONSTRAINT: ${{ github.workspace }}/installer/build-constraints.txt
       QT_QPA_PLATFORM: offscreen
