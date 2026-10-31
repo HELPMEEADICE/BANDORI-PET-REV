@@ -29,6 +29,44 @@ class CompactPageMixin:
         enabled_row.addWidget(self._compact_ai_window_enabled)
         layout.addLayout(enabled_row)
 
+        self._compact_hint_labels = []
+
+        auto_hide_row = QHBoxLayout()
+        auto_hide_row.setContentsMargins(0, 0, 0, 0)
+        auto_hide_label = BodyLabel(_tr("SettingsWindow.compact_auto_hide"), page)
+        self._compact_auto_hide_enabled = SwitchButton(page)
+        auto_hide_row.addWidget(auto_hide_label)
+        auto_hide_row.addStretch()
+        auto_hide_row.addWidget(self._compact_auto_hide_enabled)
+        layout.addLayout(auto_hide_row)
+
+        auto_hide_delay_row = QHBoxLayout()
+        auto_hide_delay_row.setContentsMargins(0, 0, 0, 0)
+        auto_hide_delay_row.setSpacing(8)
+        self._compact_auto_hide_seconds_input = LineEdit(page)
+        self._compact_auto_hide_seconds_input.setFixedWidth(120)
+        self._compact_auto_hide_seconds_input.setFixedHeight(36)
+        self._compact_auto_hide_seconds_input.setValidator(QIntValidator(1, 600, self))
+        self._compact_auto_hide_seconds_input.setPlaceholderText("8")
+        auto_hide_delay_row.addWidget(BodyLabel(_tr("SettingsWindow.compact_auto_hide_seconds"), page))
+        auto_hide_delay_row.addWidget(self._compact_auto_hide_seconds_input)
+        auto_hide_delay_row.addStretch()
+        layout.addLayout(auto_hide_delay_row)
+
+        show_on_hover_row = QHBoxLayout()
+        show_on_hover_row.setContentsMargins(0, 0, 0, 0)
+        show_on_hover_label = BodyLabel(_tr("SettingsWindow.compact_show_on_hover"), page)
+        self._compact_show_on_hover_enabled = SwitchButton(page)
+        show_on_hover_row.addWidget(show_on_hover_label)
+        show_on_hover_row.addStretch()
+        show_on_hover_row.addWidget(self._compact_show_on_hover_enabled)
+        layout.addLayout(show_on_hover_row)
+
+        auto_hide_hint = BodyLabel(_tr("SettingsWindow.compact_auto_hide_hint"), page)
+        auto_hide_hint.setWordWrap(True)
+        self._compact_hint_labels.append(auto_hide_hint)
+        layout.addWidget(auto_hide_hint)
+
         ai_event_row = QHBoxLayout()
         ai_event_row.setContentsMargins(0, 0, 0, 0)
         ai_event_label = BodyLabel(_tr("SettingsWindow.ai_event_overlay"), page)
@@ -37,8 +75,6 @@ class CompactPageMixin:
         ai_event_row.addStretch()
         ai_event_row.addWidget(self._ai_event_overlay_enabled)
         layout.addLayout(ai_event_row)
-
-        self._compact_hint_labels = []
 
         ai_event_hint = BodyLabel(_tr("SettingsWindow.ai_event_overlay_hint"), page)
         ai_event_hint.setWordWrap(True)
@@ -241,6 +277,9 @@ class CompactPageMixin:
             hasattr(self, attr)
             for attr in (
                 "_compact_ai_window_enabled",
+                "_compact_auto_hide_enabled",
+                "_compact_auto_hide_seconds_input",
+                "_compact_show_on_hover_enabled",
                 "_ai_event_overlay_enabled",
                 "_ai_status_port_enabled",
                 "_ai_status_port_input",
@@ -277,6 +316,11 @@ class CompactPageMixin:
         if not self._cfg or not self._compact_config_widgets_ready():
             return
         self._compact_ai_window_enabled.setChecked(bool(self._cfg.get("compact_ai_window_enabled", False)))
+        self._compact_auto_hide_enabled.setChecked(bool(self._cfg.get("compact_ai_window_auto_hide", False)))
+        self._compact_auto_hide_seconds_input.setText(
+            str(clamp_int(self._cfg.get("compact_ai_window_auto_hide_seconds", 8), 1, 600, 8))
+        )
+        self._compact_show_on_hover_enabled.setChecked(bool(self._cfg.get("compact_ai_window_show_on_hover", True)))
         self._ai_event_overlay_enabled.setChecked(bool(self._cfg.get("ai_event_overlay_enabled", False)))
         self._ai_status_port_enabled.setChecked(bool(self._cfg.get("ai_status_port_enabled", False)))
         self._ai_status_port_input.setText(str(clamp_int(self._cfg.get("ai_status_port", 38472), 1024, 65535, 38472)))
@@ -309,6 +353,11 @@ class CompactPageMixin:
             return {}
         data = {
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False),
+            "compact_ai_window_auto_hide": self._cfg.get("compact_ai_window_auto_hide", False),
+            "compact_ai_window_auto_hide_seconds": clamp_int(
+                self._cfg.get("compact_ai_window_auto_hide_seconds", 8), 1, 600, 8
+            ),
+            "compact_ai_window_show_on_hover": self._cfg.get("compact_ai_window_show_on_hover", True),
             "compact_ai_window_opacity": self._cfg.get("compact_ai_window_opacity", 44),
             "compact_ai_window_font_size": self._cfg.get("compact_ai_window_font_size", 12),
             "compact_ai_window_background_color": self._cfg.get("compact_ai_window_background_color", ""),
@@ -326,6 +375,11 @@ class CompactPageMixin:
         if not self._cfg or not self._compact_config_widgets_ready():
             return True
         self._cfg.set("compact_ai_window_enabled", self._compact_ai_window_enabled.isChecked())
+        self._cfg.set("compact_ai_window_auto_hide", self._compact_auto_hide_enabled.isChecked())
+        auto_hide_seconds = clamp_int(self._compact_auto_hide_seconds_input.text(), 1, 600, 8)
+        self._compact_auto_hide_seconds_input.setText(str(auto_hide_seconds))
+        self._cfg.set("compact_ai_window_auto_hide_seconds", auto_hide_seconds)
+        self._cfg.set("compact_ai_window_show_on_hover", self._compact_show_on_hover_enabled.isChecked())
         self._cfg.set("compact_ai_window_opacity", self._compact_window_opacity_slider.value())
         self._cfg.set("compact_ai_window_font_size", self._compact_window_font_size_slider.value())
         self._cfg.set("compact_ai_window_background_color", self._selected_compact_color(self._compact_bg_color_btns, BANDORI_PRIMARY))

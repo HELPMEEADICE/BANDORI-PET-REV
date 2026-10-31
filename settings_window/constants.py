@@ -313,6 +313,9 @@ DATA_CONFIG_KEYS = {
     ),
     DATA_CATEGORY_COMPACT: (
         "compact_ai_window_enabled",
+        "compact_ai_window_auto_hide",
+        "compact_ai_window_auto_hide_seconds",
+        "compact_ai_window_show_on_hover",
         "compact_ai_window_background_color",
         "compact_ai_window_text_color",
         "compact_ai_window_opacity",
