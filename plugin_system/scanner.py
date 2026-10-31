@@ -14,9 +14,10 @@ from .models import (
     SignatureInfo,
     highest_risk,
 )
+from .signing import SIGNATURE_META_PATHS
 
 
-SCANNER_VERSION = "1.0.0"
+SCANNER_VERSION = "1.0.1"
 BINARY_SUFFIXES = frozenset({".pyd", ".so", ".dll", ".dylib", ".exe", ".bin"})
 COMPILED_SUFFIXES = frozenset({".pyc", ".pyo", ".ljbc"})
 OPAQUE_PAYLOAD_SUFFIXES = frozenset({".pickle", ".pkl", ".marshal"})
@@ -262,6 +263,10 @@ def scan_plugin_directory(
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
+        # Verified signature metadata contains cryptographic bytes, whose random
+        # prefixes can match executable or pickle magic without being code.
+        if signature is not None and signature.valid and relative in SIGNATURE_META_PATHS:
+            continue
         suffix = path.suffix.lower()
         try:
             with path.open("rb") as stream:

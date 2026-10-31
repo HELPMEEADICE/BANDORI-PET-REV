@@ -1,6 +1,7 @@
 import ctypes
 import os
 import sys
+import time
 
 if sys.platform == "win32":
     import ctypes.wintypes
@@ -63,6 +64,7 @@ from bandori_core.relationship_memory import (
     user_key_from_config,
 )
 from bandori_core.action_bus import publish_emotion_behavior, publish_lip_sync
+from bandori_core.process_utils import clamp_int
 from bandori_ui.ui_helpers import FluentContextTextEdit, is_interrupt_command
 from bandori_platform.win32_dwm import apply_windows_11_border_fix
 
@@ -103,6 +105,21 @@ def _font_size_from_config(value) -> int:
     except (TypeError, ValueError, OverflowError):
         size = 12
     return max(9, min(22, size))
+
+
+AUTO_HIDE_DEFAULT_SECONDS = 8
+AUTO_HIDE_MAX_SECONDS = 600
+# An external tool that crashes mid-task never sends done/error; stop waiting
+# for it after this long so the window can still hide.
+EXTERNAL_TASK_STALE_SECONDS = 600
+HOVER_REVEAL_DELAY_MS = 300
+AUTO_HIDE_RECHECK_MS = 500
+FADE_DURATION_MS = 150
+_EXTERNAL_BUSY_STATES = {"thinking", "tool", "stream"}
+
+
+def _auto_hide_seconds_from_config(value) -> int:
+    return clamp_int(value, 1, AUTO_HIDE_MAX_SECONDS, AUTO_HIDE_DEFAULT_SECONDS)
 
 
 class CompactPromptEdit(FluentContextTextEdit):
@@ -208,6 +225,19 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._clear_timer = QTimer(self)
         self._clear_timer.setSingleShot(True)
         self._clear_timer.timeout.connect(self._clear_external_output)
+        self._auto_hide_timer = QTimer(self)
+        self._auto_hide_timer.setSingleShot(True)
+        self._auto_hide_timer.timeout.connect(self._on_auto_hide_timeout)
+        self._hover_reveal_timer = QTimer(self)
+        self._hover_reveal_timer.setSingleShot(True)
+        self._hover_reveal_timer.setInterval(HOVER_REVEAL_DELAY_MS)
+        self._hover_reveal_timer.timeout.connect(self._on_hover_reveal_timeout)
+        self._last_activity = time.monotonic()
+        self._pet_hovered = False
+        self._pointer_inside = False
+        self._external_task_active = False
+        self._external_task_at = 0.0
+        self._fade_anim = None
         self._pet_geo = QRect()
         self._manual_offset = None
         self._dragging = False
@@ -487,8 +517,160 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         current = self._surface_position()
         self._surface_move(current.x() + int(dx), current.y() + int(dy))
 
+    def place_near_pet(self, pet_geo: QRect, default_pos: QPoint):
+        """Follow the pet, keeping the offset the user dragged the window to."""
+        self._pet_geo = QRect(pet_geo)
+        if self._dragging:
+            # The drag itself owns the position until the button is released.
+            return
+        if self._manual_offset is None:
+            self._surface_move(default_pos.x(), default_pos.y())
+            return
+        screen = QApplication.screenAt(pet_geo.center()) or QApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else pet_geo
+        x, y = self._clamp_to_screen(
+            pet_geo.left() + self._manual_offset.x(),
+            pet_geo.top() + self._manual_offset.y(),
+            screen_geo,
+            8,
+        )
+        self._surface_move(x, y)
+
     def reset_position_offset(self):
         self._manual_offset = None
+
+    def auto_hide_enabled(self) -> bool:
+        return bool(
+            self._cfg
+            and self._cfg.get("compact_ai_window_enabled", False)
+            and self._cfg.get("compact_ai_window_auto_hide", False)
+        )
+
+    def _hover_reveal_enabled(self) -> bool:
+        return self.auto_hide_enabled() and bool(self._cfg.get("compact_ai_window_show_on_hover", True))
+
+    def _auto_hide_delay_seconds(self) -> int:
+        value = self._cfg.get("compact_ai_window_auto_hide_seconds", AUTO_HIDE_DEFAULT_SECONDS) if self._cfg else None
+        return _auto_hide_seconds_from_config(value)
+
+    def reveal(self):
+        """Show the window (fading in) and restart the idle countdown."""
+        if not self.isVisible():
+            if self.auto_hide_enabled() and self._fade_supported():
+                self.setWindowOpacity(0.0)
+            self.show()
+        self._fade_to(1.0)
+        self.note_activity()
+
+    def conceal(self):
+        """Fade out and hide; the text and dragged position are kept."""
+        self._auto_hide_timer.stop()
+        self._hover_reveal_timer.stop()
+        if self.isVisible():
+            self._fade_to(0.0, self._finish_conceal)
+
+    def _finish_conceal(self):
+        self._fade_anim = None
+        self.hide()
+        self.setWindowOpacity(1.0)
+
+    def note_activity(self):
+        self._last_activity = time.monotonic()
+        if self.auto_hide_enabled() and self.isVisible():
+            self._auto_hide_timer.start(self._auto_hide_delay_seconds() * 1000)
+        else:
+            self._auto_hide_timer.stop()
+
+    def apply_auto_hide_setting(self):
+        """Re-read the auto-hide setting after the settings page applied it."""
+        if not self._hover_reveal_enabled():
+            self._hover_reveal_timer.stop()
+        if self.auto_hide_enabled():
+            self.note_activity()
+        else:
+            self._auto_hide_timer.stop()
+            self._stop_fade()
+            self.setWindowOpacity(1.0)
+
+    def set_pet_hovered(self, hovered: bool, reveal: bool = True):
+        self._pet_hovered = bool(hovered)
+        if self._pet_hovered:
+            if reveal and self._hover_reveal_enabled():
+                self._hover_reveal_timer.start()
+        else:
+            self._hover_reveal_timer.stop()
+            self.note_activity()
+
+    def _on_hover_reveal_timeout(self):
+        if self._pet_hovered and self._hover_reveal_enabled():
+            self.reveal()
+
+    def _external_task_running(self) -> bool:
+        if not self._external_task_active:
+            return False
+        if time.monotonic() - self._external_task_at >= EXTERNAL_TASK_STALE_SECONDS:
+            self._external_task_active = False
+            return False
+        return True
+
+    def _tts_speaking(self) -> bool:
+        # A failed TTS request leaves _tts_playing_character set, so look at the
+        # request and the player instead of that marker.
+        return self._tts_worker is not None or not self._tts_player.is_idle()
+
+    def _should_stay_visible(self) -> bool:
+        if self._input is not None and (self._input.hasFocus() or self._input.toPlainText().strip()):
+            return True
+        return (
+            self._pointer_inside
+            or self._dragging
+            or self._pet_hovered
+            or self._worker is not None
+            or self._tts_speaking()
+            or self._external_task_running()
+        )
+
+    def _on_auto_hide_timeout(self):
+        if not self.auto_hide_enabled() or not self.isVisible():
+            return
+        if self._should_stay_visible():
+            # Time spent busy counts as activity: hide only after a full idle delay.
+            self._last_activity = time.monotonic()
+            self._auto_hide_timer.start(AUTO_HIDE_RECHECK_MS)
+            return
+        remaining = self._auto_hide_delay_seconds() - (time.monotonic() - self._last_activity)
+        if remaining > 0:
+            self._auto_hide_timer.start(max(1, int(remaining * 1000)))
+            return
+        self.conceal()
+
+    def _fade_supported(self) -> bool:
+        return not (self._surface_controller is not None and self._surface_controller.native_wayland)
+
+    def _stop_fade(self):
+        if self._fade_anim is not None:
+            # stop() does not emit finished, so a cancelled fade-out never hides.
+            anim = self._fade_anim
+            self._fade_anim = None
+            anim.stop()
+            anim.deleteLater()
+
+    def _fade_to(self, target: float, on_done=None):
+        self._stop_fade()
+        if not self._fade_supported() or self.windowOpacity() == target:
+            self.setWindowOpacity(target)
+            if on_done is not None:
+                on_done()
+            return
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
+        anim.setDuration(FADE_DURATION_MS)
+        anim.setStartValue(self.windowOpacity())
+        anim.setEndValue(target)
+        anim.finished.connect(self._stop_fade)
+        if on_done is not None:
+            anim.finished.connect(on_done)
+        self._fade_anim = anim
+        anim.start()
 
     def _base_output_height(self) -> int:
         return self._input_shell.height() if self._input_shell.height() > 0 else max(36, self._font_size() + 24)
@@ -649,6 +831,15 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         painter.setPen(QPen(self._panel_border_color, 1))
         painter.drawPath(path)
 
+    def enterEvent(self, event):
+        self._pointer_inside = True
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._pointer_inside = False
+        self.note_activity()
+        super().leaveEvent(event)
+
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_windows_frameless_fix()
@@ -730,6 +921,9 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             return
         self._clear_timer.stop()
         state = str(event.get("state", "stream") or "stream").strip().lower()
+        self._external_task_active = state in _EXTERNAL_BUSY_STATES
+        self._external_task_at = time.monotonic()
+        self.note_activity()
         if state in {"idle", "clear"}:
             self._external_stream_text = ""
             self._set_output_text("")
@@ -1464,6 +1658,9 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
             event.ignore()
             return
         self._clear_timer.stop()
+        self._auto_hide_timer.stop()
+        self._hover_reveal_timer.stop()
+        self._stop_fade()
         if self._worker is not None:
             self._worker.cancel()
             self._park_cancelled_worker(self._worker)

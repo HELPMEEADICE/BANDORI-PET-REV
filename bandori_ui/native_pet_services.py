@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 
-from PySide6.QtCore import QObject, QProcess, QTimer
+from PySide6.QtCore import QObject, QPoint, QProcess, QRect, QTimer
 
 from bandori_core.ipc_bus import radial_command_queue_key, radial_event_queue_key
 from bandori_core.process_utils import app_base_dir, process_program_and_args
@@ -95,9 +95,11 @@ class NativePetServices(QObject):
             return
         kind = event.get("event")
         if kind == "ready":
-            if self.cfg.get("compact_ai_window_enabled", False):
+            if self.cfg.get("compact_ai_window_enabled", False) and not self.cfg.get("compact_ai_window_auto_hide", False):
                 self._ensure_overlay(char).show()
             self._request_outfit_description(char)
+        elif kind == "hover":
+            self._on_pet_hover(char, bool(data.get("inside", False)))
         elif kind == "snapshot":
             self._start_outfit_description(char, data.get("path", ""))
         elif kind == "placement":
@@ -130,13 +132,20 @@ class NativePetServices(QObject):
             return
         if command == "SETTINGS":
             if "compact_ai_window_enabled" in data:
+                auto_hide = self.cfg.get("compact_ai_window_auto_hide", False)
                 for char in self.roles:
-                    if data["compact_ai_window_enabled"]:
+                    if not data["compact_ai_window_enabled"]:
+                        if char in self._overlays:
+                            self._overlays[char].hide()
+                    elif not auto_hide:
                         self._ensure_overlay(char).show()
-                    elif char in self._overlays:
-                        self._overlays[char].hide()
-            for overlay in self._overlays.values():
+            reset_position = bool(data.get("compact_ai_window_reset_position", False))
+            for char, overlay in self._overlays.items():
                 overlay.refresh_theme()
+                if reset_position:
+                    overlay.reset_position_offset()
+                    self._position_overlay(char, overlay)
+                overlay.apply_auto_hide_setting()
             return
         char = str(data.get("character") or data.get("target_character") or "")
         if command == "PEER_OFFLINE":
@@ -163,8 +172,23 @@ class NativePetServices(QObject):
                 continue
             overlay = self._ensure_overlay(char)
             self._position_overlay(char, overlay)
-            overlay.show()
+            overlay.reveal()
             overlay.apply_ai_event(data)
+
+    def _on_pet_hover(self, char, inside):
+        reveal = bool(
+            self.cfg.get("compact_ai_window_enabled", False)
+            and self.cfg.get("compact_ai_window_auto_hide", False)
+            and self.cfg.get("compact_ai_window_show_on_hover", True)
+        )
+        overlay = self._overlays.get(char)
+        if overlay is None:
+            if not (inside and reveal):
+                return
+            overlay = self._ensure_overlay(char)
+        elif inside and not overlay.isVisible():
+            self._position_overlay(char, overlay)
+        overlay.set_pet_hovered(inside, reveal=reveal)
 
     def _ensure_overlay(self, char):
         overlay = self._overlays.get(char)
@@ -179,7 +203,9 @@ class NativePetServices(QObject):
     def _position_overlay(self, char, overlay):
         pos = self.roles.get(char, {}).get("position", {})
         x, y = int(pos.get("x", 100)), int(pos.get("y", 100))
-        overlay.move(x + int(pos.get("w", 400)) // 2 - overlay.width() // 2, max(0, y - overlay.height() - 8))
+        w, h = int(pos.get("w", 400)), int(pos.get("h", 0))
+        default = QPoint(x + w // 2 - overlay.width() // 2, max(0, y - overlay.height() - 8))
+        overlay.place_near_pet(QRect(x, y, w, h), default)
 
     def _request_outfit_description(self, char):
         if not self.cfg.get("llm_live2d_outfit_recognition_enabled", False):

@@ -7,7 +7,7 @@ use std::time::Instant;
 use pet_assets::ModelCache;
 use pet_behavior::{BehaviorContext, Command, RoleBehavior, RoleBehaviorConfig, WindowMotionKind};
 use pet_config::{Config, ModelEntry, Placement};
-use pet_input::hit::{AlphaTexture, FrameSnapshot, HitStability};
+use pet_input::hit::{AlphaTexture, FrameSnapshot, HitStability, HoverState};
 
 use pet_live2d::{ModelHandle, ModelInfo};
 use pet_render::{ModelGpu, RenderError, SceneRenderer};
@@ -91,6 +91,10 @@ pub struct Role {
     stability: HitStability,
     /// Whether click-through is currently enabled.
     pub click_through: bool,
+    /// Whether the cursor rests on the model's visible pixels.
+    hover: HoverState,
+    /// Hover transition not yet reported to the Qt side.
+    hover_change: Option<bool>,
     /// Last passthrough poll timestamp.
     last_passthrough_poll: Instant,
     /// Last time the model was advanced.
@@ -337,6 +341,8 @@ impl Role {
             dragging: None,
             stability: HitStability::default(),
             click_through: false,
+            hover: HoverState::default(),
+            hover_change: None,
             last_passthrough_poll: Instant::now(),
             last_update: Instant::now(),
             hidden: false,
@@ -638,8 +644,16 @@ impl Role {
             return;
         }
         self.last_passthrough_poll = Instant::now();
-        let should = self.should_be_click_through(config, now_ms);
+        let (should, over_model) = self.passthrough_state(config, now_ms);
         self.set_click_through(should);
+        if let Some(inside) = self.hover.update(over_model) {
+            self.hover_change = Some(inside);
+        }
+    }
+
+    /// Takes the hover transition since the last call, if any.
+    pub fn take_hover_change(&mut self) -> Option<bool> {
+        self.hover_change.take()
     }
 
     /// Updates the cached cursor position; `None` when the cursor left the window.
@@ -864,17 +878,23 @@ impl Role {
 
     /// Should the window be click-through right now?
     pub fn should_be_click_through(&mut self, config: &Config, now_ms: u64) -> bool {
+        self.passthrough_state(config, now_ms).0
+    }
+
+    /// Returns (click-through, cursor over the model). A drag never counts as
+    /// hovering, and without a global cursor the window-level cursor stands in.
+    fn passthrough_state(&mut self, config: &Config, now_ms: u64) -> (bool, bool) {
         if self.dragging.is_some() {
-            return false;
+            return (false, false);
         }
         if self.hide_live2d_model || self.hidden || config.opacity <= 0.0 {
-            return true;
+            return (true, false);
         }
         let Some(global) = global_cursor(&self.window) else {
-            return false;
+            return (false, self.cursor.is_some());
         };
         let Some((x, y, width, height)) = self.window_rect() else {
-            return false;
+            return (false, false);
         };
         let outside = global.0 < x as f32
             || global.1 < y as f32
@@ -882,7 +902,7 @@ impl Role {
             || global.1 >= y as f32 + height as f32;
         if outside {
             self.stability.reset();
-            return true;
+            return (true, false);
         }
         let local = (global.0 - x as f32, global.1 - y as f32);
         let snapshot = self.snapshot();
@@ -895,7 +915,7 @@ impl Role {
             )
             .hit;
         let hit = self.stability.confirm_with(raw_hit, local, now_ms, 80);
-        !hit
+        (!hit, hit)
     }
 
     /// Sets click-through if the state changed.

@@ -16,6 +16,9 @@ SIGNATURE_META_PATHS = frozenset({FILES_MANIFEST_PATH, PUBLIC_KEY_PATH, SIGNATUR
 
 
 def _decode_text_or_raw(payload: bytes, expected_lengths: set[int]) -> bytes:
+    # Whitespace is significant in raw cryptographic bytes.
+    if len(payload) in expected_lengths:
+        return payload
     stripped = payload.strip()
     if len(stripped) in expected_lengths:
         return stripped
@@ -36,7 +39,7 @@ def _raw_public_key(payload: bytes) -> bytes:
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
-    return _decode_text_or_raw(stripped, {32})
+    return _decode_text_or_raw(payload, {32})
 
 
 def publisher_fingerprint(raw_public_key: bytes) -> str:
