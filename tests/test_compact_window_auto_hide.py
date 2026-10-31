@@ -5,6 +5,7 @@ from unittest.mock import Mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent, QPropertyAnimation
 from PySide6.QtWidgets import QApplication
 
 import bandori_chat.compact_ai_window as compact_module
@@ -54,7 +55,11 @@ def window(monkeypatch, clock):
     db = Mock()
     db.get_last_conversation.return_value = None
     monkeypatch.setattr(compact_module, "DatabaseManager", lambda: db)
-    cfg = Config({"compact_ai_window_auto_hide": True, "compact_ai_window_auto_hide_seconds": 8})
+    cfg = Config({
+        "compact_ai_window_enabled": True,
+        "compact_ai_window_auto_hide": True,
+        "compact_ai_window_auto_hide_seconds": 8,
+    })
     win = CompactAIWindow("kasumi", Mock(), cfg)
     # Animations need a running event loop; the logic under test does not.
     monkeypatch.setattr(win, "_fade_supported", lambda: False)
@@ -94,7 +99,14 @@ def test_early_timeout_waits_for_the_remaining_delay(window):
     win.note_activity()
     _expire(win, clock, seconds=5)
     assert win.isVisible()
-    assert 0 < win._auto_hide_timer.remainingTime() <= 3000
+    assert win._auto_hide_timer.isActive()
+    # Qt's default coarse timer can round its real deadline on each platform.
+    # Check the requested delay against the fake clock instead.
+    assert win._auto_hide_timer.interval() == 3000
+    _expire(win, clock, seconds=2)
+    assert win.isVisible()
+    _expire(win, clock, seconds=1)
+    assert not win.isVisible()
 
 
 def test_disabled_auto_hide_never_hides(window):
@@ -188,6 +200,50 @@ def test_brief_hover_does_not_reveal(window):
     assert not win.isVisible()
 
 
+@pytest.mark.parametrize("setting", [
+    "compact_ai_window_enabled",
+    "compact_ai_window_auto_hide",
+    "compact_ai_window_show_on_hover",
+])
+def test_disabling_hover_reveal_cancels_pending_dwell(window, setting):
+    win, cfg, _ = window
+    win.set_pet_hovered(True)
+    cfg.data[setting] = False
+    win.apply_auto_hide_setting()
+    assert not win._hover_reveal_timer.isActive()
+    win._on_hover_reveal_timeout()
+    assert not win.isVisible()
+
+
+def test_disabling_auto_hide_cancels_a_pending_fade_out(window, monkeypatch):
+    win, cfg, clock = window
+    win.reveal()
+    monkeypatch.setattr(win, "_fade_supported", lambda: True)
+    _expire(win, clock)
+    fade = win._fade_anim
+    assert fade is not None
+    cfg.data["compact_ai_window_auto_hide"] = False
+    win.apply_auto_hide_setting()
+    # A cancelled animation must not hide the now permanently visible window.
+    assert fade.state() == QPropertyAnimation.State.Stopped
+    assert win.windowOpacity() == 1.0
+    assert win.isVisible()
+
+
+def test_repeated_fades_release_finished_and_cancelled_animations(window, monkeypatch):
+    win, _, _ = window
+    monkeypatch.setattr(win, "_fade_supported", lambda: True)
+    win.reveal()
+    win._fade_anim.setCurrentTime(win._fade_anim.duration())
+    for _ in range(5):
+        win.conceal()
+        win._fade_anim.setCurrentTime(win._fade_anim.duration() // 2)
+        win.reveal()
+        win._fade_anim.setCurrentTime(win._fade_anim.duration())
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not win.findChildren(QPropertyAnimation)
+
+
 def test_conceal_keeps_output_text(window):
     win, _, clock = window
     win.reveal()
@@ -254,6 +310,14 @@ def test_hover_is_ignored_without_auto_hide(services):
     cfg.data["compact_ai_window_auto_hide"] = False
     service.handle_event(_native_event("hover", {"inside": True}))
     overlay.set_pet_hovered.assert_not_called()
+
+
+def test_hover_exit_updates_existing_overlay_while_auto_hide_is_disabled(services):
+    service, cfg, overlay = services
+    service._overlays["kasumi"] = overlay
+    cfg.data["compact_ai_window_auto_hide"] = False
+    service.handle_event(_native_event("hover", {"inside": False}))
+    overlay.set_pet_hovered.assert_called_once_with(False, reveal=False)
 
 
 def test_ai_event_reveals_the_overlay(services):

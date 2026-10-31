@@ -176,9 +176,11 @@ class NativePetServices(QObject):
             overlay.apply_ai_event(data)
 
     def _on_pet_hover(self, char, inside):
-        if not self.cfg.get("compact_ai_window_enabled", False) or not self.cfg.get("compact_ai_window_auto_hide", False):
-            return
-        reveal = bool(self.cfg.get("compact_ai_window_show_on_hover", True))
+        reveal = bool(
+            self.cfg.get("compact_ai_window_enabled", False)
+            and self.cfg.get("compact_ai_window_auto_hide", False)
+            and self.cfg.get("compact_ai_window_show_on_hover", True)
+        )
         overlay = self._overlays.get(char)
         if overlay is None:
             if not (inside and reveal):

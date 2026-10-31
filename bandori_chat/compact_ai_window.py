@@ -540,7 +540,14 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._manual_offset = None
 
     def auto_hide_enabled(self) -> bool:
-        return bool(self._cfg and self._cfg.get("compact_ai_window_auto_hide", False))
+        return bool(
+            self._cfg
+            and self._cfg.get("compact_ai_window_enabled", False)
+            and self._cfg.get("compact_ai_window_auto_hide", False)
+        )
+
+    def _hover_reveal_enabled(self) -> bool:
+        return self.auto_hide_enabled() and bool(self._cfg.get("compact_ai_window_show_on_hover", True))
 
     def _auto_hide_delay_seconds(self) -> int:
         value = self._cfg.get("compact_ai_window_auto_hide_seconds", AUTO_HIDE_DEFAULT_SECONDS) if self._cfg else None
@@ -576,23 +583,26 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
 
     def apply_auto_hide_setting(self):
         """Re-read the auto-hide setting after the settings page applied it."""
+        if not self._hover_reveal_enabled():
+            self._hover_reveal_timer.stop()
         if self.auto_hide_enabled():
             self.note_activity()
         else:
             self._auto_hide_timer.stop()
-            self._hover_reveal_timer.stop()
+            self._stop_fade()
+            self.setWindowOpacity(1.0)
 
     def set_pet_hovered(self, hovered: bool, reveal: bool = True):
         self._pet_hovered = bool(hovered)
         if self._pet_hovered:
-            if reveal and self.auto_hide_enabled():
+            if reveal and self._hover_reveal_enabled():
                 self._hover_reveal_timer.start()
         else:
             self._hover_reveal_timer.stop()
             self.note_activity()
 
     def _on_hover_reveal_timeout(self):
-        if self._pet_hovered and self.auto_hide_enabled():
+        if self._pet_hovered and self._hover_reveal_enabled():
             self.reveal()
 
     def _external_task_running(self) -> bool:
@@ -637,11 +647,16 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
     def _fade_supported(self) -> bool:
         return not (self._surface_controller is not None and self._surface_controller.native_wayland)
 
-    def _fade_to(self, target: float, on_done=None):
+    def _stop_fade(self):
         if self._fade_anim is not None:
             # stop() does not emit finished, so a cancelled fade-out never hides.
-            self._fade_anim.stop()
+            anim = self._fade_anim
             self._fade_anim = None
+            anim.stop()
+            anim.deleteLater()
+
+    def _fade_to(self, target: float, on_done=None):
+        self._stop_fade()
         if not self._fade_supported() or self.windowOpacity() == target:
             self.setWindowOpacity(target)
             if on_done is not None:
@@ -651,6 +666,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         anim.setDuration(FADE_DURATION_MS)
         anim.setStartValue(self.windowOpacity())
         anim.setEndValue(target)
+        anim.finished.connect(self._stop_fade)
         if on_done is not None:
             anim.finished.connect(on_done)
         self._fade_anim = anim
@@ -1644,9 +1660,7 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         self._clear_timer.stop()
         self._auto_hide_timer.stop()
         self._hover_reveal_timer.stop()
-        if self._fade_anim is not None:
-            self._fade_anim.stop()
-            self._fade_anim = None
+        self._stop_fade()
         if self._worker is not None:
             self._worker.cancel()
             self._park_cancelled_worker(self._worker)
