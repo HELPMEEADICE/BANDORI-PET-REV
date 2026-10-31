@@ -17,7 +17,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QLabel
 
 from plugin_system.installer import PluginInstaller
-from plugin_system.models import PluginError, PluginManifest
+from plugin_system.models import PluginError, PluginManifest, SignatureInfo
 from plugin_system.paths import PluginStateStore, plugin_paths
 from plugin_system.protocol import FrameDecoder, RpcPeer, RpcRemoteError, encode_message, request_message
 from plugin_system.registry import ContributionRegistry, PluginEventBus, PluginServiceRegistry
@@ -369,6 +369,15 @@ class PluginSystemTest(unittest.TestCase):
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+        # Include keys/signatures that begin with pickle's 0x80 marker, as well
+        # as keys with boundary whitespace. All are valid cryptographic data.
+        for seed in (0, 297, 641, 86, 37):
+            with self.subTest(seed=seed):
+                self._check_ed25519_signed_archive(Ed25519PrivateKey.from_private_bytes(
+                    seed.to_bytes(32, "big")
+                ), serialization)
+
+    def _check_ed25519_signed_archive(self, key, serialization):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             value = manifest()
@@ -377,7 +386,6 @@ class PluginSystemTest(unittest.TestCase):
                 "main.py": b"def activate(ctx):\n    pass\n",
             }
             document = build_signed_files_document(files, publisher="Example Publisher")
-            key = Ed25519PrivateKey.generate()
             public = key.public_key().public_bytes(
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
             )
@@ -391,7 +399,55 @@ class PluginSystemTest(unittest.TestCase):
             paths = plugin_paths(root / "home")
             preview = PluginInstaller(paths, PluginStateStore(paths)).stage_local(package)
             self.assertEqual("valid_untrusted", preview.report.signature.status)
-            self.assertFalse(preview.report.blocked)
+            self.assertFalse(preview.report.blocked, preview.report.to_dict())
+
+    def test_scanner_blocks_unverified_signature_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_plugin(root, manifest())
+            metadata = root / "META-INF"
+            metadata.mkdir()
+            for name in ("public_key.ed25519", "signature.ed25519"):
+                path = metadata / name
+                path.write_bytes(b"\x80\x04opaque payload")
+                try:
+                    for signature in (None, SignatureInfo(), SignatureInfo(status="invalid")):
+                        with self.subTest(name=name, signature=signature):
+                            report = scan_plugin_directory(
+                                root, PluginManifest.from_dict(manifest()),
+                                package_sha256=sha256_directory(root), signature=signature,
+                            )
+                            self.assertTrue(report.blocked)
+                            self.assertTrue(any(
+                                item.rule == "OPAQUE_SERIALIZED_PAYLOAD" and item.blocking
+                                for item in report.findings
+                            ))
+                finally:
+                    path.unlink()
+
+    def test_valid_signature_does_not_exempt_other_opaque_payloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_plugin(root, manifest())
+            for name in ("payload.dat", "META-INF/extra.ed25519",
+                         "META-INF/nested/public_key.ed25519"):
+                with self.subTest(name=name):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"\x80\x04opaque payload")
+                    try:
+                        report = scan_plugin_directory(
+                            root, PluginManifest.from_dict(manifest()),
+                            package_sha256=sha256_directory(root),
+                            signature=SignatureInfo(status="valid_untrusted"),
+                        )
+                        self.assertTrue(report.blocked)
+                        self.assertTrue(any(
+                            item.rule == "OPAQUE_SERIALIZED_PAYLOAD" and item.path == name
+                            for item in report.findings
+                        ))
+                    finally:
+                        path.unlink()
 
     def test_lua_tables_are_marshaled_through_sdk(self):
         with tempfile.TemporaryDirectory() as directory:
