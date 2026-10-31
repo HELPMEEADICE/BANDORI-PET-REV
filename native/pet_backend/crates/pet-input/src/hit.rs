@@ -413,6 +413,24 @@ impl HitStability {
     }
 }
 
+/// Edge detector for "cursor is over the model", reported to the Qt side so
+/// the compact window can reveal itself on hover.
+#[derive(Debug, Clone, Default)]
+pub struct HoverState {
+    inside: bool,
+}
+
+impl HoverState {
+    /// Records the latest verdict; returns the new state only when it changed.
+    pub fn update(&mut self, inside: bool) -> Option<bool> {
+        if self.inside == inside {
+            return None;
+        }
+        self.inside = inside;
+        Some(inside)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +614,16 @@ mod tests {
         assert!(stability.confirm(false, (14.0, 12.0), 1_050));
         assert!(!stability.confirm(false, (40.0, 40.0), 1_050));
         assert!(!stability.confirm(false, (10.0, 10.0), 1_500));
+    }
+
+    #[test]
+    fn hover_reports_only_transitions() {
+        let mut hover = HoverState::default();
+        assert_eq!(hover.update(false), None);
+        assert_eq!(hover.update(true), Some(true));
+        assert_eq!(hover.update(true), None);
+        assert_eq!(hover.update(false), Some(false));
+        assert_eq!(hover.update(false), None);
     }
 
     #[test]

@@ -95,9 +95,11 @@ class NativePetServices(QObject):
             return
         kind = event.get("event")
         if kind == "ready":
-            if self.cfg.get("compact_ai_window_enabled", False):
+            if self.cfg.get("compact_ai_window_enabled", False) and not self.cfg.get("compact_ai_window_auto_hide", False):
                 self._ensure_overlay(char).show()
             self._request_outfit_description(char)
+        elif kind == "hover":
+            self._on_pet_hover(char, bool(data.get("inside", False)))
         elif kind == "snapshot":
             self._start_outfit_description(char, data.get("path", ""))
         elif kind == "placement":
@@ -130,13 +132,16 @@ class NativePetServices(QObject):
             return
         if command == "SETTINGS":
             if "compact_ai_window_enabled" in data:
+                auto_hide = self.cfg.get("compact_ai_window_auto_hide", False)
                 for char in self.roles:
-                    if data["compact_ai_window_enabled"]:
+                    if not data["compact_ai_window_enabled"]:
+                        if char in self._overlays:
+                            self._overlays[char].hide()
+                    elif not auto_hide:
                         self._ensure_overlay(char).show()
-                    elif char in self._overlays:
-                        self._overlays[char].hide()
             for overlay in self._overlays.values():
                 overlay.refresh_theme()
+                overlay.apply_auto_hide_setting()
             return
         char = str(data.get("character") or data.get("target_character") or "")
         if command == "PEER_OFFLINE":
@@ -163,8 +168,21 @@ class NativePetServices(QObject):
                 continue
             overlay = self._ensure_overlay(char)
             self._position_overlay(char, overlay)
-            overlay.show()
+            overlay.reveal()
             overlay.apply_ai_event(data)
+
+    def _on_pet_hover(self, char, inside):
+        if not self.cfg.get("compact_ai_window_enabled", False) or not self.cfg.get("compact_ai_window_auto_hide", False):
+            return
+        reveal = bool(self.cfg.get("compact_ai_window_show_on_hover", True))
+        overlay = self._overlays.get(char)
+        if overlay is None:
+            if not (inside and reveal):
+                return
+            overlay = self._ensure_overlay(char)
+        elif inside and not overlay.isVisible():
+            self._position_overlay(char, overlay)
+        overlay.set_pet_hovered(inside, reveal=reveal)
 
     def _ensure_overlay(self, char):
         overlay = self._overlays.get(char)

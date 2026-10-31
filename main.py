@@ -1319,6 +1319,9 @@ def main():
             ("compact_ai_window_font_size", "compact_ai_window_font_size", 12),
             ("compact_ai_window_background_color", "compact_ai_window_background_color", ""),
             ("compact_ai_window_text_color", "compact_ai_window_text_color", "#24242a"),
+            ("compact_ai_window_auto_hide", "compact_ai_window_auto_hide", False),
+            ("compact_ai_window_auto_hide_seconds", "compact_ai_window_auto_hide_seconds", 8),
+            ("compact_ai_window_show_on_hover", "compact_ai_window_show_on_hover", True),
             ("ai_event_overlay_enabled", "ai_event_overlay_enabled", False),
             ("ai_status_port_enabled", "ai_status_port_enabled", False),
             ("ai_status_port", "ai_status_port", 38472),
@@ -1412,6 +1415,8 @@ def main():
             value = data.get(cfg_key, pet_window_ref.get(ref_key, cfg.get(cfg_key, default)))
             if cfg_key in ("ai_status_port", "chat_integration_port"):
                 value = clamp_int(value, 1024, 65535, default)
+            elif cfg_key == "compact_ai_window_auto_hide_seconds":
+                value = clamp_int(value, 1, 600, default)
             elif cfg_key == "moc3_leg_crop_enabled":
                 value = bool(value)
             elif cfg_key == "moc3_visible_height":
@@ -1497,7 +1502,9 @@ def main():
             "moc3_leg_crop_enabled", "moc3_visible_height",
             "compact_ai_window_enabled", "compact_ai_window_opacity",
             "compact_ai_window_font_size", "compact_ai_window_background_color",
-            "compact_ai_window_text_color", "ai_event_overlay_enabled",
+            "compact_ai_window_text_color", "compact_ai_window_auto_hide",
+            "compact_ai_window_auto_hide_seconds", "compact_ai_window_show_on_hover",
+            "ai_event_overlay_enabled",
             "ai_status_port_enabled", "ai_status_port", "ai_status_token",
             "chat_integration_enabled", "chat_integration_overlay_enabled",
             "chat_integration_include_context", "chat_integration_port",

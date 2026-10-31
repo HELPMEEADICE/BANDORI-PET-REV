@@ -706,6 +706,7 @@ impl ApplicationHandler for App {
         if self.last_frame.elapsed() >= budget {
             let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
             self.last_frame = Instant::now();
+            let mut hover_change = None;
             if let Some(role) = self.role.as_mut() {
                 if self.expression_until.is_some_and(|at| Instant::now() >= at) {
                     if role.entry.default_expression.is_empty() {
@@ -740,12 +741,16 @@ impl ApplicationHandler for App {
                 role.model.set_lip_sync(mouth.0, mouth.1);
                 role.advance_model(dt);
                 role.poll_passthrough(&self.config, self.started.elapsed().as_millis() as u64);
+                hover_change = role.take_hover_change();
                 role.guard_topmost(self.config.game_topmost);
                 role.request_redraw();
                 if role.renderer.is_fused() {
                     self.fatal = Some("GPU rendering stopped after repeated draw failures".into());
                     self.shutdown = true;
                 }
+            }
+            if let Some(inside) = hover_change {
+                self.emit("hover", json!({ "inside": inside }));
             }
         }
         if self.last_position.elapsed() >= Duration::from_millis(250) {
