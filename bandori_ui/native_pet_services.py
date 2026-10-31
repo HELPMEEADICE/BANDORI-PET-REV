@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 
-from PySide6.QtCore import QObject, QProcess, QTimer
+from PySide6.QtCore import QObject, QPoint, QProcess, QRect, QTimer
 
 from bandori_core.ipc_bus import radial_command_queue_key, radial_event_queue_key
 from bandori_core.process_utils import app_base_dir, process_program_and_args
@@ -139,8 +139,12 @@ class NativePetServices(QObject):
                             self._overlays[char].hide()
                     elif not auto_hide:
                         self._ensure_overlay(char).show()
-            for overlay in self._overlays.values():
+            reset_position = bool(data.get("compact_ai_window_reset_position", False))
+            for char, overlay in self._overlays.items():
                 overlay.refresh_theme()
+                if reset_position:
+                    overlay.reset_position_offset()
+                    self._position_overlay(char, overlay)
                 overlay.apply_auto_hide_setting()
             return
         char = str(data.get("character") or data.get("target_character") or "")
@@ -197,7 +201,9 @@ class NativePetServices(QObject):
     def _position_overlay(self, char, overlay):
         pos = self.roles.get(char, {}).get("position", {})
         x, y = int(pos.get("x", 100)), int(pos.get("y", 100))
-        overlay.move(x + int(pos.get("w", 400)) // 2 - overlay.width() // 2, max(0, y - overlay.height() - 8))
+        w, h = int(pos.get("w", 400)), int(pos.get("h", 0))
+        default = QPoint(x + w // 2 - overlay.width() // 2, max(0, y - overlay.height() - 8))
+        overlay.place_near_pet(QRect(x, y, w, h), default)
 
     def _request_outfit_description(self, char):
         if not self.cfg.get("llm_live2d_outfit_recognition_enabled", False):

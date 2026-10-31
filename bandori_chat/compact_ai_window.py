@@ -517,6 +517,25 @@ class CompactAIWindow(ChatWindowMixin, SingleShotTTSCallbacksMixin, QWidget):
         current = self._surface_position()
         self._surface_move(current.x() + int(dx), current.y() + int(dy))
 
+    def place_near_pet(self, pet_geo: QRect, default_pos: QPoint):
+        """Follow the pet, keeping the offset the user dragged the window to."""
+        self._pet_geo = QRect(pet_geo)
+        if self._dragging:
+            # The drag itself owns the position until the button is released.
+            return
+        if self._manual_offset is None:
+            self._surface_move(default_pos.x(), default_pos.y())
+            return
+        screen = QApplication.screenAt(pet_geo.center()) or QApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else pet_geo
+        x, y = self._clamp_to_screen(
+            pet_geo.left() + self._manual_offset.x(),
+            pet_geo.top() + self._manual_offset.y(),
+            screen_geo,
+            8,
+        )
+        self._surface_move(x, y)
+
     def reset_position_offset(self):
         self._manual_offset = None
 
