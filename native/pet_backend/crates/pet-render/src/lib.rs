@@ -318,22 +318,26 @@ impl Surface {
     }
 
     fn acquire(&self) -> Result<Option<wgpu::SurfaceTexture>, RenderError> {
-        match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some(frame)),
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(Some(frame)),
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                // AppKit's occlusion state can lag behind orderFront, and a
-                // covered window may stay occluded indefinitely. Neither is a
-                // draw failure; keep the renderer available for the next frame.
-                Ok(None)
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                Err(RenderError::Acquire("outdated".to_owned()))
-            }
-            wgpu::CurrentSurfaceTexture::Lost => Err(RenderError::Acquire("lost".to_owned())),
-            wgpu::CurrentSurfaceTexture::Validation => {
-                Err(RenderError::Acquire("validation".to_owned()))
-            }
+        classify_surface_texture(self.surface.get_current_texture())
+    }
+}
+
+fn classify_surface_texture(
+    result: wgpu::CurrentSurfaceTexture,
+) -> Result<Option<wgpu::SurfaceTexture>, RenderError> {
+    match result {
+        wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some(frame)),
+        wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(Some(frame)),
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            // AppKit's occlusion state can lag behind orderFront, and a
+            // covered window may stay occluded indefinitely. Neither is a
+            // draw failure; keep the renderer available for the next frame.
+            Ok(None)
+        }
+        wgpu::CurrentSurfaceTexture::Outdated => Err(RenderError::Acquire("outdated".to_owned())),
+        wgpu::CurrentSurfaceTexture::Lost => Err(RenderError::Acquire("lost".to_owned())),
+        wgpu::CurrentSurfaceTexture::Validation => {
+            Err(RenderError::Acquire("validation".to_owned()))
         }
     }
 }
@@ -1266,6 +1270,20 @@ fn scale_dim(value: u32, quality: f32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn occluded_and_timed_out_surfaces_are_not_render_failures() {
+        for result in [
+            wgpu::CurrentSurfaceTexture::Occluded,
+            wgpu::CurrentSurfaceTexture::Timeout,
+        ] {
+            assert!(matches!(classify_surface_texture(result), Ok(None)));
+        }
+        assert!(matches!(
+            classify_surface_texture(wgpu::CurrentSurfaceTexture::Lost),
+            Err(RenderError::Acquire(_))
+        ));
+    }
 
     fn clipping_scene(frame: usize) -> Vec<Moc3DrawableMesh> {
         (0..4)
