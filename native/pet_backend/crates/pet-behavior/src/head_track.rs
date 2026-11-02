@@ -23,9 +23,14 @@ pub struct HeadTracker {
 }
 
 impl HeadTracker {
-    /// Maximum tracking radius in pixels: beyond this the target is projected
-    /// onto the circle instead of being ignored.
-    pub const MAX_RADIUS: f32 = 600.0;
+    /// Tracking range multiplier over the window half-extent. The pet window is
+    /// small, so a value of 1.0 makes the head saturate at the window edge;
+    /// 2.5 lets the cursor travel about 2.5 half-windows before the head reaches
+    /// its maximum angle, which roughly covers the desktop for a small pet.
+    pub const RANGE_GAIN: f32 = 2.5;
+    /// Maximum tracking radius in pixels (projected onto the circle beyond it).
+    /// Kept well beyond a typical screen half so the gain above is not clipped.
+    pub const MAX_RADIUS: f32 = 2000.0;
     /// Dead zone (squared): 4 px.
     pub const DEADZONE_SQ: f32 = 16.0;
     /// Recenter duration in seconds.
@@ -70,21 +75,17 @@ impl HeadTracker {
         self.recenter_from = None;
 
         let drag = (
-            (dx / self.scale_for(width)).clamp(-1.0, 1.0),
+            // The pet window is narrow, so expand tracking horizontally only;
+            // the window is already tall enough for the vertical screen range.
+            (dx / (half_w * Self::RANGE_GAIN)).clamp(-1.0, 1.0),
             // Screen y grows downwards, model y grows upwards.
-            (-dy / self.scale_for(height)).clamp(-1.0, 1.0),
+            (-dy / half_h).clamp(-1.0, 1.0),
         );
         if (drag.0 - self.drag.0).abs() < 1e-4 && (drag.1 - self.drag.1).abs() < 1e-4 {
             return None;
         }
         self.drag = drag;
         Some(drag)
-    }
-
-    fn scale_for(&self, extent: f32) -> f32 {
-        // Normalize against half the window extent so the 600 px clamp maps to a
-        // sane [-1, 1] range even for tall pet windows.
-        (extent * 0.5).max(1.0)
     }
 
     /// Looks at a gaze target (peer window center) instead of the cursor.
@@ -108,7 +109,7 @@ impl HeadTracker {
         self.last_local = None;
         self.recentering = false;
         self.recenter_from = None;
-        let dx = (local.0 - width * 0.5) / (width * 0.5).max(1.0);
+        let dx = (local.0 - width * 0.5) / (width * 0.5 * Self::RANGE_GAIN).max(1.0);
         let dy = -(local.1 - height * 0.5) / (height * 0.5).max(1.0);
         let drag = (dx.clamp(-1.0, 1.0), dy.clamp(-1.0, 1.0));
         if drag == self.drag {
@@ -219,7 +220,8 @@ mod tests {
         let near = tracker.track_local(&ctx, (300.0, 250.0)).unwrap();
         let mut tracker = HeadTracker::default();
         let far = tracker.track_local(&ctx, (30_000.0, 250.0)).unwrap();
-        assert!((near.0 - 0.5).abs() < 1e-6, "{near:?}");
+        // 100 px from the 400 px window centre with a 2.5x range gain.
+        assert!((near.0 - 0.2).abs() < 1e-6, "{near:?}");
         assert!(
             (far.0 - 1.0).abs() < 1e-6,
             "projected then clamped: {far:?}"

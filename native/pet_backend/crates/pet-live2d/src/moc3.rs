@@ -50,7 +50,6 @@ pub struct Moc3Adapter {
     model: RuntimeModel,
     model_dir: PathBuf,
     info: ModelInfo,
-    face_height: Option<f32>,
     motion_paths: HashMap<String, Vec<PathBuf>>,
     expression_paths: HashMap<String, PathBuf>,
     motion_cache: HashMap<PathBuf, Motion3>,
@@ -130,13 +129,11 @@ impl Moc3Adapter {
             canvas_height: canvas.height() as f32,
         };
 
-        let face_height = crate::framing::moc3_face_height(&model, &model_dir);
         let seed = pet_util::Rng::from_entropy().next_u64();
         Ok(Self {
             model,
             model_dir,
             info,
-            face_height,
             motion_paths,
             expression_paths,
             motion_cache: HashMap::new(),
@@ -156,11 +153,6 @@ impl Moc3Adapter {
     /// Static model facts.
     pub fn info(&self) -> &ModelInfo {
         &self.info
-    }
-
-    /// Face height measured once in the neutral pose.
-    pub fn face_height(&self) -> Option<f32> {
-        self.face_height
     }
 
     /// Current meshes.
