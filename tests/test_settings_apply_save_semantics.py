@@ -4,9 +4,10 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from settings_window.pages.behavior import BehaviorPageMixin
+from settings_window.pages.chat_integration import ChatIntegrationPageMixin
 from settings_window.pages.data import DataManagementPageMixin
 
 
@@ -125,6 +126,7 @@ class _ApplyHarness(QWidget):
     _current_vsync_setting = SettingsWindow._current_vsync_setting
     _current_gpu_acceleration_setting = SettingsWindow._current_gpu_acceleration_setting
     _current_music_bounce_setting = SettingsWindow._current_music_bounce_setting
+    _config_save_deferred = SettingsWindow._config_save_deferred
 
     def __init__(self):
         super().__init__()
@@ -221,6 +223,18 @@ class _ApplyHarness(QWidget):
 
     def close(self):
         self.closed = True
+
+
+class _ChatIntegrationApplyHarness(ChatIntegrationPageMixin, _ApplyHarness):
+    def __init__(self):
+        super().__init__()
+        self._chat_integration_enabled = _SwitchStub(True)
+        self._chat_integration_overlay_enabled = _SwitchStub(True)
+        self._chat_integration_include_context = _SwitchStub(True)
+        self._chat_integration_endpoint_input = QLineEdit(self)
+        self._chat_integration_port_input = QLineEdit("38473", self)
+        self._chat_integration_token_input = QLineEdit(self)
+        self._chat_integration_preview = QWidget(self)
 
 
 class _LanguageHarness(QWidget):
@@ -376,6 +390,60 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
         self.assertTrue(harness.closed)
         self.assertEqual(1, len(harness.settings_payloads))
         self.assertEqual([("kasumi", "default")], harness.model_payloads)
+
+    def test_apply_generates_chat_token_when_enabled_without_token(self):
+        for token_input in ("", "   "):
+            with self.subTest(token_input=token_input):
+                harness = _ChatIntegrationApplyHarness()
+                harness._chat_integration_token_input.setText(token_input)
+
+                with patch("settings_window.settings_window.InfoBar.error") as error_bar:
+                    harness._on_apply()
+
+                error_bar.assert_not_called()
+                self.assertTrue(harness._cfg.saved)
+                self.assertTrue(harness.closed)
+                token = harness._cfg.get("chat_integration_token")
+                self.assertRegex(token, r"^[A-Za-z0-9_-]{24}$")
+                self.assertEqual(token, harness._chat_integration_token_input.text())
+                self.assertEqual(1, len(harness.settings_payloads))
+                self.assertEqual(token, harness.settings_payloads[0]["chat_integration_token"])
+                self.assertTrue(harness.settings_payloads[0]["chat_integration_enabled"])
+
+    def test_chat_integration_save_preserves_token_unless_generation_is_needed(self):
+        for enabled, token_input, expected_token in (
+            (True, " existing-token ", "existing-token"),
+            (False, "", ""),
+        ):
+            with self.subTest(enabled=enabled, token_input=token_input):
+                harness = _ChatIntegrationApplyHarness()
+                harness._chat_integration_enabled = _SwitchStub(enabled)
+                harness._chat_integration_token_input.setText(token_input)
+
+                result = harness._save_chat_integration_config(show_info=False, emit_update=True)
+
+                self.assertIs(result, True)
+                self.assertTrue(harness._cfg.saved)
+                self.assertEqual(expected_token, harness._cfg.get("chat_integration_token"))
+                self.assertEqual(expected_token, harness.settings_payloads[0]["chat_integration_token"])
+
+    def test_generate_chat_token_can_be_saved_and_sent_to_runtime(self):
+        harness = _ChatIntegrationApplyHarness()
+        harness._chat_integration_token_input.setText("previous-token")
+
+        with patch("settings_window.pages.chat_integration.InfoBar.success") as success_bar:
+            harness._generate_chat_integration_token()
+
+        token = harness._chat_integration_token_input.text()
+        self.assertRegex(token, r"^[A-Za-z0-9_-]{24}$")
+        self.assertNotEqual("previous-token", token)
+        self.assertFalse(harness._cfg.saved)
+        success_bar.assert_called_once()
+
+        self.assertIs(harness._save_chat_integration_config(show_info=False, emit_update=True), True)
+        self.assertTrue(harness._cfg.saved)
+        self.assertEqual(token, harness._cfg.get("chat_integration_token"))
+        self.assertEqual(token, harness.settings_payloads[0]["chat_integration_token"])
 
     def test_show_fps_is_preserved_when_display_page_was_not_opened(self):
         harness = _ApplyHarness()
