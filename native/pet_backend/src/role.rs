@@ -1236,7 +1236,7 @@ fn layout_for_model(
 }
 
 fn tracking_reference(scale_percent: f32, dpr: f64) -> (f32, f32) {
-    let scale = (scale_percent / 100.0) as f32 * dpr as f32;
+    let scale = (scale_percent / 100.0) * dpr as f32;
     (
         TRACK_REFERENCE_WINDOW_WIDTH * scale,
         TRACK_REFERENCE_WINDOW_HEIGHT * scale,
