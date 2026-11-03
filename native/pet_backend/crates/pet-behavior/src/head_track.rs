@@ -23,14 +23,6 @@ pub struct HeadTracker {
 }
 
 impl HeadTracker {
-    /// Tracking range multiplier over the window half-extent. The pet window is
-    /// small, so a value of 1.0 makes the head saturate at the window edge;
-    /// 2.5 lets the cursor travel about 2.5 half-windows before the head reaches
-    /// its maximum angle, which roughly covers the desktop for a small pet.
-    pub const RANGE_GAIN: f32 = 2.5;
-    /// Maximum tracking radius in pixels (projected onto the circle beyond it).
-    /// Kept well beyond a typical screen half so the gain above is not clipped.
-    pub const MAX_RADIUS: f32 = 2000.0;
     /// Dead zone (squared): 4 px.
     pub const DEADZONE_SQ: f32 = 16.0;
     /// Recenter duration in seconds.
@@ -51,18 +43,11 @@ impl HeadTracker {
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
-        let half_w = width * 0.5;
-        let half_h = height * 0.5;
-
-        let mut dx = cursor.0 - half_w;
-        let mut dy = cursor.1 - half_h;
-        let distance_sq = dx * dx + dy * dy;
-        if distance_sq > Self::MAX_RADIUS * Self::MAX_RADIUS {
-            let distance = distance_sq.sqrt();
-            let factor = Self::MAX_RADIUS / distance;
-            dx *= factor;
-            dy *= factor;
-        }
+        // Convert the window-local cursor into physical screen coordinates.
+        let point = (
+            ctx.own_center.0 + cursor.0 - width * 0.5,
+            ctx.own_center.1 + cursor.1 - height * 0.5,
+        );
 
         if let Some((last_x, last_y)) = self.last_local {
             let delta_sq = (cursor.0 - last_x).powi(2) + (cursor.1 - last_y).powi(2);
@@ -74,18 +59,42 @@ impl HeadTracker {
         self.recentering = false;
         self.recenter_from = None;
 
-        let drag = (
-            // The pet window is narrow, so expand tracking horizontally only;
-            // the window is already tall enough for the vertical screen range.
-            (dx / (half_w * Self::RANGE_GAIN)).clamp(-1.0, 1.0),
-            // Screen y grows downwards, model y grows upwards.
-            (-dy / half_h).clamp(-1.0, 1.0),
-        );
+        let drag = Self::screen_drag(ctx, point);
         if (drag.0 - self.drag.0).abs() < 1e-4 && (drag.1 - self.drag.1).abs() < 1e-4 {
             return None;
         }
         self.drag = drag;
         Some(drag)
+    }
+
+    /// Maps a physical screen point to drag.
+    ///
+    /// The reference rectangle is the smallest rectangle centered on this
+    /// window that contains the current monitor, but never smaller than the
+    /// fixed reference window: full width >= 2x reference width and full height
+    /// >= 1x reference height. This keeps tracking identical across models.
+    fn screen_drag(ctx: &BehaviorContext<'_>, point: (f32, f32)) -> (f32, f32) {
+        let center = ctx.own_center;
+        let (left, top, right, bottom) = ctx.screen;
+        let half_w = if right > left {
+            (center.0 - left).max(right - center.0)
+        } else {
+            ctx.surface.0 as f32 * 0.5
+        };
+        let half_h = if bottom > top {
+            (center.1 - top).max(bottom - center.1)
+        } else {
+            ctx.surface.1 as f32 * 0.5
+        };
+        let min_half_w = ctx.tracking_reference.0.max(1.0);
+        let min_half_h = (ctx.tracking_reference.1 * 0.5).max(1.0);
+        let half_w = half_w.max(min_half_w);
+        let half_h = half_h.max(min_half_h);
+        (
+            ((point.0 - center.0) / half_w).clamp(-1.0, 1.0),
+            // Screen y grows downwards, model y grows upwards.
+            ((center.1 - point.1) / half_h).clamp(-1.0, 1.0),
+        )
     }
 
     /// Looks at a gaze target (peer window center) instead of the cursor.
@@ -99,19 +108,17 @@ impl HeadTracker {
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
-        let local = match target {
-            GazeTarget::Local(point) => point,
-            GazeTarget::Screen(point) => (
-                width * 0.5 + (point.0 - own_center.0),
-                height * 0.5 + (point.1 - own_center.1),
+        let point = match target {
+            GazeTarget::Local(point) => (
+                own_center.0 + point.0 - width * 0.5,
+                own_center.1 + point.1 - height * 0.5,
             ),
+            GazeTarget::Screen(point) => point,
         };
         self.last_local = None;
         self.recentering = false;
         self.recenter_from = None;
-        let dx = (local.0 - width * 0.5) / (width * 0.5 * Self::RANGE_GAIN).max(1.0);
-        let dy = -(local.1 - height * 0.5) / (height * 0.5).max(1.0);
-        let drag = (dx.clamp(-1.0, 1.0), dy.clamp(-1.0, 1.0));
+        let drag = Self::screen_drag(ctx, point);
         if drag == self.drag {
             return None;
         }
@@ -170,6 +177,8 @@ mod tests {
             hour: 12,
             peer_center: None,
             own_center: (surface.0 as f32 / 2.0, surface.1 as f32 / 2.0),
+            screen: (0.0, 0.0, surface.0 as f32, surface.1 as f32),
+            tracking_reference: (surface.0 as f32, surface.1 as f32),
             motion_names,
             expression_names,
             character: "kasumi",
@@ -220,8 +229,8 @@ mod tests {
         let near = tracker.track_local(&ctx, (300.0, 250.0)).unwrap();
         let mut tracker = HeadTracker::default();
         let far = tracker.track_local(&ctx, (30_000.0, 250.0)).unwrap();
-        // 100 px from the 400 px window centre with a 2.5x range gain.
-        assert!((near.0 - 0.2).abs() < 1e-6, "{near:?}");
+        // 100 px from the 400 px window centre; the reference half-width is 400.
+        assert!((near.0 - 0.25).abs() < 1e-6, "{near:?}");
         assert!(
             (far.0 - 1.0).abs() < 1e-6,
             "projected then clamped: {far:?}"

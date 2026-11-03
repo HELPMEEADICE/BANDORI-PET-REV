@@ -12,7 +12,9 @@ use pet_input::hit::{AlphaTexture, FrameSnapshot, HitStability, HoverState};
 use pet_live2d::{ModelHandle, ModelInfo};
 use pet_render::{ModelGpu, RenderError, SceneRenderer};
 use pet_window::placement;
-use pet_window::sizing::{content_size, ModelLayout};
+use pet_window::sizing::{
+    content_size, ModelLayout, TRACK_REFERENCE_WINDOW_HEIGHT, TRACK_REFERENCE_WINDOW_WIDTH,
+};
 #[cfg(windows)]
 use pet_window::win32;
 use tracing::{error, info, warn};
@@ -73,6 +75,8 @@ pub struct Role {
     pub bounds: pet_window::sizing::Bounds,
     /// Stable model scale and padded animation viewport.
     pub layout: ModelLayout,
+    /// Fixed head-tracking reference window in physical pixels.
+    pub tracking_reference: (f32, f32),
     /// Model → clip matrix.
     pub matrix: neocari::core::Matrix44,
     /// Persisted placement record.
@@ -176,6 +180,7 @@ impl Role {
             .unwrap_or(1.0);
         let monitors = placement::monitors_for_scale(dpr);
         let scale = config.effective_scale_percent();
+        let tracking_reference = tracking_reference(scale, dpr);
         let (width, height) = layout.window_size(scale, dpr);
         let primary = monitors.iter().find(|monitor| monitor.is_primary).cloned();
         let mut stored = entry.window_placement.clone();
@@ -332,6 +337,7 @@ impl Role {
             behavior,
             bounds,
             layout,
+            tracking_reference,
             matrix,
             placement: stored,
             entry: entry.clone(),
@@ -429,6 +435,7 @@ impl Role {
     pub fn apply_scale(&mut self, config: &Config, dpr: f64) -> RoleResult<()> {
         let scale = config.effective_scale_percent();
         self.layout = layout_for_model(&self.model, self.bounds, config, &self.entry);
+        self.tracking_reference = tracking_reference(scale, dpr);
         let (width, height) = self.layout.window_size(scale, dpr);
         let (x, y, current_width, current_height) = self.window_rect().unwrap_or((
             self.base_position.0,
@@ -814,6 +821,8 @@ impl Role {
             hour,
             peer_center,
             own_center,
+            screen: self.screen_bounds(),
+            tracking_reference: self.tracking_reference,
             motion_names: &motion_names,
             expression_names: &expression_names,
             character: &self.character,
@@ -956,6 +965,30 @@ impl Role {
                 y as f32 + height as f32 * 0.5,
             ),
             None => (0.0, 0.0),
+        }
+    }
+
+    /// Current monitor bounds in physical pixels: `(left, top, right, bottom)`.
+    pub fn screen_bounds(&self) -> (f32, f32, f32, f32) {
+        let monitor = self
+            .window
+            .current_monitor()
+            .or_else(|| self.window.available_monitors().next());
+        match monitor {
+            Some(monitor) => {
+                let position = monitor.position();
+                let size = monitor.size();
+                (
+                    position.x as f32,
+                    position.y as f32,
+                    position.x as f32 + size.width as f32,
+                    position.y as f32 + size.height as f32,
+                )
+            }
+            None => {
+                let size = self.window.inner_size();
+                (0.0, 0.0, size.width as f32, size.height as f32)
+            }
         }
     }
 
@@ -1200,4 +1233,12 @@ fn layout_for_model(
     } else {
         layout
     }
+}
+
+fn tracking_reference(scale_percent: f32, dpr: f64) -> (f32, f32) {
+    let scale = (scale_percent / 100.0) as f32 * dpr as f32;
+    (
+        TRACK_REFERENCE_WINDOW_WIDTH * scale,
+        TRACK_REFERENCE_WINDOW_HEIGHT * scale,
+    )
 }

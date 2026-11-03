@@ -57,6 +57,11 @@ pub struct BehaviorContext<'a> {
     pub peer_center: Option<(f32, f32)>,
     /// This window's center in screen coordinates.
     pub own_center: (f32, f32),
+    /// Current monitor bounds in physical pixels: `(left, top, right, bottom)`.
+    pub screen: (f32, f32, f32, f32),
+    /// Fixed reference window size in physical pixels: `(width, height)`.
+    /// Tracking never covers less than 2x this width and 1x this height.
+    pub tracking_reference: (f32, f32),
     /// Motion group names of the current model.
     pub motion_names: &'a [String],
     /// Expression names of the current model.
@@ -412,6 +417,8 @@ mod tests {
             hour: 12,
             peer_center: None,
             own_center: (200.0, 250.0),
+            screen: (0.0, 0.0, 400.0, 500.0),
+            tracking_reference: (400.0, 500.0),
             motion_names: motions,
             expression_names: expressions,
             character: "kasumi",

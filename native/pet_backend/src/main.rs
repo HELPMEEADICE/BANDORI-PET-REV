@@ -504,6 +504,8 @@ impl App {
             hour: pet_util::time_of_day::local_hour(),
             peer_center: None,
             own_center: role.center(),
+            screen: role.screen_bounds(),
+            tracking_reference: role.tracking_reference,
             motion_names: &motions,
             expression_names: &expressions,
             character: &character,

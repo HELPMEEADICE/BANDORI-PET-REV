@@ -77,6 +77,12 @@ pub const MODEL_VERTICAL_OFFSET: f32 = 0.05;
 pub const WIDE_MOC3_HEIGHT_FACTOR: f32 = 1.2;
 pub const WIDE_MOC3_VERTICAL_OFFSET: f32 = 0.10;
 
+/// Typical normal-model window (houka school uniform) at 100% logical pixels.
+/// This is the fixed empirical ruler for head tracking so every model behaves
+/// the same: tracking range width >= 2x this width, height >= 1x this height.
+pub const TRACK_REFERENCE_WINDOW_WIDTH: f32 = 611.0;
+pub const TRACK_REFERENCE_WINDOW_HEIGHT: f32 = 903.0;
+
 /// Static framing: animation never changes the model's apparent size.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelLayout {
