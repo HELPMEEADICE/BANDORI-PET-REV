@@ -10,7 +10,7 @@ use std::time::Instant;
 use neocari::render::wgpu::WgpuLive2dRenderer;
 use pet_live2d::ModelHandle;
 use pet_render::{Gpu, ModelGpu};
-use pet_window::sizing::{content_size, ModelLayout};
+use pet_window::sizing::{content_size, upper_body_bounds, ModelLayout};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
@@ -33,11 +33,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(group) = model.info().default_motion_group().map(str::to_owned) {
         assert!(model.play_motion(&group));
     }
-    let layout = ModelLayout::new(
-        content_size(model.meshes()).ok_or("empty model")?,
-        model.face_height(),
-        model.info().format,
-    );
+    let bounds = content_size(model.meshes()).ok_or("empty model")?;
+    let upper_body =
+        upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body);
     let matrix = layout.matrix(model.flips_y());
     let gpu = Gpu::new(true, None)?;
     let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);

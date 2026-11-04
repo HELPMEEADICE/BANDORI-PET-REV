@@ -12,7 +12,7 @@ use pet_input::hit::{AlphaTexture, FrameSnapshot, HitStability, HoverState};
 use pet_live2d::{ModelHandle, ModelInfo};
 use pet_render::{ModelGpu, RenderError, SceneRenderer};
 use pet_window::placement;
-use pet_window::sizing::{content_size, ModelLayout};
+use pet_window::sizing::{content_size, upper_body_bounds, ModelLayout};
 #[cfg(windows)]
 use pet_window::win32;
 use tracing::{error, info, warn};
@@ -1196,7 +1196,9 @@ fn layout_for_model(
     if entry.pet_mode == pet_config::PetMode::Pixel {
         return ModelLayout::pixel(bounds);
     }
-    let layout = ModelLayout::new(bounds, model.face_height(), model.format());
+    let upper_body =
+        upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body);
     if model.format() == pet_config::ModelFormat::Moc3
         && config
             .extras

@@ -53,6 +53,8 @@ pub const BASE_LOGICAL_HEIGHT: f32 = 500.0;
 
 /// Shared neutral face height at 100%, close to the original moc bust scale.
 pub const BASE_FACE_HEIGHT: f32 = 120.0;
+/// Reference projected area of the head-and-torso region at 100% scale.
+pub const BASE_UPPER_BODY_AREA: f32 = 170_000.0;
 
 /// Static framing: animation never changes the model's apparent size.
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +88,30 @@ impl ModelLayout {
         Self::with_reference_height(content, reference_height)
     }
 
+    /// Sizes the whole model from the projected area of its upper-body region,
+    /// preserving the original aspect ratio while aligning broad and narrow
+    /// characters to the same visual scale.
+    pub fn from_upper_body(content: Bounds, upper_body: Bounds) -> Self {
+        let upper_area = upper_body.width() * upper_body.height();
+        if !upper_area.is_finite() || upper_area <= 1e-8 {
+            return Self::with_reference_height(content, content.height());
+        }
+        let pixels_per_unit = (BASE_UPPER_BODY_AREA / upper_area).sqrt();
+        if !pixels_per_unit.is_finite() || pixels_per_unit <= 0.0 {
+            return Self::with_reference_height(content, content.height());
+        }
+        Self::with_pixels_per_unit(content, upper_body.height(), pixels_per_unit)
+    }
+
     fn with_reference_height(content: Bounds, reference_height: f32) -> Self {
+        Self::with_pixels_per_unit(
+            content,
+            reference_height,
+            BASE_LOGICAL_HEIGHT / reference_height,
+        )
+    }
+
+    fn with_pixels_per_unit(content: Bounds, reference_height: f32, pixels_per_unit: f32) -> Self {
         let pad_x = reference_height * 0.35;
         let pad_y = reference_height * 0.15;
         Self {
@@ -96,7 +121,7 @@ impl ModelLayout {
                 min_y: content.min_y - pad_y,
                 max_y: content.max_y + pad_y,
             },
-            pixels_per_unit: BASE_LOGICAL_HEIGHT / reference_height,
+            pixels_per_unit,
         }
     }
 
@@ -123,6 +148,46 @@ pub fn content_size(meshes: &[Moc3DrawableMesh]) -> Option<Bounds> {
     let mut bounds: Option<Bounds> = None;
     for vertex in meshes.iter().flat_map(|mesh| mesh.vertices()) {
         let [x, y] = vertex.position();
+        bounds = Some(match bounds {
+            Some(current) => Bounds {
+                min_x: current.min_x.min(x),
+                min_y: current.min_y.min(y),
+                max_x: current.max_x.max(x),
+                max_y: current.max_y.max(y),
+            },
+            None => Bounds {
+                min_x: x,
+                min_y: y,
+                max_x: x,
+                max_y: y,
+            },
+        });
+    }
+    bounds.filter(|bounds| bounds.width() > 1e-4 && bounds.height() > 1e-4)
+}
+
+/// Bounds the upper part of a character from its head down to the waist area.
+/// A detected face provides a model-independent ruler; models without face
+/// metadata use a fraction of their full height.
+pub fn upper_body_bounds(
+    meshes: &[Moc3DrawableMesh],
+    face_height: Option<f32>,
+    flip_y: bool,
+) -> Option<Bounds> {
+    let content = content_size(meshes)?;
+    let face_height = face_height.filter(|height| height.is_finite() && *height > 1e-4);
+    let region_height = face_height
+        .map(|height| height * 4.75)
+        .unwrap_or(content.height() * 0.62)
+        .clamp(content.height() * 0.4, content.height() * 0.72);
+    let top = if flip_y { content.min_y } else { content.max_y };
+    let mut bounds: Option<Bounds> = None;
+    for vertex in meshes.iter().flat_map(|mesh| mesh.vertices()) {
+        let [x, y] = vertex.position();
+        let distance_from_top = if flip_y { y - top } else { top - y };
+        if distance_from_top < -1e-4 || distance_from_top > region_height {
+            continue;
+        }
         bounds = Some(match bounds {
             Some(current) => Bounds {
                 min_x: current.min_x.min(x),

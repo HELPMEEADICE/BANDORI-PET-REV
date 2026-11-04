@@ -2,7 +2,7 @@
 //! vrm_motion_preview MODEL OUTPUT_DIR [MOTION] [SECONDS] [FPS]
 use pet_live2d::ModelHandle;
 use pet_render::{Gpu, ModelGpu};
-use pet_window::sizing::{content_size, ModelLayout};
+use pet_window::sizing::{content_size, upper_body_bounds, ModelLayout};
 use std::{error::Error, path::Path};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -19,11 +19,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     std::fs::create_dir_all(output)?;
     let mut model = ModelHandle::load(Path::new(path))?;
-    let layout = ModelLayout::new(
-        content_size(model.meshes()).ok_or("empty model")?,
-        model.face_height(),
-        model.format(),
-    );
+    let bounds = content_size(model.meshes()).ok_or("empty model")?;
+    let upper_body =
+        upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body);
     let matrix = layout.matrix(false);
     let (width, height) = layout.window_size(70., 1.);
     let gpu = Gpu::new(true, None)?;
