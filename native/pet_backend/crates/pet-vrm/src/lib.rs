@@ -885,8 +885,11 @@ impl VrmModel {
             let inverse_view = self.view.inverse();
             let yaw_axis = -inverse_view.transform_vector3(Vec3::Y).normalize();
             let pitch_axis = -inverse_view.transform_vector3(Vec3::X).normalize();
-            let world_delta = Quat::from_axis_angle(yaw_axis, drag[0] * 0.50)
-                * Quat::from_axis_angle(pitch_axis, -drag[1] * 0.35);
+            // VRM head-bone forward motion is opposite to the screen-space drag
+            // convention here; invert both tracking components after converting
+            // the axes through the reflected camera.
+            let world_delta = Quat::from_axis_angle(yaw_axis, -drag[0] * 0.50)
+                * Quat::from_axis_angle(pitch_axis, drag[1] * 0.35);
             let parent = self.nodes[head]
                 .parent
                 .map(|p| self.nodes[p].world.to_scale_rotation_translation().1)
