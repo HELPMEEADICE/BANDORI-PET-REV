@@ -76,19 +76,13 @@ impl ModelLayout {
         self
     }
     /// Uses the neutral face as a common ruler for bust and full-body models.
-    /// Models without face metadata fall back to conventional format framing.
-    pub fn new(content: Bounds, face_height: Option<f32>, format: ModelFormat) -> Self {
+    /// Models without face metadata use the same content-height baseline for
+    /// every format.
+    pub fn new(content: Bounds, face_height: Option<f32>, _format: ModelFormat) -> Self {
         let reference_height = face_height
             .filter(|height| height.is_finite() && *height > 1e-4)
             .map(|height| height * BASE_LOGICAL_HEIGHT / BASE_FACE_HEIGHT)
-            .unwrap_or_else(|| {
-                content.height()
-                    * if format == ModelFormat::Moc3 {
-                        0.65
-                    } else {
-                        1.0
-                    }
-            });
+            .unwrap_or_else(|| content.height());
         let pad_x = reference_height * 0.35;
         let pad_y = reference_height * 0.15;
         Self {
