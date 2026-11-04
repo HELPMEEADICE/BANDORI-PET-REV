@@ -14,6 +14,7 @@
 //! * a place to pre-multiply if a machine only offers `PostMultiplied` surfaces.
 
 mod fps;
+mod vrm;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -372,6 +373,7 @@ fn choose_present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::Presen
 
 /// GPU state for one loaded model.
 pub struct ModelGpu {
+    vrm: Option<vrm::VrmGpu>,
     mesh_buffers: WgpuMeshBuffers,
     textures: Vec<WgpuTexture>,
     clipping_plan: WgpuClippingPlan,
@@ -415,6 +417,7 @@ impl ModelGpu {
         let transform = renderer.create_transform(&gpu.device, &matrix);
         let drawable_count = mesh_buffers.drawables().len();
         Ok(Self {
+            vrm: None,
             mesh_buffers,
             textures: uploaded,
             clipping_plan,
@@ -450,6 +453,10 @@ impl ModelGpu {
 
     /// Updates the model → clip transform.
     pub fn set_matrix(&mut self, gpu: &Gpu, renderer: &WgpuLive2dRenderer, matrix: Matrix44) {
+        if let Some(vrm) = &self.vrm {
+            vrm.set_matrix(gpu, matrix);
+            return;
+        }
         if !self.transform.update_matrix(&gpu.queue, &matrix) {
             self.transform = renderer.create_transform(&gpu.device, &matrix);
         }
@@ -483,6 +490,9 @@ impl ModelGpu {
 
     /// Number of drawables currently uploaded.
     pub fn drawable_count(&self) -> usize {
+        if let Some(vrm) = &self.vrm {
+            return vrm.count();
+        }
         self.drawable_count
     }
 
@@ -496,6 +506,39 @@ impl ModelGpu {
         let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);
         render_model_offscreen(gpu, &renderer, self, width, height)
     }
+}
+
+impl ModelGpu {
+    /// Upload a VRM using depth-tested 3D buffers. Empty Live2D resources keep
+    /// the window/IPC interface common without uploading projected hit meshes.
+    pub fn new_vrm(
+        gpu: &Gpu,
+        model: &pet_vrm::VrmModel,
+        matrix: Matrix44,
+        format: wgpu::TextureFormat,
+    ) -> Result<Self, RenderError> {
+        let renderer = WgpuLive2dRenderer::new(&gpu.device, format);
+        let mut uploaded = Self::new(gpu, &renderer, &[], &[], matrix)?;
+        uploaded.vrm = Some(vrm::VrmGpu::new(gpu, model, matrix, format));
+        Ok(uploaded)
+    }
+    pub fn update_vrm(&mut self, gpu: &Gpu, model: &pet_vrm::VrmModel) {
+        if let Some(vrm) = &mut self.vrm {
+            vrm.update(gpu, model);
+        }
+    }
+}
+
+/// Offscreen VRM rendering uses the same pipeline as the transparent pet.
+pub fn render_vrm_preview(
+    model: &pet_vrm::VrmModel,
+    matrix: Matrix44,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, RenderError> {
+    let gpu = Gpu::new(true, None)?;
+    let uploaded = ModelGpu::new_vrm(&gpu, model, matrix, wgpu::TextureFormat::Rgba8Unorm)?;
+    uploaded.capture_rgba(&gpu, width, height)
 }
 
 fn prepare_clipping_plan(mesh_buffers: &WgpuMeshBuffers) -> Result<WgpuClippingPlan, RenderError> {
@@ -552,45 +595,49 @@ fn render_model_offscreen(
         mapped_at_creation: false,
     });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    for mask in [true, false] {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("bandori-picker.preview-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: if mask {
-                    model.mask_target.view()
-                } else {
-                    &view
-                },
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        if mask {
-            renderer.draw_masks_with_textures(
-                &mut pass,
-                &model.mesh_buffers,
-                &model.clipping,
-                &model.textures,
-            )
-        } else {
-            renderer.draw_with_textures_clipping_and_transform(
-                &mut pass,
-                &model.mesh_buffers,
-                &model.textures,
-                &model.clipping,
-                &model.mask_target,
-                &model.transform,
-            )
+    if let Some(vrm) = &model.vrm {
+        vrm.encode(gpu, &mut encoder, &view, width, height, true);
+    } else {
+        for mask in [true, false] {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bandori-picker.preview-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: if mask {
+                        model.mask_target.view()
+                    } else {
+                        &view
+                    },
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if mask {
+                renderer.draw_masks_with_textures(
+                    &mut pass,
+                    &model.mesh_buffers,
+                    &model.clipping,
+                    &model.textures,
+                )
+            } else {
+                renderer.draw_with_textures_clipping_and_transform(
+                    &mut pass,
+                    &model.mesh_buffers,
+                    &model.textures,
+                    &model.clipping,
+                    &model.mask_target,
+                    &model.transform,
+                )
+            }
+            .map_err(|error| RenderError::Draw(error.to_string()))?;
         }
-        .map_err(|error| RenderError::Draw(error.to_string()))?;
     }
     encoder.copy_texture_to_buffer(
         texture.as_image_copy(),
@@ -1161,8 +1208,8 @@ impl SceneRenderer {
                 label: Some("bandori-pet.encoder"),
             });
 
-        // Pass 0: clipping masks into the offscreen atlas.
-        {
+        // Pass 0: clipping masks into the offscreen atlas (Live2D only).
+        if model.vrm.is_none() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("bandori-pet.mask_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1189,7 +1236,18 @@ impl SceneRenderer {
                 .map_err(|error| RenderError::Draw(error.to_string()))?;
         }
 
-        // Pass 1: the model, into the intermediate target.
+        // Pass 1: 3D depth pass or Live2D, into the shared intermediate target.
+        if let Some(vrm) = &model.vrm {
+            let (width, height) = self.render_size();
+            vrm.encode(
+                &self.gpu,
+                &mut encoder,
+                &self.intermediate.view,
+                width,
+                height,
+                false,
+            );
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("bandori-pet.main_pass"),
@@ -1198,7 +1256,11 @@ impl SceneRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: if model.vrm.is_some() {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1207,16 +1269,18 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.renderer
-                .draw_with_textures_clipping_and_transform(
-                    &mut pass,
-                    &model.mesh_buffers,
-                    &model.textures,
-                    &model.clipping,
-                    &model.mask_target,
-                    &model.transform,
-                )
-                .map_err(|error| RenderError::Draw(error.to_string()))?;
+            if model.vrm.is_none() {
+                self.renderer
+                    .draw_with_textures_clipping_and_transform(
+                        &mut pass,
+                        &model.mesh_buffers,
+                        &model.textures,
+                        &model.clipping,
+                        &model.mask_target,
+                        &model.transform,
+                    )
+                    .map_err(|error| RenderError::Draw(error.to_string()))?;
+            }
             if let Some(overlay) = &self.fps_overlay {
                 self.renderer
                     .draw_with_textures_and_transform(

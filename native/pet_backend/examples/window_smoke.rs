@@ -123,6 +123,7 @@ impl ApplicationHandler for Probe {
             self.stage
         );
         let role = self.role.as_mut().unwrap();
+        role.advance_model(1.0 / 60.0);
         assert!(
             !role.renderer.is_fused(),
             "renderer fused in {:?}",
@@ -218,6 +219,15 @@ fn main() {
     entry
         .extras
         .insert("pixel_path".into(), serde_json::json!(sprite));
+    // An optional avatar path exercises the same real window lifecycle with VRM.
+    if let Some(path) = std::env::args().nth(1) {
+        entry.path = std::fs::canonicalize(path)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        entry.format = pet_config::ModelFormat::from_path(&entry.path);
+        entry.pet_mode = PetMode::Live2d;
+    }
     let mut probe = Probe {
         paths: Paths::with_root(directory.path()),
         cache: ModelCache::new(

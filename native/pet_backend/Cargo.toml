@@ -5,7 +5,7 @@ resolver = "2"
 # from published sources. Keeping it out of the member list keeps
 # `cargo test --workspace` green while still building it as a dependency.
 exclude = ["vendor/neocari"]
-members = [".", "crates/pet-config", "crates/pet-i18n", "crates/pet-live2d", "crates/pet-render", "crates/pet-input", "crates/pet-behavior", "crates/pet-window", "crates/pet-util", "crates/pet-assets"]
+members = [".", "crates/pet-config", "crates/pet-i18n", "crates/pet-live2d", "crates/pet-render", "crates/pet-input", "crates/pet-behavior", "crates/pet-window", "crates/pet-util", "crates/pet-assets", "crates/pet-vrm"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +20,7 @@ pet-i18n = { path = "crates/pet-i18n" }
 pet-config = { path = "crates/pet-config" }
 pet-assets = { path = "crates/pet-assets" }
 pet-live2d = { path = "crates/pet-live2d" }
+pet-vrm = { path = "crates/pet-vrm" }
 pet-render = { path = "crates/pet-render" }
 pet-input = { path = "crates/pet-input" }
 pet-behavior = { path = "crates/pet-behavior" }

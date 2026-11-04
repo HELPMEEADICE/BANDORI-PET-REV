@@ -293,17 +293,19 @@ impl Role {
 
         let matrix = layout.matrix(model.flips_y());
         if let Ok(output) = std::env::var("BANDORI_PET_SNAPSHOT") {
-            let rgba = pet_render::render_preview(
-                model.meshes(),
-                model.textures(),
-                matrix,
-                width,
-                height,
-            )?;
+            let rgba = if let Some(vrm) = model.vrm() {
+                pet_render::render_vrm_preview(vrm, matrix, width, height)?
+            } else {
+                pet_render::render_preview(model.meshes(), model.textures(), matrix, width, height)?
+            };
             image::save_buffer(output, &rgba, width, height, image::ColorType::Rgba8)
                 .map_err(|error| RoleError::Window(format!("snapshot failed: {error}")))?;
         }
-        let model_gpu = renderer.upload_model(model.meshes(), model.textures(), matrix)?;
+        let model_gpu = if let Some(vrm) = model.vrm() {
+            ModelGpu::new_vrm(renderer.gpu(), vrm, matrix, renderer.format())?
+        } else {
+            renderer.upload_model(model.meshes(), model.textures(), matrix)?
+        };
         let textures = Self::take_hit_textures(&mut model);
 
         let mut behavior = RoleBehavior::new(pet_util::Rng::from_entropy().next_u64());
@@ -528,11 +530,19 @@ impl Role {
 
     /// Advances the model by `dt` and uploads the resulting meshes.
     pub fn advance_model(&mut self, dt: f32) {
+        if let Some((x, y, width, _)) = self.window_rect() {
+            let units_per_pixel = self.layout.viewport.width() / width.max(1) as f32;
+            if let Some(vrm) = self.model.vrm_mut() {
+                vrm.set_desktop_position(x, y, units_per_pixel);
+            }
+        }
         if !self.model.update(dt) {
             warn!("model update failed");
             return;
         }
-        if let Err(error) = self.model_gpu.update_meshes(
+        if let Some(vrm) = self.model.vrm() {
+            self.model_gpu.update_vrm(self.renderer.gpu(), vrm);
+        } else if let Err(error) = self.model_gpu.update_meshes(
             self.renderer.gpu(),
             self.renderer.renderer(),
             self.model.meshes(),
@@ -1056,9 +1066,12 @@ impl Role {
         let scale = config.effective_scale_percent();
         let (width, height) = layout.window_size(scale, dpr);
         let matrix = layout.matrix(model.flips_y());
-        let model_gpu = self
-            .renderer
-            .upload_model(model.meshes(), model.textures(), matrix)?;
+        let model_gpu = if let Some(vrm) = model.vrm() {
+            ModelGpu::new_vrm(self.renderer.gpu(), vrm, matrix, self.renderer.format())?
+        } else {
+            self.renderer
+                .upload_model(model.meshes(), model.textures(), matrix)?
+        };
         let textures = Self::take_hit_textures(&mut model);
 
         self.model = model;

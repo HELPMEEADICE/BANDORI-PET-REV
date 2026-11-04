@@ -133,6 +133,7 @@ def _find_model_jsons(root: Path) -> list[Path]:
     """
     result = []
     seen = set()
+    result.extend(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() == ".vrm")
 
     # 递归查找所有 JSON 文件
     for json_path in root.rglob("*.json"):
@@ -193,8 +194,15 @@ def _require_model_resource(model_dir: Path, resource: str) -> Path:
 def _validate_model_manifest(model_json: Path) -> None:
     """Validate a single Live2D manifest describes a loadable model."""
     try:
+        if model_json.suffix.lower() == ".vrm":
+            from bandori_models.vrm_manifest import read_vrm_manifest, read_vrm_settings
+            read_vrm_manifest(model_json)
+            settings = read_vrm_settings(model_json)
+            for resource in settings.get("motions", {}).values():
+                _require_model_resource(model_json.parent, resource)
+            return
         data = json.loads(model_json.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise CustomModelImportError("bad_model_json", detail=str(exc)) from exc
     if not isinstance(data, dict):
         raise CustomModelImportError("bad_model_json", detail="not an object")
@@ -344,6 +352,37 @@ def import_from_folder(folder: str, display_name: str,
     if not source_root.is_dir():
         raise CustomModelImportError("source_missing")
     return _import_from_dir(source_root, display_name, costume_id, source_root.name)
+
+
+def import_from_vrm(vrm_path: str, display_name: str,
+                    costume_id: str = "default") -> tuple[str, list[str]]:
+    """Import one embedded VRM and its optional motion manifest/resources."""
+    source = Path(vrm_path)
+    if not source.is_file() or source.suffix.lower() != ".vrm":
+        raise CustomModelImportError("source_missing")
+    _validate_model_manifest(source)
+    with tempfile.TemporaryDirectory(prefix="bandori_vrm_") as temp:
+        root = Path(temp)
+        try:
+            shutil.copy2(source, root / source.name)
+            sidecar = source.with_suffix(".pet.json")
+            if sidecar.is_file():
+                from bandori_models.vrm_manifest import read_vrm_settings
+                settings = read_vrm_settings(source)
+                motions = settings.get("motions", {})
+                if not isinstance(motions, dict):
+                    raise ValueError("motions must be an object")
+                for resource in motions.values():
+                    if not isinstance(resource, str):
+                        raise ValueError("motion path must be a string")
+                    motion = _require_model_resource(source.parent, resource)
+                    target = _resolve_relative_resource(root, resource)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(motion, target)
+                shutil.copy2(sidecar, root / sidecar.name)
+        except (OSError, ValueError) as exc:
+            raise CustomModelImportError("copy_failed", detail=str(exc)) from exc
+        return _import_from_dir(root, display_name, costume_id, source.name)
 
 
 def import_from_zip(zip_path: str, display_name: str,

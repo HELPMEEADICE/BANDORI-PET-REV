@@ -809,12 +809,29 @@ fn main() {
             let root = PathBuf::from(option("--root").map(String::as_str).unwrap_or("."));
             let cache = ModelCache::new(root.join(".cache/neocari"), root.join("models"));
             let resolved = cache.resolve(path)?;
-            let model = pet_live2d::ModelHandle::load(&resolved.model_path)?;
+            let mut model = pet_live2d::ModelHandle::load(&resolved.model_path)?;
+            if let Some(motion) = option("--motion") {
+                if !model.play_motion(motion) {
+                    return Err(format!("unknown motion: {motion}").into());
+                }
+            }
+            if let Some(time) = option("--time") {
+                let time: f32 = time.parse()?;
+                if !time.is_finite() || !(0.0..=600.0).contains(&time) {
+                    return Err("preview time must be 0..600 seconds".into());
+                }
+                for _ in 0..(time * 120.0).round() as usize {
+                    model.update(1.0 / 120.0);
+                }
+            }
             let bounds = pet_window::content_size(model.meshes()).ok_or("model has no bounds")?;
             let matrix = pet_window::fit_matrix(bounds, 0.95, model.flips_y());
             let width = (720.0 * bounds.aspect()).clamp(1.0, 2048.0) as u32;
-            let rgba =
-                pet_render::render_preview(model.meshes(), model.textures(), matrix, width, 720)?;
+            let rgba = if let Some(vrm) = model.vrm() {
+                pet_render::render_vrm_preview(vrm, matrix, width, 720)?
+            } else {
+                pet_render::render_preview(model.meshes(), model.textures(), matrix, width, 720)?
+            };
             image::save_buffer(output, &rgba, width, 720, image::ColorType::Rgba8)?;
             return Ok(());
         }

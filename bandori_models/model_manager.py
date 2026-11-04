@@ -30,6 +30,7 @@ CHARACTERS_DIR = BASE_DIR / "characters"
 MODELS_DOWNLOAD_URL = "https://modelscope.cn/datasets/HELPMEEADICE/BanG-Dream-Live2D/resolve/master/models.zip"
 MODEL_FORMAT_MOC = "moc"
 MODEL_FORMAT_MOC3 = "moc3"
+MODEL_FORMAT_VRM = "vrm"
 ARCHIVE_SCAN_CACHE_NAME = ".bandori_model_index.json"
 ARCHIVE_SCAN_CACHE_VERSION = 1
 _MODEL_JSON_CACHE_LIMIT = 32
@@ -67,6 +68,7 @@ def _model_manifest_candidates(costume_dir: Path):
     yield from sorted(
         path for path in costume_dir.glob("*.model3.json") if path.is_file()
     )
+    yield from sorted(path for path in costume_dir.glob("*") if path.is_file() and path.suffix.lower() == ".vrm")
 
 
 def _model_resource_exists(model_json: Path, resource) -> bool:
@@ -84,6 +86,10 @@ def _model_resource_exists(model_json: Path, resource) -> bool:
 def is_basic_valid_model_manifest(model_json: Path) -> bool:
     """Check only the resources required to load a Live2D model initially."""
     try:
+        if model_json.suffix.lower() == ".vrm":
+            from bandori_models.vrm_manifest import read_vrm_manifest
+            read_vrm_manifest(model_json)
+            return True
         data = json.loads(model_json.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return False
@@ -566,6 +572,8 @@ class ModelManager:
         )
 
     def _model_format_from_path(self, path: str) -> str:
+        if str(path).lower().endswith(".vrm"):
+            return MODEL_FORMAT_VRM
         if str(path).lower().endswith(".model3.json"):
             return MODEL_FORMAT_MOC3
         try:
@@ -612,7 +620,7 @@ class ModelManager:
 
     def get_model_format(self, character: str, costume: str) -> str:
         for item in self.get_costumes(character):
-            if item.get("id") == costume and item.get("format") in {MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3}:
+            if item.get("id") == costume and item.get("format") in {MODEL_FORMAT_MOC, MODEL_FORMAT_MOC3, MODEL_FORMAT_VRM}:
                 return item["format"]
         path = self.get_model_json_path(character, costume)
         if not path:
@@ -625,12 +633,19 @@ class ModelManager:
         else:
             stat = Path(path).stat()
             revision = (stat.st_size, stat.st_mtime_ns)
+            if str(path).lower().endswith(".vrm"):
+                sidecar = Path(path).with_suffix(".pet.json")
+                if sidecar.is_file():
+                    revision += (sidecar.stat().st_mtime_ns,)
         cached = self._model_json_cache.get(path)
         if cached is not None and cached[0] == revision:
             self._model_json_cache.move_to_end(path)
             return cached[1]
         if is_virtual_path(path):
             data = load_virtual_json(path)
+        elif str(path).lower().endswith(".vrm"):
+            from bandori_models.vrm_manifest import vrm_capabilities
+            data = vrm_capabilities(Path(path))
         else:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         self._model_json_cache[path] = (revision, data)

@@ -95,6 +95,10 @@ class BuildExeWithEmptyModels(build_exe):
         shutil.copy2(upstream / "LICENSE", native_licenses / "LICENSE")
         shutil.copytree(upstream / "LICENSES", native_licenses / "LICENSES", dirs_exist_ok=True)
         shutil.copy2(manifest.parent / "NOTICE.md", native_licenses / "NOTICE.md")
+        vrm_licenses = build_dir / "licenses" / "vrm"
+        vrm_licenses.mkdir(parents=True, exist_ok=True)
+        for name in ("third-party-notices.md", "three-vrm-LICENSE.txt", "UniVRM-LICENSE.txt", "ChatVRM-LICENSE.txt", "vrm-viewer-LICENSE.txt"):
+            shutil.copy2(manifest.parent / "crates" / "pet-vrm" / "assets" / name, vrm_licenses / name)
         pyside_source = Path(importlib.import_module("PySide6").__file__).resolve().parent
         pyside_icu_names = {
             path.name.casefold()
