@@ -10,6 +10,53 @@ fn fixture(legacy: bool) -> VrmModel {
         });
     VrmModel::load(&path).unwrap()
 }
+
+#[test]
+fn pointer_tracking_rotates_head_in_screen_direction_during_motion_fades() {
+    for legacy in [true, false] {
+        for (x, y) in [(1., 0.), (-1., 0.), (0., 1.), (0., -1.)] {
+            let mut tracked = fixture(legacy);
+            let mut neutral = fixture(legacy);
+            tracked.set_drag(x, y);
+            for _ in 0..90 {
+                tracked.update(1. / 120.);
+                neutral.update(1. / 120.);
+            }
+            assert!(tracked.play_motion("Wave"));
+            assert!(neutral.play_motion("Wave"));
+            tracked.update(1. / 120.);
+            neutral.update(1. / 120.);
+            let head = tracked.humanoid["head"];
+            let forward = if legacy { Vec3::Z } else { Vec3::NEG_Z };
+            let direction = |model: &VrmModel| {
+                let rotation = model.nodes[head].world.to_scale_rotation_translation().1;
+                model.view.transform_vector3(rotation * forward)
+            };
+            let difference = direction(&tracked) - direction(&neutral);
+            if x != 0. {
+                assert!(
+                    difference.x * x > 0.2,
+                    "legacy={legacy}, drag=({x},{y}), delta={difference:?}"
+                );
+            } else {
+                assert!(
+                    difference.y * y > 0.15,
+                    "legacy={legacy}, drag=({x},{y}), delta={difference:?}"
+                );
+            }
+            assert_ne!(
+                tracked.primitives[0].vertices[0].position,
+                neutral.primitives[0].vertices[0].position
+            );
+            tracked.set_drag(0., 0.);
+            for _ in 0..240 {
+                tracked.update(1. / 120.);
+                neutral.update(1. / 120.);
+            }
+            assert!(direction(&tracked).distance(direction(&neutral)) < 0.001);
+        }
+    }
+}
 #[test]
 fn vrm_versions_load_mtoon_morphs_and_physics() {
     for legacy in [true, false] {

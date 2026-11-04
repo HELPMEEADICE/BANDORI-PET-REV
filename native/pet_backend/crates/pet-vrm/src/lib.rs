@@ -767,12 +767,6 @@ impl VrmModel {
                 );
             }
         }
-        if let Some(&head) = self.humanoid.get("head") {
-            let drag = self.face.drag();
-            self.nodes[head].pose.r = (self.nodes[head].pose.r
-                * Quat::from_euler(glam::EulerRot::YXZ, drag[0] * 0.20, -drag[1] * 0.12, 0.))
-            .normalize();
-        }
         if let Some(transition) = &self.transition {
             let t = (self.elapsed - transition.started) / transition.duration;
             for (node, &from) in self.nodes.iter_mut().zip(&transition.from) {
@@ -782,8 +776,29 @@ impl VrmModel {
                 self.transition = None;
             }
         }
+        // Keep the animation-only pose for motion transitions. Tracking is a
+        // separate overlay, so changing the pointer during a fade stays responsive.
         self.last_pose = self.nodes.iter().map(|n| n.pose).collect();
         update_world(&mut self.nodes, &self.order);
+        if let Some(&head) = self.humanoid.get("head") {
+            let drag = self.face.drag();
+            // `view` includes a horizontal reflection. Rotation axes are axial
+            // vectors, so that reflection reverses their sign. Convert screen
+            // axes through the camera and animated parent to support both VRM
+            // versions and models with non-identity bone rotations.
+            let inverse_view = self.view.inverse();
+            let yaw_axis = -inverse_view.transform_vector3(Vec3::Y).normalize();
+            let pitch_axis = -inverse_view.transform_vector3(Vec3::X).normalize();
+            let world_delta = Quat::from_axis_angle(yaw_axis, drag[0] * 0.50)
+                * Quat::from_axis_angle(pitch_axis, -drag[1] * 0.35);
+            let parent = self.nodes[head]
+                .parent
+                .map(|p| self.nodes[p].world.to_scale_rotation_translation().1)
+                .unwrap_or(Quat::IDENTITY);
+            self.nodes[head].pose.r =
+                (parent.inverse() * world_delta * parent * self.nodes[head].pose.r).normalize();
+            update_world(&mut self.nodes, &self.order);
+        }
     }
     fn skin(&mut self) {
         let mut morph_weights: BTreeMap<(usize, usize), f32> = BTreeMap::new();

@@ -1102,6 +1102,8 @@ impl Role {
         self.model.set_auto_blink(true);
         self.model.set_auto_breath(true);
         self.behavior.set_config(RoleBehaviorConfig::from(config));
+        let (x, y) = self.behavior.drag();
+        self.model.set_drag(x, y);
         for command in self.behavior.start(0.0) {
             self.apply_command(&command);
         }

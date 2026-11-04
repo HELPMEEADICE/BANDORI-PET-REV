@@ -153,10 +153,12 @@ impl RoleBehavior {
 
     /// Replaces the behavior config (called whenever settings change).
     pub fn set_config(&mut self, config: RoleBehaviorConfig) {
-        if self.config.head_tracking && !config.head_tracking {
-            self.head.recenter_immediately();
-        }
         self.config = config;
+    }
+
+    /// Current target, for synchronizing a model that replaces the active one.
+    pub fn drag(&self) -> (f32, f32) {
+        self.head.drag()
     }
 
     /// Current config.
@@ -482,6 +484,33 @@ mod tests {
                 .any(|command| matches!(command, Command::SetDrag(_, _))),
             "{commands:?}"
         );
+    }
+
+    #[test]
+    fn disabling_tracking_recenters_the_model() {
+        let mut behavior = RoleBehavior::new(11);
+        let mut config = RoleBehaviorConfig {
+            head_tracking: true,
+            ..RoleBehaviorConfig::default()
+        };
+        behavior.set_config(config.clone());
+        let mut context = ctx(1.0, &[], &[]);
+        context.cursor_local = Some((380.0, 40.0));
+        assert!(behavior
+            .tick(&context, (0, 0))
+            .iter()
+            .any(|c| matches!(c, Command::SetDrag(x, y) if *x != 0. || *y != 0.)));
+        config.head_tracking = false;
+        behavior.set_config(config);
+        let mut last = None;
+        for _ in 0..30 {
+            for command in behavior.tick(&context, (0, 0)) {
+                if let Command::SetDrag(x, y) = command {
+                    last = Some((x, y));
+                }
+            }
+        }
+        assert_eq!(last, Some((0., 0.)));
     }
 
     fn played_motions(commands: &[Command]) -> Vec<String> {
