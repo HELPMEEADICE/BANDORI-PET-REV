@@ -1196,7 +1196,7 @@ fn layout_for_model(
     if entry.pet_mode == pet_config::PetMode::Pixel {
         return ModelLayout::pixel(bounds);
     }
-    let layout = ModelLayout::uniform(bounds);
+    let layout = ModelLayout::new(bounds, model.face_height(), model.format());
     if model.format() == pet_config::ModelFormat::Moc3
         && config
             .extras

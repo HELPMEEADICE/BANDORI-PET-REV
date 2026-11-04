@@ -19,7 +19,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     std::fs::create_dir_all(output)?;
     let mut model = ModelHandle::load(Path::new(path))?;
-    let layout = ModelLayout::uniform(content_size(model.meshes()).ok_or("empty model")?);
+    let layout = ModelLayout::new(
+        content_size(model.meshes()).ok_or("empty model")?,
+        model.face_height(),
+        model.format(),
+    );
     let matrix = layout.matrix(false);
     let (width, height) = layout.window_size(70., 1.);
     let gpu = Gpu::new(true, None)?;

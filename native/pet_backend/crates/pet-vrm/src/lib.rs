@@ -16,7 +16,10 @@ use neocari::{
 use performance::{Face, MotionProfile, Transition};
 use physics::Spring;
 use serde_json::Value;
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VrmError {
@@ -651,6 +654,99 @@ impl VrmModel {
     }
     pub fn elapsed(&self) -> f32 {
         self.elapsed
+    }
+    /// Measures the VRM face mesh that owns facial expression morphs. VRM does
+    /// not standardize facial-outline metadata, but expression morphs identify
+    /// the face mesh in most avatars. If that is unavailable, estimate face
+    /// height from geometry weighted to the humanoid head bone.
+    pub fn face_height(&self) -> Option<f32> {
+        let mut body_min = f32::INFINITY;
+        let mut body_max = f32::NEG_INFINITY;
+        for vertex in self.primitives.iter().flat_map(|p| &p.vertices) {
+            let y = vertex.position[1];
+            if y.is_finite() {
+                body_min = body_min.min(y);
+                body_max = body_max.max(y);
+            }
+        }
+        let body_height = body_max - body_min;
+        if !body_height.is_finite() || body_height <= 1e-4 {
+            return None;
+        }
+
+        let expression_meshes: BTreeSet<_> = self
+            .expressions
+            .iter()
+            .flat_map(|expression| expression.binds.iter().map(|(mesh, _, _)| *mesh))
+            .collect();
+        let mut face_mesh_bounds = BTreeMap::<usize, (f32, f32, usize)>::new();
+        for primitive in &self.primitives {
+            if !expression_meshes.contains(&primitive.mesh) {
+                continue;
+            }
+            let bounds = face_mesh_bounds.entry(primitive.mesh).or_insert((
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                0,
+            ));
+            for vertex in &primitive.vertices {
+                let y = vertex.position[1];
+                if y.is_finite() {
+                    bounds.0 = bounds.0.min(y);
+                    bounds.1 = bounds.1.max(y);
+                    bounds.2 += 1;
+                }
+            }
+        }
+        if let Some((_, (min, max, _))) = face_mesh_bounds
+            .into_iter()
+            .filter(|(_, (_, _, count))| *count >= 8)
+            .max_by_key(|(_, (_, _, count))| *count)
+        {
+            let height = max - min;
+            if height.is_finite() && height > 1e-4 {
+                return Some(height.clamp(body_height * 0.08, body_height * 0.28));
+            }
+        }
+
+        let Some(head) = self.humanoid.get("head").copied() else {
+            return None;
+        };
+        let mut head_y = Vec::new();
+        for primitive in &self.primitives {
+            let Some(skin_index) = primitive.skin else {
+                continue;
+            };
+            let Some(skin) = self.skins.get(skin_index) else {
+                continue;
+            };
+            for (bind, vertex) in primitive.bind.iter().zip(&primitive.vertices) {
+                let y = vertex.position[1];
+                if !y.is_finite() {
+                    continue;
+                }
+                let head_weight: f32 = bind
+                    .joints
+                    .iter()
+                    .zip(bind.weights)
+                    .filter_map(|(&joint, weight)| {
+                        (skin.joints.get(joint as usize) == Some(&head)).then_some(weight)
+                    })
+                    .sum();
+                if head_weight >= 0.5 {
+                    head_y.push(y);
+                }
+            }
+        }
+        if head_y.len() < 8 {
+            return None;
+        }
+        head_y.sort_unstable_by(f32::total_cmp);
+        let low = head_y.len() / 20;
+        let high = (head_y.len() - 1) * 19 / 20;
+        let estimate = (head_y[high] - head_y[low]) * 0.72;
+        (estimate.is_finite() && estimate > 1e-4)
+            .then_some(estimate.clamp(body_height * 0.08, body_height * 0.28))
     }
     pub fn spring_count(&self) -> usize {
         self.springs.len()
