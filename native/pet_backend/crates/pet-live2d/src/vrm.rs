@@ -32,7 +32,7 @@ impl VrmAdapter {
         std::mem::take(&mut self.model.textures)
     }
     pub fn face_height(&self) -> Option<f32> {
-        self.model.face_height()
+        None
     }
     pub fn hit_test_area(&mut self, _x: f32, _y: f32) -> Option<String> {
         None

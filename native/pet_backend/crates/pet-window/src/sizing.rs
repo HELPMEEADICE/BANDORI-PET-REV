@@ -48,7 +48,7 @@ impl Bounds {
     }
 }
 
-/// Reference bust height at 100% scale, before animation padding.
+/// Reference model-content height at 100% scale, before animation padding.
 pub const BASE_LOGICAL_HEIGHT: f32 = 500.0;
 
 /// Shared neutral face height at 100%, close to the original moc bust scale.
@@ -83,6 +83,16 @@ impl ModelLayout {
             .filter(|height| height.is_finite() && *height > 1e-4)
             .map(|height| height * BASE_LOGICAL_HEIGHT / BASE_FACE_HEIGHT)
             .unwrap_or_else(|| content.height());
+        Self::with_reference_height(content, reference_height)
+    }
+
+    /// Fits the complete projected model to one shared visible height,
+    /// independent of its format or head-to-body proportions.
+    pub fn uniform(content: Bounds) -> Self {
+        Self::with_reference_height(content, content.height())
+    }
+
+    fn with_reference_height(content: Bounds, reference_height: f32) -> Self {
         let pad_x = reference_height * 0.35;
         let pad_y = reference_height * 0.15;
         Self {

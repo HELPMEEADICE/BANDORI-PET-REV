@@ -652,68 +652,6 @@ impl VrmModel {
     pub fn elapsed(&self) -> f32 {
         self.elapsed
     }
-    /// Estimates neutral face height from geometry weighted to the humanoid
-    /// head bone. VRM has no standard facial-outline metadata, so use the central
-    /// 90% of the head-weighted vertices and discount the remaining skull/hair.
-    /// Models without usable head weights return `None`, allowing the shared
-    /// content-height fallback to keep all formats at the same scale.
-    pub fn face_height(&self) -> Option<f32> {
-        let mut model_min = f32::INFINITY;
-        let mut model_max = f32::NEG_INFINITY;
-        let mut head_y = Vec::new();
-        let head = self.humanoid.get("head").copied();
-
-        for primitive in &self.primitives {
-            for vertex in &primitive.vertices {
-                let y = vertex.position[1];
-                if y.is_finite() {
-                    model_min = model_min.min(y);
-                    model_max = model_max.max(y);
-                }
-            }
-
-            let (Some(head), Some(skin_index)) = (head, primitive.skin) else {
-                continue;
-            };
-            let Some(skin) = self.skins.get(skin_index) else {
-                continue;
-            };
-            for (bind, vertex) in primitive.bind.iter().zip(&primitive.vertices) {
-                let y = vertex.position[1];
-                if !y.is_finite() {
-                    continue;
-                }
-                let head_weight: f32 = bind
-                    .joints
-                    .iter()
-                    .zip(bind.weights)
-                    .filter_map(|(&joint, weight)| {
-                        (skin.joints.get(joint as usize) == Some(&head)).then_some(weight)
-                    })
-                    .sum();
-                if head_weight >= 0.5 {
-                    head_y.push(y);
-                }
-            }
-        }
-
-        let body_height = model_max - model_min;
-        if !body_height.is_finite() || body_height <= 1e-4 {
-            return None;
-        }
-
-        if head_y.len() >= 8 {
-            head_y.sort_unstable_by(f32::total_cmp);
-            let low = head_y.len() / 20;
-            let high = (head_y.len() - 1) * 19 / 20;
-            let head_height = head_y[high] - head_y[low];
-            if head_height.is_finite() && head_height > 1e-4 {
-                return Some((head_height * 0.72).clamp(body_height * 0.08, body_height * 0.28));
-            }
-        }
-
-        None
-    }
     pub fn spring_count(&self) -> usize {
         self.springs.len()
     }

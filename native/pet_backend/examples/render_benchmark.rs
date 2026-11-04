@@ -33,11 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(group) = model.info().default_motion_group().map(str::to_owned) {
         assert!(model.play_motion(&group));
     }
-    let layout = ModelLayout::new(
-        content_size(model.meshes()).ok_or("empty model")?,
-        model.face_height(),
-        model.info().format,
-    );
+    let layout = ModelLayout::uniform(content_size(model.meshes()).ok_or("empty model")?);
     let matrix = layout.matrix(model.flips_y());
     let gpu = Gpu::new(true, None)?;
     let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);
