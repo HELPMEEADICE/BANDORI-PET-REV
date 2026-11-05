@@ -91,16 +91,23 @@ impl ModelLayout {
     /// Sizes the whole model from the projected area of its upper-body region,
     /// preserving the original aspect ratio while aligning broad and narrow
     /// characters to the same visual scale.
-    pub fn from_upper_body(content: Bounds, upper_body: Bounds) -> Self {
+    pub fn from_upper_body(content: Bounds, upper_body: Bounds, format: ModelFormat) -> Self {
         let upper_area = upper_body.width() * upper_body.height();
-        if !upper_area.is_finite() || upper_area <= 1e-8 {
-            return Self::with_reference_height(content, content.height());
-        }
         let pixels_per_unit = (BASE_UPPER_BODY_AREA / upper_area).sqrt();
-        if !pixels_per_unit.is_finite() || pixels_per_unit <= 0.0 {
-            return Self::with_reference_height(content, content.height());
+        let mut layout = if upper_area.is_finite()
+            && upper_area > 1e-8
+            && pixels_per_unit.is_finite()
+            && pixels_per_unit > 0.0
+        {
+            Self::with_pixels_per_unit(content, upper_body.height(), pixels_per_unit)
+        } else {
+            Self::with_reference_height(content, content.height())
+        };
+        // Cubism 3+ models tend to appear smaller at the same bounding area.
+        if format == ModelFormat::Moc3 {
+            layout.pixels_per_unit *= 1.10;
         }
-        Self::with_pixels_per_unit(content, upper_body.height(), pixels_per_unit)
+        layout
     }
 
     fn with_reference_height(content: Bounds, reference_height: f32) -> Self {

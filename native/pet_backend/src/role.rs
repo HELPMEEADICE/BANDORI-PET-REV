@@ -1198,7 +1198,7 @@ fn layout_for_model(
     }
     let upper_body =
         upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
-    let layout = ModelLayout::from_upper_body(bounds, upper_body);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body, model.format());
     if model.format() == pet_config::ModelFormat::Moc3
         && config
             .extras

@@ -14,7 +14,7 @@ python main.py
 
 源码运行自动查找 `native/pet_backend/target/release/`、`target/debug/`；发行包从主程序目录查找 `bandori-pet-native[.exe]`。`BANDORI_PET_NATIVE` 可以指定可执行文件。找不到后端时会提示构建命令，不会退回 Qt 宠物窗口。`pet_process.py` 是兼容命令行入口，实际启动的仍是 Rust 后端。
 
-模型缩放默认 `100%`，与系统显示缩放独立。MOC、MOC3、VRM 都测量头顶到上半身区域的投影包围框，并按包围面积统一缩放；MOC/MOC3 的脸部轮廓、VRM 的表情变形网格用于确定该区域。缺少脸部数据时按模型高度估算区域，缩放始终保留角色比例。旧配置的 `live2d_scale: 0` 也按 `100%` 处理；系统 DPI 只在窗口尺寸转换为物理像素时应用一次，避免在 200% 显示缩放下重复放大。手动设置的模型缩放比例继续保留。
+模型缩放默认 `100%`，与系统显示缩放独立。MOC、MOC3、VRM 都测量头顶到上半身区域的投影包围框，并按包围面积统一缩放，MOC3 在此基础上增加 10% 以校正视觉大小；MOC/MOC3 的脸部轮廓、VRM 的表情变形网格用于确定该区域。缺少脸部数据时按模型高度估算区域，缩放始终保留角色比例。旧配置的 `live2d_scale: 0` 也按 `100%` 处理；系统 DPI 只在窗口尺寸转换为物理像素时应用一次，避免在 200% 显示缩放下重复放大。手动设置的模型缩放比例继续保留。
 
 Windows 宠物窗口使用 DirectX 12 + DirectComposition，显式使用预乘 alpha 合成；关闭 GPU 加速时使用 DX12 软件适配器。窗口创建时设置 `WS_EX_NOREDIRECTIONBITMAP`，避免透明部分露出黑色窗口底图，并在鼠标穿透、显示和 OBS 样式切换时保留该标志。Vulkan 和普通 DX12 HWND 交换链不能保证 Windows 11 上的透明合成，因此不再用作 Windows 宠物窗口的呈现路径；离屏预览仍可使用 Vulkan。
 

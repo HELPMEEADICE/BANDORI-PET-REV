@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let bounds = content_size(model.meshes()).ok_or("empty model")?;
     let upper_body =
         upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
-    let layout = ModelLayout::from_upper_body(bounds, upper_body);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body, model.format());
     let matrix = layout.matrix(model.flips_y());
     let gpu = Gpu::new(true, None)?;
     let renderer = WgpuLive2dRenderer::new(&gpu.device, wgpu::TextureFormat::Rgba8Unorm);
