@@ -105,7 +105,7 @@ impl ModelLayout {
         };
         // Cubism 3+ models tend to appear smaller at the same bounding area.
         if format == ModelFormat::Moc3 {
-            layout.pixels_per_unit *= 1.10;
+            layout.pixels_per_unit *= 1.18;
         }
         layout
     }
