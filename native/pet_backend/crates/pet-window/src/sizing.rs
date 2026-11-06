@@ -54,6 +54,35 @@ pub const BASE_LOGICAL_HEIGHT: f32 = 500.0;
 /// Shared neutral face height at 100%, close to the original moc bust scale.
 pub const BASE_FACE_HEIGHT: f32 = 120.0;
 
+/// Reference height (model units) for moc3 models without face metadata.
+/// One value for every model means they all share the same pixels-per-unit
+/// scale, so a stage model's shorter content stays shorter instead of being
+/// enlarged until the drum kit fills the window. Calibrated so a model without
+/// cdi3 gets the same window as the same model with cdi3 (the cdi3 face path
+/// currently resolves to the same reference for these models).
+pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.82;
+
+/// Fixed window height (logical pixels at 100%) shared by every moc3 model.
+/// The scale (pixels per model unit) is unchanged; any extra or missing room
+/// is transparent space symmetrically above and below the content. 903 logical
+/// px is 1264 physical px at 70% on a 2x display.
+pub const MOC3_WINDOW_HEIGHT: f32 = 903.0;
+
+/// Vertical placement of the model in the window, as a fraction of the window
+/// height below the centre. 0.05 = the model sits 5% lower than centred.
+pub const MODEL_VERTICAL_OFFSET: f32 = 0.05;
+
+/// A moc3 window that would naturally be wider than tall (e.g. a drum kit)
+/// gets 20% more height and is pushed down by 10% of the original height.
+pub const WIDE_MOC3_HEIGHT_FACTOR: f32 = 1.2;
+pub const WIDE_MOC3_VERTICAL_OFFSET: f32 = 0.10;
+
+/// Typical normal-model window (houka school uniform) at 100% logical pixels.
+/// This is the fixed empirical ruler for head tracking so every model behaves
+/// the same: tracking range width >= 2x this width, height >= 1x this height.
+pub const TRACK_REFERENCE_WINDOW_WIDTH: f32 = 611.0;
+pub const TRACK_REFERENCE_WINDOW_HEIGHT: f32 = 903.0;
+
 /// Static framing: animation never changes the model's apparent size.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelLayout {
@@ -82,16 +111,15 @@ impl ModelLayout {
             .filter(|height| height.is_finite() && *height > 1e-4)
             .map(|height| height * BASE_LOGICAL_HEIGHT / BASE_FACE_HEIGHT)
             .unwrap_or_else(|| {
-                content.height()
-                    * if format == ModelFormat::Moc3 {
-                        0.65
-                    } else {
-                        1.0
-                    }
+                if format == ModelFormat::Moc3 {
+                    DEFAULT_MOC3_REFERENCE_HEIGHT
+                } else {
+                    content.height()
+                }
             });
         let pad_x = reference_height * 0.35;
         let pad_y = reference_height * 0.15;
-        Self {
+        let mut layout = Self {
             viewport: Bounds {
                 min_x: content.min_x - pad_x,
                 max_x: content.max_x + pad_x,
@@ -99,7 +127,35 @@ impl ModelLayout {
                 max_y: content.max_y + pad_y,
             },
             pixels_per_unit: BASE_LOGICAL_HEIGHT / reference_height,
+        };
+        if format == ModelFormat::Moc3 {
+            // Every moc3 model gets the same base window height. Pixels-per-unit
+            // is untouched, so the model keeps its scale; the difference becomes
+            // transparent space instead of clipping tall animations.
+            let base_height = MOC3_WINDOW_HEIGHT * reference_height / BASE_LOGICAL_HEIGHT;
+            // If the natural window would be wider than tall, give it 20% more
+            // height and push it further down, otherwise tall animations still
+            // overflow the sides of a wide stage window.
+            let wide = layout.viewport.width() > base_height;
+            let height = if wide {
+                base_height * WIDE_MOC3_HEIGHT_FACTOR
+            } else {
+                base_height
+            };
+            let offset = base_height
+                * if wide {
+                    WIDE_MOC3_VERTICAL_OFFSET
+                } else {
+                    MODEL_VERTICAL_OFFSET
+                };
+            let center_y = (layout.viewport.min_y + layout.viewport.max_y) * 0.5;
+            layout.viewport.min_y = center_y - height * 0.5;
+            layout.viewport.max_y = center_y + height * 0.5;
+            // Move the viewport up, so the model renders below the centre.
+            layout.viewport.min_y += offset;
+            layout.viewport.max_y += offset;
         }
+        layout
     }
 
     /// Physical size, keeping the same scale on both axes even at size limits.

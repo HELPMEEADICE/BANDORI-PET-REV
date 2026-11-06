@@ -262,6 +262,8 @@ mod tests {
             hour,
             peer_center: None,
             own_center: (200.0, 250.0),
+            screen: (0.0, 0.0, 400.0, 500.0),
+            tracking_reference: (400.0, 500.0),
             motion_names,
             expression_names,
             character: "kasumi",
