@@ -3,7 +3,7 @@
 use pet_input::hit::{AlphaTexture, FrameSnapshot};
 use pet_live2d::ModelHandle;
 use pet_render::{Gpu, ModelGpu};
-use pet_window::sizing::{content_size, ModelLayout};
+use pet_window::sizing::{content_size, upper_body_bounds, ModelLayout};
 use std::{error::Error, path::Path, sync::Arc, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -18,11 +18,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     std::fs::create_dir_all(output)?;
     let mut model = ModelHandle::load(Path::new(path))?;
-    let layout = ModelLayout::new(
-        content_size(model.meshes()).ok_or("missing bounds")?,
-        None,
-        model.format(),
-    );
+    let bounds = content_size(model.meshes()).ok_or("missing bounds")?;
+    let upper_body =
+        upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body, model.format());
     let matrix = layout.matrix(false);
     let (width, height) = layout.window_size(100., 1.);
     let gpu = Gpu::new(true, None)?;

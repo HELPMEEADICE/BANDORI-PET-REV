@@ -12,7 +12,7 @@ fn fixture(legacy: bool) -> VrmModel {
 }
 
 #[test]
-fn pointer_tracking_rotates_head_in_screen_direction_during_motion_fades() {
+fn pointer_tracking_corrects_inverted_screen_direction_during_motion_fades() {
     for legacy in [true, false] {
         for (x, y) in [(1., 0.), (-1., 0.), (0., 1.), (0., -1.)] {
             let mut tracked = fixture(legacy);
@@ -35,12 +35,12 @@ fn pointer_tracking_rotates_head_in_screen_direction_during_motion_fades() {
             let difference = direction(&tracked) - direction(&neutral);
             if x != 0. {
                 assert!(
-                    difference.x * x > 0.2,
+                    difference.x * x < -0.2,
                     "legacy={legacy}, drag=({x},{y}), delta={difference:?}"
                 );
             } else {
                 assert!(
-                    difference.y * y > 0.15,
+                    difference.y * y < -0.15,
                     "legacy={legacy}, drag=({x},{y}), delta={difference:?}"
                 );
             }
