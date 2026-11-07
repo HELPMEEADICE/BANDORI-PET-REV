@@ -709,9 +709,7 @@ impl VrmModel {
             }
         }
 
-        let Some(head) = self.humanoid.get("head").copied() else {
-            return None;
-        };
+        let head = self.humanoid.get("head").copied()?;
         let mut head_y = Vec::new();
         for primitive in &self.primitives {
             let Some(skin_index) = primitive.skin else {
