@@ -201,7 +201,7 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
 
         self.assertEqual([True], updated)
 
-    def test_detail_character_image_is_cached_per_character(self):
+    def test_missing_detail_character_image_is_not_cached(self):
         window = SettingsWindow.__new__(SettingsWindow)
         manager = _CountingImageModelManager()
         window._model_manager = manager
@@ -210,8 +210,8 @@ class SettingsModelListResponsivenessTest(unittest.TestCase):
         self.assertIsNone(window._load_detail_character_pixmap("kasumi"))
         self.assertIsNone(window._load_detail_character_pixmap("kasumi"))
 
-        self.assertEqual(1, manager.path_reads)
-        self.assertEqual(1, manager.data_reads)
+        self.assertEqual(2, manager.path_reads)
+        self.assertEqual(2, manager.data_reads)
 
     def test_detail_character_image_cache_is_bounded(self):
         window = SettingsWindow.__new__(SettingsWindow)

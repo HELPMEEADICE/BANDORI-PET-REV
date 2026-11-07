@@ -2329,6 +2329,9 @@ class SettingsWindow(
     def _cache_detail_character_pixmap(self, character: str, pixmap):
         cache = self._detail_image_pixmap_cache
         cache.pop(character, None)
+        if pixmap is None:
+            # A transient read/decode failure must be retried on next selection.
+            return
         cache[character] = pixmap
         while len(cache) > _DETAIL_IMAGE_PIXMAP_CACHE_LIMIT:
             cache.pop(next(iter(cache)))

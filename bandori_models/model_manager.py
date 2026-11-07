@@ -527,11 +527,11 @@ class ModelManager:
         return self._characters.get(character, {}).get("display", character.title())
 
     def get_character_image_path(self, character: str) -> str:
-        image_path = self._character_images.get(character, "")
+        image_path = self._get_character_image_source(character)
         return "" if is_virtual_path(image_path) else image_path
 
     def get_character_image_data(self, character: str) -> bytes:
-        image_path = self._character_images.get(character, "")
+        image_path = self._get_character_image_source(character)
         if not is_virtual_path(image_path):
             return b""
         model_path = self._model_paths.get((character, self.get_default_costume(character)), "")
@@ -543,17 +543,60 @@ class ModelManager:
             except (OSError, ValueError, KeyError, RuntimeError):
                 # Optional metadata must not prevent a valid portrait loading.
                 pass
-        try:
-            return load_virtual_bytes(image_path)
-        except Exception as exc:
-            print(f"Failed to load archive character image {image_path}: {exc}")
-            return b""
+        for attempt in range(2):
+            try:
+                # Retry from the archive so a failed/empty cached read cannot
+                # leave both the picker and chat avatars blank for this session.
+                if attempt == 0:
+                    data = load_virtual_bytes(image_path)
+                else:
+                    data = load_virtual_bytes(image_path, cache=False)
+                if not data:
+                    raise ValueError("empty character image")
+                return data
+            except Exception as exc:
+                if attempt == 1:
+                    print(f"Failed to load archive character image {image_path}: {exc}")
+                    return b""
+                if isinstance(exc, KeyError):
+                    # A replaced package can move its portrait member. Ignore
+                    # the persisted catalog and rediscover just this character.
+                    image_path = self._refresh_character_image_source(character)
+                    if not is_virtual_path(image_path):
+                        return b""
+
+    def _get_character_image_source(self, character: str) -> str:
+        image_path = self._character_images.get(character, "")
+        if not image_path and character not in getattr(self, "_characters", {}):
+            return ""
+        if image_path and (is_virtual_path(image_path) or Path(image_path).is_file()):
+            return image_path
+        # Startup discovery may have failed while a package was being written
+        # or temporarily unavailable. A missing entry is not a permanent miss.
+        return self._refresh_character_image_source(character)
+
+    def _refresh_character_image_source(self, character: str) -> str:
+        image_path = ""
+        for root in model_search_dirs():
+            directory_image = self._find_dir_character_image(root / character)
+            if directory_image:
+                image_path = directory_image
+            archive = root / f"{character}.zst"
+            if archive.is_file():
+                result = self._read_model_archive(archive)
+                if result and result.get("image_path"):
+                    image_path = result["image_path"]
+        if image_path:
+            self._character_images[character] = image_path
+        else:
+            self._character_images.pop(character, None)
+        return image_path
 
     @staticmethod
     def _find_dir_character_image(char_dir: Path) -> str:
         for ext in ("png", "jpg", "webp"):
             path = char_dir / f"character.{ext}"
-            if path.exists():
+            if path.is_file():
                 return str(path.resolve())
         return ""
 
