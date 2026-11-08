@@ -342,10 +342,11 @@ impl ModelHandle {
     }
 
     /// Neutral face height, independent of hair, costume, and full/bust framing.
+    /// Moc3 does not read cdi3/DisplayInfo; it uses the fixed default reference.
     pub fn face_height(&self) -> Option<f32> {
         match self {
             ModelHandle::Moc2(adapter) => adapter.face_height(),
-            ModelHandle::Moc3(adapter) => adapter.face_height(),
+            ModelHandle::Moc3(_) => None,
             Self::Sprite(adapter) => adapter.face_height(),
             Self::Vrm(adapter) => adapter.face_height(),
         }

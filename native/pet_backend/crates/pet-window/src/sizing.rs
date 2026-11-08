@@ -56,6 +56,30 @@ pub const BASE_FACE_HEIGHT: f32 = 120.0;
 /// Reference projected area of the head-and-torso region at 100% scale.
 pub const BASE_UPPER_BODY_AREA: f32 = 170_000.0;
 
+/// Reference height (model units) for moc3 models without face metadata.
+/// One value for every model means they all share the same pixels-per-unit
+/// scale, so a stage model's shorter content stays shorter instead of being
+/// enlarged until the drum kit fills the window.
+pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.82;
+
+/// Minimum window height in logical pixels at 100% for moc3 models.
+/// Taller content retains its animation padding; extra room never changes scale.
+pub const MOC3_WINDOW_HEIGHT: f32 = 903.0;
+
+/// Downward model placement as a fraction of the minimum reference height.
+pub const MODEL_VERTICAL_OFFSET: f32 = 0.05;
+
+/// A moc3 window wider than the reference height (e.g. a drum kit) gets a
+/// 20% taller minimum and a downward offset of 10% of the reference height.
+pub const WIDE_MOC3_HEIGHT_FACTOR: f32 = 1.2;
+pub const WIDE_MOC3_VERTICAL_OFFSET: f32 = 0.10;
+
+/// Typical normal-model window (houka school uniform) at 100% logical pixels.
+/// This is the fixed empirical ruler for head tracking so every model behaves
+/// the same: tracking range width >= 2x this width, height >= 1x this height.
+pub const TRACK_REFERENCE_WINDOW_WIDTH: f32 = 611.0;
+pub const TRACK_REFERENCE_WINDOW_HEIGHT: f32 = 903.0;
+
 /// Static framing: animation never changes the model's apparent size.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelLayout {
@@ -78,23 +102,38 @@ impl ModelLayout {
         self
     }
     /// Uses the neutral face as a common ruler for bust and full-body models.
-    /// Models without face metadata use the same content-height baseline for
-    /// every format.
-    pub fn new(content: Bounds, face_height: Option<f32>, _format: ModelFormat) -> Self {
+    /// Moc3 models without face metadata share a fixed model-space ruler.
+    pub fn new(content: Bounds, face_height: Option<f32>, format: ModelFormat) -> Self {
         let reference_height = face_height
             .filter(|height| height.is_finite() && *height > 1e-4)
             .map(|height| height * BASE_LOGICAL_HEIGHT / BASE_FACE_HEIGHT)
-            .unwrap_or_else(|| content.height());
-        Self::with_reference_height(content, reference_height)
+            .unwrap_or_else(|| {
+                if format == ModelFormat::Moc3 {
+                    DEFAULT_MOC3_REFERENCE_HEIGHT
+                } else {
+                    content.height()
+                }
+            });
+        let layout = Self::with_reference_height(content, reference_height);
+        if format == ModelFormat::Moc3 {
+            layout.with_moc3_framing()
+        } else {
+            layout
+        }
     }
 
     /// Sizes the whole model from the projected area of its upper-body region,
     /// preserving the original aspect ratio while aligning broad and narrow
     /// characters to the same visual scale.
     pub fn from_upper_body(content: Bounds, upper_body: Bounds, format: ModelFormat) -> Self {
+        // Bandori moc3 assets already share a coordinate scale. In particular,
+        // stage props must not change the character's apparent size.
+        if format == ModelFormat::Moc3 {
+            return Self::new(content, None, format);
+        }
         let upper_area = upper_body.width() * upper_body.height();
         let pixels_per_unit = (BASE_UPPER_BODY_AREA / upper_area).sqrt();
-        let mut layout = if upper_area.is_finite()
+        if upper_area.is_finite()
             && upper_area > 1e-8
             && pixels_per_unit.is_finite()
             && pixels_per_unit > 0.0
@@ -102,12 +141,27 @@ impl ModelLayout {
             Self::with_pixels_per_unit(content, upper_body.height(), pixels_per_unit)
         } else {
             Self::with_reference_height(content, content.height())
-        };
-        // Cubism 3+ models tend to appear smaller at the same bounding area.
-        if format == ModelFormat::Moc3 {
-            layout.pixels_per_unit *= 1.18;
         }
-        layout
+    }
+
+    /// Adds animation room without discarding any of the padded content bounds.
+    fn with_moc3_framing(mut self) -> Self {
+        let base_height = MOC3_WINDOW_HEIGHT / self.pixels_per_unit;
+        let wide = self.viewport.width() > base_height;
+        let minimum_height = base_height * if wide { WIDE_MOC3_HEIGHT_FACTOR } else { 1.0 };
+        let offset = base_height
+            * if wide {
+                WIDE_MOC3_VERTICAL_OFFSET
+            } else {
+                MODEL_VERTICAL_OFFSET
+            };
+        // Account for the downward model placement before choosing the height:
+        // shifting a fixed viewport alone would cut into the bottom padding.
+        let height = minimum_height.max(self.viewport.height() + 2.0 * offset);
+        let center_y = self.viewport.center_y() + offset;
+        self.viewport.min_y = center_y - height * 0.5;
+        self.viewport.max_y = center_y + height * 0.5;
+        self
     }
 
     fn with_reference_height(content: Bounds, reference_height: f32) -> Self {
@@ -286,6 +340,76 @@ mod tests {
         let (scaled_width, scaled_height) = layout.window_size(200.0, 1.5);
         assert_eq!(scaled_height, 1950);
         assert!((scaled_width as f32 - width as f32 * 3.0).abs() <= 1.0);
+    }
+
+    #[test]
+    fn moc3_framing_retains_padding_for_tall_and_wide_models() {
+        for (half_width, half_height) in [(0.2, 1.0), (0.22, 0.64), (1.5, 0.4)] {
+            let content = Bounds {
+                min_x: -half_width,
+                max_x: half_width,
+                min_y: -half_height,
+                max_y: half_height,
+            };
+            let padded = ModelLayout::with_reference_height(content, DEFAULT_MOC3_REFERENCE_HEIGHT);
+            let layout = ModelLayout::new(content, None, ModelFormat::Moc3);
+            assert_eq!(layout.pixels_per_unit, padded.pixels_per_unit);
+            assert_eq!(layout.viewport.min_x, padded.viewport.min_x);
+            assert_eq!(layout.viewport.max_x, padded.viewport.max_x);
+            assert!(layout.viewport.min_y <= padded.viewport.min_y + 1e-6);
+            assert!(layout.viewport.max_y >= padded.viewport.max_y - 1e-6);
+            assert!(layout.viewport.center_y() > content.center_y());
+            let wide = padded.viewport.width() * padded.pixels_per_unit > MOC3_WINDOW_HEIGHT;
+            let minimum = MOC3_WINDOW_HEIGHT * if wide { WIDE_MOC3_HEIGHT_FACTOR } else { 1.0 };
+            assert!(layout.window_size(100.0, 1.0).1 as f32 >= minimum - 0.5);
+            let matrix = layout.matrix(false);
+            assert!(matrix.transform_y(content.min_y) >= -1.0);
+            assert!(matrix.transform_y(content.max_y) <= 1.0);
+        }
+    }
+
+    #[test]
+    fn moc3_runtime_layout_uses_the_same_scale_with_stage_props() {
+        for half_width in [0.22, 1.5] {
+            let content = Bounds {
+                min_x: -half_width,
+                max_x: half_width,
+                min_y: -0.73,
+                max_y: 0.55,
+            };
+            for upper_height in [0.4, 0.8] {
+                let upper_body = Bounds {
+                    min_y: content.max_y - upper_height,
+                    ..content
+                };
+                let layout = ModelLayout::from_upper_body(content, upper_body, ModelFormat::Moc3);
+                let expected = ModelLayout::new(content, None, ModelFormat::Moc3);
+                assert_eq!(layout.viewport, expected.viewport);
+                assert_eq!(
+                    layout.pixels_per_unit,
+                    BASE_LOGICAL_HEIGHT / DEFAULT_MOC3_REFERENCE_HEIGHT
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn other_formats_keep_upper_body_area_sizing() {
+        let content = Bounds {
+            min_x: -1.0,
+            max_x: 1.0,
+            min_y: -1.0,
+            max_y: 1.0,
+        };
+        let upper_body = Bounds {
+            min_y: 0.0,
+            ..content
+        };
+        for format in [ModelFormat::Moc, ModelFormat::Vrm] {
+            let layout = ModelLayout::from_upper_body(content, upper_body, format);
+            let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
+            assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
+        }
     }
 
     #[test]

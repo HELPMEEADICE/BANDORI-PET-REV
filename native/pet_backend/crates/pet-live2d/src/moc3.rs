@@ -40,6 +40,13 @@ const FALLBACK_EYE_IDS: [&str; 2] = ["ParamEyeLOpen", "ParamEyeROpen"];
 /// Maximum head yaw/pitch in degrees (matches Cubism's default parameter range).
 const MAX_ANGLE_DEGREES: f32 = 30.0;
 
+// Same acceleration-limited drag smoothing as Neocari's Cubism 2 target point.
+const SMOOTH_FRAME_RATE: f32 = 30.0;
+const SMOOTH_TIME_TO_MAX_SPEED: f32 = 0.15;
+const SMOOTH_MAX_V: f32 = (40.0 / 7.5) / SMOOTH_FRAME_RATE;
+const SMOOTH_FRAME_TO_MAX_SPEED: f32 = SMOOTH_TIME_TO_MAX_SPEED * SMOOTH_FRAME_RATE;
+const SMOOTH_EPSILON: f32 = 0.01;
+
 struct PlayingMotion {
     group: String,
     player: MotionPlayer,
@@ -50,7 +57,6 @@ pub struct Moc3Adapter {
     model: RuntimeModel,
     model_dir: PathBuf,
     info: ModelInfo,
-    face_height: Option<f32>,
     motion_paths: HashMap<String, Vec<PathBuf>>,
     expression_paths: HashMap<String, PathBuf>,
     motion_cache: HashMap<PathBuf, Motion3>,
@@ -63,6 +69,10 @@ pub struct Moc3Adapter {
     eye_blink_ids: Vec<String>,
     has_breath: bool,
     view: (f32, f32),
+    drag_target: (f32, f32),
+    drag_velocity: (f32, f32),
+    drag_last_time: Option<f32>,
+    time: f32,
     mouth_open: f32,
     mouth_form: f32,
 }
@@ -130,13 +140,11 @@ impl Moc3Adapter {
             canvas_height: canvas.height() as f32,
         };
 
-        let face_height = crate::framing::moc3_face_height(&model, &model_dir);
         let seed = pet_util::Rng::from_entropy().next_u64();
         Ok(Self {
             model,
             model_dir,
             info,
-            face_height,
             motion_paths,
             expression_paths,
             motion_cache: HashMap::new(),
@@ -148,6 +156,10 @@ impl Moc3Adapter {
             eye_blink_ids,
             has_breath,
             view: (0.0, 0.0),
+            drag_target: (0.0, 0.0),
+            drag_velocity: (0.0, 0.0),
+            drag_last_time: None,
+            time: 0.0,
             mouth_open: 0.0,
             mouth_form: 0.0,
         })
@@ -156,11 +168,6 @@ impl Moc3Adapter {
     /// Static model facts.
     pub fn info(&self) -> &ModelInfo {
         &self.info
-    }
-
-    /// Face height measured once in the neutral pose.
-    pub fn face_height(&self) -> Option<f32> {
-        self.face_height
     }
 
     /// Current meshes.
@@ -181,6 +188,7 @@ impl Moc3Adapter {
     /// Advances one frame (see the module docs for the exact order).
     pub fn update(&mut self, delta_seconds: f32) -> bool {
         let delta = delta_seconds.clamp(0.0, 0.25);
+        self.smooth_drag(delta);
         let mut rng = Rng::seeded(
             self.player
                 .as_ref()
@@ -391,9 +399,67 @@ impl Moc3Adapter {
         self.player.as_ref().map(|playing| playing.group.as_str())
     }
 
+    /// Advances the acceleration-limited drag smoother used for the head and
+    /// body angles. This mirrors Neocari's Cubism 2 target point, so `.moc3`
+    /// tracking has the same natural lag as `.moc`.
+    fn smooth_drag(&mut self, delta: f32) {
+        let now = self.time + delta;
+        self.time = now;
+        let Some(last) = self.drag_last_time else {
+            self.drag_last_time = Some(now);
+            return;
+        };
+        let frame_weight = (now - last) * SMOOTH_FRAME_RATE;
+        self.drag_last_time = Some(now);
+
+        let max_acceleration = frame_weight * SMOOTH_MAX_V / SMOOTH_FRAME_TO_MAX_SPEED;
+        let dx = self.drag_target.0 - self.view.0;
+        let dy = self.drag_target.1 - self.view.1;
+        if dx.abs() <= SMOOTH_EPSILON && dy.abs() <= SMOOTH_EPSILON {
+            return;
+        }
+
+        let distance = (dx * dx + dy * dy).sqrt();
+        let velocity_x = SMOOTH_MAX_V * dx / distance;
+        let velocity_y = SMOOTH_MAX_V * dy / distance;
+        let mut acceleration_x = velocity_x - self.drag_velocity.0;
+        let mut acceleration_y = velocity_y - self.drag_velocity.1;
+        let acceleration =
+            (acceleration_x * acceleration_x + acceleration_y * acceleration_y).sqrt();
+        if acceleration > max_acceleration && acceleration > 0.0 {
+            acceleration_x = acceleration_x * max_acceleration / acceleration;
+            acceleration_y = acceleration_y * max_acceleration / acceleration;
+        }
+        self.drag_velocity.0 += acceleration_x;
+        self.drag_velocity.1 += acceleration_y;
+
+        let max_velocity = 0.5
+            * ((max_acceleration * max_acceleration + 16.0 * max_acceleration * distance
+                - 8.0 * max_acceleration * distance)
+                .sqrt()
+                - max_acceleration);
+        let current_velocity = (self.drag_velocity.0 * self.drag_velocity.0
+            + self.drag_velocity.1 * self.drag_velocity.1)
+            .sqrt();
+        if current_velocity > max_velocity && current_velocity > 0.0 {
+            self.drag_velocity.0 = self.drag_velocity.0 * max_velocity / current_velocity;
+            self.drag_velocity.1 = self.drag_velocity.1 * max_velocity / current_velocity;
+        }
+
+        if self.drag_velocity.0 * dx > 0.0 && self.drag_velocity.0.abs() > dx.abs() {
+            self.drag_velocity.0 = dx;
+        }
+        if self.drag_velocity.1 * dy > 0.0 && self.drag_velocity.1.abs() > dy.abs() {
+            self.drag_velocity.1 = dy;
+        }
+
+        self.view.0 += self.drag_velocity.0;
+        self.view.1 += self.drag_velocity.1;
+    }
+
     /// Drag target in normalized coordinates.
     pub fn set_drag(&mut self, x: f32, y: f32) {
-        self.view = (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0));
+        self.drag_target = (x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0));
     }
 
     /// Automatic blink toggle.

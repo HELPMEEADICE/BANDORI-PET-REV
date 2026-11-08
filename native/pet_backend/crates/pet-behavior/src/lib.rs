@@ -5,7 +5,7 @@
 //! process executes. No model inference is involved — the original script used an
 //! LLM for chat, LITE only needs the local half.
 //!
-//! * [`head_track`] — 600 px radial clamp, 4 px dead zone, 0.3 s recenter, plus
+//! * [`head_track`] — screen-relative tracking, 4 px dead zone, 0.3 s recenter, plus
 //!   mutual gaze over peer window centers.
 //! * [`idle`] — 5 s ambient tick, 180 s cooldown, morning/sleep/late-night/daze
 //!   buckets, random-motion selection.
@@ -59,6 +59,11 @@ pub struct BehaviorContext<'a> {
     pub peer_center: Option<(f32, f32)>,
     /// This window's center in screen coordinates.
     pub own_center: (f32, f32),
+    /// Current monitor bounds in physical pixels: `(left, top, right, bottom)`.
+    pub screen: (f32, f32, f32, f32),
+    /// Fixed reference window size in physical pixels: `(width, height)`.
+    /// Tracking never covers less than 2x this width and 1x this height.
+    pub tracking_reference: (f32, f32),
     /// Motion group names of the current model.
     pub motion_names: &'a [String],
     /// Expression names of the current model.
@@ -421,6 +426,8 @@ mod tests {
             hour: 12,
             peer_center: None,
             own_center: (200.0, 250.0),
+            screen: (0.0, 0.0, 400.0, 500.0),
+            tracking_reference: (400.0, 500.0),
             motion_names: motions,
             expression_names: expressions,
             character: "kasumi",
