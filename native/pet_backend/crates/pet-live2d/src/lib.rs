@@ -217,6 +217,15 @@ impl ModelHandle {
         }
     }
 
+    /// Plays a resting group, forcing MOC3 motions to loop. Other formats retain
+    /// their native playback semantics.
+    pub fn play_rest_motion(&mut self, group: &str) -> bool {
+        match self {
+            ModelHandle::Moc3(adapter) => adapter.play_rest_motion(group),
+            _ => self.play_motion(group),
+        }
+    }
+
     /// Plays an expression by name; `false` when unknown.
     pub fn play_expression(&mut self, name: &str) -> bool {
         match self {

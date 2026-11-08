@@ -838,14 +838,20 @@ impl Role {
 
     fn apply_command(&mut self, command: &Command) {
         match command {
-            Command::PlayMotion(group) => {
+            Command::PlayMotion(group) | Command::PlayRestMotion(group) => {
                 tracing::debug!(motion = %group, "play motion");
-                if group.is_empty() {
-                    if let Some(default) = self.info.default_motion_group() {
-                        let default = default.to_owned();
-                        self.model.play_motion(&default);
-                    }
-                } else if !self.model.play_motion(group) {
+                let group = if group.is_empty() {
+                    self.info.default_motion_group()
+                } else {
+                    Some(group.as_str())
+                };
+                let Some(group) = group else { return };
+                let played = if matches!(command, Command::PlayRestMotion(_)) {
+                    self.model.play_rest_motion(group)
+                } else {
+                    self.model.play_motion(group)
+                };
+                if !played {
                     warn!(group, "motion not available on this model");
                 }
             }

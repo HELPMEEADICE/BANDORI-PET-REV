@@ -280,6 +280,15 @@ impl Moc3Adapter {
     /// The pose on screen is kept as the source of a short cross-fade, so
     /// replacing a running clip never snaps.
     pub fn play_motion(&mut self, group: &str) -> bool {
+        self.play_motion_with_looping(group, false)
+    }
+
+    /// Plays a resting motion in a loop, regardless of the file's `Loop` flag.
+    pub fn play_rest_motion(&mut self, group: &str) -> bool {
+        self.play_motion_with_looping(group, true)
+    }
+
+    fn play_motion_with_looping(&mut self, group: &str, looping: bool) -> bool {
         let Some(paths) = self.motion_paths.get(group) else {
             tracing::warn!(group, "unknown moc3 motion group");
             return false;
@@ -303,7 +312,7 @@ impl Moc3Adapter {
         self.begin_pose_fade();
         self.player = Some(PlayingMotion {
             group: group.to_owned(),
-            player: MotionPlayer::with_looping(motion, false),
+            player: MotionPlayer::with_looping(motion, looping),
         });
         true
     }
