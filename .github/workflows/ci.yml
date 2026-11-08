@@ -51,6 +51,9 @@ jobs:
     name: Python lint, resources, scripts and workflows
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
     defaults:
       run:
         shell: bash
@@ -107,17 +110,25 @@ jobs:
               throw ($parseErrors | Out-String)
             }
           }
+      - name: Cache actionlint archive
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/actionlint-download
+          key: ${{ runner.os }}-${{ runner.arch }}-actionlint-${{ env.ACTIONLINT_VERSION }}-${{ env.ACTIONLINT_SHA256 }}
       - name: Install actionlint
-        env:
-          ACTIONLINT_VERSION: "1.7.12"
-          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
         run: |
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location --retry 3 \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
-            --output "$RUNNER_TEMP/$archive"
-          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          download_dir="$RUNNER_TEMP/actionlint-download"
+          mkdir -p "$download_dir"
+          if [[ ! -f "$download_dir/$archive" ]]; then
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-delay 10 --retry-max-time 180 \
+              --connect-timeout 15 --max-time 60 \
+              "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
+              --output "$download_dir/$archive"
+          fi
+          echo "$ACTIONLINT_SHA256  $download_dir/$archive" | sha256sum --check
+          tar -xzf "$download_dir/$archive" -C "$RUNNER_TEMP" actionlint
       - name: Validate GitHub Actions workflows
         run: '"$RUNNER_TEMP/actionlint" -color'
 
