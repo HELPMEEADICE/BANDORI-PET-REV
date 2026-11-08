@@ -54,6 +54,7 @@ jobs:
     env:
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+      ACTIONLINT_ASSET_ID: "384924896"
     defaults:
       run:
         shell: bash
@@ -121,11 +122,20 @@ jobs:
           download_dir="$RUNNER_TEMP/actionlint-download"
           mkdir -p "$download_dir"
           if [[ ! -f "$download_dir/$archive" ]]; then
-            curl --fail --silent --show-error --location \
-              --retry 5 --retry-delay 10 --retry-max-time 180 \
-              --connect-timeout 15 --max-time 60 \
-              "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
-              --output "$download_dir/$archive"
+            if ! curl --fail --silent --show-error --location \
+                --retry 3 --retry-delay 10 --retry-max-time 120 \
+                --connect-timeout 15 --max-time 60 \
+                "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}" \
+                --output "$download_dir/$archive"; then
+              # The API redirects to the same asset through a separate endpoint.
+              curl --fail --silent --show-error --location \
+                --retry 3 --retry-delay 10 --retry-max-time 120 \
+                --connect-timeout 15 --max-time 60 \
+                --header "Accept: application/octet-stream" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/rhysd/actionlint/releases/assets/${ACTIONLINT_ASSET_ID}" \
+                --output "$download_dir/$archive"
+            fi
           fi
           echo "$ACTIONLINT_SHA256  $download_dir/$archive" | sha256sum --check
           tar -xzf "$download_dir/$archive" -C "$RUNNER_TEMP" actionlint
