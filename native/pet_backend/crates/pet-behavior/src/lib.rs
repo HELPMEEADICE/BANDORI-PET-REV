@@ -5,7 +5,7 @@
 //! process executes. No model inference is involved — the original script used an
 //! LLM for chat, LITE only needs the local half.
 //!
-//! * [`head_track`] — 600 px radial clamp, 4 px dead zone, 0.3 s recenter, plus
+//! * [`head_track`] — screen-relative tracking, 4 px dead zone, 0.3 s recenter, plus
 //!   mutual gaze over peer window centers.
 //! * [`idle`] — 5 s ambient tick, 180 s cooldown, morning/sleep/late-night/daze
 //!   buckets, random-motion selection.

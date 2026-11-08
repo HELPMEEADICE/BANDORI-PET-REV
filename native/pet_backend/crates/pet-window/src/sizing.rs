@@ -66,12 +66,11 @@ pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.82;
 /// Taller content retains its animation padding; extra room never changes scale.
 pub const MOC3_WINDOW_HEIGHT: f32 = 903.0;
 
-/// Vertical placement of the model in the window, as a fraction of the window
-/// height below the centre. 0.05 = the model sits 5% lower than centred.
+/// Downward model placement as a fraction of the minimum reference height.
 pub const MODEL_VERTICAL_OFFSET: f32 = 0.05;
 
-/// A moc3 window that would naturally be wider than tall (e.g. a drum kit)
-/// gets 20% more height and is pushed down by 10% of the original height.
+/// A moc3 window wider than the reference height (e.g. a drum kit) gets a
+/// 20% taller minimum and a downward offset of 10% of the reference height.
 pub const WIDE_MOC3_HEIGHT_FACTOR: f32 = 1.2;
 pub const WIDE_MOC3_VERTICAL_OFFSET: f32 = 0.10;
 
