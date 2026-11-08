@@ -189,3 +189,42 @@ fn clearing_an_expression_fades_it_out() {
     assert!(peak < SNAP, "the face snapped: {peak:.4} in one frame");
     assert!(fade_frames > 1, "the expression popped instead of fading");
 }
+
+#[test]
+fn resting_motions_loop_but_triggered_motions_play_once() {
+    let Some(mut model) = load() else {
+        eprintln!("skipped: set BANDORI_PET_TEST_MOC3 to an extracted .model3.json");
+        return;
+    };
+    // Neither idle nor a user-selected non-idle default may stop after one cycle.
+    for group in ["mtn_idle01_C", "mtn_nod01_C"] {
+        let motion = neocari::motion::load_motion(
+            model
+                .model_dir()
+                .join(format!("motions/{group}.motion3.json")),
+        )
+        .unwrap();
+        let frames = (motion.meta().duration() / FRAME).ceil() as usize + 2;
+        assert!(frames > 2, "the fixture must have a positive duration");
+        assert!(model.play_rest_motion(group));
+        for _ in 0..frames * 3 {
+            assert!(model.update(FRAME));
+            assert!(
+                !model.is_motion_finished(),
+                "resting motion stopped: {group}"
+            );
+            assert_eq!(model.active_motion_group(), Some(group));
+        }
+
+        // The same cached clip must still play just once when explicitly triggered.
+        assert!(model.play_motion(group));
+        for _ in 0..frames {
+            assert!(model.update(FRAME));
+        }
+        assert!(
+            model.is_motion_finished(),
+            "triggered motion looped: {group}"
+        );
+        assert_eq!(model.active_motion_group(), None);
+    }
+}

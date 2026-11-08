@@ -28,6 +28,8 @@ pub use window_motion::{WindowMotionKind, WindowMotionPlayer};
 pub enum Command {
     /// Play a motion group by exact name.
     PlayMotion(String),
+    /// Play the default/resting group in a loop (empty = model default idle).
+    PlayRestMotion(String),
     /// Play an expression by exact name.
     PlayExpression(String),
     /// Play any non-idle motion (`__random__`).
@@ -120,7 +122,7 @@ impl From<&pet_config::Config> for RoleBehaviorConfig {
 /// Timers created by triggered motions (spec §3.3: 9000 / 3200 / 5000 ms).
 #[derive(Debug, Clone, Default)]
 struct FeedbackTimers {
-    /// Hard stop for a clip that never ends on its own (9 s / 8 s after the trigger).
+    /// Hard stop for click/ambient feedback (9 s); absent for externally triggered clips.
     clear_motion_at: Option<f64>,
     /// Earliest point at which a finished clip may hand back to the resting motion.
     settle_motion_at: Option<f64>,
@@ -158,10 +160,12 @@ impl RoleBehavior {
 
     /// Replaces the behavior config (called whenever settings change).
     pub fn set_config(&mut self, config: RoleBehaviorConfig) {
-        if self.config.head_tracking && !config.head_tracking {
-            self.head.recenter_immediately();
-        }
         self.config = config;
+    }
+
+    /// Current target, for synchronizing a model that replaces the active one.
+    pub fn drag(&self) -> (f32, f32) {
+        self.head.drag()
     }
 
     /// Current config.
@@ -186,10 +190,10 @@ impl RoleBehavior {
         self.last_interaction = now;
         let mut commands = Vec::new();
         if !self.config.default_motion.is_empty() {
-            commands.push(Command::PlayMotion(self.config.default_motion.clone()));
+            commands.push(Command::PlayRestMotion(self.config.default_motion.clone()));
             self.default_motion_playing = true;
         } else if self.config.idle_actions {
-            commands.push(Command::PlayMotion(String::new()));
+            commands.push(Command::PlayRestMotion(String::new()));
         }
         if !self.config.default_expression.is_empty() {
             commands.push(Command::PlayExpression(
@@ -285,12 +289,17 @@ impl RoleBehavior {
         if clear_due || settle_due {
             self.timers.clear_motion_at = None;
             self.timers.settle_motion_at = None;
-            commands.push(Command::PlayMotion(self.rest_motion()));
+            commands.push(Command::PlayRestMotion(self.rest_motion()));
             self.default_motion_playing = true;
         }
 
         // 3. Ambient random / idle motions.
-        if self.config.random_actions || self.config.idle_actions {
+        // Ambient actions must not replace a plugin/menu clip while it is playing.
+        if !clear_due
+            && !settle_due
+            && self.timers.settle_motion_at.is_none()
+            && (self.config.random_actions || self.config.idle_actions)
+        {
             if let Some(plan) = self.idle.tick(
                 ctx,
                 &mut self.rng,
@@ -343,12 +352,12 @@ impl RoleBehavior {
 
     /// Registers a motion the caller started on its own (radial menu, IPC).
     ///
-    /// The pet returns to its resting motion as soon as the clip ends (2 s grace)
-    /// or after the 8 s hard stop, matching the click feedback timers.
+    /// Let the clip play once to its natural end, then restore the resting loop.
+    /// Clear any previous click/ambient deadline so long plugin clips are not cut.
     pub fn note_triggered_motion(&mut self, now: f64) {
         self.note_interaction(now);
-        self.timers.clear_motion_at = Some(now + 8.0);
-        self.timers.settle_motion_at = Some(now + 2.0);
+        self.timers.clear_motion_at = None;
+        self.timers.settle_motion_at = Some(now);
     }
 
     /// Motion played once a triggered clip is over; empty means the model's idle group.
@@ -468,7 +477,7 @@ mod tests {
         behavior.set_config(config);
         behavior.on_click(ClickRegion::Head, 0.0, &ctx(0.0, &motions, &expressions));
         let commands = behavior.tick(&ctx(9.5, &motions, &expressions), (0, 0));
-        assert!(commands.contains(&Command::PlayMotion(String::new())));
+        assert!(commands.contains(&Command::PlayRestMotion(String::new())));
     }
 
     #[test]
@@ -491,11 +500,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn disabling_tracking_recenters_the_model() {
+        let mut behavior = RoleBehavior::new(11);
+        let mut config = RoleBehaviorConfig {
+            head_tracking: true,
+            ..RoleBehaviorConfig::default()
+        };
+        behavior.set_config(config.clone());
+        let mut context = ctx(1.0, &[], &[]);
+        context.cursor_local = Some((380.0, 40.0));
+        assert!(behavior
+            .tick(&context, (0, 0))
+            .iter()
+            .any(|c| matches!(c, Command::SetDrag(x, y) if *x != 0. || *y != 0.)));
+        config.head_tracking = false;
+        behavior.set_config(config);
+        let mut last = None;
+        for _ in 0..30 {
+            for command in behavior.tick(&context, (0, 0)) {
+                if let Command::SetDrag(x, y) = command {
+                    last = Some((x, y));
+                }
+            }
+        }
+        assert_eq!(last, Some((0., 0.)));
+    }
+
     fn played_motions(commands: &[Command]) -> Vec<String> {
         commands
             .iter()
             .filter_map(|command| match command {
-                Command::PlayMotion(name) => Some(name.clone()),
+                Command::PlayMotion(name) | Command::PlayRestMotion(name) => Some(name.clone()),
                 _ => None,
             })
             .collect()
@@ -575,5 +611,55 @@ mod tests {
 
         let commands = behavior.tick(&settled_context(2.1, true, &motions, &expressions), (0, 0));
         assert_eq!(played_motions(&commands), vec!["idle01".to_owned()]);
+    }
+
+    #[test]
+    fn startup_requests_a_loop_for_default_and_idle_motions() {
+        let mut behavior = RoleBehavior::new(15);
+        behavior.set_config(RoleBehaviorConfig {
+            default_motion: "performance".to_owned(),
+            ..RoleBehaviorConfig::default()
+        });
+        assert_eq!(
+            behavior.start(0.0),
+            vec![Command::PlayRestMotion("performance".to_owned())]
+        );
+        behavior.set_config(RoleBehaviorConfig {
+            idle_actions: true,
+            ..RoleBehaviorConfig::default()
+        });
+        assert_eq!(
+            behavior.start(1.0),
+            vec![Command::PlayRestMotion(String::new())]
+        );
+    }
+
+    #[test]
+    fn external_motion_survives_old_deadlines_and_ambient_actions_until_it_finishes() {
+        let motions = vec!["smile01".to_owned(), "idle01".to_owned()];
+        let mut behavior = RoleBehavior::new(16);
+        let mut config = resting_config("idle01", "smile01");
+        config.idle_actions = true;
+        config.random_actions = true;
+        behavior.set_config(config);
+        behavior.tick(&ctx(0.0, &motions, &[]), (0, 0)); // Arm ambient planning.
+        behavior.on_click(ClickRegion::Head, 0.0, &ctx(0.0, &motions, &[]));
+        // A plugin action replaces the click and must clear its 9 s deadline.
+        behavior.note_triggered_motion(1.0);
+        for now in [3.5, 8.5, 9.5, 30.0, 200.0] {
+            let commands = behavior.tick(&settled_context(now, false, &motions, &[]), (0, 0));
+            assert!(played_motions(&commands).is_empty(), "{now}: {commands:?}");
+        }
+        let commands = behavior.tick(&settled_context(201.0, true, &motions, &[]), (0, 0));
+        assert_eq!(commands, vec![Command::PlayRestMotion("idle01".to_owned())]);
+    }
+
+    #[test]
+    fn short_external_motion_returns_to_idle_without_a_grace_delay() {
+        let mut behavior = RoleBehavior::new(17);
+        behavior.note_triggered_motion(0.0);
+        let commands = behavior.tick(&ctx(0.5, &[], &[]), (0, 0));
+        assert_eq!(commands, vec![Command::PlayRestMotion(String::new())]);
+        assert!(played_motions(&behavior.tick(&ctx(1.0, &[], &[]), (0, 0))).is_empty());
     }
 }

@@ -64,7 +64,7 @@
   "SettingsWindow.no_character_results": "沒有符合的角色",
   "SettingsWindow.no_costume_results": "沒有符合的服裝",
   "SettingsWindow.custom_model_import_button": "匯入自訂模型",
-  "SettingsWindow.custom_model_import_title": "匯入自訂 Live2D 模型",
+  "SettingsWindow.custom_model_import_title": "匯入自訂 Live2D / VRM 模型",
   "SettingsWindow.custom_model_import_hint": "選擇一個包含 Live2D 模型設定檔（model.json 或 *.model3.json）的資料夾，或一個打包好的 .zip。支援 Cubism 2.1（.json + .moc）和 Cubism 3（.model3.json + .moc3）。匯入後角色會出現在「自訂模型」分組中。",
   "SettingsWindow.custom_model_choose_folder": "選擇資料夾",
   "SettingsWindow.custom_model_choose_zip": "選擇 .zip",

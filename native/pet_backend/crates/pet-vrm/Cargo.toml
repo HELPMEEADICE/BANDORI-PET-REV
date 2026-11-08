@@ -1,0 +1,18 @@
+[package]
+name = "pet-vrm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native VRM humanoids, VRMA retargeting and spring-bone physics."
+
+[dependencies]
+neocari.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+image.workspace = true
+glam = "0.30"
+gltf = { version = "1.4", default-features = false, features = ["utils", "names", "extensions", "KHR_texture_transform", "KHR_materials_unlit"] }
+bytemuck = { version = "1", features = ["derive"] }

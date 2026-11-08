@@ -221,6 +221,29 @@ mod tests {
     }
 
     #[test]
+    fn tracking_uses_farthest_monitor_edges_with_negative_coordinates() {
+        let mut ctx = context((400, 500), &[], &[]);
+        ctx.screen = (-1920.0, -100.0, 1920.0, 1080.0);
+        ctx.tracking_reference = (611.0, 903.0);
+        assert_eq!(
+            HeadTracker::screen_drag(&ctx, (-1920.0, 250.0)),
+            (-1.0, 0.0)
+        );
+        let right = HeadTracker::screen_drag(&ctx, (1920.0, 250.0));
+        assert!((right.0 - 1720.0 / 2120.0).abs() < 1e-6);
+        assert_eq!(HeadTracker::screen_drag(&ctx, (200.0, 1080.0)), (0.0, -1.0));
+    }
+
+    #[test]
+    fn tracking_reference_limits_sensitivity_on_small_monitors() {
+        let mut ctx = context((400, 500), &[], &[]);
+        ctx.tracking_reference = (611.0, 903.0);
+        let drag = HeadTracker::screen_drag(&ctx, (300.0, 100.0));
+        assert!((drag.0 - 100.0 / 611.0).abs() < 1e-6);
+        assert!((drag.1 - 150.0 / 451.5).abs() < 1e-6);
+    }
+
+    #[test]
     fn far_cursor_is_projected_onto_the_radius() {
         let motions: Vec<String> = vec![];
         let expressions: Vec<String> = vec![];

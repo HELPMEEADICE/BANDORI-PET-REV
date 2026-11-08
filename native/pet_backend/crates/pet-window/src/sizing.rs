@@ -48,24 +48,22 @@ impl Bounds {
     }
 }
 
-/// Reference bust height at 100% scale, before animation padding.
+/// Model-height factor paired with [`BASE_FACE_HEIGHT`] for face-relative sizing.
 pub const BASE_LOGICAL_HEIGHT: f32 = 500.0;
 
 /// Shared neutral face height at 100%, close to the original moc bust scale.
 pub const BASE_FACE_HEIGHT: f32 = 120.0;
+/// Reference projected area of the head-and-torso region at 100% scale.
+pub const BASE_UPPER_BODY_AREA: f32 = 170_000.0;
 
 /// Reference height (model units) for moc3 models without face metadata.
 /// One value for every model means they all share the same pixels-per-unit
 /// scale, so a stage model's shorter content stays shorter instead of being
-/// enlarged until the drum kit fills the window. Calibrated so a model without
-/// cdi3 gets the same window as the same model with cdi3 (the cdi3 face path
-/// currently resolves to the same reference for these models).
+/// enlarged until the drum kit fills the window.
 pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.82;
 
-/// Fixed window height (logical pixels at 100%) shared by every moc3 model.
-/// The scale (pixels per model unit) is unchanged; any extra or missing room
-/// is transparent space symmetrically above and below the content. 903 logical
-/// px is 1264 physical px at 70% on a 2x display.
+/// Minimum window height in logical pixels at 100% for moc3 models.
+/// Taller content retains its animation padding; extra room never changes scale.
 pub const MOC3_WINDOW_HEIGHT: f32 = 903.0;
 
 /// Vertical placement of the model in the window, as a fraction of the window
@@ -105,7 +103,7 @@ impl ModelLayout {
         self
     }
     /// Uses the neutral face as a common ruler for bust and full-body models.
-    /// Models without face metadata fall back to conventional format framing.
+    /// Moc3 models without face metadata share a fixed model-space ruler.
     pub fn new(content: Bounds, face_height: Option<f32>, format: ModelFormat) -> Self {
         let reference_height = face_height
             .filter(|height| height.is_finite() && *height > 1e-4)
@@ -117,45 +115,76 @@ impl ModelLayout {
                     content.height()
                 }
             });
+        let layout = Self::with_reference_height(content, reference_height);
+        if format == ModelFormat::Moc3 {
+            layout.with_moc3_framing()
+        } else {
+            layout
+        }
+    }
+
+    /// Sizes the whole model from the projected area of its upper-body region,
+    /// preserving the original aspect ratio while aligning broad and narrow
+    /// characters to the same visual scale.
+    pub fn from_upper_body(content: Bounds, upper_body: Bounds, format: ModelFormat) -> Self {
+        // Bandori moc3 assets already share a coordinate scale. In particular,
+        // stage props must not change the character's apparent size.
+        if format == ModelFormat::Moc3 {
+            return Self::new(content, None, format);
+        }
+        let upper_area = upper_body.width() * upper_body.height();
+        let pixels_per_unit = (BASE_UPPER_BODY_AREA / upper_area).sqrt();
+        if upper_area.is_finite()
+            && upper_area > 1e-8
+            && pixels_per_unit.is_finite()
+            && pixels_per_unit > 0.0
+        {
+            Self::with_pixels_per_unit(content, upper_body.height(), pixels_per_unit)
+        } else {
+            Self::with_reference_height(content, content.height())
+        }
+    }
+
+    /// Adds animation room without discarding any of the padded content bounds.
+    fn with_moc3_framing(mut self) -> Self {
+        let base_height = MOC3_WINDOW_HEIGHT / self.pixels_per_unit;
+        let wide = self.viewport.width() > base_height;
+        let minimum_height = base_height * if wide { WIDE_MOC3_HEIGHT_FACTOR } else { 1.0 };
+        let offset = base_height
+            * if wide {
+                WIDE_MOC3_VERTICAL_OFFSET
+            } else {
+                MODEL_VERTICAL_OFFSET
+            };
+        // Account for the downward model placement before choosing the height:
+        // shifting a fixed viewport alone would cut into the bottom padding.
+        let height = minimum_height.max(self.viewport.height() + 2.0 * offset);
+        let center_y = self.viewport.center_y() + offset;
+        self.viewport.min_y = center_y - height * 0.5;
+        self.viewport.max_y = center_y + height * 0.5;
+        self
+    }
+
+    fn with_reference_height(content: Bounds, reference_height: f32) -> Self {
+        Self::with_pixels_per_unit(
+            content,
+            reference_height,
+            BASE_LOGICAL_HEIGHT / reference_height,
+        )
+    }
+
+    fn with_pixels_per_unit(content: Bounds, reference_height: f32, pixels_per_unit: f32) -> Self {
         let pad_x = reference_height * 0.35;
         let pad_y = reference_height * 0.15;
-        let mut layout = Self {
+        Self {
             viewport: Bounds {
                 min_x: content.min_x - pad_x,
                 max_x: content.max_x + pad_x,
                 min_y: content.min_y - pad_y,
                 max_y: content.max_y + pad_y,
             },
-            pixels_per_unit: BASE_LOGICAL_HEIGHT / reference_height,
-        };
-        if format == ModelFormat::Moc3 {
-            // Every moc3 model gets the same base window height. Pixels-per-unit
-            // is untouched, so the model keeps its scale; the difference becomes
-            // transparent space instead of clipping tall animations.
-            let base_height = MOC3_WINDOW_HEIGHT * reference_height / BASE_LOGICAL_HEIGHT;
-            // If the natural window would be wider than tall, give it 20% more
-            // height and push it further down, otherwise tall animations still
-            // overflow the sides of a wide stage window.
-            let wide = layout.viewport.width() > base_height;
-            let height = if wide {
-                base_height * WIDE_MOC3_HEIGHT_FACTOR
-            } else {
-                base_height
-            };
-            let offset = base_height
-                * if wide {
-                    WIDE_MOC3_VERTICAL_OFFSET
-                } else {
-                    MODEL_VERTICAL_OFFSET
-                };
-            let center_y = (layout.viewport.min_y + layout.viewport.max_y) * 0.5;
-            layout.viewport.min_y = center_y - height * 0.5;
-            layout.viewport.max_y = center_y + height * 0.5;
-            // Move the viewport up, so the model renders below the centre.
-            layout.viewport.min_y += offset;
-            layout.viewport.max_y += offset;
+            pixels_per_unit,
         }
-        layout
     }
 
     /// Physical size, keeping the same scale on both axes even at size limits.
@@ -181,6 +210,46 @@ pub fn content_size(meshes: &[Moc3DrawableMesh]) -> Option<Bounds> {
     let mut bounds: Option<Bounds> = None;
     for vertex in meshes.iter().flat_map(|mesh| mesh.vertices()) {
         let [x, y] = vertex.position();
+        bounds = Some(match bounds {
+            Some(current) => Bounds {
+                min_x: current.min_x.min(x),
+                min_y: current.min_y.min(y),
+                max_x: current.max_x.max(x),
+                max_y: current.max_y.max(y),
+            },
+            None => Bounds {
+                min_x: x,
+                min_y: y,
+                max_x: x,
+                max_y: y,
+            },
+        });
+    }
+    bounds.filter(|bounds| bounds.width() > 1e-4 && bounds.height() > 1e-4)
+}
+
+/// Bounds the upper part of a character from its head down to the waist area.
+/// A detected face provides a model-independent ruler; models without face
+/// metadata use a fraction of their full height.
+pub fn upper_body_bounds(
+    meshes: &[Moc3DrawableMesh],
+    face_height: Option<f32>,
+    flip_y: bool,
+) -> Option<Bounds> {
+    let content = content_size(meshes)?;
+    let face_height = face_height.filter(|height| height.is_finite() && *height > 1e-4);
+    let region_height = face_height
+        .map(|height| height * 4.75)
+        .unwrap_or(content.height() * 0.62)
+        .clamp(content.height() * 0.4, content.height() * 0.72);
+    let top = if flip_y { content.min_y } else { content.max_y };
+    let mut bounds: Option<Bounds> = None;
+    for vertex in meshes.iter().flat_map(|mesh| mesh.vertices()) {
+        let [x, y] = vertex.position();
+        let distance_from_top = if flip_y { y - top } else { top - y };
+        if distance_from_top < -1e-4 || distance_from_top > region_height {
+            continue;
+        }
         bounds = Some(match bounds {
             Some(current) => Bounds {
                 min_x: current.min_x.min(x),
@@ -272,6 +341,76 @@ mod tests {
         let (scaled_width, scaled_height) = layout.window_size(200.0, 1.5);
         assert_eq!(scaled_height, 1950);
         assert!((scaled_width as f32 - width as f32 * 3.0).abs() <= 1.0);
+    }
+
+    #[test]
+    fn moc3_framing_retains_padding_for_tall_and_wide_models() {
+        for (half_width, half_height) in [(0.2, 1.0), (0.22, 0.64), (1.5, 0.4)] {
+            let content = Bounds {
+                min_x: -half_width,
+                max_x: half_width,
+                min_y: -half_height,
+                max_y: half_height,
+            };
+            let padded = ModelLayout::with_reference_height(content, DEFAULT_MOC3_REFERENCE_HEIGHT);
+            let layout = ModelLayout::new(content, None, ModelFormat::Moc3);
+            assert_eq!(layout.pixels_per_unit, padded.pixels_per_unit);
+            assert_eq!(layout.viewport.min_x, padded.viewport.min_x);
+            assert_eq!(layout.viewport.max_x, padded.viewport.max_x);
+            assert!(layout.viewport.min_y <= padded.viewport.min_y + 1e-6);
+            assert!(layout.viewport.max_y >= padded.viewport.max_y - 1e-6);
+            assert!(layout.viewport.center_y() > content.center_y());
+            let wide = padded.viewport.width() * padded.pixels_per_unit > MOC3_WINDOW_HEIGHT;
+            let minimum = MOC3_WINDOW_HEIGHT * if wide { WIDE_MOC3_HEIGHT_FACTOR } else { 1.0 };
+            assert!(layout.window_size(100.0, 1.0).1 as f32 >= minimum - 0.5);
+            let matrix = layout.matrix(false);
+            assert!(matrix.transform_y(content.min_y) >= -1.0);
+            assert!(matrix.transform_y(content.max_y) <= 1.0);
+        }
+    }
+
+    #[test]
+    fn moc3_runtime_layout_uses_the_same_scale_with_stage_props() {
+        for half_width in [0.22, 1.5] {
+            let content = Bounds {
+                min_x: -half_width,
+                max_x: half_width,
+                min_y: -0.73,
+                max_y: 0.55,
+            };
+            for upper_height in [0.4, 0.8] {
+                let upper_body = Bounds {
+                    min_y: content.max_y - upper_height,
+                    ..content
+                };
+                let layout = ModelLayout::from_upper_body(content, upper_body, ModelFormat::Moc3);
+                let expected = ModelLayout::new(content, None, ModelFormat::Moc3);
+                assert_eq!(layout.viewport, expected.viewport);
+                assert_eq!(
+                    layout.pixels_per_unit,
+                    BASE_LOGICAL_HEIGHT / DEFAULT_MOC3_REFERENCE_HEIGHT
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn other_formats_keep_upper_body_area_sizing() {
+        let content = Bounds {
+            min_x: -1.0,
+            max_x: 1.0,
+            min_y: -1.0,
+            max_y: 1.0,
+        };
+        let upper_body = Bounds {
+            min_y: 0.0,
+            ..content
+        };
+        for format in [ModelFormat::Moc, ModelFormat::Vrm] {
+            let layout = ModelLayout::from_upper_body(content, upper_body, format);
+            let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
+            assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
+        }
     }
 
     #[test]

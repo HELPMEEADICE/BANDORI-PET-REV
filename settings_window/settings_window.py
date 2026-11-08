@@ -12,6 +12,7 @@ from bandori_models.custom_model_import import (
     CustomModelImportError,
     delete_custom_character,
     import_from_folder,
+    import_from_vrm,
     import_from_zip,
     is_custom_character,
 )
@@ -2285,7 +2286,8 @@ class SettingsWindow(
         get_model_format = getattr(self._model_manager, "get_model_format", None)
         model_format = item.get("format") or (get_model_format(character, costume) if get_model_format else "")
         if hasattr(self, "_detail_format_badge"):
-            self._detail_format_badge.setVisible(str(model_format or "").lower() == "moc3")
+            self._detail_format_badge.setText("VRM" if str(model_format).lower() == "vrm" else "MOC3")
+            self._detail_format_badge.setVisible(str(model_format or "").lower() in {"moc3", "vrm"})
             self._detail_format_badge.raise_()
         self._detail_name.setText(display)
         self._detail_costume.setText(_tr("SettingsWindow.detail_costume", costume=costume_name))
@@ -2327,6 +2329,9 @@ class SettingsWindow(
     def _cache_detail_character_pixmap(self, character: str, pixmap):
         cache = self._detail_image_pixmap_cache
         cache.pop(character, None)
+        if pixmap is None:
+            # A transient read/decode failure must be retried on next selection.
+            return
         cache[character] = pixmap
         while len(cache) > _DETAIL_IMAGE_PIXMAP_CACHE_LIMIT:
             cache.pop(next(iter(cache)))
@@ -2625,6 +2630,8 @@ class SettingsWindow(
                 args = (dialog.source_path, dialog.display_name, dialog.costume_id or "default")
                 if dialog.source_kind == "zip":
                     character, costumes = import_from_zip(*args)
+                elif dialog.source_kind == "vrm":
+                    character, costumes = import_from_vrm(*args)
                 else:
                     character, costumes = import_from_folder(*args)
             except CustomModelImportError as exc:

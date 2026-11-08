@@ -15,6 +15,7 @@ mod moc2;
 mod moc3;
 mod sprite;
 mod transition;
+mod vrm;
 
 use std::path::Path;
 
@@ -30,6 +31,8 @@ use pet_config::ModelFormat;
 /// Errors raised while loading or driving a model.
 #[derive(Debug, thiserror::Error)]
 pub enum Live2dError {
+    #[error(transparent)]
+    Vrm(#[from] pet_vrm::VrmError),
     /// Neocari could not load the model folder.
     #[error("failed to load model {path}: {source}")]
     Load {
@@ -94,15 +97,32 @@ pub enum ModelHandle {
     /// Cubism 3/4/5 `.moc3` runtime.
     Moc3(Moc3Adapter),
     Sprite(sprite::SpriteAdapter),
+    Vrm(vrm::VrmAdapter),
 }
 
 impl ModelHandle {
+    pub fn vrm(&self) -> Option<&pet_vrm::VrmModel> {
+        if let Self::Vrm(adapter) = self {
+            Some(&adapter.model)
+        } else {
+            None
+        }
+    }
+    pub fn vrm_mut(&mut self) -> Option<&mut pet_vrm::VrmModel> {
+        if let Self::Vrm(adapter) = self {
+            Some(&mut adapter.model)
+        } else {
+            None
+        }
+    }
+
     /// TTS mouth pose, applied after motion/expression evaluation.
     pub fn set_lip_sync(&mut self, open: f32, form: f32) {
         match self {
             Self::Moc2(adapter) => adapter.set_lip_sync(open, form),
             Self::Moc3(adapter) => adapter.set_lip_sync(open, form),
             Self::Sprite(adapter) => adapter.set_lip_sync(open, form),
+            Self::Vrm(adapter) => adapter.set_lip_sync(open, form),
         }
     }
     /// Loads a model, choosing the adapter from the file name / declared format.
@@ -110,6 +130,12 @@ impl ModelHandle {
         let path = model_path.display().to_string();
         if !model_path.exists() {
             return Err(Live2dError::NoParent(path));
+        }
+        if model_path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("vrm"))
+        {
+            return Ok(Self::Vrm(vrm::VrmAdapter::load(model_path)?));
         }
         if model_path.extension().is_some_and(|e| e == "webp") {
             return Ok(Self::Sprite(sprite::SpriteAdapter::load(model_path)?));
@@ -135,6 +161,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.info(),
             ModelHandle::Moc3(adapter) => adapter.info(),
             Self::Sprite(adapter) => adapter.info(),
+            Self::Vrm(adapter) => adapter.info(),
         }
     }
 
@@ -144,6 +171,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.meshes(),
             ModelHandle::Moc3(adapter) => adapter.meshes(),
             Self::Sprite(adapter) => adapter.meshes(),
+            Self::Vrm(adapter) => adapter.meshes(),
         }
     }
 
@@ -153,6 +181,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.textures(),
             ModelHandle::Moc3(adapter) => adapter.textures(),
             Self::Sprite(adapter) => adapter.textures(),
+            Self::Vrm(adapter) => adapter.textures(),
         }
     }
 
@@ -164,6 +193,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.take_textures(),
             ModelHandle::Moc3(adapter) => adapter.take_textures(),
             Self::Sprite(adapter) => adapter.take_textures(),
+            Self::Vrm(adapter) => adapter.take_textures(),
         }
     }
 
@@ -173,6 +203,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.update(delta_seconds),
             ModelHandle::Moc3(adapter) => adapter.update(delta_seconds),
             Self::Sprite(adapter) => adapter.update(delta_seconds),
+            Self::Vrm(adapter) => adapter.update(delta_seconds),
         }
     }
 
@@ -182,6 +213,16 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.play_motion(group),
             ModelHandle::Moc3(adapter) => adapter.play_motion(group),
             Self::Sprite(adapter) => adapter.play_motion(group),
+            Self::Vrm(adapter) => adapter.play_motion(group),
+        }
+    }
+
+    /// Plays a resting group, forcing MOC3 motions to loop. Other formats retain
+    /// their native playback semantics.
+    pub fn play_rest_motion(&mut self, group: &str) -> bool {
+        match self {
+            ModelHandle::Moc3(adapter) => adapter.play_rest_motion(group),
+            _ => self.play_motion(group),
         }
     }
 
@@ -191,6 +232,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.play_expression(name),
             ModelHandle::Moc3(adapter) => adapter.play_expression(name),
             Self::Sprite(adapter) => adapter.play_expression(name),
+            Self::Vrm(adapter) => adapter.play_expression(name),
         }
     }
 
@@ -200,6 +242,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.clear_expression(),
             ModelHandle::Moc3(adapter) => adapter.clear_expression(),
             Self::Sprite(adapter) => adapter.clear_expression(),
+            Self::Vrm(adapter) => adapter.clear_expression(),
         }
     }
 
@@ -209,6 +252,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.active_expression_count(),
             ModelHandle::Moc3(adapter) => adapter.active_expression_count(),
             Self::Sprite(adapter) => adapter.active_expression_count(),
+            Self::Vrm(adapter) => adapter.active_expression_count(),
         }
     }
 
@@ -218,6 +262,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.stop_motions(),
             ModelHandle::Moc3(adapter) => adapter.stop_motions(),
             Self::Sprite(adapter) => adapter.stop_motions(),
+            Self::Vrm(adapter) => adapter.stop_motions(),
         }
     }
 
@@ -227,6 +272,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.is_motion_finished(),
             ModelHandle::Moc3(adapter) => adapter.is_motion_finished(),
             Self::Sprite(adapter) => adapter.is_motion_finished(),
+            Self::Vrm(adapter) => adapter.is_motion_finished(),
         }
     }
 
@@ -236,6 +282,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.active_motion_group(),
             ModelHandle::Moc3(adapter) => adapter.active_motion_group(),
             Self::Sprite(adapter) => adapter.active_motion_group(),
+            Self::Vrm(adapter) => adapter.active_motion_group(),
         }
     }
 
@@ -245,6 +292,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.set_drag(x, y),
             ModelHandle::Moc3(adapter) => adapter.set_drag(x, y),
             Self::Sprite(adapter) => adapter.set_drag(x, y),
+            Self::Vrm(adapter) => adapter.set_drag(x, y),
         }
     }
 
@@ -254,6 +302,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.set_auto_blink(enabled),
             ModelHandle::Moc3(adapter) => adapter.set_auto_blink(enabled),
             Self::Sprite(adapter) => adapter.set_auto_blink(enabled),
+            Self::Vrm(adapter) => adapter.set_auto_blink(enabled),
         }
     }
 
@@ -263,6 +312,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.set_auto_breath(enabled),
             ModelHandle::Moc3(adapter) => adapter.set_auto_breath(enabled),
             Self::Sprite(adapter) => adapter.set_auto_breath(enabled),
+            Self::Vrm(adapter) => adapter.set_auto_breath(enabled),
         }
     }
 
@@ -272,6 +322,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.set_mouth_open(value),
             ModelHandle::Moc3(adapter) => adapter.set_mouth_open(value),
             Self::Sprite(adapter) => adapter.set_mouth_open(value),
+            Self::Vrm(adapter) => adapter.set_mouth_open(value),
         }
     }
 
@@ -281,6 +332,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.hit_test_area(x, y),
             ModelHandle::Moc3(adapter) => adapter.hit_test_area(x, y),
             Self::Sprite(adapter) => adapter.hit_test_area(x, y),
+            Self::Vrm(adapter) => adapter.hit_test_area(x, y),
         }
     }
 
@@ -296,6 +348,7 @@ impl ModelHandle {
             ModelHandle::Moc2(adapter) => adapter.face_height(),
             ModelHandle::Moc3(_) => None,
             Self::Sprite(adapter) => adapter.face_height(),
+            Self::Vrm(adapter) => adapter.face_height(),
         }
     }
 

@@ -99,12 +99,16 @@ pub enum ModelFormat {
     Moc,
     /// Cubism 3/4/5 `.moc3` (loaded through `assets::load_model_runtime`).
     Moc3,
+    /// VRM 0.x / 1.0 glTF binary humanoid.
+    Vrm,
 }
 
 impl ModelFormat {
     /// Detects the format from a model JSON file name.
     pub fn from_path(path: &str) -> Self {
-        if path.to_ascii_lowercase().ends_with(".model3.json") {
+        if path.to_ascii_lowercase().ends_with(".vrm") {
+            ModelFormat::Vrm
+        } else if path.to_ascii_lowercase().ends_with(".model3.json") {
             ModelFormat::Moc3
         } else {
             ModelFormat::Moc
@@ -115,6 +119,7 @@ impl ModelFormat {
     pub fn from_token(value: &str) -> Self {
         match value {
             "moc3" => ModelFormat::Moc3,
+            "vrm" => ModelFormat::Vrm,
             _ => ModelFormat::Moc,
         }
     }

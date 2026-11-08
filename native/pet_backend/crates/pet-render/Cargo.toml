@@ -8,6 +8,7 @@ description = "Render orchestration: mask pass + main pass, clipping lifetime, q
 
 [dependencies]
 pet-config.workspace = true
+pet-vrm.workspace = true
 neocari.workspace = true
 wgpu.workspace = true
 winit.workspace = true

@@ -13,7 +13,8 @@ use pet_live2d::{ModelHandle, ModelInfo};
 use pet_render::{ModelGpu, RenderError, SceneRenderer};
 use pet_window::placement;
 use pet_window::sizing::{
-    content_size, ModelLayout, TRACK_REFERENCE_WINDOW_HEIGHT, TRACK_REFERENCE_WINDOW_WIDTH,
+    content_size, upper_body_bounds, ModelLayout, TRACK_REFERENCE_WINDOW_HEIGHT,
+    TRACK_REFERENCE_WINDOW_WIDTH,
 };
 #[cfg(windows)]
 use pet_window::win32;
@@ -298,17 +299,19 @@ impl Role {
 
         let matrix = layout.matrix(model.flips_y());
         if let Ok(output) = std::env::var("BANDORI_PET_SNAPSHOT") {
-            let rgba = pet_render::render_preview(
-                model.meshes(),
-                model.textures(),
-                matrix,
-                width,
-                height,
-            )?;
+            let rgba = if let Some(vrm) = model.vrm() {
+                pet_render::render_vrm_preview(vrm, matrix, width, height)?
+            } else {
+                pet_render::render_preview(model.meshes(), model.textures(), matrix, width, height)?
+            };
             image::save_buffer(output, &rgba, width, height, image::ColorType::Rgba8)
                 .map_err(|error| RoleError::Window(format!("snapshot failed: {error}")))?;
         }
-        let model_gpu = renderer.upload_model(model.meshes(), model.textures(), matrix)?;
+        let model_gpu = if let Some(vrm) = model.vrm() {
+            ModelGpu::new_vrm(renderer.gpu(), vrm, matrix, renderer.format())?
+        } else {
+            renderer.upload_model(model.meshes(), model.textures(), matrix)?
+        };
         let textures = Self::take_hit_textures(&mut model);
 
         let mut behavior = RoleBehavior::new(pet_util::Rng::from_entropy().next_u64());
@@ -535,11 +538,19 @@ impl Role {
 
     /// Advances the model by `dt` and uploads the resulting meshes.
     pub fn advance_model(&mut self, dt: f32) {
+        if let Some((x, y, width, _)) = self.window_rect() {
+            let units_per_pixel = self.layout.viewport.width() / width.max(1) as f32;
+            if let Some(vrm) = self.model.vrm_mut() {
+                vrm.set_desktop_position(x, y, units_per_pixel);
+            }
+        }
         if !self.model.update(dt) {
             warn!("model update failed");
             return;
         }
-        if let Err(error) = self.model_gpu.update_meshes(
+        if let Some(vrm) = self.model.vrm() {
+            self.model_gpu.update_vrm(self.renderer.gpu(), vrm);
+        } else if let Err(error) = self.model_gpu.update_meshes(
             self.renderer.gpu(),
             self.renderer.renderer(),
             self.model.meshes(),
@@ -837,14 +848,20 @@ impl Role {
 
     fn apply_command(&mut self, command: &Command) {
         match command {
-            Command::PlayMotion(group) => {
+            Command::PlayMotion(group) | Command::PlayRestMotion(group) => {
                 tracing::debug!(motion = %group, "play motion");
-                if group.is_empty() {
-                    if let Some(default) = self.info.default_motion_group() {
-                        let default = default.to_owned();
-                        self.model.play_motion(&default);
-                    }
-                } else if !self.model.play_motion(group) {
+                let group = if group.is_empty() {
+                    self.info.default_motion_group()
+                } else {
+                    Some(group.as_str())
+                };
+                let Some(group) = group else { return };
+                let played = if matches!(command, Command::PlayRestMotion(_)) {
+                    self.model.play_rest_motion(group)
+                } else {
+                    self.model.play_motion(group)
+                };
+                if !played {
                     warn!(group, "motion not available on this model");
                 }
             }
@@ -1089,9 +1106,12 @@ impl Role {
         let scale = config.effective_scale_percent();
         let (width, height) = layout.window_size(scale, dpr);
         let matrix = layout.matrix(model.flips_y());
-        let model_gpu = self
-            .renderer
-            .upload_model(model.meshes(), model.textures(), matrix)?;
+        let model_gpu = if let Some(vrm) = model.vrm() {
+            ModelGpu::new_vrm(self.renderer.gpu(), vrm, matrix, self.renderer.format())?
+        } else {
+            self.renderer
+                .upload_model(model.meshes(), model.textures(), matrix)?
+        };
         let textures = Self::take_hit_textures(&mut model);
 
         self.model = model;
@@ -1122,6 +1142,8 @@ impl Role {
         self.model.set_auto_blink(true);
         self.model.set_auto_breath(true);
         self.behavior.set_config(RoleBehaviorConfig::from(config));
+        let (x, y) = self.behavior.drag();
+        self.model.set_drag(x, y);
         for command in self.behavior.start(0.0) {
             self.apply_command(&command);
         }
@@ -1214,7 +1236,9 @@ fn layout_for_model(
     if entry.pet_mode == pet_config::PetMode::Pixel {
         return ModelLayout::pixel(bounds);
     }
-    let layout = ModelLayout::new(bounds, model.face_height(), model.format());
+    let upper_body =
+        upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
+    let layout = ModelLayout::from_upper_body(bounds, upper_body, model.format());
     if model.format() == pet_config::ModelFormat::Moc3
         && config
             .extras

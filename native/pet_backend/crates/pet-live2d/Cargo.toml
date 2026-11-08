@@ -9,6 +9,7 @@ description = "Neocari wrapper: moc/moc3 model adapters, motion/expression assem
 [dependencies]
 pet-config.workspace = true
 pet-util.workspace = true
+pet-vrm.workspace = true
 neocari.workspace = true
 serde.workspace = true
 thiserror.workspace = true
