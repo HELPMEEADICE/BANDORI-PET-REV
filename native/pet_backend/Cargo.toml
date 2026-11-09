@@ -5,7 +5,7 @@ resolver = "2"
 # from published sources. Keeping it out of the member list keeps
 # `cargo test --workspace` green while still building it as a dependency.
 exclude = ["vendor/neocari"]
-members = [".", "crates/pet-config", "crates/pet-i18n", "crates/pet-live2d", "crates/pet-render", "crates/pet-input", "crates/pet-behavior", "crates/pet-window", "crates/pet-util", "crates/pet-assets", "crates/pet-vrm"]
+members = [".", "crates/pet-config", "crates/pet-i18n", "crates/pet-live2d", "crates/pet-render", "crates/pet-input", "crates/pet-behavior", "crates/pet-window", "crates/pet-util", "crates/pet-assets", "crates/pet-vrm", "crates/pet-ipc", "crates/pet-ipc-python"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +16,9 @@ authors = ["BANDORI-PET contributors"]
 repository = "https://github.com/HELPMEEADICE/BANDORI-PET-REV"
 
 [workspace.dependencies]
+pet-ipc = { path = "crates/pet-ipc" }
+memmap2 = "0.9"
+fs2 = "0.4"
 pet-i18n = { path = "crates/pet-i18n" }
 pet-config = { path = "crates/pet-config" }
 pet-assets = { path = "crates/pet-assets" }
@@ -101,8 +104,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-memmap2 = "0.9"
-fs2 = "0.4"
+pet-ipc.workspace = true
 image.workspace = true
 
 [target.'cfg(windows)'.dependencies]

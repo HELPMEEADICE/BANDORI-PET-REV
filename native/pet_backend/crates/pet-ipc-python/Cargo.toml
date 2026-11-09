@@ -1,0 +1,19 @@
+[package]
+name = "pet-ipc-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "_pet_ipc"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+pet-ipc.workspace = true
+pyo3 = { version = "0.29", features = ["abi3-py310", "generate-import-lib"] }
+
+[build-dependencies]
+pyo3-build-config = "0.29"
