@@ -638,15 +638,16 @@ class SettingsWindow(
         super().hideEvent(event)
 
     def _play_entrance(self):
-        effect = QGraphicsOpacityEffect(self)
-        effect.setOpacity(0.0)
-        self.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"opacity", self)
+        # Fade the native window rather than caching the whole widget tree in
+        # a graphics effect. The portrait can arrive while the first frame is
+        # fading in; an ancestor effect can leave its backing store blank until
+        # the character page is hidden and shown again.
+        self.setWindowOpacity(0.0)
+        anim = QPropertyAnimation(self, b"windowOpacity", self)
         anim.setDuration(280)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim.finished.connect(lambda: self.setGraphicsEffect(None))
         anim.start()
 
     @staticmethod

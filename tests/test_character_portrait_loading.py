@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from types import MethodType, SimpleNamespace
 from unittest.mock import patch
 
@@ -7,7 +9,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel, QSystemTrayIcon
 
 from bandori_models import model_manager
 from bandori_models.model_manager import ModelManager
@@ -144,6 +147,69 @@ def test_successful_detail_decode_is_cached_without_rereading_archive(portrait_a
         assert window._load_detail_character_pixmap("tomorin") is first
     read.assert_called_once()
     app.processEvents()
+
+
+@pytest.mark.parametrize("load_during_entrance", [False, True])
+def test_first_tray_open_paints_portrait_without_changing_pages(portrait_archive, load_during_entrance):
+    app = QApplication.instance() or QApplication([])
+    archive, _ = portrait_archive
+    with patch.object(model_manager, "model_search_dirs", return_value=[archive.parent]):
+        manager = ModelManager()
+    release_image = threading.Event()
+    read_image = manager.get_character_image_data
+
+    def delayed_image(character):
+        assert release_image.wait(5)
+        return read_image(character)
+
+    def wait_until(predicate):
+        deadline = time.monotonic() + 5
+        while not predicate() and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert predicate()
+
+    with patch.object(manager, "get_character_image_data", side_effect=delayed_image):
+        window = SettingsWindow(manager, current_char="tomorin", current_costume="casual",
+                                show_launch=False, keep_alive_on_close=True)
+        tray = QSystemTrayIcon()
+        tray.activated.connect(lambda reason: window.showNormal()
+                               if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        try:
+            if not load_during_entrance:
+                release_image.set()
+                wait_until(lambda: window._model_detail_image_worker is None)
+            tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
+            if load_during_entrance:
+                QTest.qWait(150)
+                release_image.set()
+            QTest.qWait(400)
+            wait_until(lambda: window._model_detail_image_worker is None
+                       and window._model_detail_metadata_worker is None
+                       and window.windowOpacity() == 1.0)
+
+            def assert_portrait_painted():
+                label = window._detail_image
+                assert not label.pixmap().isNull()
+                assert label.text() == ""
+                center = label.mapTo(window, label.rect().center())
+                assert window.grab().toImage().pixelColor(center).name() == "#5588aa"
+
+            assert_portrait_painted()
+            # Closing to the tray releases image resources; the next tray open
+            # must restore the portrait as well.
+            window.close()
+            assert window._detail_image.pixmap().isNull()
+            tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)
+            wait_until(lambda: window._model_detail_image_worker is None
+                       and window._model_detail_metadata_worker is None)
+            assert_portrait_painted()
+        finally:
+            release_image.set()
+            window._keep_alive_on_close = False
+            window.close()
+            window.deleteLater()
+            tray.deleteLater()
+            app.processEvents()
 
 
 @pytest.mark.parametrize("view", ["sidebar", "title", "message"])
