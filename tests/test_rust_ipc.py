@@ -323,6 +323,7 @@ def test_unicode_boundaries_utf8_replacement_and_sequence_exhaustion():
         assert q.last_publish_error == "empty payload"
         assert q.read_available(-1) == []
         assert q.read_available(1) == ["🐈" * 16]
+        assert q.read_available(2**128) == []
         assert q.publish("a")
         patch(queue_file_path(q.key), 28 + 76 + 12, b"\xff")
         assert q.read_available() == ["�"]
