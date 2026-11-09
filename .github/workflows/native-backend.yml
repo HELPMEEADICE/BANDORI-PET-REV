@@ -13,7 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-11-arm, ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-26-intel]
+        include:
+          - { os: windows-2022, python-arch: x64 }
+          - { os: windows-11-arm, python-arch: arm64 }
+          - { os: ubuntu-24.04, python-arch: x64 }
+          - { os: ubuntu-24.04-arm, python-arch: arm64 }
+          - { os: macos-latest, python-arch: arm64 }
+          - { os: macos-26-intel, python-arch: x64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -23,6 +29,10 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python-arch }}
       - name: Install Rust
         shell: bash
         run: |
@@ -47,9 +57,6 @@ jobs:
       - name: Test macOS Metal window lifecycle
         if: runner.os == 'macOS'
         run: cargo run --manifest-path native/pet_backend/Cargo.toml --example window_smoke --locked
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
       - name: Install IPC test dependencies
         run: python -m pip install pytest zstandard psutil
       - name: Build Python IPC extension and non-graphical Rust peer
