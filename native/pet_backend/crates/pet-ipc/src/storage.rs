@@ -32,6 +32,18 @@ pub(crate) fn open(path: &Path, create: bool) -> io::Result<File> {
 
 pub(crate) struct Lock<'a>(&'a File);
 
+fn try_exclusive(file: &File) -> Result<()> {
+    FileExt::try_lock_exclusive(file).map_err(|error| {
+        if error.kind() == io::ErrorKind::WouldBlock
+            || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+        {
+            Error::InUse
+        } else {
+            Error::Io(error)
+        }
+    })
+}
+
 impl<'a> Lock<'a> {
     pub fn exclusive(file: &'a File) -> io::Result<Self> {
         FileExt::lock_exclusive(file)?;
@@ -42,7 +54,9 @@ impl<'a> Lock<'a> {
 impl Drop for Lock<'_> {
     fn drop(&mut self) {
         // Closing the handle is the final OS-level fallback if unlocking fails.
-        let _ = FileExt::unlock(self.0);
+        if let Err(error) = FileExt::unlock(self.0) {
+            eprintln!("pet-ipc: data unlock failed: {error}");
+        }
     }
 }
 
@@ -64,18 +78,10 @@ impl Storage {
             return Err(Error::InvalidExtent);
         }
         let owner = open(&sidecar(path, ".owner"), true)?;
-        FileExt::try_lock_exclusive(&owner).map_err(|e| {
-            if e.kind() == io::ErrorKind::WouldBlock
-                || e.raw_os_error() == fs2::lock_contended_error().raw_os_error()
-            {
-                Error::InUse
-            } else {
-                Error::Io(e)
-            }
-        })?;
+        try_exclusive(&owner)?;
         let lease = open(&sidecar(path, ".lease"), true)?;
         // Never truncate a crashed owner's queue while survivors still map it.
-        FileExt::try_lock_exclusive(&lease).map_err(|_| Error::InUse)?;
+        try_exclusive(&lease)?;
         let file = open(path, true)?;
         let map = {
             let _lock = Lock::exclusive(&file)?;
@@ -143,19 +149,23 @@ impl Storage {
             Some(owner) => owner,
             None => {
                 let candidate = open(&sidecar(&self.path, ".owner"), true)?;
-                if FileExt::try_lock_exclusive(&candidate).is_err() {
-                    return Ok(());
+                match try_exclusive(&candidate) {
+                    Ok(()) => {}
+                    Err(Error::InUse) => return Ok(()),
+                    Err(error) => return Err(error),
                 }
                 candidate
             }
         };
         let lease = open(&sidecar(&self.path, ".lease"), true)?;
-        if FileExt::try_lock_exclusive(&lease).is_ok() {
-            match std::fs::remove_file(&self.path) {
+        match try_exclusive(&lease) {
+            Ok(()) => match std::fs::remove_file(&self.path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
-            }
+            },
+            Err(Error::InUse) => {}
+            Err(error) => return Err(error),
         }
         drop(owner);
         // Never unlink sidecars: doing so splits the lock namespace on Unix.
@@ -165,6 +175,8 @@ impl Storage {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        let _ = self.close();
+        if let Err(error) = self.close() {
+            eprintln!("pet-ipc: storage cleanup failed: {error}");
+        }
     }
 }

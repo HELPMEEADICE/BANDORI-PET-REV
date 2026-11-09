@@ -98,6 +98,8 @@ class BuildExeWithEmptyModels(build_exe):
         shutil.copy2(native_binary, build_dir / native_name)
         assets_name = "pet_assets.dll" if sys.platform == "win32" else "libpet_assets.dylib" if sys.platform == "darwin" else "libpet_assets.so"
         shutil.copy2(native_output / "release" / assets_name, build_dir / assets_name)
+        subprocess.run([sys.executable, str(BASE_DIR / "tools" / "smoke_frozen_ipc.py"),
+                        str(build_dir.resolve())], cwd=BASE_DIR, check=True)
         native_licenses = build_dir / "licenses" / "neocari"
         native_licenses.mkdir(parents=True, exist_ok=True)
         upstream = manifest.parent / "vendor" / "neocari"

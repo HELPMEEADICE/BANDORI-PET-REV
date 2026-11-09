@@ -3,6 +3,7 @@
 //! A Queue owns an independent cursor. Use &mut access (or a Mutex) per handle;
 //! separate handles/processes synchronize through OS file locks. No workers or
 //! polling loops are created. The v1 ring is bounded and overwrites old entries.
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 mod protocol;
 mod region;
 mod storage;
@@ -54,6 +55,8 @@ pub struct Queue {
 }
 
 impl Queue {
+    /// Create a zeroed v1 ring, refusing live owners or surviving participants.
+    /// The caller supplies the legacy queue file path; parents must exist.
     pub fn create(path: &Path, count: u32, size: u32) -> Result<Self> {
         let extent = memory_size(count, size)?;
         let storage = Storage::create(
@@ -74,6 +77,8 @@ impl Queue {
         })
     }
 
+    /// Attach after validating the entire extent. With tail=false, start at
+    /// the oldest retained sequence; otherwise only observe future messages.
     pub fn attach(path: &Path, tail: bool) -> Result<Self> {
         let storage = Storage::attach(path)?;
         let file = storage.file.as_ref().ok_or(Error::Detached)?;
@@ -93,15 +98,19 @@ impl Queue {
         })
     }
 
+    /// Fixed number of ring slots.
     pub fn slot_count(&self) -> u32 {
         self.count
     }
+    /// Maximum UTF-8 payload bytes in a slot.
     pub fn slot_size(&self) -> u32 {
         self.size
     }
+    /// This handle's next unread sequence (independent of other consumers).
     pub fn cursor(&self) -> u64 {
         self.cursor
     }
+    /// Saturating count of overwritten or corrupt entries encountered here.
     pub fn dropped_messages(&self) -> u64 {
         self.dropped
     }
@@ -109,9 +118,12 @@ impl Queue {
     pub fn set_dropped_messages(&mut self, value: u64) {
         self.dropped = value;
     }
+    /// Whether this handle still owns its mapping.
     pub fn is_attached(&self) -> bool {
         self.storage.map.is_some()
     }
+    /// Unmap before closing handles; the last participant removes the data
+    /// file when the owner is gone. Repeated closes succeed.
     pub fn close(&mut self) -> Result<()> {
         self.storage.close()
     }
@@ -189,6 +201,7 @@ impl Queue {
         Ok(lines)
     }
 
+    /// Read all currently retained messages with a single transaction lock.
     pub fn read(&mut self) -> Result<Vec<String>> {
         self.read_available(None)
     }

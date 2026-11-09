@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install IPC test dependencies
-        run: python -m pip install pytest zstandard
+        run: python -m pip install pytest zstandard psutil
       - name: Build Python IPC extension and non-graphical Rust peer
         run: |
           python tools/build_ipc.py --debug

@@ -90,6 +90,12 @@ impl NativeQueue {
             };
             let result = match state.queue.as_mut() {
                 Some(queue) => queue.publish(&line),
+                None if line.trim_end_matches(['\r', '\n']).is_empty() => {
+                    Err(pet_ipc::Error::Empty)
+                }
+                None if line.trim_end_matches(['\r', '\n']).len() > self.slot_size as usize => {
+                    Err(pet_ipc::Error::Oversize(self.slot_size))
+                }
                 None => Err(pet_ipc::Error::Detached),
             };
             state.publish_error = result

@@ -7,12 +7,14 @@ use fs2::FileExt;
 use crate::storage::{Lock, Storage};
 use crate::{Error, Result};
 
+/// Legacy byte-storage transactions using the same lifetime and data locks.
 pub struct MappedRegion {
     storage: Storage,
     locked: bool,
 }
 
 impl MappedRegion {
+    /// Create a zeroed region bounded by MAX_MAPPING_SIZE.
     pub fn create(path: &Path, size: usize) -> Result<Self> {
         Ok(Self {
             storage: Storage::create_region(path, size, None)?,
@@ -20,6 +22,7 @@ impl MappedRegion {
         })
     }
 
+    /// Attach raw storage without interpreting a queue header.
     pub fn attach(path: &Path) -> Result<Self> {
         Ok(Self {
             storage: Storage::attach_region(path, false)?,
@@ -37,6 +40,7 @@ impl MappedRegion {
         Ok(self.storage.map.as_ref().ok_or(Error::Detached)?.to_vec())
     }
 
+    /// Copy bytes under the existing transaction or a temporary data lock.
     pub fn snapshot(&self) -> Result<Vec<u8>> {
         let file = self.storage.file.as_ref().ok_or(Error::Detached)?;
         let _guard = if self.locked {
@@ -65,6 +69,7 @@ impl MappedRegion {
         result.and(unlock)
     }
 
+    /// Release any transaction and close idempotently.
     pub fn close(&mut self) -> Result<()> {
         self.locked = false;
         self.storage.close()
