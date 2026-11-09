@@ -22,6 +22,8 @@ def frozen_windows_tree(tmp_path, machine=0x8664, arch="AMD64"):
     struct.pack_into("<4sH", header, 64, b"PE\0\0", machine)
     for name in release.EXECUTABLES:
         (build / f"{name}.exe").write_bytes(header)
+    (build / "lib" / "bandori_core").mkdir()
+    (build / "lib" / "bandori_core" / "_pet_ipc.pyd").write_bytes(header)
     return build
 
 
@@ -96,6 +98,16 @@ def test_packaging_requires_native_archive_library(tmp_path):
     build = frozen_windows_tree(tmp_path)
     (build / "pet_assets.dll").unlink()
     with pytest.raises(ValueError, match="pet-assets library"):
+        release.validate_build(build, "windows", "x86_64")
+
+
+def test_packaging_requires_matching_rust_ipc_extension(tmp_path):
+    build = frozen_windows_tree(tmp_path)
+    extension = build / "lib" / "bandori_core" / "_pet_ipc.pyd"
+    with pytest.raises(ValueError, match="IPC extension architecture"):
+        release.validate_ipc_extension(build, "windows", "aarch64")
+    extension.unlink()
+    with pytest.raises(ValueError, match="Rust IPC extension"):
         release.validate_build(build, "windows", "x86_64")
 
 

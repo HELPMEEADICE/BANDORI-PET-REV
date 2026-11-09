@@ -147,6 +147,11 @@ jobs:
       - name: Install Windows MSI support
         if: runner.os == 'Windows'
         run: python -m pip install python-msilib
+      # setup.py rebuilds and validates the extension before cx_Freeze. This
+      # probe fails early for an interpreter/toolchain architecture mismatch.
+      - name: Verify Rust IPC extension before freezing
+        if: runner.os != 'macOS'
+        run: python tools/build_ipc.py
       - name: Install Inno Setup 6
         if: runner.os == 'Windows'
         shell: pwsh

@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-24.04, macos-latest]
+        os: [windows-2022, windows-11-arm, ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-26-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -52,6 +52,12 @@ jobs:
           python-version: "3.12"
       - name: Install IPC test dependencies
         run: python -m pip install pytest zstandard
+      - name: Build Python IPC extension and non-graphical Rust peer
+        run: |
+          python tools/build_ipc.py --debug
+          cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-ipc --example ipc_peer --locked
+      - name: Test queue compatibility, concurrency and crash recovery
+        run: python -m pytest tests/test_shared_memory_ipc.py tests/test_rust_ipc.py -q
       - name: Test Python archive bridge
         run: python -m pytest tests/test_native_assets.py -q
       - name: Test Python to Rust shared memory

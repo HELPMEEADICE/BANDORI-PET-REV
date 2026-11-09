@@ -221,6 +221,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-assets --locked
+          cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-ipc --example ipc_peer --locked
+          python tools/build_ipc.py --debug
       - name: Run regression tests
         shell: bash
         run: |

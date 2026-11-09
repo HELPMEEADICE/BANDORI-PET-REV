@@ -82,8 +82,17 @@ class BuildExeWithEmptyModels(build_exe):
             rust_args.extend(["--target", rust_target])
             native_output /= rust_target
         subprocess.run(rust_args, check=True)
+        # Explicit build step: match this interpreter's architecture, then make
+        # cx_Freeze discover the extension as an actual imported native module.
+        from tools.build_ipc import build as build_ipc
+        build_ipc(target=rust_target if sys.platform == "darwin" else None)
         super().run()
         build_dir = Path(self.build_exe)
+        from installer.package_release import validate_ipc_extension
+        validate_ipc_extension(
+            build_dir, {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux"),
+            "aarch64" if release_arch_name() == "ARM64" else "x86_64",
+        )
         native_name = "bandori-pet-native" + (".exe" if sys.platform == "win32" else "")
         native_binary = native_output / "release" / native_name
         shutil.copy2(native_binary, build_dir / native_name)
@@ -507,7 +516,7 @@ include_files = [item for item in include_files if item is not None]
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["bandori_audio.tts_manager", "lupa.luajit21"],
+    "includes": ["bandori_audio.tts_manager", "lupa.luajit21", "bandori_core._pet_ipc"],
     "packages": [
         "OpenGL",
         "PIL",
@@ -551,7 +560,7 @@ build_exe_options = {
     "include_msvcr": sys.platform == "win32",
     
     "zip_include_packages": ["*"], 
-    "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data", "qfluentwidgets", "PIL", "lupa"],
+    "zip_exclude_packages": ["_sounddevice_data", "_soundfile_data", "qfluentwidgets", "PIL", "lupa", "bandori_core"],
 }
 
 base = "gui" if sys.platform == "win32" else None
