@@ -1,14 +1,11 @@
-"""OS memory mappings shared by Python UI processes and the Rust pet.
+"""Legacy storage facade and stable queue naming. All mapping/locking is Rust.
 
-The data plane is mmap (no socket or stdio transport). A byte-range lock on
-Windows and flock on Unix serialize writers with Rust's fs2 locks. The owner
-lock is separate so a crashed creator can be reclaimed without resetting a
-live queue. Files live in a private, per-user temporary directory.
+MappedMemory.data() exposes a transaction snapshot: refresh on lock, commit on
+unlock. As before, callers must lock around shared reads/writes. Application
+queues use NativeQueue directly and never copy the entire mapping across FFI.
 """
-
 from enum import IntEnum
 import hashlib
-import mmap
 import os
 from pathlib import Path
 import tempfile
@@ -22,28 +19,8 @@ def queue_file_path(key: str) -> Path:
     return directory / (hashlib.sha256(key.encode("utf-8")).hexdigest() + ".shm")
 
 
-def _lock(file, *, blocking=True):
-    if os.name == "nt":
-        import msvcrt
-        file.seek(0)
-        msvcrt.locking(file.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(file.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-
-
-def _unlock(file):
-    if os.name == "nt":
-        import msvcrt
-        file.seek(0)
-        msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(file.fileno(), fcntl.LOCK_UN)
-
-
 class MappedMemory:
-    """Small storage interface used by SharedMemoryLineQueue."""
+    """Compatibility lock/data/unlock API backed by pet-ipc storage."""
 
     class SharedMemoryError(IntEnum):
         UnknownError = 0
@@ -51,92 +28,69 @@ class MappedMemory:
 
     def __init__(self, key):
         self.path = queue_file_path(key)
-        self._file = None
-        self._owner = None
+        self._native = None
         self._mapping = None
         self._error = self.SharedMemoryError.UnknownError
         self._message = ""
         self._thread_lock = threading.RLock()
+        self._depth = 0
+
+    def _open(self, size=None):
+        from bandori_core._pet_ipc import NativeMemory
+        with self._thread_lock:
+            if self._native is not None:
+                self._message = "memory is already attached"
+                return False
+            try:
+                self._native = (NativeMemory.attach(self.path) if size is None
+                                else NativeMemory.create(self.path, int(size)))
+                self._mapping = bytearray(self._native.snapshot())
+                return True
+            except (RuntimeError, OverflowError) as exc:
+                self._message = str(exc)
+                if "live owner" in self._message:
+                    self._error = self.SharedMemoryError.AlreadyExists
+                self.detach()
+                return False
 
     def create(self, size):
-        try:
-            self._owner = open(str(self.path) + ".owner", "a+b")
-            try:
-                _lock(self._owner, blocking=False)
-            except OSError:
-                self._owner.close()
-                self._owner = None
-                self._error = self.SharedMemoryError.AlreadyExists
-                self._message = "queue already has a live owner"
-                return False
-            self._file = open(self.path, "a+b")
-            _lock(self._file)
-            try:
-                self._file.truncate(size)
-                self._mapping = mmap.mmap(self._file.fileno(), size)
-            finally:
-                _unlock(self._file)
-            return True
-        except OSError as exc:
-            self._message = str(exc)
-            self.detach()
-            return False
+        return self._open(size)
 
     def attach(self):
-        try:
-            self._file = open(self.path, "r+b")
-            self._mapping = mmap.mmap(self._file.fileno(), 0)
-            return True
-        except (OSError, ValueError) as exc:
-            self._message = str(exc)
-            self.detach()
-            return False
+        return self._open()
 
     def detach(self):
-        if self._mapping is not None:
-            self._mapping.close()
+        with self._thread_lock:
+            if self._native is not None:
+                self._native.close()
+                self._native = None
             self._mapping = None
-        if self._file is not None:
-            self._file.close()
-            self._file = None
-        owner = self._owner
-        self._owner = None
-        # Try after every participant detaches. On Windows the owner's unlink
-        # may fail while readers still map the file; the final reader retries.
-        # Keep the owner lock filename stable to avoid splitting OS locks.
-        if owner is not None:
-            try:
-                self.path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            owner.close()
-        else:
-            try:
-                with open(str(self.path) + ".owner", "a+b") as candidate:
-                    _lock(candidate, blocking=False)
-                    try:
-                        self.path.unlink(missing_ok=True)
-                    finally:
-                        _unlock(candidate)
-            except OSError:
-                pass
 
     def isAttached(self):
-        return self._mapping is not None
+        return self._native is not None
 
     def lock(self):
         self._thread_lock.acquire()
         try:
-            _lock(self._file)
+            if self._native is None:
+                self._message = "queue is detached"
+                self._thread_lock.release()
+                return False
+            if self._depth == 0:
+                self._mapping[:] = self._native.lock()
+            self._depth += 1
             return True
-        except OSError:
+        except RuntimeError as exc:
+            self._message = str(exc)
             self._thread_lock.release()
             return False
 
     def unlock(self):
         try:
-            _unlock(self._file)
+            if self._depth == 1 and self._native is not None:
+                self._native.unlock(self._mapping)
         finally:
+            self._depth = max(0, self._depth - 1)
             self._thread_lock.release()
 
     def data(self):

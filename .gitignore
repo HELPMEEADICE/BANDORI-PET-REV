@@ -35,4 +35,6 @@ config.json.*
 *.log
 
 /native/pet_backend/target/
+/bandori_core/_pet_ipc*.pyd
+/bandori_core/_pet_ipc*.so
 /.cache/

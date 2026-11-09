@@ -7,7 +7,19 @@ import struct
 import uuid
 from dataclasses import dataclass
 
-from bandori_core.mapped_memory import MappedMemory
+import logging
+
+from bandori_core.mapped_memory import queue_file_path
+
+try:
+    from bandori_core._pet_ipc import NativeQueue
+except ImportError as exc:
+    raise ImportError(
+        "Rust IPC extension is required. Run: python tools/build_ipc.py "
+        "(use the same Python interpreter as the application)."
+    ) from exc
+
+_logger = logging.getLogger(__name__)
 
 
 _MAGIC = b"BDIPC01!"
@@ -138,162 +150,90 @@ def coalesce_latest_peer_positions(raw_lines: list[str]) -> list[str]:
 
 
 class SharedMemoryLineQueue:
-    def __init__(self, key: str, memory: MappedMemory, *, slot_count: int, slot_size: int, cursor: int):
+    """Compatibility facade over pet-ipc; all mapped queue access runs in Rust.
+
+    Each handle has its own cursor. The v1 ring can overwrite unread messages;
+    dropped_messages counts those losses and reads report them through logging.
+    There is deliberately no import-time compilation or Python fallback.
+    """
+
+    def __init__(self, key: str, queue: NativeQueue):
         self.key = key
-        self.slot_count = int(slot_count)
-        self.slot_size = int(slot_size)
-        self._memory = memory
-        self._cursor = int(cursor)
-        self.dropped_messages = 0
-        self.last_publish_error = ""
+        self.slot_count = queue.slot_count
+        self.slot_size = queue.slot_size
+        self._queue = queue
+        self._reported_drops = 0
+        self._reported_read_error = ""
 
     @classmethod
-    def create(
-        cls,
-        key: str,
-        *,
-        slot_count: int | None = None,
-        slot_size: int | None = None,
-        fallback_slot_counts: tuple[int, ...] | None = None,
-    ) -> "SharedMemoryLineQueue":
-        using_default_slot_count = slot_count is None
-        slot_count = _DEFAULT_SLOT_COUNT if slot_count is None else slot_count
-        slot_size = _DEFAULT_SLOT_SIZE if slot_size is None else slot_size
-        slot_count = max(1, int(slot_count))
-        slot_size = max(64, int(slot_size))
-        candidates = _queue_slot_count_candidates(
-            slot_count,
-            using_default=using_default_slot_count,
-            fallback_slot_counts=fallback_slot_counts,
-        )
-
+    def create(cls, key: str, *, slot_count: int | None = None,
+               slot_size: int | None = None,
+               fallback_slot_counts: tuple[int, ...] | None = None) -> "SharedMemoryLineQueue":
+        using_default = slot_count is None
+        count = max(1, int(_DEFAULT_SLOT_COUNT if slot_count is None else slot_count))
+        size = max(64, int(_DEFAULT_SLOT_SIZE if slot_size is None else slot_size))
         errors = []
-        for candidate_count in candidates:
-            memory = MappedMemory(key)
-            size = _queue_memory_size(candidate_count, slot_size)
-            created = memory.create(size)
-            if created:
-                queue = cls(key, memory, slot_count=candidate_count, slot_size=slot_size, cursor=0)
-                queue._initialize()
-                return queue
-            errors.append(f"{size} bytes: {memory.errorString()}")
-        raise RuntimeError(f"Failed to create shared memory '{key}': {'; '.join(errors) or 'no attempts made'}")
+        for candidate in _queue_slot_count_candidates(
+            count, using_default=using_default, fallback_slot_counts=fallback_slot_counts
+        ):
+            try:
+                native = NativeQueue.create(queue_file_path(key), candidate, size)
+                return cls(key, native)
+            except (RuntimeError, OverflowError) as exc:
+                errors.append(f"{_queue_memory_size(candidate, size)} bytes: {exc}")
+        raise RuntimeError(f"Failed to create shared memory '{key}': {'; '.join(errors)}")
 
     @classmethod
     def attach(cls, key: str, *, start_at_tail: bool = True) -> "SharedMemoryLineQueue":
-        memory = MappedMemory(key)
-        if not memory.attach():
-            raise RuntimeError(f"Failed to attach shared memory '{key}': {memory.errorString()}")
-        queue = cls(key, memory, slot_count=1, slot_size=64, cursor=0)
-        magic, version, slot_count, slot_size, next_seq = queue._read_header_locked()
-        if (magic != _MAGIC or version != _VERSION or slot_count < 1 or slot_size < 64
-                or _queue_memory_size(slot_count, slot_size) != len(memory.data())):
-            memory.detach()
-            raise RuntimeError(f"Shared memory '{key}' is not a Bandori IPC queue")
-        queue.slot_count = slot_count
-        queue.slot_size = slot_size
-        queue._cursor = next_seq if start_at_tail else max(0, next_seq - slot_count)
-        return queue
+        try:
+            return cls(key, NativeQueue.attach(queue_file_path(key), bool(start_at_tail)))
+        except RuntimeError as exc:
+            raise RuntimeError(f"Failed to attach shared memory '{key}': {exc}") from exc
 
     def close(self) -> None:
-        memory = self._memory
-        self._memory = None
-        if memory is not None and memory.isAttached():
-            memory.detach()
+        self._queue.close()
 
     def is_attached(self) -> bool:
-        return self._memory is not None and self._memory.isAttached()
+        return self._queue.is_attached()
 
     def publish(self, line: str) -> bool:
-        payload = normalize_ipc_line(line).encode("utf-8")
-        if not payload or len(payload) > self.slot_size:
-            self.last_publish_error = "empty payload" if not payload else f"payload exceeds {self.slot_size} bytes"
-            return False
-        self.last_publish_error = ""
-        if not self.is_attached():
-            self.last_publish_error = "queue is detached"
-            return False
-        memory = self._memory
-        if memory is None or not memory.lock():
-            self.last_publish_error = "queue lock failed"
-            return False
-        try:
-            data = memory.data()
-            if data is None:
-                self.last_publish_error = "queue memory is unavailable"
-                return False
-            view = memoryview(data)
-            magic, version, slot_count, slot_size, next_seq = self._read_header(view)
-            if magic != _MAGIC or version != _VERSION:
-                self.last_publish_error = "queue header is invalid"
-                return False
-            slot_index = next_seq % slot_count
-            offset = _HEADER.size + slot_index * (_SLOT_HEADER.size + slot_size)
-            _SLOT_HEADER.pack_into(view, offset, next_seq, len(payload))
-            payload_start = offset + _SLOT_HEADER.size
-            view[payload_start:payload_start + len(payload)] = payload
-            self._write_header(view, slot_count, slot_size, next_seq + 1)
-            return True
-        finally:
-            memory.unlock()
+        published = self._queue.publish(normalize_ipc_line(line))
+        if not published:
+            _logger.error("IPC queue %s publish failed: %s", self.key, self.last_publish_error)
+        return published
 
     def read_available(self, max_messages: int | None = None) -> list[str]:
         if max_messages is not None:
             max_messages = max(0, int(max_messages))
-            if max_messages == 0:
-                return []
-        if not self.is_attached():
-            return []
-        memory = self._memory
-        if memory is None or not memory.lock():
-            return []
-        try:
-            data = memory.data()
-            if data is None:
-                return []
-            view = memoryview(data)
-            magic, version, slot_count, slot_size, next_seq = self._read_header(view)
-            if magic != _MAGIC or version != _VERSION:
-                return []
-            first_available = max(0, next_seq - slot_count)
-            if self._cursor < first_available:
-                self.dropped_messages += first_available - self._cursor
-                self._cursor = first_available
-            messages = []
-            seq = self._cursor
-            while seq < next_seq and (max_messages is None or len(messages) < max_messages):
-                slot_index = seq % slot_count
-                offset = _HEADER.size + slot_index * (_SLOT_HEADER.size + slot_size)
-                slot_seq, length = _SLOT_HEADER.unpack_from(view, offset)
-                if slot_seq == seq and 0 < length <= slot_size:
-                    payload_start = offset + _SLOT_HEADER.size
-                    messages.append(bytes(view[payload_start:payload_start + length]).decode("utf-8", errors="replace"))
-                seq += 1
-            self._cursor = seq
-            return messages
-        finally:
-            memory.unlock()
+        lines = self._queue.read_available(max_messages)
+        dropped = self._queue.dropped_messages
+        if dropped > self._reported_drops:
+            _logger.error("IPC queue %s lost %d messages (ring overwrite or corrupt slot)",
+                          self.key, dropped - self._reported_drops)
+        self._reported_drops = dropped
+        error = self._queue.last_read_error
+        if error and error != self._reported_read_error:
+            _logger.error("IPC queue %s read failed: %s", self.key, error)
+        self._reported_read_error = error
+        return lines
 
-    def _initialize(self) -> None:
-        if not self._memory.lock():
-            raise RuntimeError(f"Failed to lock shared memory '{self.key}'")
-        try:
-            self._write_header(memoryview(self._memory.data()), self.slot_count, self.slot_size, 0)
-        finally:
-            self._memory.unlock()
+    @property
+    def dropped_messages(self) -> int:
+        return self._queue.dropped_messages
 
-    def _read_header_locked(self):
-        if not self._memory.lock():
-            raise RuntimeError(f"Failed to lock shared memory '{self.key}'")
-        try:
-            return self._read_header(memoryview(self._memory.data()))
-        finally:
-            self._memory.unlock()
+    @dropped_messages.setter
+    def dropped_messages(self, value: int) -> None:
+        self._queue.dropped_messages = value
 
-    @staticmethod
-    def _read_header(view):
-        return _HEADER.unpack_from(view, 0)
+    @property
+    def last_publish_error(self) -> str:
+        return self._queue.last_publish_error
 
-    @staticmethod
-    def _write_header(view, slot_count: int, slot_size: int, next_seq: int) -> None:
-        _HEADER.pack_into(view, 0, _MAGIC, _VERSION, int(slot_count), int(slot_size), int(next_seq))
+    @last_publish_error.setter
+    def last_publish_error(self, value: str) -> None:
+        self._queue.last_publish_error = value
+
+    @property
+    def last_read_error(self) -> str:
+        """Diagnostic for recoverable reads, which continue to return []."""
+        return self._queue.last_read_error
