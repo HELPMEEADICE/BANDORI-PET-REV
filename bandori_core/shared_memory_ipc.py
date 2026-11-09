@@ -205,13 +205,11 @@ class SharedMemoryLineQueue:
     def read_available(self, max_messages: int | None = None) -> list[str]:
         if max_messages is not None:
             max_messages = max(0, int(max_messages))
-        lines = self._queue.read_available(max_messages)
-        dropped = self._queue.dropped_messages
+        lines, dropped, error = self._queue.read_batch(max_messages)
         if dropped > self._reported_drops:
             _logger.error("IPC queue %s lost %d messages (ring overwrite or corrupt slot)",
                           self.key, dropped - self._reported_drops)
         self._reported_drops = dropped
-        error = self._queue.last_read_error
         if error and error != self._reported_read_error:
             _logger.error("IPC queue %s read failed: %s", self.key, error)
         self._reported_read_error = error

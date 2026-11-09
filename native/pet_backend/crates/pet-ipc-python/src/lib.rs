@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use pet_ipc::Queue;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 
 #[derive(Default)]
 struct State {
@@ -13,6 +14,26 @@ struct State {
     dropped: u64,
     publish_error: String,
     read_error: String,
+}
+
+impl State {
+    fn read(&mut self, max_messages: Option<usize>) -> Vec<String> {
+        let Some(queue) = self.queue.as_mut() else {
+            return Vec::new();
+        };
+        let result = queue.read_available(max_messages);
+        self.dropped = queue.dropped_messages();
+        match result {
+            Ok(lines) => {
+                self.read_error.clear();
+                lines
+            }
+            Err(error) => {
+                self.read_error = error.to_string();
+                Vec::new()
+            }
+        }
+    }
 }
 
 #[pyclass(frozen, module = "bandori_core._pet_ipc")]
@@ -86,21 +107,23 @@ impl NativeQueue {
             let Ok(mut state) = self.state.lock() else {
                 return Vec::new();
             };
-            let Some(queue) = state.queue.as_mut() else {
-                return Vec::new();
+            state.read(max_messages)
+        })
+    }
+
+    /// Read payloads and diagnostics in a single FFI call.
+    #[pyo3(signature = (max_messages=None))]
+    fn read_batch(
+        &self,
+        py: Python<'_>,
+        max_messages: Option<usize>,
+    ) -> (Vec<String>, u64, String) {
+        py.detach(|| {
+            let Ok(mut state) = self.state.lock() else {
+                return (Vec::new(), 0, "queue mutex is poisoned".into());
             };
-            let result = queue.read_available(max_messages);
-            state.dropped = queue.dropped_messages();
-            match result {
-                Ok(lines) => {
-                    state.read_error.clear();
-                    lines
-                }
-                Err(e) => {
-                    state.read_error = e.to_string();
-                    Vec::new()
-                }
-            }
+            let lines = state.read(max_messages);
+            (lines, state.dropped, state.read_error.clone())
         })
     }
 
@@ -200,11 +223,13 @@ impl NativeMemory {
                 .map_err(runtime)
         })
     }
-    fn lock(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
-        py.detach(|| self.0.lock().map_err(runtime)?.lock().map_err(runtime))
+    fn lock(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
+        let bytes = py.detach(|| self.0.lock().map_err(runtime)?.lock().map_err(runtime))?;
+        Ok(PyBytes::new(py, &bytes).unbind())
     }
-    fn snapshot(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
-        py.detach(|| self.0.lock().map_err(runtime)?.snapshot().map_err(runtime))
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
+        let bytes = py.detach(|| self.0.lock().map_err(runtime)?.snapshot().map_err(runtime))?;
+        Ok(PyBytes::new(py, &bytes).unbind())
     }
     fn unlock(&self, py: Python<'_>, bytes: Vec<u8>) -> PyResult<()> {
         py.detach(|| {
