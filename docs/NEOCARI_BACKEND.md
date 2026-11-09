@@ -9,6 +9,7 @@
 ```sh
 git submodule update --init --recursive
 cargo build --release --manifest-path native/pet_backend/Cargo.toml -p bandori-pet-native -p pet-assets --locked
+python tools/build_ipc.py
 python main.py
 ```
 
