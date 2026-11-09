@@ -56,11 +56,11 @@ pub const BASE_FACE_HEIGHT: f32 = 120.0;
 /// Reference projected area of the head-and-torso region at 100% scale.
 pub const BASE_UPPER_BODY_AREA: f32 = 170_000.0;
 
-/// Reference height (model units) for moc3 models without face metadata.
-/// One value for every model means they all share the same pixels-per-unit
-/// scale, so a stage model's shorter content stays shorter instead of being
-/// enlarged until the drum kit fills the window.
-pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.82;
+/// Upper-body ruler in moc3 model units, calibrated against the existing moc
+/// bust scale (Tomori and Anon in matching casual costumes). A full-body moc3
+/// must be taller on screen, rather than fitting its legs into a bust's height.
+/// Keep one ruler for all moc3 models so stage props cannot change body scale.
+pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.60;
 
 /// Minimum window height in logical pixels at 100% for moc3 models.
 /// Taller content retains its animation padding; extra room never changes scale.
@@ -409,6 +409,84 @@ mod tests {
             let layout = ModelLayout::from_upper_body(content, upper_body, format);
             let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
             assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn moc3_full_bodies_match_moc_bust_scale_without_fitting_away_the_legs() {
+        // Neutral geometry measured from Tomori/Anon casual (moc) and
+        // casual_spring_01 (moc3). These costumes share their body proportions;
+        // the moc geometry ends at the thighs, while moc3 includes the feet.
+        for (moc, upper, moc3) in [
+            (
+                Bounds {
+                    min_x: 303.5952,
+                    min_y: 391.3333,
+                    max_x: 1696.4098,
+                    max_y: 2963.089,
+                },
+                Bounds {
+                    min_x: 303.5952,
+                    min_y: 391.3333,
+                    max_x: 1696.4098,
+                    max_y: 2242.8828,
+                },
+                Bounds {
+                    min_x: -0.21303663,
+                    min_y: -0.69486207,
+                    max_x: 0.21306235,
+                    max_y: 0.5309641,
+                },
+            ),
+            (
+                Bounds {
+                    min_x: 303.59436,
+                    min_y: 307.49982,
+                    max_x: 1696.4095,
+                    max_y: 2880.7554,
+                },
+                Bounds {
+                    min_x: 303.59436,
+                    min_y: 307.49982,
+                    max_x: 1696.4095,
+                    max_y: 2159.8596,
+                },
+                Bounds {
+                    min_x: -0.21959661,
+                    min_y: -0.72569036,
+                    max_x: 0.21959753,
+                    max_y: 0.5512259,
+                },
+            ),
+        ] {
+            let bust = ModelLayout::from_upper_body(moc, upper, ModelFormat::Moc);
+            let full = ModelLayout::from_upper_body(moc3, moc3, ModelFormat::Moc3);
+            for (zoom, dpr) in [(100.0, 1.0), (130.0, 1.5), (200.0, 2.0)] {
+                let project = |layout: ModelLayout, content: Bounds, flip_y: bool| {
+                    let (w, h) = layout.window_size(zoom, dpr);
+                    let matrix = layout.matrix(flip_y);
+                    (
+                        (matrix.transform_x(content.max_x) - matrix.transform_x(content.min_x))
+                            .abs()
+                            * w as f32
+                            / 2.0,
+                        (matrix.transform_y(content.max_y) - matrix.transform_y(content.min_y))
+                            .abs()
+                            * h as f32
+                            / 2.0,
+                    )
+                };
+                let (bust_width, bust_height) = project(bust, moc, true);
+                let (full_width, full_height) = project(full, moc3, false);
+                assert!(
+                    (full_width / bust_width - 1.0).abs() < 0.03,
+                    "head/torso scale must match across formats"
+                );
+                assert!(
+                    full_height > bust_height * 1.5,
+                    "full legs require a taller viewport, not a smaller character"
+                );
+            }
         }
     }
 

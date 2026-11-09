@@ -15,7 +15,7 @@ python main.py
 
 源码运行自动查找 `native/pet_backend/target/release/`、`target/debug/`；发行包从主程序目录查找 `bandori-pet-native[.exe]`。`BANDORI_PET_NATIVE` 可以指定可执行文件。找不到后端时会提示构建命令，不会退回 Qt 宠物窗口。`pet_process.py` 是兼容命令行入口，实际启动的仍是 Rust 后端。
 
-模型缩放默认 `100%`，与系统显示缩放独立。MOC、VRM 测量头顶到上半身区域的投影包围框，并按包围面积统一缩放；MOC 的脸部轮廓、VRM 的表情变形网格用于确定该区域，缺少脸部数据时按模型高度估算。MOC3 使用统一的模型坐标比例，不依赖 `cdi3.json`，舞台道具不会改变角色大小。MOC3 窗口在 `100%` 时至少为 903 逻辑像素高，宽幅模型增加高度和下移留白；较高模型会继续扩展窗口，保留完整内容及动画边距。缩放始终保留角色比例。旧配置的 `live2d_scale: 0` 也按 `100%` 处理；系统 DPI 只在窗口尺寸转换为物理像素时应用一次，避免在 200% 显示缩放下重复放大。手动设置的模型缩放比例继续保留。
+模型缩放默认 `100%`，与系统显示缩放独立。MOC、VRM 测量头顶到上半身区域的投影包围框，并按包围面积统一缩放；MOC 的脸部轮廓、VRM 的表情变形网格用于确定该区域，缺少脸部数据时按模型高度估算。MOC3 使用统一的模型坐标比例，不依赖 `cdi3.json`，舞台道具不会改变角色大小。其上半身比例尺为 `0.60` 模型单位，与灯、爱音相同服装的 MOC 半身模型校准；此前的 `0.82` 会使 MOC3 人物明显偏小，此次人物线性尺寸增加约 36.7%。全身 MOC3 应比半身 MOC 显示得更高，头部和身体粗细保持接近，而不是把两者的整个人物高度缩放成一样。MOC3 窗口在 `100%` 时至少为 903 逻辑像素高，宽幅模型增加高度和下移留白；较高模型会继续扩展窗口，保留完整内容及动画边距。缩放始终保留角色比例。旧配置的 `live2d_scale: 0` 也按 `100%` 处理；系统 DPI 只在窗口尺寸转换为物理像素时应用一次，避免在 200% 显示缩放下重复放大。手动设置的模型缩放比例继续保留。
 
 Windows 宠物窗口使用 DirectX 12 + DirectComposition，显式使用预乘 alpha 合成；关闭 GPU 加速时使用 DX12 软件适配器。窗口创建时设置 `WS_EX_NOREDIRECTIONBITMAP`，避免透明部分露出黑色窗口底图，并在鼠标穿透、显示和 OBS 样式切换时保留该标志。Vulkan 和普通 DX12 HWND 交换链不能保证 Windows 11 上的透明合成，因此不再用作 Windows 宠物窗口的呈现路径；离屏预览仍可使用 Vulkan。
 
@@ -24,6 +24,32 @@ macOS 使用 Metal。Linux 宠物窗口使用 X11，在 Wayland 会话中需要 
 macOS 在请求首帧之前先以不抢焦点的方式显示透明窗口。当前锁定的 wgpu Metal 后端会拒绝为尚未显示的窗口获取 drawable，因此不能套用 Windows 的“首帧成功后才显示”顺序。窗口暂时被遮挡、AppKit 可见状态尚未更新或获取帧超时时，跳过该帧并继续重试，不计入渲染失败熔断；主动隐藏的角色停止绘制，恢复显示后继续渲染。
 
 `setup.py build` 会先构建 release 后端并将其和许可文件复制到发行目录。安装包校验包含该可执行文件；macOS / Linux / Windows 构建工作流会拉取固定的 Neocari 子模块。
+
+## MOC3 大小校准复核
+
+`framing_probe` 按桌宠实际的 `100%`、DPR=1 渲染中立姿态，保留窗口比例尺，
+不把生成图片统一缩放到同一高度。它使用独立的解压缓存，不干扰正在运行的角色。
+
+```sh
+cargo run --release --manifest-path native/pet_backend/Cargo.toml --example framing_probe --locked -- .runtime/framing-check models/tomorin.zst::casual/model.json models/tomorin.zst::casual_spring_01/adv_live2d_tomori_001_casual_spring_01.model3.json
+```
+
+本机 Windows 实测的可见像素包围框宽度：
+
+| 同角色、同服装 | MOC 参考 | MOC3 修复前 | MOC3 修复后 |
+| --- | ---: | ---: | ---: |
+| 灯，casual / casual_spring_01 | 294 px | 210 px | 289 px |
+| 爱音，casual / casual_spring_01 | 297 px | 220 px | 301 px |
+
+灯的 MOC 可见高度为 655 px，修复后的全身 MOC3 为 1019 px；爱音分别为 652 px 和
+1061 px。MOC 的三组参考渲染在修复前后逐像素一致。新增回归使用实测中立姿态的几何
+包围框，检查 100%／130%／200% 和不同 DPR 下的宽度相差不超过 3%，且 MOC3 全身
+高度超过 MOC 半身的 1.5 倍；原有舞台道具、动画留白、纹理上限和比例测试继续通过。
+
+本次 `cargo fmt`、workspace Clippy 和完整 Rust 测试通过（470 passed、5 ignored）；
+Python 为 802 passed、2 skipped，跳过项为当前解释器缺少 py7zr 和 Windows 无 Unix
+resource 模块。重建 release 后端后，tomorin casual_spring_01 和 houka live_01
+均实际通过 GPU／窗口／IPC 冒烟测试。
 
 ## 归档资源服务
 
