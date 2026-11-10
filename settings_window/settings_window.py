@@ -618,6 +618,9 @@ class SettingsWindow(
             self._model_detail_suspended = False
             if self._current_page == "characters" and not self._selecting_model:
                 self._show_model_detail()
+        # Wait until the first Show has settled before loading/applying a
+        # portrait, so it uses the visible window's layout and screen DPR.
+        QTimer.singleShot(0, self._refresh_visible_model_detail_image)
         if not hasattr(self, '_entrance_done'):
             self._entrance_done = True
             QTimer.singleShot(80, self._play_entrance)
@@ -648,6 +651,7 @@ class SettingsWindow(
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(self._refresh_visible_model_detail_image)
         anim.start()
 
     @staticmethod
@@ -2338,6 +2342,10 @@ class SettingsWindow(
             cache.pop(next(iter(cache)))
 
     def _queue_model_detail_image_load(self, character: str):
+        if not self.isVisible():
+            # Construction prepares the selected model, but the first Show
+            # starts its image request once the native window is ready.
+            return
         self._model_detail_image_request_id = getattr(self, "_model_detail_image_request_id", 0) + 1
         request_id = self._model_detail_image_request_id
         previous_worker = getattr(self, "_model_detail_image_worker", None)
@@ -2361,6 +2369,21 @@ class SettingsWindow(
         )
         worker.finished.connect(lambda w=worker: self._on_model_detail_worker_completed(w))
         worker.start()
+
+    def _refresh_visible_model_detail_image(self):
+        if not self.isVisible() or self._current_page != "characters" or self._selecting_model:
+            return
+        item = self._selected_model_item()
+        if not item:
+            return
+        character = item["character"]
+        pixmap = self._detail_image_pixmap_cache.get(character)
+        if pixmap is not None and not pixmap.isNull():
+            # Reapply after the entrance fade as well: a portrait delivered
+            # during the first native-window paint must reach the final frame.
+            self._show_model_detail_pixmap(character, pixmap)
+        elif self._model_detail_image_worker is None:
+            self._queue_model_detail_image_load(character)
 
     def _on_model_detail_image_loaded(self, request_id: int, worker, result: dict):
         if request_id != getattr(self, "_model_detail_image_request_id", 0):

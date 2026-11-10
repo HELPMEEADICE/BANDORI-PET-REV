@@ -13,6 +13,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QSystemTrayIcon
 
 from bandori_models import model_manager
+from bandori_core.config_manager import ConfigManager
 from bandori_models.model_manager import ModelManager
 from bandori_models.zst_model_archive import load_virtual_bytes
 from chat_window.avatar_utils import _rounded_avatar_pixmap
@@ -150,11 +151,25 @@ def test_successful_detail_decode_is_cached_without_rereading_archive(portrait_a
 
 
 @pytest.mark.parametrize("load_during_entrance", [False, True])
-def test_first_tray_open_paints_portrait_without_changing_pages(portrait_archive, load_during_entrance):
+@pytest.mark.parametrize("selected_index", [0, 1])
+def test_first_tray_open_paints_portrait_without_changing_pages(portrait_archive, load_during_entrance, selected_index):
     app = QApplication.instance() or QApplication([])
     archive, _ = portrait_archive
+    second_archive = archive.with_name("soyorin.zst")
+    second_image = QImage(48, 96, QImage.Format.Format_ARGB32)
+    second_image.fill(0xFFAA8855)
+    second_portrait = archive.with_name("second.png")
+    assert second_image.save(str(second_portrait))
+    write_archive(second_archive, {
+        "character.png": second_portrait.read_bytes(),
+        "casual/model.json": b"{}",
+    })
     with patch.object(model_manager, "model_search_dirs", return_value=[archive.parent]):
         manager = ModelManager()
+    characters = ["tomorin", "soyorin"]
+    selected_character = characters[selected_index]
+    cfg = ConfigManager(archive.parent / "config.json")
+    cfg.set("models", [{"character": character, "costume": "casual"} for character in characters])
     release_image = threading.Event()
     read_image = manager.get_character_image_data
 
@@ -168,13 +183,17 @@ def test_first_tray_open_paints_portrait_without_changing_pages(portrait_archive
             QTest.qWait(10)
         assert predicate()
 
-    with patch.object(manager, "get_character_image_data", side_effect=delayed_image):
-        window = SettingsWindow(manager, current_char="tomorin", current_costume="casual",
-                                show_launch=False, keep_alive_on_close=True)
+    with patch.object(manager, "get_character_image_data", side_effect=delayed_image) as image_reads:
+        window = SettingsWindow(manager, current_char=selected_character, current_costume="casual",
+                                show_launch=False, keep_alive_on_close=True, config_manager=cfg)
         tray = QSystemTrayIcon()
         tray.activated.connect(lambda reason: window.showNormal()
                                if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
         try:
+            # The hidden constructor must not race the first native Show with
+            # an image decoded/applied before the window is ready to paint.
+            QTest.qWait(20)
+            image_reads.assert_not_called()
             if not load_during_entrance:
                 release_image.set()
                 wait_until(lambda: window._model_detail_image_worker is None)
@@ -188,11 +207,13 @@ def test_first_tray_open_paints_portrait_without_changing_pages(portrait_archive
                        and window.windowOpacity() == 1.0)
 
             def assert_portrait_painted():
+                assert window._selected_list_character == selected_character
                 label = window._detail_image
                 assert not label.pixmap().isNull()
                 assert label.text() == ""
                 center = label.mapTo(window, label.rect().center())
-                assert window.grab().toImage().pixelColor(center).name() == "#5588aa"
+                expected_color = ["#5588aa", "#aa8855"][selected_index]
+                assert window.grab().toImage().pixelColor(center).name() == expected_color
 
             assert_portrait_painted()
             # Closing to the tray releases image resources; the next tray open
