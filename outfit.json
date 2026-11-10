@@ -122,7 +122,10 @@
         "halloween": "万圣节",
         "furisode": "振袖和服",
         "live_event_332_r": "332期 これからも迎える朝は",
-        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！"
+        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！",
+        "bili_001_collabo_r": "bilibili联动 R",
+        "bili_001_collabo_ur": "bilibili联动 UR",
+        "live_event_343_ur": "343期"
       }
     },
     "yukina": {
@@ -227,7 +230,12 @@
         "school_winter_s2": "冬季校服2",
         "special_5th": "五周年",
         "swimsuit-2023": "2023夏季泳衣",
-        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン"
+        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン",
+        "bili_021_collabo_ur": "bilibili联动 UR",
+        "dream_festival_5_ur": "梦限5",
+        "glasses-2023": "眼镜2023",
+        "live_event_338_ur": "338期",
+        "live_event_342_sr": "342期"
       }
     },
     "anon": {
@@ -249,7 +257,20 @@
         "live_event_313_ur": "313期 传递给大家吧！KAWAII♡Happy Party!Part2♡",
         "live_sr_01": "SR队服",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual": "常服",
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_glasses": "春季常服（眼镜）",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服",
+        "roomwear_01": "居家服",
+        "roomwear_01_glasses": "居家服（眼镜）",
+        "school_summer": "夏季校服",
+        "school_summer_hs_1st": "高一夏季校服",
+        "school_winter": "冬季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_hs_1st_glasses": "高一冬季校服（眼镜）"
       }
     },
     "tomorin": {
@@ -270,7 +291,20 @@
         "live_event_307_ssr": "307期 献给分歧路上前行的人们",
         "live_sr_01": "SR队服",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "2024_furisode": "振袖和服2024",
+        "bili_036_collabo_ur": "bilibili联动 UR",
+        "casual": "常服",
+        "casual_spring_01": "春季常服",
+        "furisode": "振袖和服",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服",
+        "school_summer": "夏季校服",
+        "school_summer_hs_1st": "高一夏季校服",
+        "school_winter": "冬季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "taki": {
@@ -291,7 +325,21 @@
         "live_event_307_sr": "307期 献给分歧路上前行的人们",
         "live_sr_01": "SR队服",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "arbeit_ring_01": "RING打工服",
+        "casual": "常服",
+        "casual_spring_01": "春季常服",
+        "event_277_story_01": "277期 故事1",
+        "halloween_01": "万圣节",
+        "halloween_02": "万圣节2",
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服",
+        "live_event_325_sr": "325期 All☆Stars CiRCRiNG Fes!",
+        "school_summer": "夏季校服",
+        "school_summer_hs": "高中夏季校服",
+        "school_winter": "冬季校服",
+        "school_winter_hs": "高中冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "soyo": {
@@ -311,7 +359,17 @@
         "live_event_307_sr": "307期 献给分歧路上前行的人们",
         "live_sr_01": "SR队服",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual": "常服",
+        "casual_spring_01": "春季常服",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服",
+        "school_summer": "夏季校服",
+        "school_summer_hs": "高中夏季校服",
+        "school_winter": "冬季校服",
+        "school_winter_hs": "高中冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "rana": {
@@ -330,7 +388,18 @@
         "live_event_307_ur": "307期 献给分歧路上前行的人们",
         "live_sr_01": "SR队服",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual": "常服",
+        "casual_spring_01": "春季常服",
+        "event_286_story_01": "286期 故事1",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服",
+        "live_event_287_ssr": "287期 共同前行 向着未来的路标",
+        "school_summer": "夏季校服",
+        "school_summer_jhs": "初中夏季校服",
+        "school_winter": "冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "sakiko": {
@@ -339,7 +408,16 @@
         "casual-2023": "常服2023",
         "event_297_story_01": "event_297_story_01",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual_spring_01": "春季常服",
+        "child_casual_spring_01_still": "童年春季常服（静态）",
+        "jh_school_winter_2023": "初中冬季校服2023",
+        "live_01": "演出服",
+        "live_01_mask": "演出服（面具）",
+        "live_01_stage": "舞台演出服",
+        "school_summer_hs_1st": "高一夏季校服",
+        "school_winter_hs_1st": "高一冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "mutsumi": {
@@ -348,7 +426,15 @@
         "casual-2023": "常服2023",
         "event_297_story_01": "event_297_story_01",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual_spring_01": "春季常服",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_mask": "演出服（面具）",
+        "live_01_stage": "舞台演出服",
+        "school_summer_hs": "高中夏季校服",
+        "school_winter_hs": "高中冬季校服",
+        "school_winter_jhs": "初中冬季校服"
       }
     },
     "umiri": {
@@ -357,7 +443,15 @@
         "casual-2023": "常服2023",
         "event_297_story_01": "event_297_story_01",
         "school_summer-2023": "夏季校服2023",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "casual_spring_01": "春季常服",
+        "halloween_01": "万圣节",
+        "jhs_casual_spring_01_still": "初中春季常服（静态）",
+        "live_01": "演出服",
+        "live_01_mask": "演出服（面具）",
+        "live_01_stage": "舞台演出服",
+        "school_summer_hs": "高中夏季校服",
+        "school_winter_hs": "高中冬季校服"
       }
     },
     "uika": {
@@ -369,14 +463,30 @@
         "school_winter-2023": "冬季校服2023",
         "sumimi": "sumimi",
         "casual_nocap": "常服(无帽)",
-        "casual-2023_nocap": "常服2023(无帽)"
+        "casual-2023_nocap": "常服2023(无帽)",
+        "caretaker_01": "看护服",
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_hat": "春季常服（帽子）",
+        "child_casual_summer_01_silhouette": "童年夏季常服（剪影）",
+        "live_01": "演出服",
+        "live_01_mask": "演出服（面具）",
+        "live_01_mask_silhouette": "演出服（面具剪影）",
+        "live_01_stage": "舞台演出服",
+        "school_summer_hs": "高中夏季校服",
+        "school_winter_hs": "高中冬季校服"
       }
     },
     "nyamu": {
       "display": "祐天寺若麦",
       "costumes": {
         "casual-2023": "常服2023",
-        "event_297_story_01": "event_297_story_01"
+        "event_297_story_01": "event_297_story_01",
+        "casual_spring_01": "春季常服",
+        "casual_spring_01_hat_sunglasses": "春季常服（帽子、墨镜）",
+        "halloween_01": "万圣节",
+        "live_01": "演出服",
+        "live_01_mask": "演出服（面具）",
+        "live_01_stage": "舞台演出服"
       }
     },
     "arale": {
@@ -391,7 +501,8 @@
         "roomwear_01": "居家服",
         "school_winter_jhs": "初中冬季校服",
         "soundonly_virtual_01_still": "虚拟形象（静态）",
-        "virtual_01": "虚拟形象"
+        "virtual_01": "虚拟形象",
+        "live_01_stage": "舞台演出服"
       }
     },
     "nonoka": {
@@ -403,7 +514,8 @@
         "detective_01": "侦探服",
         "live_01": "演出服",
         "school_winter_jhs": "初中冬季校服",
-        "virtual_01": "虚拟形象"
+        "virtual_01": "虚拟形象",
+        "live_01_stage": "舞台演出服"
       }
     },
     "ritsu": {
@@ -416,7 +528,8 @@
         "school_winter_hs": "高中冬季校服",
         "school_winter_jhs": "初中冬季校服",
         "soundonly_virtual_casual_spring_01_still": "春季虚拟形象（静态）",
-        "virtual_01": "虚拟形象"
+        "virtual_01": "虚拟形象",
+        "live_01_stage": "舞台演出服"
       }
     },
     "miyako": {
@@ -427,7 +540,8 @@
         "casual_spring_01_nose_glasses": "春季常服（眼镜）",
         "live_01": "演出服",
         "soundonly_virtual_01_still": "虚拟形象（静态）",
-        "virtual_01": "虚拟形象"
+        "virtual_01": "虚拟形象",
+        "live_01_stage": "舞台演出服"
       }
     },
     "yuno": {
@@ -436,7 +550,8 @@
         "casual_spring_01": "春季常服",
         "live_01": "演出服",
         "school_summer_jhs": "初中夏季校服",
-        "virtual_01": "虚拟形象"
+        "virtual_01": "虚拟形象",
+        "live_01_stage": "舞台演出服"
       }
     },
     "hotaru": {
@@ -444,7 +559,8 @@
       "costumes": {
         "casual_spring_01": "春季常服",
         "child_casual_spring_01_still": "童年春季常服（静态）",
-        "live_01": "演出服"
+        "live_01": "演出服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "natsume": {
@@ -455,7 +571,8 @@
         "school_summer_jhs_3rd": "初三夏季校服",
         "school_winter_hs_1st": "高一冬季校服",
         "school_winter_hs_2nd": "高二冬季校服",
-        "school_winter_jhs_3rd": "初三冬季校服"
+        "school_winter_jhs_3rd": "初三冬季校服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "nagi": {
@@ -466,7 +583,9 @@
         "school_summer_jhs_2nd": "初二夏季校服",
         "school_winter_hs_1st": "高一冬季校服",
         "school_winter_jhs_2nd": "初二冬季校服",
-        "school_winter_jhs_3rd": "初三冬季校服"
+        "school_winter_jhs_3rd": "初三冬季校服",
+        "child_casual_spring_01": "童年春季常服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "mahoro": {
@@ -478,7 +597,9 @@
         "school_summer_jhs_3rd": "初三夏季校服",
         "school_winter_hs_1st": "高一冬季校服",
         "school_winter_hs_2nd": "高二冬季校服",
-        "school_winter_jhs_3rd": "初三冬季校服"
+        "school_winter_jhs_3rd": "初三冬季校服",
+        "child_casual_spring_01": "童年春季常服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "houka": {
@@ -489,7 +610,9 @@
         "school_summer_jhs_2nd": "初二夏季校服",
         "school_winter_hs_1st": "高一冬季校服",
         "school_winter_jhs_2nd": "初二冬季校服",
-        "school_winter_jhs_3rd": "初三冬季校服"
+        "school_winter_jhs_3rd": "初三冬季校服",
+        "birthday2627_01": "生日服（2627）",
+        "live_01_stage": "舞台演出服"
       }
     },
     "raika": {
@@ -500,7 +623,8 @@
         "child_casual_spring_01_still": "童年春季常服（静态）",
         "live_01": "演出服",
         "roomwear_01": "居家服",
-        "school_winter_hs_2nd": "高二冬季校服"
+        "school_winter_hs_2nd": "高二冬季校服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "miku": {
@@ -512,7 +636,9 @@
         "idol": "偶像服",
         "live_01": "演出服",
         "roomwear_01": "居家服",
-        "school_winter_hs": "高中冬季校服"
+        "school_winter_hs": "高中冬季校服",
+        "birthday2627_01": "生日服（2627）",
+        "live_01_stage": "舞台演出服"
       }
     },
     "yomogi": {
@@ -521,7 +647,8 @@
         "arbeit_livehouse_01": "Live House打工服",
         "casual_spring_01": "春季常服",
         "live_01": "演出服",
-        "roomwear_01": "居家服"
+        "roomwear_01": "居家服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "chieri": {
@@ -531,7 +658,8 @@
         "casual_spring_01": "春季常服",
         "live_01": "演出服",
         "roomwear_01": "居家服",
-        "school_winter_hs_1st": "高一冬季校服"
+        "school_winter_hs_1st": "高一冬季校服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "shizuku": {
@@ -541,13 +669,16 @@
         "casual_spring_01": "春季常服",
         "live_01": "演出服",
         "roomwear_01": "居家服",
-        "school_winter_jhs": "初中冬季校服"
+        "school_winter_jhs": "初中冬季校服",
+        "child_casual_spring_01": "童年春季常服",
+        "live_01_stage": "舞台演出服"
       }
     },
     "mana": {
       "display": "纯田真奈",
       "costumes": {
-        "sumimi": "Sumimi"
+        "sumimi": "Sumimi",
+        "casual_spring_01": "春季常服"
       }
     },
     "tae": {
@@ -643,7 +774,23 @@
         "furisode": "振袖和服",
         "live_event_332_ur": "332期 これからも迎える朝は",
         "live_event_317_r": "317期 迷い道の先、福来たる",
-        "live_event_321_ssr": "321期 約束重ねて、また明日"
+        "live_event_321_ssr": "321期 約束重ねて、また明日",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "arbeit_event287": "287期 打工服",
+        "event_102_story_01": "102期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_140_story_01": "140期 故事1",
+        "event_160_story_01": "160期 故事1",
+        "event_166_story_01": "166期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_233_story_01": "233期 故事1",
+        "event_99_story_02": "99期 故事2",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_343_sr": "343期",
+        "popipa_fes": "PPP FES",
+        "special_5th": "五周年"
       }
     },
     "rimi": {
@@ -738,7 +885,22 @@
         "arbeit": "RING工作服",
         "live_event_332_sr": "332期 これからも迎える朝は",
         "live_event_315_ssr": "315期 在笑颜盛放的平安夜",
-        "live_event_321_r": "321期 約束重ねて、また明日"
+        "live_event_321_r": "321期 約束重ねて、また明日",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "2024_furisode": "振袖和服2024",
+        "casual_winter-sunglass": "冬季常服（墨镜）",
+        "event_119_story_01": "119期 故事1",
+        "event_140_story_01": "140期 故事1",
+        "event_160_story_01": "160期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_227_story_01": "227期 故事1",
+        "event_233_story_01": "233期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_343_ur": "343期",
+        "popipa_fes": "PPP FES",
+        "special_5th": "五周年"
       }
     },
     "saaya": {
@@ -833,7 +995,21 @@
         "live_event_332_ur": "332期 これからも迎える朝は",
         "dream_festival_4_ur": "梦限4",
         "live_event_321_sr": "321期 約束重ねて、また明日",
-        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!"
+        "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "2025_furisode": "振袖和服2025",
+        "chispa": "CHiSPA",
+        "event_09": "9期",
+        "event_108_story_01": "108期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_160_story_01": "160期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_343_ssr": "343期",
+        "popipa_fes": "PPP FES",
+        "special_5th": "五周年"
       }
     },
     "arisa": {
@@ -937,7 +1113,25 @@
         "arbeit": "RING工作服",
         "halloween": "万圣节",
         "live_event_332_ssr": "332期 これからも迎える朝は",
-        "live_event_321_ur": "321期 約束重ねて、また明日"
+        "live_event_321_ur": "321期 約束重ねて、また明日",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "arbeit_event287": "287期 打工服",
+        "dream_festival_5_ur": "梦限5",
+        "event_101_story_01": "101期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_137_story_01": "137期 故事1",
+        "event_160_story_01": "160期 故事1",
+        "event_166_story_01": "166期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_50_story_01": "50期 故事1",
+        "event_80_story_01": "80期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_343_r": "343期",
+        "popipa_fes": "PPP FES",
+        "school_winter_v3": "冬季校服V3",
+        "special_5th": "五周年"
       }
     },
     "ran": {
@@ -1031,7 +1225,27 @@
         "dream_festival_4_ur": "梦限4",
         "live_event_320_ssr": "320期 Our Sweetest Valentine！",
         "live_event_328_ur": "328期 芽生えた想い、夕陽に交わして",
-        "live_event_336_sr": "336期 あの夕映えに誓って"
+        "live_event_336_sr": "336期 あの夕映えに誓って",
+        "2019_furisode": "振袖和服2019",
+        "2024_furisode": "振袖和服2024",
+        "bili_006_collabo_ur": "bilibili联动 UR",
+        "event_06_story": "6期 故事",
+        "event_101_story_01": "101期 故事1",
+        "event_122_story_01": "122期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_138_story_01": "138期 故事1",
+        "event_227_story_01": "227期 故事1",
+        "event_227_story_03": "227期 故事3",
+        "event_227_story_04": "227期 故事4",
+        "event_49_story_01": "49期 故事1",
+        "event_54_story_01": "54期 故事1",
+        "event_75_story_01": "75期 故事1",
+        "event_80_story_01": "80期 故事1",
+        "garupa_t": "少女乐队",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年"
       }
     },
     "moca": {
@@ -1119,7 +1333,25 @@
         "swimsuit-2023": "泳衣2023",
         "live_event_320_ur": "320期 Our Sweetest Valentine！",
         "live_event_328_ssr": "328期 芽生えた想い、夕陽に交わして",
-        "live_event_336_ur": "336期 あの夕映えに誓って"
+        "live_event_336_ur": "336期 あの夕映えに誓って",
+        "2019_furisode": "振袖和服2019",
+        "2024_furisode": "振袖和服2024",
+        "dream_festival_5_ur": "梦限5",
+        "event_122_story_01": "122期 故事1",
+        "event_266_story_01": "266期 故事1",
+        "event_322_story_01": "322期 故事1",
+        "event_42_story_01": "42期 故事1",
+        "event_49_story_01": "49期 故事1",
+        "event_54_story_01": "54期 故事1",
+        "event_65_story_01": "65期 故事1",
+        "event_94_story_01": "94期 故事1",
+        "event_94_story_02": "94期 故事2",
+        "garupa_t": "少女乐队",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "store": "店员服"
       }
     },
     "himari": {
@@ -1210,7 +1442,27 @@
         "live_event_320_sr": "320期 Our Sweetest Valentine！",
         "live_event_327_r": "327期 黎明のスタン・バイ",
         "live_event_328_ur": "328期 芽生えた想い、夕陽に交わして",
-        "live_event_336_r": "336期 あの夕映えに誓って"
+        "live_event_336_r": "336期 あの夕映えに誓って",
+        "2019_furisode": "振袖和服2019",
+        "event_122_story_01": "122期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_144_story_01": "144期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_296_story_01": "296期 故事1",
+        "event_42_story_01": "42期 故事1",
+        "event_42_story_02": "42期 故事2",
+        "event_42_story_03": "42期 故事3",
+        "event_49_story_01": "49期 故事1",
+        "event_54_story_01": "54期 故事1",
+        "event_90_story_01": "90期 故事1",
+        "garupa_t": "少女乐队",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣",
+        "tracksuit": "运动服",
+        "wd_practice": "练习服（WD）"
       }
     },
     "tomoe": {
@@ -1297,7 +1549,36 @@
         "live_event_320_r": "320期 Our Sweetest Valentine！",
         "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_328_sr": "328期 芽生えた想い、夕陽に交わして",
-        "live_event_336_ur": "336期 あの夕映えに誓って"
+        "live_event_336_ur": "336期 あの夕映えに誓って",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "2025_furisode": "振袖和服2025",
+        "event_06_story": "6期 故事",
+        "event_119_story_01": "119期 故事1",
+        "event_122_story_01": "122期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_200_story01": "200期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_236_story_01": "236期 故事1",
+        "event_294_story_01": "294期 故事1",
+        "event_340_story_01": "340期 故事1",
+        "event_340_taiko": "340期 太鼓",
+        "event_42_story_01": "42期 故事1",
+        "event_42_story_02": "42期 故事2",
+        "event_42_story_03": "42期 故事3",
+        "event_44_story_01": "44期 故事1",
+        "event_49_story_01": "49期 故事1",
+        "event_54_story_01": "54期 故事1",
+        "event_85_story_01": "85期 故事1",
+        "garupa_t": "少女乐队",
+        "live_event_340_ssr": "340期",
+        "miko": "巫女",
+        "pajamas": "睡衣",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "wd_practice": "练习服（WD）"
       }
     },
     "tsugumi": {
@@ -1388,7 +1669,25 @@
         "swimsuit-2023": "泳衣2023",
         "live_event_320_ur": "320期 Our Sweetest Valentine！",
         "live_event_328_r": "328期 芽生えた想い、夕陽に交わして",
-        "live_event_336_ssr": "336期 あの夕映えに誓って"
+        "live_event_336_ssr": "336期 あの夕映えに誓って",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "arbeit-2023": "打工服2023",
+        "event_119_story_01": "119期 故事1",
+        "event_122_story_01": "122期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_49_story_01": "49期 故事1",
+        "event_54_story_01": "54期 故事1",
+        "event_80_story_01": "80期 故事1",
+        "garupa_t": "少女乐队",
+        "live_event_344_r": "344期",
+        "school_armband": "校服（袖章）",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "story_01": "故事1"
       }
     },
     "aya": {
@@ -1485,7 +1784,34 @@
         "swimsuit-2023": "泳衣2023",
         "dream_festival_5_ur": "梦限5",
         "live_event_323_sr": "323期 千の言葉でも足りないくらい",
-        "live_event_330_ssr": "330期 君と一緒に！パスパレ全国ツアー！"
+        "live_event_330_ssr": "330期 君と一緒に！パスパレ全国ツアー！",
+        "2019_furisode": "振袖和服2019",
+        "2024_furisode": "振袖和服2024",
+        "apron-2023": "围裙2023",
+        "bili_016_collabo_ssr": "bilibili联动 SSR",
+        "casual-2023-penlight": "常服2023（荧光棒）",
+        "event_104_story_01": "104期 故事1",
+        "event_154_story_01": "154期 故事1",
+        "event_154_story_02": "154期 故事2",
+        "event_195_story_01": "195期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_278_story_01": "278期 故事1",
+        "event_304_story_01": "304期 故事1",
+        "event_55_story_01": "55期 故事1",
+        "event_65_story_01": "65期 故事1",
+        "event_74_story_01": "74期 故事1",
+        "event_82_story_01": "82期 故事1",
+        "event_86_story_01": "86期 故事1",
+        "event_86_story_02": "86期 故事2",
+        "event_96_story_01": "96期 故事1",
+        "fast_food": "快餐店",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_337_ur": "337期",
+        "live_event_338_r": "338期",
+        "special_5th": "五周年",
+        "story_01-2023": "故事1（2023）",
+        "swim_swit": "泳衣"
       }
     },
     "hina": {
@@ -1573,7 +1899,32 @@
         "school_winter_s2": "冬季校服2",
         "story_01": "story_01",
         "live_event_323_ur": "323期 千の言葉でも足りないくらい",
-        "live_event_330_r": "330期 君と一緒に！パスパレ全国ツアー！"
+        "live_event_330_r": "330期 君と一緒に！パスパレ全国ツアー！",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "casual-2023-penlight": "常服2023（荧光棒）",
+        "event_104_story_01": "104期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_134_story_01": "134期 故事1",
+        "event_154_story_01": "154期 故事1",
+        "event_154_story_02": "154期 故事2",
+        "event_195_story_01": "195期 故事1",
+        "event_304_story_01": "304期 故事1",
+        "event_33_story01": "33期 故事1",
+        "event_344_story_01": "344期 故事1",
+        "event_36_story01": "36期 故事1",
+        "event_86_story_01": "86期 故事1",
+        "event_86_story_02": "86期 故事2",
+        "garupa_t": "少女乐队",
+        "live_event_337_r": "337期",
+        "live_event_338_ur": "338期",
+        "live_event_344_sr": "344期",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "story_01-2023": "故事1（2023）",
+        "swimsuit-2023": "泳衣2023"
       }
     },
     "chisato": {
@@ -1660,7 +2011,26 @@
         "story_01": "story_01",
         "live_event_323_ur": "323期 千の言葉でも足りないくらい",
         "live_event_327_ur": "327期 黎明のスタン・バイ",
-        "live_event_330_sr": "330期 君と一緒に！パスパレ全国ツアー！"
+        "live_event_330_sr": "330期 君と一緒に！パスパレ全国ツアー！",
+        "2019_furisode": "振袖和服2019",
+        "casual-2023-penlight": "常服2023（荧光棒）",
+        "dream_festival_4_ur": "梦限4",
+        "event_104_story_01": "104期 故事1",
+        "event_154_story_01": "154期 故事1",
+        "event_154_story_02": "154期 故事2",
+        "event_195_story_01": "195期 故事1",
+        "event_344_story_01": "344期 故事1",
+        "event_55_story_01": "55期 故事1",
+        "event_86_story_01": "86期 故事1",
+        "event_86_story_02": "86期 故事2",
+        "garupa_t": "少女乐队",
+        "juliet": "朱丽叶",
+        "live_event_337_ur": "337期",
+        "live_event_344_ur": "344期",
+        "practice_clothes": "练习服",
+        "special_5th": "五周年",
+        "stage_costume": "舞台服",
+        "story_01-2023": "故事1（2023）"
       }
     },
     "maya": {
@@ -1747,7 +2117,26 @@
         "live_event_323_r": "323期 千の言葉でも足りないくらい",
         "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_327_sr": "327期 黎明のスタン・バイ",
-        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！"
+        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！",
+        "2018_furisode": "振袖和服2018",
+        "casual-2023-penlight": "常服2023（荧光棒）",
+        "event_104_story_01": "104期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_154_story_01": "154期 故事1",
+        "event_154_story_02": "154期 故事2",
+        "event_195_story_01": "195期 故事1",
+        "event_226_story_01": "226期 故事1",
+        "event_33_story01": "33期 故事1",
+        "event_45_story_01": "45期 故事1",
+        "event_86_story_01": "86期 故事1",
+        "garupa_t": "少女乐队",
+        "live_event_337_sr": "337期",
+        "practice_clothes": "练习服",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "story_01-2023": "故事1（2023）"
       }
     },
     "eve": {
@@ -1839,7 +2228,30 @@
         "swimsuit-2023": "泳衣2023",
         "live_event_317_ssr": "317期 迷い道の先、福来たる",
         "live_event_323_ssr": "323期 千の言葉でも足りないくらい",
-        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！"
+        "live_event_330_ur": "330期 君と一緒に！パスパレ全国ツアー！",
+        "2018_furisode": "振袖和服2018",
+        "2021af": "武士道",
+        "arbeit-2023": "打工服2023",
+        "casual-2023-penlight": "常服2023（荧光棒）",
+        "dream_festival_5_ur": "梦限5",
+        "event024_story02": "24期 故事2",
+        "event_104_story_01": "104期 故事1",
+        "event_143_story_01": "143期 故事1",
+        "event_154_story_01": "154期 故事1",
+        "event_154_story_02": "154期 故事2",
+        "event_195_story_01": "195期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_278_story_01": "278期 故事1",
+        "event_38_story01": "38期 故事1",
+        "event_50_story_01": "50期 故事1",
+        "event_65_story_01": "65期 故事1",
+        "event_80_story_01": "80期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "live_event_337_ssr": "337期",
+        "special_5th": "五周年",
+        "story_01-2023": "故事1（2023）",
+        "yukata-2023": "浴衣2023"
       }
     },
     "kokoro": {
@@ -1932,7 +2344,34 @@
         "live_event_316_ssr": "316期 Welcome to 濑田薰乐园",
         "live_event_324_sr": "324期 ほっとひと息、ハロハピ温泉旅情",
         "live_event_331_ssr": "331期 ハロー・スマイル♡なんでも屋さん★",
-        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！"
+        "live_event_335_ur": "335期 エンジョイ！　私たちのベストサマー！",
+        "2018_furisode": "振袖和服2018",
+        "2021af": "武士道",
+        "2024_furisode": "振袖和服2024",
+        "bili_011_collabo_ur": "bilibili联动 UR",
+        "event_03": "3期",
+        "event_110_story_01": "110期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_141_story_01": "141期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_244_story_01": "244期 故事1",
+        "event_266_story_01": "266期 故事1",
+        "event_316_story_01": "316期 故事1",
+        "event_335_story_01": "335期 故事1",
+        "event_341_story_01": "341期 故事1",
+        "event_44_story_01": "44期 故事1",
+        "event_44_story_02": "44期 故事2",
+        "event_48_story_01": "48期 故事1",
+        "event_50_story_01": "50期 故事1",
+        "event_67_story_01": "67期 故事1",
+        "event_82_story_01": "82期 故事1",
+        "event_82_story_02": "82期 故事2",
+        "event_88_story_01": "88期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes-2023": "体操服2023",
+        "halloween_without_lantern": "万圣节（无灯笼）",
+        "live_event_341_ur": "341期",
+        "special_5th": "五周年"
       }
     },
     "kaoru": {
@@ -2022,7 +2461,32 @@
         "live_event_316_ur": "316期 Welcome to 濑田薰乐园",
         "live_event_324_r": "324期 ほっとひと息、ハロハピ温泉旅情",
         "live_event_327_ur": "327期 黎明のスタン・バイ",
-        "live_event_331_sr": "331期 ハロー・スマイル♡なんでも屋さん★"
+        "live_event_331_sr": "331期 ハロー・スマイル♡なんでも屋さん★",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "event_100_story_01": "100期 故事1",
+        "event_110_story_01": "110期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_206_story_01": "206期 故事1",
+        "event_226_story_01": "226期 故事1",
+        "event_244_story_01": "244期 故事1",
+        "event_260_story_01": "260期 故事1",
+        "event_304_story_01": "304期 故事1",
+        "event_342_story_01": "342期 故事1",
+        "event_45_story_01": "45期 故事1",
+        "event_48_story_01": "48期 故事1",
+        "event_67_story_01": "67期 故事1",
+        "event_88_story_01": "88期 故事1",
+        "garupa_t": "少女乐队",
+        "live_event_338_ssr": "338期",
+        "live_event_341_ur": "341期",
+        "romeo": "罗密欧",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "story_01-2023": "故事1（2023）",
+        "wd_practice": "练习服（WD）"
       }
     },
     "hagumi": {
@@ -2112,7 +2576,26 @@
         "swimsuit-2023": "泳衣2023",
         "live_event_316_ur": "316期 Welcome to 濑田薰乐园",
         "live_event_324_ssr": "324期 ほっとひと息、ハロハピ温泉旅情",
-        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★"
+        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★",
+        "2019_furisode": "振袖和服2019",
+        "2025_furisode": "振袖和服2025",
+        "event_110_story_01": "110期 故事1",
+        "event_153_story_01": "153期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_244_story_01": "244期 故事1",
+        "event_33_story01": "33期 故事1",
+        "event_40": "40期",
+        "event_48_story_01": "48期 故事1",
+        "event_50_story_01": "50期 故事1",
+        "event_67_story_01": "67期 故事1",
+        "event_88_story_01": "88期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "gym_clothes-2023": "体操服2023",
+        "live_event_341_r": "341期",
+        "live_event_344_ur": "344期",
+        "special_5th": "五周年",
+        "uniform": "制服"
       }
     },
     "kanon": {
@@ -2202,7 +2685,25 @@
         "live_event_324_ur": "324期 ほっとひと息、ハロハピ温泉旅情",
         "live_event_325_sr": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_327_ssr": "327期 黎明のスタン・バイ",
-        "live_event_331_r": "331期 ハロー・スマイル♡なんでも屋さん★"
+        "live_event_331_r": "331期 ハロー・スマイル♡なんでも屋さん★",
+        "2019_furisode": "振袖和服2019",
+        "event_110_story_01": "110期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_344_story_01": "344期 故事1",
+        "event_48_story_01": "48期 故事1",
+        "event_55_story_01": "55期 故事1",
+        "event_67_story_01": "67期 故事1",
+        "event_74_story_01": "74期 故事1",
+        "event_88_story_01": "88期 故事1",
+        "fast_food": "快餐店",
+        "garupa_t": "少女乐队",
+        "live_event_338_sr": "338期",
+        "live_event_341_ssr": "341期",
+        "live_event_344_ssr": "344期",
+        "michelle": "米歇尔",
+        "school_winter_v3": "冬季校服V3",
+        "special_5th": "五周年"
       }
     },
     "misaki": {
@@ -2293,7 +2794,38 @@
         "live_event_315_r": "315期 在笑颜盛放的平安夜",
         "live_event_316_sr": "316期 Welcome to 濑田薰乐园",
         "live_event_324_ur": "324期 ほっとひと息、ハロハピ温泉旅情",
-        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★"
+        "live_event_331_ur": "331期 ハロー・スマイル♡なんでも屋さん★",
+        "2019_furisode": "振袖和服2019",
+        "601_live_default": "601 队服",
+        "601_live_r_2023": "601 队服2023",
+        "dream_festival_4_ur": "梦限4",
+        "dream_festival_5_ur": "梦限5",
+        "event_110_story_01": "110期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_144_story_01": "144期 故事1",
+        "event_175_story_01": "175期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_244_story_01": "244期 故事1",
+        "event_289_story_01": "289期 故事1",
+        "event_302_story01": "302期 故事1",
+        "event_33_story01": "33期 故事1",
+        "event_33_story02": "33期 故事2",
+        "event_38_story01": "38期 故事1",
+        "event_44_story_01": "44期 故事1",
+        "event_48_story_01": "48期 故事1",
+        "event_57_story_01": "57期 故事1",
+        "event_67_story_01": "67期 故事1",
+        "event_88_story_01": "88期 故事1",
+        "garupa_t": "少女乐队",
+        "gym_clothes": "体操服",
+        "gym_clothes-2023": "体操服2023",
+        "live_event_341_sr": "341期",
+        "ranger": "战队服",
+        "school_winter_v3": "冬季校服V3",
+        "special_5th": "五周年",
+        "story_01": "故事1",
+        "story_03": "故事3",
+        "wd_practice": "练习服（WD）"
       }
     },
     "sayo": {
@@ -2382,7 +2914,25 @@
         "dream_festival_4_ur": "梦限4",
         "live_event_314_r": "314期 燐光微芒、渐染炽热",
         "live_event_322_sr": "322期 Re:Like Re:Live",
-        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン"
+        "live_event_333_ur": "333期 ディープ・ローズ・ホライズン",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "apron": "围裙",
+        "event_119_story_01": "119期 故事1",
+        "event_266_story_01": "266期 故事1",
+        "event_340_story_01": "340期 故事1",
+        "event_38_story01": "38期 故事1",
+        "event_38_story02": "38期 故事2",
+        "event_38_story03": "38期 故事3",
+        "event_42_story_01": "42期 故事1",
+        "event_52_story_01": "52期 故事1",
+        "fantasy": "幻想",
+        "fantasy_01": "幻想1",
+        "garupa_t": "少女乐队",
+        "live_event_340_ur": "340期",
+        "live_event_342_r": "342期",
+        "school_winter_v3": "冬季校服V3",
+        "special_5th": "五周年"
       }
     },
     "lisa": {
@@ -2472,7 +3022,25 @@
         "live_event_314_sr": "314期 燐光微芒、渐染炽热",
         "live_event_315_ur": "315期 在笑颜盛放的平安夜",
         "live_event_322_ur": "322期 Re:Like Re:Live",
-        "live_event_333_ssr": "333期 ディープ・ローズ・ホライズン"
+        "live_event_333_ssr": "333期 ディープ・ローズ・ホライズン",
+        "2019_furisode": "振袖和服2019",
+        "2021af": "武士道",
+        "2024_furisode": "振袖和服2024",
+        "event_119_story_01": "119期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_216_story_02": "216期 故事2",
+        "event_52_story_01": "52期 故事1",
+        "fantasy": "幻想",
+        "garupa_t": "少女乐队",
+        "live_event_342_ur": "342期",
+        "school_summer_s2": "夏季校服2",
+        "school_summer_v3": "夏季校服V3",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "store": "店员服",
+        "store-2023": "店员服2023",
+        "swim_swit": "泳衣"
       }
     },
     "ako": {
@@ -2564,7 +3132,25 @@
         "live_event_322_ur": "322期 Re:Like Re:Live",
         "live_event_325_ssr": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_333_sr": "333期 ディープ・ローズ・ホライズン",
-        "live_event_335_r": "335期 エンジョイ！　私たちのベストサマー！"
+        "live_event_335_r": "335期 エンジョイ！　私たちのベストサマー！",
+        "2018_furisode": "振袖和服2018",
+        "event_105_story_01": "105期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_33_story01": "33期 故事1",
+        "event_340_story_01": "340期 故事1",
+        "event_52_story_01": "52期 故事1",
+        "event_89_story_01": "89期 故事1",
+        "event_97_story_01": "97期 故事1",
+        "fantasy": "幻想",
+        "garupa_t": "少女乐队",
+        "live_event_340_sr": "340期",
+        "live_event_342_ssr": "342期",
+        "nfo01": "NFO",
+        "school_summer_s2": "夏季校服2",
+        "school_winter": "冬季校服",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "rinko": {
@@ -2649,7 +3235,28 @@
         "dream_festival_5_ur": "梦限5",
         "live_event_314_ur": "314期 燐光微芒、渐染炽热",
         "live_event_322_r": "322期 Re:Like Re:Live",
-        "live_event_333_r": "333期 ディープ・ローズ・ホライズン"
+        "live_event_333_r": "333期 ディープ・ローズ・ホライズン",
+        "2018_furisode": "振袖和服2018",
+        "2025_furisode": "振袖和服2025",
+        "event_116_story_01": "116期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "event_304_story_01": "304期 故事1",
+        "event_342_story_01": "342期 故事1",
+        "event_342_story_02": "342期 故事2",
+        "event_342_story_03": "342期 故事3",
+        "event_38_story01": "38期 故事1",
+        "event_38_story02": "38期 故事2",
+        "event_38_story03": "38期 故事3",
+        "event_52_story_01": "52期 故事1",
+        "event_70_story_01": "70期 故事1",
+        "fantasy": "幻想",
+        "garupa_t": "少女乐队",
+        "live_event_342_ur": "342期",
+        "nfo01": "NFO",
+        "school_winter_v3": "冬季校服V3",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "pareo": {
@@ -2696,7 +3303,14 @@
         "school_winter-2023": "冬季校服2023",
         "dream_festival_4_ur": "梦限4",
         "live_event_319_sr": "319期 Radiance and Eclipse",
-        "live_event_329_ssr": "329期 Beyond my Imagination"
+        "live_event_329_ssr": "329期 Beyond my Imagination",
+        "2021af": "武士道",
+        "2022_furisode": "振袖和服2022",
+        "event_143_story_02": "143期 故事2",
+        "event_158_story_01": "158期 故事1",
+        "expose": "EXPOSE",
+        "live_event_339_ur": "339期",
+        "special_5th": "五周年"
       }
     },
     "masuki": {
@@ -2746,7 +3360,14 @@
         "live_event_319_ur": "319期 Radiance and Eclipse",
         "live_event_325_ssr": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_329_r": "329期 Beyond my Imagination",
-        "live_event_335_sr": "335期 エンジョイ！　私たちのベストサマー！"
+        "live_event_335_sr": "335期 エンジョイ！　私たちのベストサマー！",
+        "2022_furisode": "振袖和服2022",
+        "event_158_story_01": "158期 故事1",
+        "event_308_story_01": "308期 故事1",
+        "event_335_story_01": "335期 故事1",
+        "expose": "EXPOSE",
+        "live_event_339_ur": "339期",
+        "special_5th": "五周年"
       }
     },
     "lock": {
@@ -2801,7 +3422,17 @@
         "school_winter-2023": "冬季校服2023",
         "swimsuit-2023": "泳衣2023",
         "live_event_319_r": "319期 Radiance and Eclipse",
-        "live_event_329_ur": "329期 Beyond my Imagination"
+        "live_event_329_ur": "329期 Beyond my Imagination",
+        "2022_furisode": "振袖和服2022",
+        "dream_festival_4_ur": "梦限4",
+        "event_119_story_01": "119期 故事1",
+        "event_158_story_01": "158期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "expose": "EXPOSE",
+        "live_event_339_ssr": "339期",
+        "school_winter_2": "冬季校服2",
+        "special_5th": "五周年",
+        "story_01": "故事1"
       }
     },
     "chu2": {
@@ -2850,7 +3481,14 @@
         "school_winter-2023": "冬季校服2023",
         "dream_festival_5_ur": "梦限5",
         "live_event_319_ssr": "319期 Radiance and Eclipse",
-        "live_event_329_ur": "329期 Beyond my Imagination"
+        "live_event_329_ur": "329期 Beyond my Imagination",
+        "2021af": "武士道",
+        "2022_furisode": "振袖和服2022",
+        "2024_furisode": "振袖和服2024",
+        "event_158_story_01": "158期 故事1",
+        "expose": "EXPOSE",
+        "live_event_339_sr": "339期",
+        "special_5th": "五周年"
       }
     },
     "mashiro": {
@@ -2913,7 +3551,21 @@
         "vocal_limited_ssr": "限定SSR",
         "live_event_318_ur": "318期 あなたを照らすオーバード",
         "live_event_326_r": "326期 広がる世界へのリベラメンテ",
-        "live_event_334_ur": "334期 輝く星々のコンチェルト"
+        "live_event_334_ur": "334期 輝く星々のコンチェルト",
+        "2021af": "武士道",
+        "2022_furisode": "振袖和服2022",
+        "2024_furisode": "振袖和服2024",
+        "bili_026_collabo_ur": "bilibili联动 UR",
+        "event_119_story_01": "119期 故事1",
+        "event_132_story_01": "132期 故事1",
+        "event_194_story_01": "194期 故事1",
+        "event_203_story_01": "203期 故事1",
+        "event_266_story_01": "266期 故事1",
+        "event_340_story_01": "340期 故事1",
+        "live_event_340_ur": "340期",
+        "live_event_345_sr": "345期",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "touko": {
@@ -2970,7 +3622,19 @@
         "live_event_315_ur": "315期 在笑颜盛放的平安夜",
         "live_event_318_r": "318期 あなたを照らすオーバード",
         "live_event_326_ur": "326期 広がる世界へのリベラメンテ",
-        "live_event_334_ssr": "334期 輝く星々のコンチェルト"
+        "live_event_334_ssr": "334期 輝く星々のコンチェルト",
+        "2021af": "武士道",
+        "2022_furisode": "振袖和服2022",
+        "2024_furisode": "振袖和服2024",
+        "dream_festival_5_ur": "梦限5",
+        "event_132_story_01": "132期 故事1",
+        "event_194_story_01": "194期 故事1",
+        "event_203_story_01": "203期 故事1",
+        "event_227_story_01": "227期 故事1",
+        "event_266_story_01": "266期 故事1",
+        "live_event_345_ur": "345期",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "nanami": {
@@ -3027,7 +3691,18 @@
         "live_event_318_sr": "318期 あなたを照らすオーバード",
         "live_event_326_ur": "326期 広がる世界へのリベラメンテ",
         "live_event_334_sr": "334期 輝く星々のコンチェルト",
-        "live_event_335_ssr": "335期 エンジョイ！　私たちのベストサマー！"
+        "live_event_335_ssr": "335期 エンジョイ！　私たちのベストサマー！",
+        "2022_furisode": "振袖和服2022",
+        "arbeit_2023": "打工服2023",
+        "casual_v3": "常服V3",
+        "event_132_story_01": "132期 故事1",
+        "event_157_story_01": "157期 故事1",
+        "event_194_story_01": "194期 故事1",
+        "event_203_story_01": "203期 故事1",
+        "event_335_story_01": "335期 故事1",
+        "live_event_345_r": "345期",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "tsukushi": {
@@ -3082,7 +3757,18 @@
         "live_event_318_ur": "318期 あなたを照らすオーバード",
         "live_event_325_ur": "325期 All☆Stars CiRCRiNG Fes!",
         "live_event_326_sr": "326期 広がる世界へのリベラメンテ",
-        "live_event_334_r": "334期 輝く星々のコンチェルト"
+        "live_event_334_r": "334期 輝く星々のコンチェルト",
+        "2021af": "武士道",
+        "2022_furisode": "振袖和服2022",
+        "arbeit-2023": "打工服2023",
+        "event_119_story_01": "119期 故事1",
+        "event_120_story_01": "120期 故事1",
+        "event_194_story_01": "194期 故事1",
+        "event_340_story_01": "340期 故事1",
+        "live_event_340_r": "340期",
+        "live_event_345_ur": "345期",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "rui": {
@@ -3137,7 +3823,14 @@
         "dream_festival_4_ur": "梦限4",
         "live_event_318_ssr": "318期 あなたを照らすオーバード",
         "live_event_326_ssr": "326期 広がる世界へのリベラメンテ",
-        "live_event_334_ur": "334期 輝く星々のコンチェルト"
+        "live_event_334_ur": "334期 輝く星々のコンチェルト",
+        "2022_furisode": "振袖和服2022",
+        "event_132_story_01": "132期 故事1",
+        "event_190_story_01": "190期 故事1",
+        "event_194_story_01": "194期 故事1",
+        "live_event_345_ssr": "345期",
+        "special_5th": "五周年",
+        "swim_swit": "泳衣"
       }
     },
     "rei": {
@@ -3187,7 +3880,15 @@
         "vocal_limited_sr": "限定SR",
         "dream_festival_5_ur": "梦限5",
         "live_event_319_ur": "319期 Radiance and Eclipse",
-        "live_event_329_sr": "329期 Beyond my Imagination"
+        "live_event_329_sr": "329期 Beyond my Imagination",
+        "2022_furisode": "振袖和服2022",
+        "2024_furisode": "振袖和服2024",
+        "bili_031_collabo_ur": "bilibili联动 UR",
+        "event_158_story_01": "158期 故事1",
+        "event_304_story_01": "304期 故事1",
+        "expose": "EXPOSE",
+        "live_event_339_r": "339期",
+        "special_5th": "五周年"
       }
     },
     "kanata": {
@@ -3197,7 +3898,8 @@
         "live_01": "演出服",
         "school_summer_jhs_3rd": "初三夏季校服",
         "school_winter_hs_1st": "高一冬季校服",
-        "school_winter_jhs_3rd": "初三冬季校服"
+        "school_winter_jhs_3rd": "初三冬季校服",
+        "child_casual_spring_01": "童年春季常服"
       }
     },
     "viola": {
@@ -3213,7 +3915,12 @@
         "casual": "常服",
         "casual-2023": "常服2023",
         "school_summer": "school_summer",
-        "school_winter-2023": "冬季校服2023"
+        "school_winter-2023": "冬季校服2023",
+        "event_102_story_01": "102期 故事1",
+        "event_119_story_01": "119期 故事1",
+        "event_128_story_01": "128期 故事1",
+        "event_216_story_01": "216期 故事1",
+        "school_summer-2023": "夏季校服2023"
       }
     }
   }
