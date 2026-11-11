@@ -2241,13 +2241,30 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             })
         return {"total_unread": total_unread, "threads": threads}
 
-    def external_chat_context_text(self, limit_threads: int = 4, limit_messages: int = 6) -> str:
+    def external_chat_context_text(
+        self, limit_threads: int = 4, limit_messages: int = 6, *,
+        platform: str | None = None, thread_id: str | None = None,
+        chat_type: str | None = None,
+    ) -> str:
         limit_threads = _clamp_int(limit_threads, 1, 12, 4)
         limit_messages = _clamp_int(limit_messages, 1, 20, 6)
+        scoped = any(value is not None for value in (platform, thread_id, chat_type))
+        if scoped:
+            platform = _clean_external_text(platform)
+            thread_id = _clean_external_text(thread_id)
+            chat_type = _clean_external_text(chat_type).lower()
+            # An incomplete remote conversation identity must never fall back
+            # to the desktop's aggregate context.
+            if not platform or not thread_id or chat_type not in {"group", "private"}:
+                return ""
+        thread_filter = "WHERE platform=? AND thread_id=? AND chat_type=? " if scoped else ""
+        thread_params = (platform, thread_id, chat_type) if scoped else ()
+        message_filter = "AND chat_type=? " if scoped else ""
         rows = self._conn.execute(
             "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
-            "FROM external_chat_threads ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
-            (limit_threads,),
+            f"FROM external_chat_threads {thread_filter}"
+            "ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
+            (*thread_params, limit_threads),
         ).fetchall()
         if not rows:
             return ""
@@ -2264,8 +2281,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             msg_rows = self._conn.execute(
                 "SELECT id, platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at "
                 "FROM external_chat_messages WHERE platform=? AND thread_id=? "
-                "ORDER BY id DESC LIMIT ?",
-                (platform, thread_id, limit_messages),
+                f"{message_filter}ORDER BY id DESC LIMIT ?",
+                (platform, thread_id, chat_type, limit_messages) if scoped
+                else (platform, thread_id, limit_messages),
             ).fetchall()
             for message in [_external_message_row_dict(item) for item in reversed(msg_rows)]:
                 sender = message["sender_name"] or message["sender_id"] or "unknown"

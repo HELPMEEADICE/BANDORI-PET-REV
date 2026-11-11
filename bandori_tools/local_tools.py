@@ -464,7 +464,9 @@ def run_local_tool_call(name: str, arguments, tool_config: dict | None = None) -
                 content = f"Plugin tool failed: {exc}"
             return {"content": content, "extra_messages": []}
         if is_mcp_tool_name(name):
-            return {"content": call_mcp_tool(name, arguments, cancel_event=cancel_event), "extra_messages": []}
+            return {"content": call_mcp_tool(
+                name, arguments, cancel_event=cancel_event, tool_config=tool_config,
+            ), "extra_messages": []}
         if is_computer_tool_name(name):
             return run_computer_tool(name, arguments, tool_config or {})
         return {"content": f"Unsupported tool: {name}", "extra_messages": []}

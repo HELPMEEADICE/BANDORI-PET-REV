@@ -24,6 +24,7 @@ from .installer import PluginInstaller
 from .models import PluginError, PluginManifest, ScanReport
 from .paths import PluginPaths, PluginStateStore, plugin_paths
 from .protocol import RpcPeer, RpcRemoteError
+from .redaction import is_sensitive_key, redact_secrets
 from .registry import (
     ContributionRegistry,
     PluginEventBus,
@@ -550,9 +551,16 @@ class PluginSupervisor(QObject):
             if service_name == "config.get":
                 payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
                 key = str(payload.get("key", "") or "").lower()
-                if any(part in key for part in ("key", "token", "password", "secret", "authorization")):
+                if is_sensitive_key(key) or "key" in key:
                     self._require_permission(plugin_id, "secrets.read")
-            return service.handler(data.get("payload"))
+            result = service.handler(data.get("payload"))
+            if (
+                service_name == "config.get"
+                and self.state.plugin(plugin_id).get("execution") != "native"
+                and not permission_allowed(self._plugin_permissions(plugin_id), "secrets.read")
+            ):
+                return redact_secrets(result)
+            return result
         if method == "services.register":
             self._require_permission(plugin_id, "services.register")
             name = str(data.get("name", "") or "")

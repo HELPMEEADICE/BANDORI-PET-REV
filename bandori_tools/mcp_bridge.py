@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import queue
@@ -20,7 +21,6 @@ from bandori_tools.tool_arguments import parse_tool_arguments
 
 _PROTOCOL_VERSION = "2025-06-18"
 _TOOL_PREFIX = "mcp__"
-_TOOL_NAME_MAP: dict[str, tuple[dict, str]] = {}
 _CLIENTS: dict[str, "StdioMcpClient"] = {}
 _HTTP_SESSIONS: dict[str, dict] = {}
 
@@ -39,12 +39,16 @@ def _server_timeout_seconds(server: dict) -> int:
 
 
 def mcp_proxy_tools(config: dict, exclude_native: bool = False) -> list[dict]:
+    # Discovery belongs to this request. Other requests must not lend it their
+    # tools or overwrite bindings when labels happen to match.
+    config["_mcp_tool_name_map"] = {}
     if not _mcp_enabled(config):
         return []
     tools = []
     tool_name_map_updates = {}
     cancel_event = config.get("_cancel_event")
     for server in _enabled_servers(config):
+        server = copy.deepcopy(server)
         if _is_native_only(server):
             continue
         if exclude_native and _can_use_native_server(config, server):
@@ -67,10 +71,8 @@ def mcp_proxy_tools(config: dict, exclude_native: bool = False) -> list[dict]:
         except InterruptedError:
             return []
         except Exception as exc:
-            tools.append(_mcp_error_tool(server, exc))
-    if tool_name_map_updates:
-        with _LOCK:
-            _TOOL_NAME_MAP.update(tool_name_map_updates)
+            tools.append(_mcp_error_tool(server, exc, tool_name_map_updates))
+    config["_mcp_tool_name_map"] = tool_name_map_updates
     return tools
 
 
@@ -194,20 +196,23 @@ def is_mcp_tool_name(name: str) -> bool:
     return str(name or "").startswith(_TOOL_PREFIX)
 
 
-def call_mcp_tool(public_name: str, arguments, cancel_event=None) -> str:
+def call_mcp_tool(public_name: str, arguments, cancel_event=None, *, tool_config: dict | None = None) -> str:
     arguments = parse_tool_arguments(arguments)
-    with _LOCK:
-        server, tool_name = _TOOL_NAME_MAP.get(public_name, ({}, ""))
+    config = tool_config or {}
+    if not _mcp_enabled(config) or config.get("_remote_companion_request", False):
+        return "MCP tool call blocked: MCP is disabled in this request."
+    tool_name_map = config.get("_mcp_tool_name_map", {})
+    server, tool_name = tool_name_map.get(public_name, ({}, ""))
     if not server or not tool_name:
-        # The process may be fresh; rebuild maps from configured clients is not
-        # possible here, so return a clear error instead of guessing.
         return f"MCP tool is not available in this request: {public_name}"
     if server.get("transport") == "error":
         return str(server.get("error", "MCP server is not available."))
-    if str(server.get("require_approval", "always")).lower() == "always":
+    if server not in _enabled_servers(config):
+        return f"MCP tool is no longer approved in this request: {public_name}"
+    if str(server.get("require_approval", "always")).strip().lower() != "never":
         # Approval is represented as a settings-level permission in this app.
         # If a server requires per-call approval, keep the call blocked until
-        # the user switches that server to never/auto in settings.
+        # the user switches that server to never in settings.
         return f"MCP tool blocked by approval setting: {server.get('label', '')}/{tool_name}"
     try:
         if cancel_event is not None and cancel_event.is_set():
@@ -254,17 +259,16 @@ def _tool_description(server: dict, item: dict) -> str:
     return f"Call MCP tool {item.get('name', '')} on server {label}."
 
 
-def _mcp_error_tool(server: dict, exc: Exception) -> dict:
+def _mcp_error_tool(server: dict, exc: Exception, tool_name_map: dict) -> dict:
     label = _safe_name(server.get("label", "mcp"))
     name = f"{_TOOL_PREFIX}{label}__status"[:64]
     error = _format_mcp_exception(server, exc)
-    with _LOCK:
-        _TOOL_NAME_MAP[name] = ({
-            "transport": "error",
-            "label": label,
-            "require_approval": "never",
-            "error": error,
-        }, "status")
+    tool_name_map[name] = ({
+        "transport": "error",
+        "label": label,
+        "require_approval": "never",
+        "error": error,
+    }, "status")
     return {
         "type": "function",
         "function": {
@@ -799,7 +803,6 @@ def close_mcp_clients():
     with _LOCK:
         clients = list(_CLIENTS.values())
         _CLIENTS.clear()
-        _TOOL_NAME_MAP.clear()
         _HTTP_SESSIONS.clear()
     for client in clients:
         try:

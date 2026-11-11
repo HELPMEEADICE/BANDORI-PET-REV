@@ -570,6 +570,73 @@ return p
         self.assertEqual("host-secret", restored["llm_api_key"])
         self.assertEqual("nested-secret", restored["nested"]["access_token"])
 
+    def test_config_reads_redact_nested_secrets_without_secrets_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = manifest(permissions={"config": {"read": True}})
+            source = root / "plugin"
+            write_plugin(source, value)
+            supervisor = PluginSupervisor(paths=plugin_paths(root / "home"))
+            original = {
+                "llm_api_profiles": [{
+                    "name": "profile", "llm_api_key": "nested-secret",
+                    "nested": {"Authorization": "bearer-secret", "enabled": True},
+                }],
+                "llm_mcp_servers": [{"authorization": "mcp-secret", "label": "server"}],
+                "llm_api_key": "direct-secret",
+                "credential": "credential-secret",
+            }
+            try:
+                supervisor.installer.commit(supervisor.installer.stage_local(source), enable=False)
+                handler = lambda payload: original[payload["key"]]
+                supervisor.register_service("config.get", handler, permission="config.read")
+                supervisor.services.register(
+                    "config.get", handler, owner=f"plugin:{value['id']}", priority=10,
+                )
+                for method in ("services.call", "services.call_next"):
+                    for key in ("llm_api_profiles", "llm_mcp_servers"):
+                        with self.subTest(method=method, key=key):
+                            result = supervisor.handle_plugin_call(value["id"], method, {
+                                "service": "config.get", "payload": {"key": key},
+                            }, peer=None)
+                            self.assertEqual(redact_secrets(original[key]), result)
+                            for secret in ("nested-secret", "bearer-secret", "mcp-secret"):
+                                self.assertNotIn(secret, json.dumps(result))
+                    for key in ("llm_api_key", "credential"):
+                        with self.subTest(method=method, key=key), self.assertRaises(RpcRemoteError) as caught:
+                            supervisor.handle_plugin_call(value["id"], method, {
+                                "service": "config.get", "payload": {"key": key},
+                            }, peer=None)
+                        self.assertEqual("permission_denied", caught.exception.code)
+                self.assertEqual("nested-secret", original["llm_api_profiles"][0]["llm_api_key"])
+            finally:
+                supervisor.close()
+
+    def test_authorized_and_native_plugins_can_read_nested_config_secrets(self):
+        for execution in ("managed", "native"):
+            with self.subTest(execution=execution), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                permissions = {"config": {"read": True}}
+                if execution == "managed":
+                    permissions["secrets"] = {"read": True}
+                value = manifest(
+                    execution=execution, permissions=permissions,
+                    entrypoints={"worker" if execution == "managed" else "main": "main.py"},
+                )
+                source = root / "plugin"
+                write_plugin(source, value)
+                supervisor = PluginSupervisor(paths=plugin_paths(root / "home"))
+                try:
+                    supervisor.installer.commit(supervisor.installer.stage_local(source), enable=False)
+                    profiles = [{"llm_api_key": "allowed-secret"}]
+                    supervisor.register_service("config.get", lambda _payload: profiles, permission="config.read")
+                    result = supervisor.handle_plugin_call(value["id"], "services.call", {
+                        "service": "config.get", "payload": {"key": "llm_api_profiles"},
+                    }, peer=None)
+                    self.assertEqual(profiles, result)
+                finally:
+                    supervisor.close()
+
     def test_ui_update_cannot_escalate_location_permission(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -849,7 +849,11 @@ def main():
         user_text = f"{sender_name}：{event.get('text') or ''}".strip()
         try:
             with chat_integration_ref["lock"]:
-                context = chat_integration_db().external_chat_context_text()
+                context = chat_integration_db().external_chat_context_text(
+                    platform=str(event.get("platform") or ""),
+                    thread_id=str(event.get("thread_id") or ""),
+                    chat_type=_napcat_chat_type(event),
+                )
         except Exception:
             context = ""
         if context:

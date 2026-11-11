@@ -161,7 +161,9 @@ intent documentation only and cannot constrain native code.
 Managed settings/configuration events replace token, password, API-key and secret
 values with opaque markers. The host restores the original values after event patches;
 reading secrets is only available through an explicitly granted `secrets.read`
-capability. Native plugins are not redacted.
+capability. `config.get` also redacts secrets recursively inside configuration
+objects and arrays, including API profiles and MCP server credentials, unless
+that permission is granted. Native plugins are not redacted.
 
 ## Scan and signing
 
