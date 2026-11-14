@@ -12,6 +12,7 @@
 //! * [`window_motion`] — the six emotion displacements with OutCubic keyframes.
 pub mod head_track;
 pub mod idle;
+pub mod music;
 pub mod window_motion;
 
 use pet_config::{ClickAction, ClickProfile, ClickRegion};
