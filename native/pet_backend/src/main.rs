@@ -3,6 +3,8 @@
 
 mod config;
 mod ipc;
+mod music_service;
+mod music_source;
 mod role;
 
 use std::collections::HashMap;
@@ -114,6 +116,8 @@ struct App {
     last_click: Instant,
     fatal: Option<String>,
     shutdown: bool,
+    music_source: music_source::MusicSource,
+    music_active: Option<bool>,
 }
 
 impl App {
@@ -149,6 +153,8 @@ impl App {
             last_click: Instant::now() - Duration::from_secs(1),
             fatal: None,
             shutdown: false,
+            music_source: music_source::MusicSource::new(),
+            music_active: None,
         })
     }
 
@@ -222,6 +228,10 @@ impl App {
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(Value::Null);
         match command {
+            "NATIVE_MUSIC_SOURCE" => {
+                self.music_source
+                    .replace(payload["path"].as_str().map(PathBuf::from));
+            }
             "SHUTDOWN" => self.shutdown = true,
             "SETTINGS" if payload.is_object() => {
                 self.raw_config
@@ -430,7 +440,6 @@ impl App {
                             }
                         }
                     }
-                    "music_scale" => { if let Some(role) = self.role.as_mut() { role.set_music_scale(payload["scale"].as_f64().unwrap_or(1.0) as f32); } }
                     _ => {}
                 }
             }
@@ -706,9 +715,11 @@ impl ApplicationHandler for App {
         }
         let budget = Duration::from_secs_f64(1.0 / self.config.fps as f64);
         if self.last_frame.elapsed() >= budget {
-            let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
+            let music_dt = self.last_frame.elapsed().as_secs_f64().min(0.1);
+            let dt = music_dt as f32;
             self.last_frame = Instant::now();
             let mut hover_change = None;
+            let mut music_change = None;
             if let Some(role) = self.role.as_mut() {
                 if self.expression_until.is_some_and(|at| Instant::now() >= at) {
                     if role.entry.default_expression.is_empty() {
@@ -735,6 +746,13 @@ impl ApplicationHandler for App {
                     peer,
                     center,
                 );
+                let active = role.music_active(&self.config);
+                let peak = self.music_source.level(active);
+                role.tick_music(active, peak, music_dt);
+                if self.music_active != Some(active) {
+                    self.music_active = Some(active);
+                    music_change = Some(active);
+                }
                 let mouth = if self.mouth_at.elapsed() > Duration::from_millis(750) {
                     (0.0, 0.0)
                 } else {
@@ -753,6 +771,9 @@ impl ApplicationHandler for App {
             }
             if let Some(inside) = hover_change {
                 self.emit("hover", json!({ "inside": inside }));
+            }
+            if let Some(active) = music_change {
+                self.emit("music_active", json!({"active":active}));
             }
         }
         if self.last_position.elapsed() >= Duration::from_millis(250) {
@@ -799,6 +820,10 @@ fn main() {
         .init();
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let command: Vec<String> = std::env::args().collect();
+        if command.get(1).is_some_and(|arg| arg == "--music-service") {
+            let path = command.get(2).ok_or("missing music mapping path")?;
+            return music_service::run(std::path::Path::new(path));
+        }
         if command.get(1).is_some_and(|arg| arg == "--render-preview") {
             let path = command.get(2).ok_or("missing preview model")?;
             let option = |flag: &str| {

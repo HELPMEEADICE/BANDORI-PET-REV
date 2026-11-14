@@ -62,6 +62,8 @@ struct DragState {
 
 /// One role window and everything it owns.
 pub struct Role {
+    music: pet_behavior::music::MusicSpring,
+    music_scale: f32,
     /// The winit window.
     pub window: Arc<Window>,
     /// Swapchain + renderer for this window.
@@ -120,6 +122,25 @@ pub struct Role {
 }
 
 impl Role {
+    pub fn music_active(&self, config: &Config) -> bool {
+        cfg!(windows)
+            && config.music_bounce_enabled
+            && !self.hidden
+            && !self.hide_live2d_model
+            && self.dragging.is_none()
+            && !self.behavior.window_motion_active()
+    }
+
+    pub fn tick_music(&mut self, active: bool, peak: f64, dt: f64) {
+        let scale = self.music.update(active, peak, dt);
+        self.set_music_scale(scale);
+    }
+
+    fn reset_music(&mut self) {
+        self.music.reset();
+        self.set_music_scale(1.0);
+    }
+
     /// Keep rendering and inverse hit testing on the same audio transform.
     pub fn set_music_scale(&mut self, scale: f32) {
         let scale = if self.dragging.is_some() || self.behavior.window_motion_active() {
@@ -132,6 +153,10 @@ impl Role {
         } else {
             1.0
         };
+        if self.music_scale == scale {
+            return;
+        }
+        self.music_scale = scale;
         let base = self.layout.matrix(self.model.flips_y());
         let mut stretch = neocari::core::Matrix44::identity();
         stretch.scale(1.0, scale);
@@ -333,6 +358,8 @@ impl Role {
         );
 
         let mut role = Self {
+            music: pet_behavior::music::MusicSpring::new(),
+            music_scale: 1.0,
             window,
             renderer,
             model,
@@ -431,6 +458,9 @@ impl Role {
             self.renderer.set_vsync(config.vsync);
         }
         self.hide_live2d_model = config.hide_live2d_model;
+        if !self.music_active(config) {
+            self.reset_music();
+        }
         self.sync_visibility();
     }
 
@@ -438,6 +468,10 @@ impl Role {
     pub fn apply_scale(&mut self, config: &Config, dpr: f64) -> RoleResult<()> {
         let scale = config.effective_scale_percent();
         self.layout = layout_for_model(&self.model, self.bounds, config, &self.entry);
+        // Layout may change even when the window size is unchanged (MOC3 crop).
+        let music_scale = self.music_scale;
+        self.music_scale = f32::NAN;
+        self.set_music_scale(music_scale);
         self.tracking_reference = tracking_reference(scale, dpr);
         let (width, height) = self.layout.window_size(scale, dpr);
         let (x, y, current_width, current_height) = self.window_rect().unwrap_or((
@@ -457,10 +491,6 @@ impl Role {
             .request_inner_size(PhysicalSize::new(width, height));
         self.base_position = (new_x, new_y);
         self.set_position(new_x, new_y);
-        let matrix = self.layout.matrix(self.model.flips_y());
-        self.matrix = matrix;
-        self.model_gpu
-            .set_matrix(self.renderer.gpu(), self.renderer.renderer(), matrix);
         self.renderer.resize(PhysicalSize::new(width, height), dpr);
         self.record_placement();
         Ok(())
@@ -748,6 +778,7 @@ impl Role {
             moved: false,
             total: (0.0, 0.0),
         });
+        self.reset_music();
         true
     }
 
@@ -1012,6 +1043,9 @@ impl Role {
     /// Hides or shows the role window.
     pub fn set_hidden(&mut self, hidden: bool) {
         self.hidden = hidden;
+        if hidden {
+            self.reset_music();
+        }
         self.sync_visibility();
     }
 
@@ -1056,6 +1090,9 @@ impl Role {
     /// Triggers an emotion displacement.
     pub fn trigger_window_motion(&mut self, kind: WindowMotionKind, intensity: u8, now: f64) {
         self.behavior.trigger_window_motion(kind, intensity, now);
+        if self.behavior.window_motion_active() {
+            self.reset_music();
+        }
     }
 
     /// Model path of this role for the About page.
@@ -1120,6 +1157,8 @@ impl Role {
         self.bounds = bounds;
         self.layout = layout;
         self.matrix = matrix;
+        self.music.reset();
+        self.music_scale = 1.0;
         self.info = info;
         self.entry = entry.clone();
         self.character = entry.character.clone();

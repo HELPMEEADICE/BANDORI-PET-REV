@@ -420,6 +420,8 @@ pub struct Config {
     pub live2d_random_actions_enabled: bool,
     /// Window-level emotion displacement.
     pub emotion_behavior_enabled: bool,
+    /// Output-peak driven model squash/stretch (Windows only).
+    pub music_bounce_enabled: bool,
 
     /// Name of the active click profile (empty = inline `click_motion_actions`).
     pub click_motion_active_profile: String,
@@ -470,6 +472,7 @@ impl Default for Config {
             live2d_idle_actions_enabled: false,
             live2d_random_actions_enabled: false,
             emotion_behavior_enabled: false,
+            music_bounce_enabled: false,
 
             click_motion_active_profile: String::new(),
             click_motion_actions: default_click_actions(),
