@@ -5,9 +5,10 @@
 //! The commit flag is cleared first so a killed writer cannot expose a torn slot.
 //! Readers never wait on the writer; contention/malformed/stale data means silence.
 //! Storage's owner/lease protocol prevents resize while any consumer is mapped.
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::atomic::{fence, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::protocol::integer;
 use crate::storage::{Lock, Storage};
@@ -16,6 +17,13 @@ use crate::{Error, Result};
 const MAGIC: &[u8; 8] = b"BDLEVEL!";
 const SIZE: usize = 40;
 pub const MAX_AGE_MS: u64 = 250;
+
+/// Reclaim a crashed producer with no surviving consumers. Uses only try-locks;
+/// a surviving owner/reader retains its lease and prevents premature unlink.
+pub fn cleanup(path: &Path) -> Result<()> {
+    drop(Storage::try_attach_region(path)?);
+    Ok(())
+}
 
 pub fn timestamp_ms() -> u64 {
     SystemTime::now()
@@ -86,16 +94,20 @@ impl LevelPublisher {
 
 pub struct LevelReader {
     storage: Storage,
+    observed: Cell<Option<(u64, Instant)>>,
 }
 
 impl LevelReader {
     pub fn attach(path: &Path) -> Result<Self> {
         let storage = Storage::try_attach_region(path)?;
         let file = storage.file.as_ref().ok_or(Error::Detached)?;
-        let _lock = Lock::try_exclusive(file)?;
+        let _lock = Lock::try_shared(file)?;
         validate(storage.map.as_ref().ok_or(Error::Detached)?)?;
         drop(_lock);
-        Ok(Self { storage })
+        Ok(Self {
+            storage,
+            observed: Cell::new(None),
+        })
     }
 
     /// No allocations or blocking data lock on the render path. Caller may use
@@ -106,7 +118,7 @@ impl LevelReader {
 
     fn sample(&self, now_ms: u64) -> Result<f32> {
         let file = self.storage.file.as_ref().ok_or(Error::Detached)?;
-        let _lock = Lock::try_exclusive(file)?;
+        let _lock = Lock::try_shared(file)?;
         fence(Ordering::Acquire);
         let map = self.storage.map.as_ref().ok_or(Error::Detached)?;
         validate(map)?;
@@ -117,6 +129,16 @@ impl LevelReader {
         let fresh = now_ms
             .checked_sub(stamp)
             .is_some_and(|age| age <= MAX_AGE_MS);
+        // A wall-clock adjustment must not resurrect a frozen producer's value.
+        let now = Instant::now();
+        if let Some((seen, at)) = self.observed.get() {
+            if seen == sequence && now.duration_since(at) > Duration::from_millis(MAX_AGE_MS) {
+                return Ok(0.0);
+            }
+        }
+        if self.observed.get().is_none_or(|(seen, _)| seen != sequence) {
+            self.observed.set(Some((sequence, now)));
+        }
         Ok(
             if committed == 1 && sequence != 0 && stamp != 0 && fresh && peak.is_finite() {
                 peak.clamp(0.0, 1.0)

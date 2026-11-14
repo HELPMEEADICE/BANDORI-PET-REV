@@ -76,6 +76,7 @@ def is_control_ipc_line(line: str) -> bool:
     normalized = normalize_ipc_line(line)
     return normalized == "SHUTDOWN" or normalized.startswith((
         "SETTINGS\t",
+        "NATIVE_MUSIC_SOURCE\t",
         "FOCUS_CHAT",
         "FOCUS_SETTINGS",
         "OPEN_CHAT",

@@ -200,11 +200,28 @@ impl NativeQueue {
 
 #[pymodule]
 fn _pet_ipc(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(cleanup_music_level, module)?)?;
     module.add_class::<NativeQueue>()?;
     module.add_class::<NativeMemory>()?;
     module.add("BACKEND", "rust-pet-ipc")?;
     module.add("PROTOCOL_VERSION", pet_ipc::VERSION)?;
     Ok(())
+}
+
+#[pyfunction]
+fn cleanup_music_level(py: Python<'_>, path: PathBuf) -> PyResult<()> {
+    py.detach(|| match pet_ipc::level::cleanup(&path) {
+        Ok(()) | Err(pet_ipc::Error::InUse) => Ok(()),
+        Err(pet_ipc::Error::Io(e))
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(runtime(error)),
+    })
 }
 
 /// Low-level compatibility adapter; the application queue never uses snapshots.

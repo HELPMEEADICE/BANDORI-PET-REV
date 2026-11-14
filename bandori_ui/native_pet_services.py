@@ -4,7 +4,6 @@ Owns menus, chat windows, compact overlays, plugin services, and persistence.
 The native process owns all pet pixels, animation, input and window behavior.
 """
 import json
-import time
 import uuid
 
 from PySide6.QtCore import QObject, QPoint, QProcess, QRect, QTimer
@@ -26,16 +25,14 @@ class NativePetServices(QObject):
         self._chats = {}
         self._overlays = {}
         self._plugin_bridge = None
-        self._meter = None
-        self._springs = {}
-        self._last_music = time.monotonic()
+        from bandori_audio.music_bounce import NativeMusicService
+        self._music = NativeMusicService(self, self._music_source_changed)
         self._closed = False
         self._captures = {}
         self._outfit_workers = {}
         self._timer = QTimer(self)
         self._timer.setInterval(30)
         self._timer.timeout.connect(self._poll)
-        self._timer.start()
         app.aboutToQuit.connect(self.close)
         self._connect_plugins(app)
 
@@ -76,6 +73,7 @@ class NativePetServices(QObject):
             role["costume"] = model.get("costume", "")
             role["mode"] = model.get("pet_mode", "live2d")
             role["path"] = model.get("path", "")
+        self._sync_music()
 
     def control(self, character, command, **data):
         data.update(character=character, command=command)
@@ -95,9 +93,16 @@ class NativePetServices(QObject):
             return
         kind = event.get("event")
         if kind == "ready":
+            # A restarted pet attaches at the tail of the control queue.
+            role.pop("music_active", None)
+            self._sync_music()
+            self._music_source_changed(self._music.path)
             if self.cfg.get("compact_ai_window_enabled", False) and not self.cfg.get("compact_ai_window_auto_hide", False):
                 self._ensure_overlay(char).show()
             self._request_outfit_description(char)
+        elif kind == "music_active":
+            role["music_active"] = bool(data.get("active", False))
+            self._sync_music()
         elif kind == "hover":
             self._on_pet_hover(char, bool(data.get("inside", False)))
         elif kind == "snapshot":
@@ -131,6 +136,7 @@ class NativePetServices(QObject):
         if not isinstance(data, dict):
             return
         if command == "SETTINGS":
+            self._sync_music(data)
             if "compact_ai_window_enabled" in data:
                 auto_hide = self.cfg.get("compact_ai_window_auto_hide", False)
                 for char in self.roles:
@@ -150,6 +156,7 @@ class NativePetServices(QObject):
         char = str(data.get("character") or data.get("target_character") or "")
         if command == "PEER_OFFLINE":
             self.roles.pop(char, None)
+            self._sync_music()
             overlay = self._overlays.pop(char, None)
             if overlay:
                 overlay.close()
@@ -314,6 +321,7 @@ class NativePetServices(QObject):
             process.setWorkingDirectory(str(app_base_dir()))
             state = {"commands": commands, "events": events, "process": process, "ready": False, "pending": None}
             self._menus[char] = state
+            self._timer.start()
             process.finished.connect(lambda *_: self._menu_finished(char, state))
             process.start()
         items = []
@@ -330,6 +338,8 @@ class NativePetServices(QObject):
     def _menu_finished(self, char, state):
         if self._menus.get(char) is state:
             self._menus.pop(char, None)
+        if not self._menus:
+            self._timer.stop()
         state["commands"].close()
         state["events"].close()
         state["process"].deleteLater()
@@ -353,7 +363,6 @@ class NativePetServices(QObject):
                     self.broadcast("SETTINGS\t" + json.dumps({"drag_locked": locked}))
             if state["ready"] and state["pending"] and state["commands"].publish(state["pending"]):
                 state["pending"] = None
-        self._music_tick()
 
     def _toggle_pixel(self, char):
         import copy
@@ -366,25 +375,18 @@ class NativePetServices(QObject):
                 send_ipc_message("SETTINGS\t" + json.dumps({"models": models}, ensure_ascii=False))
                 return
 
-    def _music_tick(self):
-        from bandori_audio.music_bounce import MusicSpring, OutputLevelMonitor, music_bounce_supported
-        enabled = self.cfg.get("music_bounce_enabled", False) and music_bounce_supported()
-        if enabled and self._meter is None:
-            self._meter = OutputLevelMonitor()
-            self._meter.start()
-        if not enabled:
-            if self._meter:
-                self._meter.stop()
-                self._meter = None
-                for char in self.roles: self.control(char, "music_scale", scale=1.0)
-                self._springs.clear()
-            return
-        now = time.monotonic()
-        dt, self._last_music = min(now - self._last_music, 0.1), now
-        for char in self.roles:
-            spring = self._springs.setdefault(char, MusicSpring())
-            displacement = spring.step(self._meter.level(), dt)
-            self.control(char, "music_scale", scale=max(0.65, min(1.20, 1.0 + displacement * 0.32)))
+    def _music_source_changed(self, path):
+        self.broadcast("NATIVE_MUSIC_SOURCE\t" + json.dumps({"path": path}))
+
+    def _sync_music(self, settings=None):
+        settings = settings or {}
+        enabled = settings.get("music_bounce_enabled", self.cfg.get("music_bounce_enabled", False))
+        hidden = settings.get("hide_live2d_model", self.cfg.get("hide_live2d_model", False))
+        if "music_bounce_enabled" in settings or "hide_live2d_model" in settings:
+            for role in self.roles.values():
+                role.pop("music_active", None)
+        self._music.set_running(enabled and not hidden and any(
+            role.get("music_active", True) for role in self.roles.values()))
 
     def close(self):
         if self._closed:
@@ -400,8 +402,7 @@ class NativePetServices(QObject):
             Path(path).unlink(missing_ok=True)
         self._captures.clear()
         self._timer.stop()
-        if self._meter:
-            self._meter.stop()
+        self._music.close()
         for overlay in self._overlays.values(): overlay.close()
         self._overlays.clear()
         for state in list(self._menus.values()):
