@@ -4,6 +4,7 @@
 //! separate handles/processes synchronize through OS file locks. No workers or
 //! polling loops are created. The v1 ring is bounded and overwrites old entries.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+pub mod level;
 mod protocol;
 mod region;
 mod storage;

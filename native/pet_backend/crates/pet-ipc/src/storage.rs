@@ -45,6 +45,11 @@ fn try_exclusive(file: &File) -> Result<()> {
 }
 
 impl<'a> Lock<'a> {
+    pub fn try_exclusive(file: &'a File) -> Result<Self> {
+        try_exclusive(file)?;
+        Ok(Self(file))
+    }
+
     pub fn exclusive(file: &'a File) -> io::Result<Self> {
         FileExt::lock_exclusive(file)?;
         Ok(Self(file))
@@ -112,11 +117,27 @@ impl Storage {
     }
 
     pub fn attach_region(path: &Path, validate: bool) -> Result<Self> {
+        Self::attach_region_impl(path, validate, false)
+    }
+
+    pub fn try_attach_region(path: &Path) -> Result<Self> {
+        Self::attach_region_impl(path, false, true)
+    }
+
+    fn attach_region_impl(path: &Path, validate: bool, nonblocking: bool) -> Result<Self> {
         let lease = open(&sidecar(path, ".lease"), true)?;
-        FileExt::lock_shared(&lease)?;
+        if nonblocking {
+            FileExt::try_lock_shared(&lease)?;
+        } else {
+            FileExt::lock_shared(&lease)?;
+        }
         let file = open(path, false)?;
         let map = {
-            let _lock = Lock::exclusive(&file)?;
+            let _lock = if nonblocking {
+                Lock::try_exclusive(&file)?
+            } else {
+                Lock::exclusive(&file)?
+            };
             let length = file.metadata()?.len();
             if !(1..=MAX_MAPPING_SIZE as u64).contains(&length) {
                 return Err(Error::InvalidExtent);
