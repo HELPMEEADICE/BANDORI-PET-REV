@@ -36,8 +36,8 @@ fn many_consumers_observe_coherent_latest_samples() {
         .map(|_| {
             let path = path.clone();
             let barrier = barrier.clone();
+            let reader = LevelReader::attach(&path).unwrap();
             std::thread::spawn(move || {
-                let reader = LevelReader::attach(&path).unwrap();
                 barrier.wait();
                 for _ in 0..2000 {
                     let peak = reader.level(1000);
@@ -55,4 +55,45 @@ fn many_consumers_observe_coherent_latest_samples() {
     for reader in readers {
         reader.join().unwrap();
     }
+}
+
+#[test]
+fn busy_or_uncommitted_writer_never_blocks_or_exposes_torn_data() {
+    use fs2::FileExt;
+    use std::io::{Seek, SeekFrom, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("level");
+    let mut writer = LevelPublisher::create(&path).unwrap();
+    let reader = LevelReader::attach(&path).unwrap();
+    writer.publish(0.8, 1000).unwrap();
+    let mut raw = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    FileExt::lock_exclusive(&raw).unwrap();
+    assert_eq!(reader.level(1000), 0.0);
+    assert!(LevelReader::attach(&path).is_err());
+    assert!(!writer.publish(0.9, 1000).unwrap());
+    // Simulate abrupt termination after invalidation but before commit.
+    raw.seek(SeekFrom::Start(12)).unwrap();
+    raw.write_all(&0_u32.to_le_bytes()).unwrap();
+    FileExt::unlock(&raw).unwrap();
+    assert_eq!(reader.level(1000), 0.0);
+    assert!(writer.publish(0.6, 1000).unwrap());
+    assert_eq!(reader.level(1000), 0.6);
+}
+
+#[test]
+fn backwards_wall_clock_cannot_revive_a_frozen_sequence() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("level");
+    let mut writer = LevelPublisher::create(&path).unwrap();
+    let reader = LevelReader::attach(&path).unwrap();
+    writer.publish(0.8, 1000).unwrap();
+    assert_eq!(reader.level(1000), 0.8);
+    std::thread::sleep(std::time::Duration::from_millis(260));
+    assert_eq!(reader.level(1001), 0.0);
+    writer.publish(0.7, 1001).unwrap();
+    assert_eq!(reader.level(1001), 0.7);
 }

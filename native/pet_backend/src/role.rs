@@ -122,6 +122,10 @@ pub struct Role {
 }
 
 impl Role {
+    pub fn music_scale(&self) -> f32 {
+        self.music_scale
+    }
+
     pub fn music_active(&self, config: &Config) -> bool {
         cfg!(windows)
             && config.music_bounce_enabled

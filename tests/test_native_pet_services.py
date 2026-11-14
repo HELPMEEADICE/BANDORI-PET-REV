@@ -83,17 +83,45 @@ def test_native_overlay_can_be_enabled_without_an_external_chat_event(services, 
     overlay.show.assert_called_once()
 
 
-def test_music_silence_keeps_native_model_at_its_original_scale(services, monkeypatch):
+def test_music_settings_only_manage_service_and_never_send_scales(services, monkeypatch):
     service, cfg, broadcast = services
     cfg.data["music_bounce_enabled"] = True
-    meter = Mock()
-    meter.level.return_value = 0.0
-    monkeypatch.setattr("bandori_audio.music_bounce.music_bounce_supported", lambda: True)
-    monkeypatch.setattr("bandori_audio.music_bounce.OutputLevelMonitor", lambda: meter)
-    service._music_tick()
-    data = json.loads(broadcast.call_args.args[0].split("\t", 1)[1])
-    assert data["command"] == "music_scale"
-    assert data["scale"] == 1.0
+    running = Mock()
+    monkeypatch.setattr(service._music, "set_running", running)
+    service.handle_line('SETTINGS\t{"music_bounce_enabled":true}')
+    running.assert_called_with(True)
+    broadcast.reset_mock()
+    for _ in range(100):
+        service._poll()
+    broadcast.assert_not_called()
+    assert not service._timer.isActive()
+    service.handle_line('SETTINGS\t{"music_bounce_enabled":false}')
+    running.assert_called_with(False)
+
+
+def test_all_paused_roles_stop_shared_service_and_one_resuming_restarts_it(services, monkeypatch):
+    service, cfg, _ = services
+    cfg.data["music_bounce_enabled"] = True
+    running = Mock()
+    monkeypatch.setattr(service._music, "set_running", running)
+    service.roles["other"] = {"character": "other", "music_active": True}
+    def activity(char, active):
+        service.handle_event({"character": char, "costume": "live_default", "event": "music_active", "data": {"active": active}})
+    activity("kasumi", False)
+    running.assert_called_with(True)
+    activity("other", False)
+    running.assert_called_with(False)
+    activity("kasumi", True)
+    running.assert_called_with(True)
+
+
+def test_music_source_changes_use_reliable_control_lane(services):
+    from bandori_core.ipc_bus import is_control_ipc_line, is_reliable_ipc_line
+    service, _, broadcast = services
+    service._music_source_changed("session-level.shm")
+    line = broadcast.call_args.args[0]
+    assert is_control_ipc_line(line) and is_reliable_ipc_line(line)
+    assert json.loads(line.split("\t", 1)[1]) == {"path": "session-level.shm"}
 
 
 def test_menu_relay_preserves_the_native_click_monitor(services):

@@ -45,6 +45,19 @@ fn try_exclusive(file: &File) -> Result<()> {
 }
 
 impl<'a> Lock<'a> {
+    pub fn try_shared(file: &'a File) -> Result<Self> {
+        FileExt::try_lock_shared(file).map_err(|error| {
+            if error.kind() == io::ErrorKind::WouldBlock
+                || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+            {
+                Error::InUse
+            } else {
+                Error::Io(error)
+            }
+        })?;
+        Ok(Self(file))
+    }
+
     pub fn try_exclusive(file: &'a File) -> Result<Self> {
         try_exclusive(file)?;
         Ok(Self(file))

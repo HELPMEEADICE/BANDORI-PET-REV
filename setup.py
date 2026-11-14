@@ -93,6 +93,8 @@ class BuildExeWithEmptyModels(build_exe):
             build_dir, {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux"),
             "aarch64" if release_arch_name() == "ARM64" else "x86_64",
         )
+        # This executable also supplies --music-service; bundle it beside the
+        # launcher on every platform (no separate audio-service payload).
         native_name = "bandori-pet-native" + (".exe" if sys.platform == "win32" else "")
         native_binary = native_output / "release" / native_name
         shutil.copy2(native_binary, build_dir / native_name)

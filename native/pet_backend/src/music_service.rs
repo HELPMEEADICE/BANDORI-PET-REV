@@ -60,7 +60,7 @@ impl<M> RecoveringMeter<M> {
     }
 }
 
-pub fn run(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(path: &Path, metrics: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Only the read-only endpoint peak is queried. No WASAPI stream is opened.
     let mut publisher = LevelPublisher::create(path)?;
     let (stop, stopped) = mpsc::channel();
@@ -76,19 +76,46 @@ pub fn run(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     io::stdout().flush()?;
     let mut meter = RecoveringMeter::new();
     let interval = Duration::from_secs_f64(1.0 / 60.0);
+    let started = Instant::now();
+    let mut next_sample = started;
+    let (mut samples, mut available, mut read_ns, mut publish_ns) = (0_u64, 0_u64, 0_u128, 0_u128);
     loop {
         let start = Instant::now();
         if stopped.try_recv().is_ok() {
             break;
         }
         let peak = meter.sample(start, platform::Meter::new, platform::Meter::read);
+        let sampled = Instant::now();
         publisher.publish(peak, timestamp_ms())?;
-        match stopped.recv_timeout(interval.saturating_sub(start.elapsed())) {
+        if metrics {
+            samples += 1;
+            available += u64::from(meter.meter.is_some());
+            read_ns += sampled.duration_since(start).as_nanos();
+            publish_ns += sampled.elapsed().as_nanos();
+        }
+        // Absolute deadlines prevent Windows timeout rounding from accumulating
+        // on every sample. Skip missed deadlines instead of sampling in a burst.
+        next_sample += interval;
+        let now = Instant::now();
+        if next_sample <= now {
+            next_sample = now + interval;
+        }
+        match stopped.recv_timeout(next_sample.duration_since(now)) {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             _ => break,
         }
     }
     publisher.publish(0.0, timestamp_ms())?;
+    if metrics {
+        println!(
+            "METRICS {}",
+            serde_json::json!({"samples":samples,"available_samples":available,
+            "wall_s":started.elapsed().as_secs_f64(),
+            "mean_read_ns":read_ns as f64 / samples.max(1) as f64,
+            "mean_publish_ns":publish_ns as f64 / samples.max(1) as f64})
+        );
+        io::stdout().flush()?;
+    }
     Ok(())
 }
 

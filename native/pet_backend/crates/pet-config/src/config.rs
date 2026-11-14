@@ -635,6 +635,7 @@ mod tests {
         assert!(!config.live2d_idle_actions_enabled);
         assert!(!config.live2d_random_actions_enabled);
         assert!(!config.emotion_behavior_enabled);
+        assert!(!config.music_bounce_enabled);
     }
 
     #[test]
@@ -646,6 +647,17 @@ mod tests {
         assert!(config.live2d_idle_actions_enabled);
         assert!(config.live2d_random_actions_enabled);
         assert!(config.emotion_behavior_enabled);
+    }
+
+    #[test]
+    fn music_bounce_round_trips_without_changing_unknown_settings() {
+        let config: Config =
+            serde_json::from_str(r#"{"music_bounce_enabled":true,"unrelated":{"key":42}}"#)
+                .unwrap();
+        assert!(config.music_bounce_enabled);
+        let value = serde_json::to_value(config).unwrap();
+        assert_eq!(value["music_bounce_enabled"], true);
+        assert_eq!(value["unrelated"]["key"], 42);
     }
 
     #[test]

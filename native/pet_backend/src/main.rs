@@ -427,7 +427,9 @@ impl App {
                     "visibility" => { if let Some(role) = self.role.as_mut() { role.set_hidden(!payload["visible"].as_bool().unwrap_or(true)); } }
                     "reset" => { if let Some(role) = self.role.as_mut() { role.place_apart(&[]); } self.position(true); }
                     "shutdown" => self.shutdown = true,
-                    "status" => self.emit("status", json!({"backend":"neocari", "fps":self.config.fps, "opacity":self.config.opacity, "mouth":self.mouth, "models":self.config.models})),
+                    "status" => self.emit("status", json!({"backend":"neocari", "fps":self.config.fps, "opacity":self.config.opacity, "mouth":self.mouth, "models":self.config.models,
+                        "music_scale":self.role.as_ref().map_or(1.0, role::Role::music_scale),
+                        "music_active":self.role.as_ref().is_some_and(|r| r.music_active(&self.config))})),
                     "snapshot" => {
                         if let (Some(role), Some(path)) = (self.role.as_ref(), payload["path"].as_str()) {
                             let (width, height) = role.size();
@@ -822,7 +824,10 @@ fn main() {
         let command: Vec<String> = std::env::args().collect();
         if command.get(1).is_some_and(|arg| arg == "--music-service") {
             let path = command.get(2).ok_or("missing music mapping path")?;
-            return music_service::run(std::path::Path::new(path));
+            return music_service::run(
+                std::path::Path::new(path),
+                command.iter().any(|s| s == "--music-metrics"),
+            );
         }
         if command.get(1).is_some_and(|arg| arg == "--render-preview") {
             let path = command.get(2).ok_or("missing preview model")?;
