@@ -1,0 +1,323 @@
+{
+  "platform": "Windows-10-10.0.19045-SP0",
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "profile": "debug",
+  "baseline_commit": "a20bf47ac074e7f0b9c77f33e6370753a26fdbc9",
+  "scope": "Measure real old/new Music Bounce work on one machine, without a pet GPU.\n\nBuild the native binary + music_benchmark example and the Python IPC extension.\nThe old modules are loaded from the audited Git commit, never from production.\nOld: actual Qt 30 ms tick, Python Core Audio worker, springs, JSON and mapped IPC.\nNew: actual NativeMusicService plus N independent headless native frame consumers.\nGPU/model/window cost is excluded in BOTH cases. RSS reports are not a full-app\nmemory comparison. --profile selects matching debug or release artifacts.\n",
+  "old": [
+    {
+      "roles": 1,
+      "enabled": true,
+      "wall_s": 5.009137400000327,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "scale_ipc_per_s": 31.741992144194253,
+      "python_cpu_cycles": 119674107,
+      "python_cycles_per_s": 23891160.781493474,
+      "python_rss_bytes": 46112768,
+      "audio_reads": 162,
+      "mean_audio_read_ns": 1008674.074074074
+    },
+    {
+      "roles": 8,
+      "enabled": true,
+      "wall_s": 4.992797499999142,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "scale_ipc_per_s": 246.75545122753562,
+      "python_cpu_cycles": 150404403,
+      "python_cycles_per_s": 30124274.61759181,
+      "python_rss_bytes": 48644096,
+      "audio_reads": 162,
+      "mean_audio_read_ns": 163428.3950617284
+    },
+    {
+      "roles": 1,
+      "enabled": false,
+      "wall_s": 4.9866213999994216,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "scale_ipc_per_s": 0.0,
+      "python_cpu_cycles": 40660563,
+      "python_cycles_per_s": 8153930.234207217,
+      "python_rss_bytes": 48709632,
+      "audio_reads": 0,
+      "mean_audio_read_ns": null
+    },
+    {
+      "roles": 8,
+      "enabled": false,
+      "wall_s": 4.995983400000114,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "scale_ipc_per_s": 0.0,
+      "python_cpu_cycles": 42569381,
+      "python_cycles_per_s": 8520721.065646261,
+      "python_rss_bytes": 48652288,
+      "audio_reads": 0,
+      "mean_audio_read_ns": null
+    }
+  ],
+  "new": [
+    {
+      "roles": 1,
+      "enabled": true,
+      "wall_s": 4.993433999999979,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "python_cpu_cycles": 878964,
+      "python_cycles_per_s": 176023.95465725663,
+      "scale_ipc_per_s": 0.0,
+      "python_rss_bytes": 47861760,
+      "steady_source_notifications": 0,
+      "native_cpu_s": [
+        0.0,
+        0.0
+      ],
+      "native_cpu_cycles": [
+        32392304,
+        54945441
+      ],
+      "consumer_rss_bytes": [
+        6729728
+      ],
+      "service_rss_bytes": [
+        10428416
+      ],
+      "consumer_timings": [
+        {
+          "frames": 360,
+          "mean_read_ns": 20567.5,
+          "mean_physics_ns": 1955.2777777777778
+        }
+      ],
+      "service_metrics": {
+        "samples": 365,
+        "available_samples": 365,
+        "wall_s": 6.0766377,
+        "mean_read_ns": 136736.43835616438,
+        "mean_publish_ns": 9340.27397260274
+      }
+    },
+    {
+      "roles": 8,
+      "enabled": true,
+      "wall_s": 5.003899999999703,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "python_cpu_cycles": 1102890,
+      "python_cycles_per_s": 220406.08325507413,
+      "scale_ipc_per_s": 0.0,
+      "python_rss_bytes": 48701440,
+      "steady_source_notifications": 0,
+      "native_cpu_s": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.015625,
+        0.0,
+        0.0
+      ],
+      "native_cpu_cycles": [
+        25379316,
+        28366167,
+        24339157,
+        28327615,
+        26231977,
+        22760388,
+        20905168,
+        26236120,
+        56607363
+      ],
+      "consumer_rss_bytes": [
+        6737920,
+        6737920,
+        6725632,
+        6725632,
+        6733824,
+        6729728,
+        6717440,
+        6713344
+      ],
+      "service_rss_bytes": [
+        10412032
+      ],
+      "consumer_timings": [
+        {
+          "frames": 360,
+          "mean_read_ns": 15196.111111111111,
+          "mean_physics_ns": 1282.2222222222222
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 17682.777777777777,
+          "mean_physics_ns": 1406.111111111111
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 13965.277777777777,
+          "mean_physics_ns": 1206.9444444444443
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 17708.61111111111,
+          "mean_physics_ns": 1323.611111111111
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 16364.444444444445,
+          "mean_physics_ns": 1311.9444444444443
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 14138.333333333334,
+          "mean_physics_ns": 1220.0
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 10760.833333333334,
+          "mean_physics_ns": 1035.0
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 17042.777777777777,
+          "mean_physics_ns": 1246.6666666666667
+        }
+      ],
+      "service_metrics": {
+        "samples": 366,
+        "available_samples": 366,
+        "wall_s": 6.0988345,
+        "mean_read_ns": 141239.07103825136,
+        "mean_publish_ns": 9261.20218579235
+      }
+    },
+    {
+      "roles": 1,
+      "enabled": false,
+      "wall_s": 5.014505099999951,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "python_cpu_cycles": 1292306,
+      "python_cycles_per_s": 257713.56778558518,
+      "scale_ipc_per_s": 0.0,
+      "python_rss_bytes": 48730112,
+      "steady_source_notifications": 0,
+      "native_cpu_s": [
+        0.0
+      ],
+      "native_cpu_cycles": [
+        15774707
+      ],
+      "consumer_rss_bytes": [
+        6602752
+      ],
+      "service_rss_bytes": [],
+      "consumer_timings": [
+        {
+          "frames": 360,
+          "mean_read_ns": 143.33333333333334,
+          "mean_physics_ns": 625.2777777777778
+        }
+      ],
+      "service_metrics": null
+    },
+    {
+      "roles": 8,
+      "enabled": false,
+      "wall_s": 5.004399299999932,
+      "python_cpu_s": 0.0,
+      "python_cpu_percent_one_core": 0.0,
+      "python_cpu_cycles": 1274269,
+      "python_cycles_per_s": 254629.76145808696,
+      "scale_ipc_per_s": 0.0,
+      "python_rss_bytes": 48734208,
+      "steady_source_notifications": 0,
+      "native_cpu_s": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "native_cpu_cycles": [
+        13559719,
+        11388284,
+        15429087,
+        19298397,
+        17061271,
+        18365005,
+        14011437,
+        12618385
+      ],
+      "consumer_rss_bytes": [
+        6598656,
+        6619136,
+        6598656,
+        6610944,
+        6615040,
+        6615040,
+        6619136,
+        6606848
+      ],
+      "service_rss_bytes": [],
+      "consumer_timings": [
+        {
+          "frames": 360,
+          "mean_read_ns": 58.333333333333336,
+          "mean_physics_ns": 366.3888888888889
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 34.44444444444444,
+          "mean_physics_ns": 308.3333333333333
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 100.0,
+          "mean_physics_ns": 410.0
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 105.83333333333333,
+          "mean_physics_ns": 562.5
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 106.38888888888889,
+          "mean_physics_ns": 467.5
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 109.16666666666667,
+          "mean_physics_ns": 501.6666666666667
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 75.55555555555556,
+          "mean_physics_ns": 366.3888888888889
+        },
+        {
+          "frames": 360,
+          "mean_read_ns": 78.61111111111111,
+          "mean_physics_ns": 392.5
+        }
+      ],
+      "service_metrics": null
+    }
+  ],
+  "native_physics": {
+    "updates": 1000000,
+    "mean_physics_ns": 22.8612
+  },
+  "python_physics": {
+    "updates": 1000000,
+    "mean_physics_ns": 1035.3132
+  }
+}

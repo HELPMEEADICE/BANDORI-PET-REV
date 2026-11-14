@@ -102,7 +102,9 @@ owner 已退出后删除 `.shm`。活跃队列的重复 create 不会清空数�
 v1 没有共享消费者确认或持久重放。可靠通道仍是有限覆盖环：不能将 publish=True
 解释成端到端送达，也不能保证暂停的消费者在无限积压后收到所有命令。
 迁移保留单独通道、既有分类、设置进程重试／stdout 后备、注册时重发设置和
-False／异常的既有调用处理。`NATIVE_CONTROL/music_scale` 仍走可覆盖通道。
+False／异常的既有调用处理。旧 `NATIVE_CONTROL/music_scale` 分类保留为可覆盖通道，
+原生角色已停止接受该命令。音乐律动通过 `NATIVE_MUSIC_SOURCE` 在可靠控制通道通知
+共享源变化，电平直接读取 `BDLEVEL!` 最新值映射，详见 `native-music-bounce.md`。
 
 兼容修复增加了可观测性：覆盖／损坏计数与读取错误在 Python 记录为 error，
 原生端报告广播／CONTROL 丢失、可靠发布失败和损坏 Envelope，避免静默吞掉控制消息。
