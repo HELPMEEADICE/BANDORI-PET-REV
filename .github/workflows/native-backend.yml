@@ -38,11 +38,14 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
-      - name: Install X11 dependencies
+      - name: Install Linux GUI dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxrandr-dev xvfb
+          # PySide6.QtGui also needs EGL/OpenGL for the Python archive bridge tests.
+          sudo apt-get install -y \
+            libegl1 libgl1 libopengl0 \
+            libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxrandr-dev xvfb
       - name: Check formatting
         run: cargo fmt --manifest-path native/pet_backend/Cargo.toml --all -- --check
       - name: Check and lint all targets
