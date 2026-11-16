@@ -254,3 +254,206 @@ fn centimeter_source_animation_keeps_desktop_root_in_place() {
         );
     }
 }
+
+#[test]
+fn sparse_morph_skinning_matches_the_scalar_reference() {
+    for legacy in [true, false] {
+        let mut model = fixture(legacy);
+        let primitive = &mut model.primitives[0];
+        primitive.morphs = (0..6)
+            .map(|m| {
+                (
+                    (0..primitive.bind.len())
+                        .map(|i| Vec3::new(i as f32 * 0.01, m as f32 * 0.02, 0.))
+                        .collect(),
+                    if m % 2 == 0 {
+                        vec![]
+                    } else {
+                        vec![Vec3::X * 0.1; primitive.bind.len()]
+                    },
+                )
+            })
+            .collect();
+        // Include inactive targets, clamped weights, missing base weights and
+        // several expression binds contributing to the same target.
+        primitive.weights = vec![0., -0.5, 0.3, 1.2];
+        model.expressions = vec![
+            Expression {
+                name: "test-a".into(),
+                binds: vec![(primitive.mesh, 0, 0.5), (primitive.mesh, 2, 0.5)],
+            },
+            Expression {
+                name: "test-b".into(),
+                binds: vec![(primitive.mesh, 2, 0.8), (primitive.mesh, 4, 0.7)],
+            },
+        ];
+        model.face.weights.insert("test-a".into(), 0.6);
+        model.face.weights.insert("test-b".into(), 0.9);
+        let mut weights = BTreeMap::<(usize, usize), f32>::new();
+        for expression in &model.expressions {
+            for &(mesh, target, weight) in &expression.binds {
+                *weights.entry((mesh, target)).or_default() +=
+                    weight * model.face.weight(&expression.name);
+            }
+        }
+        let expected: Vec<Vec<Vertex>> = model
+            .primitives
+            .iter()
+            .map(|p| {
+                p.bind
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bind)| {
+                        let mut position = bind.position;
+                        let mut normal = bind.normal;
+                        for (m, (positions, normals)) in p.morphs.iter().enumerate() {
+                            let weight = (p.weights.get(m).copied().unwrap_or(0.)
+                                + weights.get(&(p.mesh, m)).copied().unwrap_or(0.))
+                            .clamp(0., 1.);
+                            if weight != 0. {
+                                position +=
+                                    positions.get(i).copied().unwrap_or(Vec3::ZERO) * weight;
+                                normal += normals.get(i).copied().unwrap_or(Vec3::ZERO) * weight;
+                            }
+                        }
+                        let transform = if let Some(s) = p.skin {
+                            let skin = &model.skins[s];
+                            let mut matrix = Mat4::ZERO;
+                            let mut total = 0.;
+                            for (&joint, &weight) in bind.joints.iter().zip(&bind.weights) {
+                                if weight > 0. {
+                                    matrix += (model.nodes[skin.joints[joint as usize]].world
+                                        * skin.inverse[joint as usize])
+                                        * weight;
+                                    total += weight;
+                                }
+                            }
+                            if total > 1e-6 {
+                                matrix * (1. / total)
+                            } else {
+                                model.nodes[p.node].world
+                            }
+                        } else {
+                            model.nodes[p.node].world
+                        };
+                        Vertex {
+                            position: model
+                                .view
+                                .transform_point3(transform.transform_point3(position))
+                                .to_array(),
+                            normal: model
+                                .view
+                                .transform_vector3(transform.transform_vector3(normal))
+                                .normalize_or_zero()
+                                .to_array(),
+                            uv: bind.uv,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        model.skin();
+        for (p, expected) in model.primitives.iter().zip(expected) {
+            for (actual, expected) in p.vertices.iter().zip(expected) {
+                assert!(Vec3::from(actual.position).distance(Vec3::from(expected.position)) < 1e-6);
+                assert!(Vec3::from(actual.normal).distance(Vec3::from(expected.normal)) < 1e-6);
+                assert_eq!(actual.uv, expected.uv);
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_hit_vertices_preserve_u32_triangles_chunk_boundaries_and_uvs() {
+    let mut model = fixture(false);
+    let primitive = &mut model.primitives[0];
+    for i in primitive.bind.len()..65_540 {
+        let source = &primitive.bind[i % 3];
+        primitive.bind.push(BindVertex {
+            position: source.position,
+            normal: source.normal,
+            uv: [i as f32 / 65_540., (i % 7) as f32 / 7.],
+            joints: source.joints,
+            weights: source.weights,
+        });
+    }
+    primitive.indices = [65_536, 2, 65_539, 65_536, 65_539, 2].repeat(10_001);
+    let material = &mut model.materials[primitive.material];
+    material.uv_scale = [1.2, 0.7];
+    material.uv_rotation = 0.6;
+    material.uv_offset = [0.2, -0.3];
+    model.prepare_hit_projections();
+    assert_eq!(model.hit_projections.len(), 2);
+    assert_eq!(model.projected[0].indices().len(), 60_000);
+    assert_eq!(model.projected[1].indices().len(), 6);
+    let sources: Vec<_> = model
+        .hit_projections
+        .iter()
+        .map(|p| p.sources.as_ptr())
+        .collect();
+    for _ in 0..3 {
+        model.update(1. / 60.);
+        let primitive = &model.primitives[0];
+        let material = &model.materials[primitive.material];
+        for (chunk, mesh) in primitive.indices.chunks(60_000).zip(&model.projected) {
+            assert_eq!(mesh.vertices().len(), 3);
+            assert_eq!(mesh.texture_index(), material.hit_texture as i32);
+            for (&source, &index) in chunk.iter().zip(mesh.indices()) {
+                let actual = mesh.vertices()[index as usize];
+                let vertex = primitive.vertices[source as usize];
+                assert_eq!(actual.position(), [vertex.position[0], vertex.position[1]]);
+                let x = vertex.uv[0] * material.uv_scale[0];
+                let y = vertex.uv[1] * material.uv_scale[1];
+                let expected = [
+                    x * material.uv_rotation.cos() - y * material.uv_rotation.sin()
+                        + material.uv_offset[0],
+                    x * material.uv_rotation.sin()
+                        + y * material.uv_rotation.cos()
+                        + material.uv_offset[1],
+                ];
+                for (actual, expected) in actual.uv().iter().zip(expected) {
+                    assert!((actual - expected).abs() < 1e-6);
+                }
+            }
+        }
+        assert_eq!(
+            sources,
+            model
+                .hit_projections
+                .iter()
+                .map(|p| p.sources.as_ptr())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn embedded_texture_sources_keep_manifest_order_and_shared_references() {
+    let colors = [[10, 20, 30, 40], [50, 60, 70, 80]];
+    let mut blob = std::io::Cursor::new(Vec::new());
+    let mut views = Vec::new();
+    for color in colors {
+        let offset = blob.position();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(2, 3, image::Rgba(color)))
+            .write_to(&mut blob, image::ImageFormat::Png)
+            .unwrap();
+        views.push(serde_json::json!({"buffer": 0, "byteOffset": offset, "byteLength": blob.position() - offset}));
+    }
+    let data = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": blob.get_ref().len()}],
+        "bufferViews": views,
+        "images": [{"bufferView": 0, "mimeType": "image/png"},
+                   {"bufferView": 1, "mimeType": "image/png"},
+                   {"uri": "unused-thumbnail.png"}],
+        "textures": [{"source": 1}, {"source": 0}, {"source": 1}],
+    });
+    let gltf = gltf::Gltf::from_slice(&serde_json::to_vec(&data).unwrap()).unwrap();
+    let textures = load_textures(&gltf, blob.get_ref()).unwrap();
+    assert_eq!(textures.len(), 3);
+    for (texture, color) in textures.iter().zip([colors[1], colors[0], colors[1]]) {
+        assert_eq!((texture.width(), texture.height()), (2, 3));
+        assert!(texture.rgba().chunks_exact(4).all(|pixel| pixel == color));
+    }
+    assert!(load_textures(&gltf, &[]).is_err());
+}

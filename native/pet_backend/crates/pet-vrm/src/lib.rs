@@ -17,7 +17,7 @@ use performance::{Face, MotionProfile, Transition};
 use physics::Spring;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
 };
 
@@ -74,6 +74,13 @@ struct BindVertex {
 struct Skin {
     joints: Vec<usize>,
     inverse: Vec<Mat4>,
+    palette: Vec<Mat4>,
+}
+
+/// Static u32-to-u16 remapping for one chunk of the CPU hit-test facade.
+struct HitProjection {
+    primitive: usize,
+    sources: Box<[u32]>,
 }
 /// One indexed triangle draw. `vertices` are in orthographic view space.
 pub struct Primitive {
@@ -97,6 +104,8 @@ pub struct VrmModel {
     pub materials: Vec<Material>,
     pub textures: Vec<DecodedTexture>,
     pub projected: Vec<Moc3DrawableMesh>,
+    hit_projections: Vec<HitProjection>,
+    active_morphs: Vec<(usize, f32)>,
     pub legacy: bool,
     pub(crate) nodes: Vec<Node>,
     pub(crate) order: Vec<usize>,
@@ -232,6 +241,47 @@ pub(crate) fn update_world(nodes: &mut [Node], order: &[usize]) {
     }
 }
 
+fn load_textures(gltf: &gltf::Gltf, blob: &[u8]) -> Result<Vec<DecodedTexture>> {
+    let mut image_uses = vec![0usize; gltf.images().len()];
+    for texture in gltf.textures() {
+        image_uses[texture.source().index()] += 1;
+    }
+    let mut images: Vec<_> = gltf
+        .images()
+        .map(|im| {
+            if image_uses[im.index()] == 0 {
+                return Ok(None);
+            }
+            let gltf::image::Source::View { view, .. } = im.source() else {
+                return Err(invalid("VRM images must be embedded"));
+            };
+            let data = blob
+                .get(view.offset()..view.offset() + view.length())
+                .ok_or_else(|| invalid("image outside buffer"))?;
+            let rgba = image::load_from_memory(data)?.into_rgba8();
+            Ok(Some(DecodedTexture::new(
+                rgba.width(),
+                rgba.height(),
+                rgba.into_raw(),
+            )))
+        })
+        .collect::<Result<_>>()?;
+    let mut textures = Vec::with_capacity(gltf.textures().len());
+    for texture in gltf.textures() {
+        let source = texture.source().index();
+        image_uses[source] -= 1;
+        // Move the final reference instead of retaining a second decoded
+        // copy of every PNG throughout model/animation loading.
+        let image = if image_uses[source] == 0 {
+            images[source].take().unwrap()
+        } else {
+            images[source].as_ref().unwrap().clone()
+        };
+        textures.push(image);
+    }
+    Ok(textures)
+}
+
 impl VrmModel {
     pub fn load(path: &Path) -> Result<Self> {
         let (gltf, json) = document(&std::fs::read(path)?)?;
@@ -274,27 +324,7 @@ impl VrmModel {
         if !humanoid.contains_key("hips") || humanoid.values().any(|&i| i >= nodes.len()) {
             return Err(invalid("invalid humanoid bones"));
         }
-        let images: Vec<_> = gltf
-            .images()
-            .map(|im| {
-                let gltf::image::Source::View { view, .. } = im.source() else {
-                    return Err(invalid("VRM images must be embedded"));
-                };
-                let data = blob
-                    .get(view.offset()..view.offset() + view.length())
-                    .ok_or_else(|| invalid("image outside buffer"))?;
-                let rgba = image::load_from_memory(data)?.into_rgba8();
-                Ok(DecodedTexture::new(
-                    rgba.width(),
-                    rgba.height(),
-                    rgba.into_raw(),
-                ))
-            })
-            .collect::<Result<_>>()?;
-        let mut textures = Vec::new();
-        for texture in gltf.textures() {
-            textures.push(images[texture.source().index()].clone());
-        }
+        let mut textures = load_textures(&gltf, blob)?;
         let mut materials = gltf
             .materials()
             .map(|m| Material::load(m, &json, vrm, legacy, textures.len()))
@@ -319,7 +349,12 @@ impl VrmModel {
                     .read_inverse_bind_matrices()
                     .map(|it| it.map(|m| Mat4::from_cols_array_2d(&m)).collect())
                     .unwrap_or_else(|| vec![Mat4::IDENTITY; joints.len()]);
-                Skin { joints, inverse }
+                let palette = vec![Mat4::IDENTITY; joints.len().min(inverse.len())];
+                Skin {
+                    joints,
+                    inverse,
+                    palette,
+                }
             })
             .collect::<Vec<_>>();
         let mut primitives = Vec::new();
@@ -505,6 +540,8 @@ impl VrmModel {
             materials,
             textures,
             projected: Vec::new(),
+            hit_projections: Vec::new(),
+            active_morphs: Vec::new(),
             legacy,
             nodes,
             order,
@@ -541,6 +578,7 @@ impl VrmModel {
             legacy,
         )?;
         model.evaluate_pose();
+        model.prepare_hit_projections();
         model.skin();
         if let Some(name) = settings["default_motion"].as_str() {
             if !model.play_motion(name) {
@@ -872,7 +910,8 @@ impl VrmModel {
         }
         // Keep the animation-only pose for motion transitions. Tracking is a
         // separate overlay, so changing the pointer during a fade stays responsive.
-        self.last_pose = self.nodes.iter().map(|n| n.pose).collect();
+        self.last_pose.clear();
+        self.last_pose.extend(self.nodes.iter().map(|n| n.pose));
         update_world(&mut self.nodes, &self.order);
         if let Some(&head) = self.humanoid.get("head") {
             let drag = self.face.drag();
@@ -907,34 +946,36 @@ impl VrmModel {
                 }
             }
         }
-        let palettes: Vec<Vec<Mat4>> = self
-            .skins
-            .iter()
-            .map(|s| {
-                s.joints
-                    .iter()
-                    .zip(&s.inverse)
-                    .map(|(&j, inv)| self.nodes[j].world * *inv)
-                    .collect()
-            })
-            .collect();
-        let mut hit_mesh = 0;
+        for skin in &mut self.skins {
+            for ((matrix, &joint), inverse) in
+                skin.palette.iter_mut().zip(&skin.joints).zip(&skin.inverse)
+            {
+                *matrix = self.nodes[joint].world * *inverse;
+            }
+        }
         for p in &mut self.primitives {
+            // Resolve and clamp each target once, rather than doing a map lookup
+            // for every vertex and every (usually inactive) target.
+            self.active_morphs.clear();
+            for m in 0..p.morphs.len() {
+                let weight = (p.weights.get(m).copied().unwrap_or(0.)
+                    + morph_weights.get(&(p.mesh, m)).copied().unwrap_or(0.))
+                .clamp(0., 1.);
+                if weight != 0. {
+                    self.active_morphs.push((m, weight));
+                }
+            }
             p.vertices.clear();
             for (i, b) in p.bind.iter().enumerate() {
                 let mut position = b.position;
                 let mut normal = b.normal;
-                for (m, (positions, normals)) in p.morphs.iter().enumerate() {
-                    let w = (p.weights.get(m).copied().unwrap_or(0.)
-                        + morph_weights.get(&(p.mesh, m)).copied().unwrap_or(0.))
-                    .clamp(0., 1.);
-                    if w != 0. {
-                        if let Some(dp) = positions.get(i) {
-                            position += *dp * w;
-                        }
-                        if let Some(dn) = normals.get(i) {
-                            normal += *dn * w;
-                        }
+                for &(m, weight) in &self.active_morphs {
+                    let (positions, normals) = &p.morphs[m];
+                    if let Some(dp) = positions.get(i) {
+                        position += *dp * weight;
+                    }
+                    if let Some(dn) = normals.get(i) {
+                        normal += *dn * weight;
                     }
                 }
                 let transform = if let Some(s) = p.skin {
@@ -942,7 +983,7 @@ impl VrmModel {
                     let mut total = 0.;
                     for (&j, &w) in b.joints.iter().zip(&b.weights) {
                         if w > 0. {
-                            mat += palettes[s][j as usize] * w;
+                            mat += self.skins[s].palette[j as usize] * w;
                             total += w;
                         }
                     }
@@ -967,44 +1008,73 @@ impl VrmModel {
                     uv: b.uv,
                 });
             }
-            // Chunk triangles for the existing u16 alpha-hit-test facade. Render
-            // buffers keep the original u32 indices and full 3D depth.
+        }
+        for (mesh, projection) in self.projected.iter_mut().zip(&self.hit_projections) {
+            let primitive = &self.primitives[projection.primitive];
+            let material = &self.materials[primitive.material];
+            let angle = material.uv_rotation;
+            let (sin, cos) = angle.sin_cos();
+            let vertices = projection
+                .sources
+                .iter()
+                .map(|&source| {
+                    let vertex = primitive.vertices[source as usize];
+                    let x = vertex.uv[0] * material.uv_scale[0];
+                    let y = vertex.uv[1] * material.uv_scale[1];
+                    Moc3DrawableVertex::new(
+                        [vertex.position[0], vertex.position[1]],
+                        [
+                            x * cos - y * sin + material.uv_offset[0],
+                            x * sin + y * cos + material.uv_offset[1],
+                        ],
+                    )
+                })
+                .collect();
+            *mesh = Moc3DrawableMesh::from_parts(
+                material.hit_texture as i32,
+                0,
+                1.,
+                0.,
+                vertices,
+                mesh.indices().to_vec(),
+                Vec::new(),
+            );
+        }
+    }
+
+    fn prepare_hit_projections(&mut self) {
+        // Keep original triangle order and 60,000-index boundaries. Shared
+        // vertices are projected once; the GPU still uses the original u32 mesh.
+        self.projected.clear();
+        self.hit_projections.clear();
+        for (primitive, p) in self.primitives.iter().enumerate() {
             for chunk in p.indices.chunks(60_000) {
-                let material = &self.materials[p.material];
-                let uv_transform = |uv: [f32; 2]| {
-                    let angle = material.uv_rotation;
-                    let x = uv[0] * material.uv_scale[0];
-                    let y = uv[1] * material.uv_scale[1];
-                    [
-                        x * angle.cos() - y * angle.sin() + material.uv_offset[0],
-                        x * angle.sin() + y * angle.cos() + material.uv_offset[1],
-                    ]
-                };
-                let vertices = chunk
+                let mut remap = HashMap::new();
+                let mut sources = Vec::new();
+                let indices = chunk
                     .iter()
-                    .map(|&i| {
-                        let v = p.vertices[i as usize];
-                        Moc3DrawableVertex::new([v.position[0], v.position[1]], uv_transform(v.uv))
+                    .map(|&source| {
+                        *remap.entry(source).or_insert_with(|| {
+                            let index = sources.len() as u16;
+                            sources.push(source);
+                            index
+                        })
                     })
                     .collect();
-                let texture = material.hit_texture as i32;
-                let mesh = Moc3DrawableMesh::from_parts(
-                    texture,
+                self.projected.push(Moc3DrawableMesh::from_parts(
+                    self.materials[p.material].hit_texture as i32,
                     0,
                     1.,
                     0.,
-                    vertices,
-                    (0..chunk.len() as u16).collect(),
                     Vec::new(),
-                );
-                if hit_mesh < self.projected.len() {
-                    self.projected[hit_mesh] = mesh;
-                } else {
-                    self.projected.push(mesh);
-                }
-                hit_mesh += 1;
+                    indices,
+                    Vec::new(),
+                ));
+                self.hit_projections.push(HitProjection {
+                    primitive,
+                    sources: sources.into_boxed_slice(),
+                });
             }
         }
-        self.projected.truncate(hit_mesh);
     }
 }

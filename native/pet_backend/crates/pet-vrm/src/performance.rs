@@ -146,8 +146,11 @@ impl Face {
             } else {
                 0.
             };
-            let weight = self.weights.entry(name.clone()).or_default();
-            *weight += (target - *weight) * blend;
+            if let Some(weight) = self.weights.get_mut(name) {
+                *weight += (target - *weight) * blend;
+            } else {
+                self.weights.insert(name.clone(), target * blend);
+            }
         }
     }
     pub fn weight(&self, name: &str) -> f32 {

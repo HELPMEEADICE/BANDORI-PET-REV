@@ -849,8 +849,6 @@ impl Role {
     ) -> Vec<Command> {
         let size = self.window.inner_size();
         let hour = pet_util::time_of_day::local_hour();
-        let motion_names = self.info.motion_groups.clone();
-        let expression_names = self.info.expression_names.clone();
         // Window events stop outside the window and while it is click-through.
         // Sample the screen cursor every tick, keeping out-of-bounds local
         // coordinates so head tracking still sees targets beyond the window.
@@ -869,8 +867,8 @@ impl Role {
             own_center,
             screen: self.screen_bounds(),
             tracking_reference: self.tracking_reference,
-            motion_names: &motion_names,
-            expression_names: &expression_names,
+            motion_names: &self.info.motion_groups,
+            expression_names: &self.info.expression_names,
             character: &self.character,
             motion_finished: self.model.is_motion_finished(),
         };
