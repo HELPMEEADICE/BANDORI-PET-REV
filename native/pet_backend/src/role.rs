@@ -7,7 +7,7 @@ use std::time::Instant;
 use pet_assets::ModelCache;
 use pet_behavior::{BehaviorContext, Command, RoleBehavior, RoleBehaviorConfig, WindowMotionKind};
 use pet_config::{Config, ModelEntry, Placement};
-use pet_input::hit::{AlphaTexture, FrameSnapshot, HitStability, HoverState};
+use pet_input::hit::{cursor_to_model, hit_test_meshes, AlphaTexture, HitStability, HoverState};
 
 use pet_live2d::{ModelHandle, ModelInfo};
 use pet_render::{ModelGpu, RenderError, SceneRenderer};
@@ -713,16 +713,17 @@ impl Role {
         self.cursor = position;
     }
 
-    /// Builds a hit-test snapshot of the current frame.
-    pub fn snapshot(&self) -> FrameSnapshot {
-        FrameSnapshot::new(self.model.meshes(), Arc::clone(&self.textures), self.matrix)
-    }
-
     /// Tests a local physical-pixel cursor position against the model.
     pub fn hit_test(&mut self, cursor: (f32, f32), alpha_threshold: u8, now_ms: u64) -> bool {
-        let snapshot = self.snapshot();
         let size = self.window.inner_size();
-        let result = snapshot.hit_test(cursor, (size.width, size.height), alpha_threshold);
+        let result = hit_test_meshes(
+            self.model.meshes(),
+            &self.textures,
+            self.matrix,
+            cursor,
+            (size.width, size.height),
+            alpha_threshold,
+        );
         self.stability.confirm(result.hit, cursor, now_ms)
     }
 
@@ -731,8 +732,7 @@ impl Role {
     /// The 7-region split uses content bounds, excluding transparent padding.
     pub fn region_at(&mut self, cursor: (f32, f32)) -> pet_config::ClickRegion {
         let size = self.window.inner_size();
-        let snapshot = self.snapshot();
-        let Some(point) = snapshot.cursor_to_model(cursor, (size.width, size.height)) else {
+        let Some(point) = cursor_to_model(self.matrix, cursor, (size.width, size.height)) else {
             return pet_config::ClickRegion::UpperBodyCenter;
         };
         let area = self
@@ -966,15 +966,16 @@ impl Role {
             return (true, false);
         }
         let local = (global.0 - x as f32, global.1 - y as f32);
-        let snapshot = self.snapshot();
         let size = self.window.inner_size();
-        let raw_hit = snapshot
-            .hit_test(
-                local,
-                (size.width, size.height),
-                config.live2d_hit_alpha_threshold,
-            )
-            .hit;
+        let raw_hit = hit_test_meshes(
+            self.model.meshes(),
+            &self.textures,
+            self.matrix,
+            local,
+            (size.width, size.height),
+            config.live2d_hit_alpha_threshold,
+        )
+        .hit;
         let hit = self.stability.confirm_with(raw_hit, local, now_ms, 80);
         (!hit, hit)
     }

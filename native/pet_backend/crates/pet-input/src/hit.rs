@@ -258,15 +258,7 @@ impl FrameSnapshot {
 
     /// Maps a physical-pixel cursor position to a model-space point.
     pub fn cursor_to_model(&self, cursor: (f32, f32), surface: (u32, u32)) -> Option<(f32, f32)> {
-        if surface.0 == 0 || surface.1 == 0 {
-            return None;
-        }
-        let clip_x = (cursor.0 / surface.0 as f32) * 2.0 - 1.0;
-        let clip_y = 1.0 - (cursor.1 / surface.1 as f32) * 2.0;
-        Some((
-            self.matrix.invert_transform_x(clip_x),
-            self.matrix.invert_transform_y(clip_y),
-        ))
+        cursor_to_model(self.matrix, cursor, surface)
     }
 
     /// Tests one physical-pixel cursor position.
@@ -313,20 +305,109 @@ impl FrameSnapshot {
     }
 
     fn triangle_uv(&self, drawable: &HitDrawable, point: (f32, f32)) -> Option<([f32; 2], f32)> {
-        for triangle in drawable.indices.chunks_exact(3) {
-            let a = drawable.vertices.get(triangle[0] as usize)?;
-            let b = drawable.vertices.get(triangle[1] as usize)?;
-            let c = drawable.vertices.get(triangle[2] as usize)?;
-            if let Some((u, v, w)) = barycentric(point, a.position, b.position, c.position) {
-                let uv = [
-                    a.uv[0] * u + b.uv[0] * v + c.uv[0] * w,
-                    a.uv[1] * u + b.uv[1] * v + c.uv[1] * w,
-                ];
-                return Some((uv, 1.0));
+        triangle_uv(&drawable.indices, point, |index| {
+            drawable.vertices.get(index).copied()
+        })
+    }
+}
+
+/// Maps a cursor without building or copying any mesh geometry.
+pub fn cursor_to_model(
+    matrix: Matrix44,
+    cursor: (f32, f32),
+    surface: (u32, u32),
+) -> Option<(f32, f32)> {
+    if surface.0 == 0 || surface.1 == 0 {
+        return None;
+    }
+    let clip_x = (cursor.0 / surface.0 as f32) * 2.0 - 1.0;
+    let clip_y = 1.0 - (cursor.1 / surface.1 as f32) * 2.0;
+    Some((
+        matrix.invert_transform_x(clip_x),
+        matrix.invert_transform_y(clip_y),
+    ))
+}
+
+/// Tests live meshes on their owning thread, without allocating a snapshot.
+/// Drawable indices match the filtered order in [`FrameSnapshot`].
+pub fn hit_test_meshes(
+    meshes: &[Moc3DrawableMesh],
+    textures: &[AlphaTexture],
+    matrix: Matrix44,
+    cursor: (f32, f32),
+    surface: (u32, u32),
+    alpha_threshold: u8,
+) -> HitResult {
+    let point = cursor_to_model(matrix, cursor, surface);
+    let mut result = HitResult {
+        hit: false,
+        model_point: point.unwrap_or((0.0, 0.0)),
+        drawable_index: None,
+    };
+    let Some(point) = point else {
+        return result;
+    };
+    let drawables = meshes.iter().filter(|mesh| {
+        !mesh.vertices().is_empty()
+            && mesh.indices().len() >= 3
+            && (mesh.opacity() > 0.01 || mesh.opacity().is_nan())
+    });
+    for (index, mesh) in drawables.enumerate() {
+        let first = mesh.vertices()[0].position();
+        let mut bounds = Bounds::from_corners((first[0], first[1]), (first[0], first[1]));
+        for vertex in &mesh.vertices()[1..] {
+            let [x, y] = vertex.position();
+            bounds.min_x = bounds.min_x.min(x);
+            bounds.min_y = bounds.min_y.min(y);
+            bounds.max_x = bounds.max_x.max(x);
+            bounds.max_y = bounds.max_y.max(y);
+        }
+        if point.0 < bounds.min_x
+            || point.0 > bounds.max_x
+            || point.1 < bounds.min_y
+            || point.1 > bounds.max_y
+        {
+            continue;
+        }
+        let uv = triangle_uv(mesh.indices(), point, |index| {
+            mesh.vertices().get(index).map(|vertex| HitVertex {
+                position: vertex.position(),
+                uv: vertex.uv(),
+            })
+        });
+        if let Some((uv, coverage)) = uv {
+            let texture_index = usize::try_from(mesh.texture_index()).unwrap_or(0);
+            let alpha = textures
+                .get(texture_index)
+                .map_or(255, |t| sample_alpha(t, uv));
+            if (alpha as f32 / 255.0 * mesh.opacity() * coverage) * 255.0 > alpha_threshold as f32 {
+                result.hit = true;
+                result.drawable_index = Some(index);
+                return result;
             }
         }
-        None
     }
+    result
+}
+
+fn triangle_uv(
+    indices: &[u16],
+    point: (f32, f32),
+    vertex: impl Fn(usize) -> Option<HitVertex>,
+) -> Option<([f32; 2], f32)> {
+    for triangle in indices.chunks_exact(3) {
+        let a = vertex(triangle[0] as usize)?;
+        let b = vertex(triangle[1] as usize)?;
+        let c = vertex(triangle[2] as usize)?;
+        if let Some((u, v, w)) = barycentric(point, a.position, b.position, c.position) {
+            let uv = [
+                a.uv[0] * u + b.uv[0] * v + c.uv[0] * w,
+                a.uv[1] * u + b.uv[1] * v + c.uv[1] * w,
+            ];
+            return Some((uv, 1.0));
+        }
+    }
+    None
 }
 
 /// Barycentric coordinates of `point` inside triangle `a,b,c` (any winding).
@@ -482,6 +563,63 @@ mod tests {
         assert!(!snapshot.hit_test((50.0, 50.0), (100, 100), 8).hit);
         // Lowering the threshold below 0 is impossible, so alpha 0 never hits.
         assert!(!snapshot.hit_test((50.0, 50.0), (100, 100), 0).hit);
+    }
+
+    #[test]
+    fn borrowed_hit_tests_match_snapshots_for_geometry_alpha_and_transforms() {
+        use neocari::moc3::Moc3DrawableVertex;
+        let mesh = |opacity, texture, indices| {
+            Moc3DrawableMesh::from_parts(
+                texture,
+                0,
+                opacity,
+                0.0,
+                vec![
+                    Moc3DrawableVertex::new([-0.7, 0.8], [0.0, 0.0]),
+                    Moc3DrawableVertex::new([0.9, 0.6], [1.0, 0.0]),
+                    Moc3DrawableVertex::new([0.4, -0.9], [0.7, 1.0]),
+                ],
+                indices,
+                vec![],
+            )
+        };
+        let textures = Arc::new(vec![AlphaTexture::from(DecodedTexture::new(
+            2,
+            2,
+            vec![0, 0, 0, 0, 0, 0, 0, 85, 0, 0, 0, 170, 0, 0, 0, 255],
+        ))]);
+        for opacity in [0.0, 0.01, 0.02, 0.5, 1.0] {
+            for texture in [-1, 0, 7] {
+                let meshes = vec![
+                    mesh(0.0, 0, vec![0, 1, 2]),
+                    mesh(1.0, 0, vec![0, 1]),
+                    mesh(opacity, texture, vec![0, 1, 2]),
+                    mesh(1.0, 0, vec![0, 9, 2]),
+                    quad_mesh(0.2),
+                ];
+                for scale in [1.0, -0.7] {
+                    let mut matrix = Matrix44::identity();
+                    matrix.scale(scale, 0.8);
+                    matrix.translate(0.1, -0.2);
+                    let snapshot = FrameSnapshot::new(&meshes, Arc::clone(&textures), matrix);
+                    for surface in [(100, 80), (0, 80), (100, 0)] {
+                        for y in (0..=100).step_by(5) {
+                            for x in (0..=100).step_by(5) {
+                                for threshold in [0, 8, 84, 128, 254, 255] {
+                                    let cursor = (x as f32, y as f32);
+                                    assert_eq!(
+                                        hit_test_meshes(
+                                            &meshes, &textures, matrix, cursor, surface, threshold
+                                        ),
+                                        snapshot.hit_test(cursor, surface, threshold),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

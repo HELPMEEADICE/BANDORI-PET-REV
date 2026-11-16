@@ -131,6 +131,27 @@ cargo run --release --manifest-path native/pet_backend/Cargo.toml --example rend
 
 两种模型的全程几何校验值及三个抽样帧的 RGBA 像素在优化前后均一致。moc3 动画求值路径没有改动，表中的小幅波动保留原始测量结果；实际收益随模型、驱动及硬件而变化。
 
+## 鼠标检测与像素动画开销
+
+鼠标悬停、点击和透明区域穿透在模型所属线程上直接读取当前网格，不再为每次检测分配和复制完整的顶点、UV 与索引快照。区域分类只做坐标转换。需要独立持有几何数据的调用方仍可使用 `FrameSnapshot`；两条检测路径共用三角形插值和 alpha 采样逻辑。像素动画继续推进时间和动作状态，只在实际显示的行列发生变化时重建四边形。
+
+以下 CPU 基准可读取普通模型文件、像素 WebP、VRM 或归档虚拟路径。运行前会比较两条路径在 441 个光标位置的完整命中结果，输出每次检测耗时、累计分配次数和字节数，并断言直接读取路径没有堆分配：
+
+```sh
+cargo run --release --manifest-path native/pet_backend/Cargo.toml --example hit_test_benchmark --locked -- models/kasumi.zst::live_default/model.json 20000
+cargo run --release --manifest-path native/pet_backend/Cargo.toml --example hit_test_benchmark --locked -- pixels/arisa.webp 20000
+```
+
+2026-11-16，本机 release 构建各测量 20,000 次，光标按 21×21 网格采样，单轮结果如下。模型加载、纹理解码及 alpha 提取不计入耗时；分配计数器本身有少量计时开销。
+
+| 模型 | 检测耗时：快照 → 直接读取 | 每次检测分配次数 | 每次检测累计分配字节 |
+| --- | --- | --- | --- |
+| Arisa `school_summer-2023`（moc，108 网格） | 22.42 → 8.18 µs | 197 → 0 | 103,110 → 0 |
+| Miku `arbeit_livehouse_01`（moc3，301 网格） | 93.75 → 16.48 µs | 482 → 0 | 257,208 → 0 |
+| Arisa 像素角色 | 0.144 → 0.021 µs | 3 → 0 | 156 → 0 |
+
+这里的字节数是单次检测累计申请的临时内存，不代表进程常驻内存或整体内存占用的降幅。耗时也不代表最终呈现 FPS；实际收益取决于模型复杂度与鼠标位置。
+
 ## 来源与许可
 
 原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。

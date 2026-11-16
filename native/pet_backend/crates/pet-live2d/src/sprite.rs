@@ -17,6 +17,7 @@ pub struct SpriteAdapter {
     elapsed: f32,
     cols: f32,
     rows: f32,
+    displayed_frame: Option<(usize, u64)>,
 }
 
 impl SpriteAdapter {
@@ -63,6 +64,7 @@ impl SpriteAdapter {
             elapsed: 0.0,
             cols,
             rows,
+            displayed_frame: None,
         };
         result.update(0.0);
         Ok(result)
@@ -90,8 +92,13 @@ impl SpriteAdapter {
             self.elapsed = 0.0;
             return self.update(0.0);
         }
-        let col = (frame % frames) as f32;
-        let row = animation["row"].as_u64().unwrap_or(0) as f32;
+        let col = frame % frames;
+        let row = animation["row"].as_u64().unwrap_or(0);
+        if self.displayed_frame == Some((col, row)) {
+            return true;
+        }
+        self.displayed_frame = Some((col, row));
+        let (col, row) = (col as f32, row as f32);
         let (u0, v0, u1, v1) = (
             col / self.cols,
             row / self.rows,
@@ -152,5 +159,72 @@ impl SpriteAdapter {
     }
     pub fn face_height(&self) -> Option<f32> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sprite() -> SpriteAdapter {
+        let mut sprite = SpriteAdapter {
+            info: ModelInfo {
+                format: ModelFormat::Moc,
+                motion_groups: vec!["idle".into(), "jump".into()],
+                expression_names: vec![],
+                texture_count: 1,
+                canvas_width: 32.0,
+                canvas_height: 48.0,
+            },
+            textures: vec![],
+            meshes: vec![],
+            animations: serde_json::json!({
+                "idle": {"frames": 4, "fps": 12, "row": 0, "loop": true},
+                "jump": {"frames": 2, "fps": 12, "row": 1, "loop": false},
+            }),
+            active: "idle".into(),
+            elapsed: 0.0,
+            cols: 4.0,
+            rows: 2.0,
+            displayed_frame: None,
+        };
+        assert!(sprite.update(0.0));
+        sprite
+    }
+
+    #[test]
+    fn unchanged_sprite_frame_keeps_geometry_and_allocations() {
+        let mut sprite = sprite();
+        let meshes = sprite.meshes.as_ptr();
+        let vertices = sprite.meshes[0].vertices().as_ptr();
+        let original = sprite.meshes.clone();
+        for _ in 0..10 {
+            assert!(sprite.update(1.0 / 60.0));
+            assert_eq!(sprite.meshes, original);
+            assert_eq!(sprite.meshes.as_ptr(), meshes);
+            assert_eq!(sprite.meshes[0].vertices().as_ptr(), vertices);
+        }
+        assert!(sprite.update(0.1));
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.25, 0.0]);
+        assert!(sprite.update(0.75));
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn sprite_motion_changes_and_completion_update_the_displayed_row() {
+        let mut sprite = sprite();
+        assert!(sprite.play_motion("jump"));
+        sprite.update(0.0);
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.0, 0.5]);
+        sprite.update(0.25);
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.25, 0.5]);
+        sprite.update(0.25);
+        assert_eq!(sprite.active_motion_group(), Some("idle"));
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.0, 0.0]);
+        sprite.update(0.25);
+        sprite.stop_motions();
+        sprite.update(0.0);
+        assert_eq!(sprite.meshes[0].vertices()[0].uv(), [0.0, 0.0]);
+        assert!(!sprite.play_motion("missing"));
     }
 }
