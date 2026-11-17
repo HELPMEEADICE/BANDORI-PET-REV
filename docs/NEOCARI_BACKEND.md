@@ -111,6 +111,10 @@ cargo run --manifest-path native/pet_backend/Cargo.toml --example window_smoke -
 
 ## 渲染性能基准
 
+2026-11-17 更新 Neocari 至 `0bc5c78094fac02b186d2617e075f1b0007cd35a`。GPU 网格缓冲将每顶点 16 字节的位置/UV 与每网格 28 字节的透明度及颜色数据分开存储；几何和材质变化独立上传，连续变化区间合并写入，未变化帧不上传网格数据。现有遮罩、模型、预览与 FPS 绘制接口自动选择对应管线，保留透明网格的绘制顺序。上游同时复用合成 uniform 缓冲与绑定组，并按需分配离屏组遮罩纹理；这些合成优化仅在调用上游模型合成接口时生效，不代表本项目已新增完整 Cubism 5.3 离屏组合成支持。
+
+本次更新在 Windows 上通过格式检查、workspace Clippy 和完整 Rust 测试（497 passed、5 ignored）。额外启用的 GPU 动画缓冲像素对比、嵌套遮罩合成像素对比、47 项上游渲染器集成测试及 DirectComposition 交换链重配置回归均通过。重建 release 后端后，Kasumi MOC（含 FPS）、Tomori MOC3 和 Arisa 像素角色均通过真实 GPU／窗口／IPC 冒烟测试，Python 后端通信测试 5 项通过。
+
 动画顶点按连续变化的网格合并上传，未变化的网格仍跳过；遮罩计划在边界变化时复用分组，只在显隐或拓扑变化时重建。`.moc` 的口型覆盖在物理和姿态之后、网格求值之前应用，避免同一帧重复求值。
 
 使用已解压的模型运行基准，输出 JSON 中的动画求值和网格上传准备耗时（微秒）：
@@ -154,6 +158,6 @@ cargo run --release --manifest-path native/pet_backend/Cargo.toml --example hit_
 
 ## 来源与许可
 
-原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `f4eee3e95ec27530a1ebfdb60aa6bd478b4cabbc`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。
+原生组件参考 [BANDORI-PET-LITE](https://github.com/HELPMEEADICE/BANDORI-PET-LITE) 的 `b102c3123f1e74262b4155237d2b2ad31d5c7c6a`：模型适配、渲染、窗口、输入、行为和配置公共类型在此基础上调整，采用 GPL-3.0-only。Neocari 使用子模块固定在 `0bc5c78094fac02b186d2617e075f1b0007cd35a`，参见其 `LICENSE` 和 `LICENSES/`。发布包携带这些许可；本项目不在安装包中附带角色模型。
 
 Lua 插件仍使用 `lupa.luajit21`；安装包保留该插件运行时。旧 Live2D Lua 适配器、命中区域脚本、字节码编译和渲染源码打包已移除。
