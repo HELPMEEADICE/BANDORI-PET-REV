@@ -9,6 +9,31 @@ permissions:
   contents: read
 
 jobs:
+  database-python-abi:
+    name: Database ABI / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install stable Rust and Python test runner
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          python -m pip install pytest
+      - name: Build and test the native database binding
+        run: |
+          python tools/build_db.py --debug
+          python -m pytest tests/test_rust_database.py -q
   native:
     strategy:
       fail-fast: false
@@ -65,6 +90,7 @@ jobs:
       - name: Build Python IPC extension and non-graphical Rust peer
         run: |
           python tools/build_ipc.py --debug
+          python tools/build_db.py --debug
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-ipc --example ipc_peer --locked
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-ipc --example level_peer --locked
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-behavior --example music_trace --locked
@@ -74,6 +100,8 @@ jobs:
         run: python -m pytest tests/test_music_bounce.py -q
       - name: Test queue compatibility, concurrency and crash recovery
         run: python -m pytest tests/test_shared_memory_ipc.py tests/test_rust_ipc.py -q
+      - name: Test native database compatibility, concurrency and recovery
+        run: python -m pytest tests/test_rust_database.py -q
       - name: Test Python archive bridge
         run: python -m pytest tests/test_native_assets.py -q
       - name: Test Python to Rust shared memory

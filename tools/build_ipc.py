@@ -22,7 +22,7 @@ def build(*, release=True, target=None, crate="pet-ipc-python", module="_pet_ipc
     if sysconfig.get_config_var("Py_GIL_DISABLED"):
         raise RuntimeError("Use the supported GIL-enabled CPython 3.10+ build")
     if sys.version_info < (3, 10):
-        raise RuntimeError("pet-ipc requires CPython 3.10+")
+        raise RuntimeError(f"{crate} requires CPython 3.10+")
     if target is None and sys.platform == "darwin":
         machine = platform.machine().lower()
         target = ("aarch64" if machine in {"arm64", "aarch64"} else "x86_64") + "-apple-darwin"
@@ -43,7 +43,7 @@ def build(*, release=True, target=None, crate="pet-ipc-python", module="_pet_ipc
         if message.get("reason") == "compiler-artifact" and message["target"]["name"] == module:
             libraries.extend(Path(name) for name in message["filenames"] if Path(name).suffix in {".dll", ".so", ".dylib"})
     if len(libraries) != 1:
-        raise RuntimeError(f"Expected one pet-ipc extension artifact, got {libraries}")
+        raise RuntimeError(f"Expected one {crate} extension artifact, got {libraries}")
     suffix = ".pyd" if sys.platform == "win32" else ".abi3.so"
     destination = ROOT / "bandori_core" / (module + suffix)
     # Do not let an older interpreter-specific extension mask the fresh build.
