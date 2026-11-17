@@ -68,7 +68,7 @@ class ConfigTempCleanupTest(unittest.TestCase):
             self.assertTrue(runtime_tmp.exists())
             self.assertTrue(lock_file.exists())
 
-    def test_database_lock_is_removed_after_close(self):
+    def test_native_database_needs_no_python_file_lock(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "data.db"
 
@@ -76,10 +76,7 @@ class ConfigTempCleanupTest(unittest.TestCase):
             db.close()
 
             lock_exists = Path(str(db_path) + ".lock").exists()
-            if os.name == "nt":
-                self.assertFalse(lock_exists)
-            else:
-                self.assertTrue(lock_exists)
+            self.assertFalse(lock_exists)
 
 
 if __name__ == "__main__":

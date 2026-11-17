@@ -120,9 +120,12 @@ python -m venv venv
 ```bash
 pip install -r requirements.txt
 python tools/build_ipc.py
+python tools/build_db.py
 ```
 
 `tools/build_ipc.py` 为当前 Python 和 CPU 架构显式构建 Rust IPC 扩展。更新 IPC 源码后需重新运行；模块导入不会触发编译，缺少扩展会明确报错。协议、生命周期、测试与基准见 [Rust IPC 说明](docs/rust-ipc.md)。
+
+`tools/build_db.py` 显式构建必需的 Rust SQLite 扩展，复用同一套 PyO3 abi3 和架构选择逻辑。源码修改后需重新构建；程序启动不会自动运行 Cargo。数据库结构、兼容接口、备份恢复及性能结果见 [Rust 数据库说明](docs/rust-database-migration.md)。
 
 > **Wayland 用户：** 原生宠物后端目前使用 XWayland。设置和聊天仍使用 Qt。宠物窗口不再使用旧版 Qt layer-shell 桥；具体要求见 [Neocari 后端说明](docs/NEOCARI_BACKEND.md)。
 

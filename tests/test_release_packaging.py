@@ -24,6 +24,7 @@ def frozen_windows_tree(tmp_path, machine=0x8664, arch="AMD64"):
         (build / f"{name}.exe").write_bytes(header)
     (build / "lib" / "bandori_core").mkdir()
     (build / "lib" / "bandori_core" / "_pet_ipc.pyd").write_bytes(header)
+    (build / "lib" / "bandori_core" / "_pet_db.pyd").write_bytes(header)
     return build
 
 
@@ -125,3 +126,37 @@ def test_checksums_cover_installer_bytes_and_require_every_format(tmp_path):
     (tmp_path / names[-1]).touch()
     with pytest.raises(ValueError, match="Missing or empty installer"):
         release.write_checksums(tmp_path, names, "SHA256SUMS.txt")
+
+
+def test_packaging_requires_matching_rust_database(tmp_path):
+    build = frozen_windows_tree(tmp_path)
+    with pytest.raises(ValueError, match="database extension architecture"):
+        release.validate_db_extension(build, "windows", "aarch64")
+    (build / "lib" / "bandori_core" / "_pet_db.pyd").unlink()
+    with pytest.raises(ValueError, match="Rust database extension"):
+        release.validate_build(build, "windows", "x86_64")
+
+
+@pytest.mark.parametrize("target,arch", [
+    ("windows", "x86_64"), ("windows", "aarch64"),
+    ("linux", "x86_64"), ("linux", "aarch64"),
+    ("macos", "x86_64"), ("macos", "aarch64"),
+])
+def test_database_extension_header_validation_for_all_release_targets(tmp_path, target, arch):
+    header = bytearray(70)
+    suffix = ".pyd" if target == "windows" else ".abi3.so"
+    if target == "windows":
+        header[:2] = b"MZ"
+        struct.pack_into("<I", header, 60, 64)
+        struct.pack_into("<4sH", header, 64, b"PE\0\0", 0x8664 if arch == "x86_64" else 0xAA64)
+    elif target == "linux":
+        header[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", header, 18, 62 if arch == "x86_64" else 183)
+    else:
+        header[:4] = b"\xcf\xfa\xed\xfe"
+        struct.pack_into("<I", header, 4, 0x01000007 if arch == "x86_64" else 0x0100000C)
+    path = tmp_path / ("_pet_db" + suffix)
+    path.write_bytes(header)
+    assert release.validate_db_extension(tmp_path, target, arch) == path
+    with pytest.raises(ValueError, match="architecture"):
+        release.validate_db_extension(tmp_path, target, "aarch64" if arch == "x86_64" else "x86_64")

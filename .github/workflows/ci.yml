@@ -225,6 +225,7 @@ jobs:
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-ipc --example level_peer --locked
           cargo build --manifest-path native/pet_backend/Cargo.toml -p pet-behavior --example music_trace --locked
           python tools/build_ipc.py --debug
+          python tools/build_db.py --debug
       - name: Run regression tests
         shell: bash
         run: |

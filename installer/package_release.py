@@ -54,29 +54,38 @@ def installer_names(target, arch, version=APP_VERSION):
 
 def validate_ipc_extension(directory, target, arch):
     """Require the Rust IPC extension and verify the frozen target architecture."""
+    return validate_native_extension(directory, target, arch, "_pet_ipc", "IPC")
+
+
+def validate_db_extension(directory, target, arch):
+    """The database extension is mandatory on every release architecture."""
+    return validate_native_extension(directory, target, arch, "_pet_db", "database")
+
+
+def validate_native_extension(directory, target, arch, module, label):
     suffix = ".pyd" if target == "windows" else ".so"
-    extensions = list(directory.rglob("*_pet_ipc*" + suffix))
+    extensions = list(directory.rglob("*" + module + "*" + suffix))
     if len(extensions) != 1 or extensions[0].stat().st_size == 0:
-        raise ValueError(f"Expected one Rust IPC extension in {directory}, got {extensions}")
+        raise ValueError(f"Expected one Rust {label} extension in {directory}, got {extensions}")
     path = extensions[0]
     with path.open("rb") as binary:
         header = binary.read(64)
         if target == "windows":
             if len(header) < 64 or header[:2] != b"MZ":
-                raise ValueError(f"Invalid IPC extension: {path}")
+                raise ValueError(f"Invalid {label} extension: {path}")
             binary.seek(struct.unpack_from("<I", header, 60)[0])
             pe = binary.read(6)
             expected = 0x8664 if arch == "x86_64" else 0xAA64
             if len(pe) != 6 or struct.unpack("<4sH", pe) != (b"PE\0\0", expected):
-                raise ValueError(f"Wrong IPC extension architecture: {path}")
+                raise ValueError(f"Wrong {label} extension architecture: {path}")
         elif target == "linux":
             expected = 62 if arch == "x86_64" else 183
             if len(header) < 20 or header[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", header, 18)[0] != expected:
-                raise ValueError(f"Wrong IPC extension architecture: {path}")
+                raise ValueError(f"Wrong {label} extension architecture: {path}")
         else:
             expected = 0x01000007 if arch == "x86_64" else 0x0100000C
             if len(header) < 8 or header[:4] != b"\xcf\xfa\xed\xfe" or struct.unpack_from("<I", header, 4)[0] != expected:
-                raise ValueError(f"Wrong IPC extension architecture (thin Mach-O required): {path}")
+                raise ValueError(f"Wrong {label} extension architecture (thin Mach-O required): {path}")
     return path
 
 
@@ -96,6 +105,7 @@ def validate_build(directory, target, arch):
     if not assets_library.is_file() or assets_library.stat().st_size == 0:
         raise ValueError(f"Missing pet-assets library: {assets_library}")
     validate_ipc_extension(directory, target, arch)
+    validate_db_extension(directory, target, arch)
     for name in EXECUTABLES:
         path = directory / (name + (".exe" if target == "windows" else ""))
         with path.open("rb") as binary:

@@ -165,13 +165,23 @@ class DatabaseMemorySafetyTests(unittest.TestCase):
                     chat_attachment_manager.chat_attachment_dir(),
                 )
 
-    def test_posix_database_lock_file_is_persistent(self):
-        with patch.object(database_manager.os, "name", "posix"):
-            self.assertFalse(database_manager._remove_database_lock_on_close())
+    def test_native_database_preserves_wal_and_foreign_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = DatabaseManager(str(Path(temp_dir) / "data.db"))
+            try:
+                self.assertEqual(("wal",), db._conn.execute("PRAGMA journal_mode").fetchone())
+                self.assertEqual((1,), db._conn.execute("PRAGMA foreign_keys").fetchone())
+            finally:
+                db.close()
 
-    def test_windows_database_lock_file_can_be_cleaned_up(self):
-        with patch.object(database_manager.os, "name", "nt"):
-            self.assertTrue(database_manager._remove_database_lock_on_close())
+    def test_close_rolls_back_uncommitted_native_transaction(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = str(Path(temp_dir) / "data.db")
+            db = DatabaseManager(path)
+            db._conn.execute("INSERT INTO conversations(character) VALUES ('uncommitted')")
+            db.close()
+            with closing(sqlite3.connect(path)) as conn:
+                self.assertEqual((0,), conn.execute("SELECT COUNT(*) FROM conversations").fetchone())
 
     def test_character_aliases_are_loaded_from_the_asset_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

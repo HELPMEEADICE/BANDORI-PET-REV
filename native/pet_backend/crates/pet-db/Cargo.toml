@@ -1,0 +1,15 @@
+[package]
+name = "pet-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.43", features = ["bundled", "backup"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+fs2.workspace = true
+

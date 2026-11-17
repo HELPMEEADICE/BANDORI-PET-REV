@@ -86,10 +86,16 @@ class BuildExeWithEmptyModels(build_exe):
         # cx_Freeze discover the extension as an actual imported native module.
         from tools.build_ipc import build as build_ipc
         build_ipc(target=rust_target if sys.platform == "darwin" else None)
+        from tools.build_db import build as build_db
+        build_db(target=rust_target if sys.platform == "darwin" else None)
         super().run()
         build_dir = Path(self.build_exe)
-        from installer.package_release import validate_ipc_extension
+        from installer.package_release import validate_ipc_extension, validate_db_extension
         validate_ipc_extension(
+            build_dir, {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux"),
+            "aarch64" if release_arch_name() == "ARM64" else "x86_64",
+        )
+        validate_db_extension(
             build_dir, {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux"),
             "aarch64" if release_arch_name() == "ARM64" else "x86_64",
         )
@@ -101,6 +107,8 @@ class BuildExeWithEmptyModels(build_exe):
         assets_name = "pet_assets.dll" if sys.platform == "win32" else "libpet_assets.dylib" if sys.platform == "darwin" else "libpet_assets.so"
         shutil.copy2(native_output / "release" / assets_name, build_dir / assets_name)
         subprocess.run([sys.executable, str(BASE_DIR / "tools" / "smoke_frozen_ipc.py"),
+                        str(build_dir.resolve())], cwd=BASE_DIR, check=True)
+        subprocess.run([sys.executable, str(BASE_DIR / "tools" / "smoke_frozen_db.py"),
                         str(build_dir.resolve())], cwd=BASE_DIR, check=True)
         native_licenses = build_dir / "licenses" / "neocari"
         native_licenses.mkdir(parents=True, exist_ok=True)
@@ -520,7 +528,7 @@ include_files = [item for item in include_files if item is not None]
 build_exe_options = {
     "build_exe": str(BASE_DIR / "BUILD" / f"BANDORI-PET-REV-RELEASE-{release_platform_name()}-{release_arch_name()}"),
     "include_files": include_files,
-    "includes": ["bandori_audio.tts_manager", "lupa.luajit21", "bandori_core._pet_ipc"],
+    "includes": ["bandori_audio.tts_manager", "lupa.luajit21", "bandori_core._pet_ipc", "bandori_core._pet_db"],
     "packages": [
         "OpenGL",
         "PIL",
