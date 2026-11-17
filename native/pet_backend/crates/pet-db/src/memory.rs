@@ -73,7 +73,11 @@ pub fn change_state(c: &Connection, a: &Value, delta: bool) -> Result<Value> {
         let n = if delta {
             int(&current, key).saturating_add(int(a, &format!("{key}_delta")))
         } else {
-            integer(&a[key]).unwrap_or(int(&current, key))
+            if a[key].is_null() {
+                int(&current, key)
+            } else {
+                clamp(&a[key], 0, 100, default)
+            }
         };
         next[key] = json!(clamp(&json!(n), 0, 100, default));
     }

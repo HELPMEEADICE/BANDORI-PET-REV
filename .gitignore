@@ -37,4 +37,6 @@ config.json.*
 /native/pet_backend/target/
 /bandori_core/_pet_ipc*.pyd
 /bandori_core/_pet_ipc*.so
+/bandori_core/_pet_db*.pyd
+/bandori_core/_pet_db*.so
 /.cache/

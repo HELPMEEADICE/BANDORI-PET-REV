@@ -1548,6 +1548,7 @@ dependencies = [
 name = "pet-db"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "rusqlite",
  "serde",
  "serde_json",

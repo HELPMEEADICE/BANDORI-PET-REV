@@ -20,7 +20,12 @@ fn from_python(v: &Bound<'_, PyAny>) -> PyResult<Value> {
         return Ok(Value::from(v.extract::<i64>()?));
     }
     if v.is_instance_of::<PyFloat>() {
-        return Ok(Value::from(v.extract::<f64>()?));
+        let number = v.extract::<f64>()?;
+        return Ok(if number.is_finite() {
+            Value::from(number)
+        } else {
+            Value::String(number.to_string())
+        });
     }
     if v.is_instance_of::<PyString>() {
         return Ok(Value::String(v.extract()?));
@@ -113,6 +118,34 @@ struct NativeDatabase {
 
 #[pymethods]
 impl NativeDatabase {
+    #[staticmethod]
+    fn migrate_legacy(py: Python<'_>, source: PathBuf, target: PathBuf) -> PyResult<()> {
+        py.detach(|| pet_db::maintenance::migrate_legacy(&source, &target))
+            .map_err(|e| error(py, e))
+    }
+    #[staticmethod]
+    fn summary(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyAny>> {
+        to_python(
+            py,
+            py.detach(|| pet_db::maintenance::summary_file(&path))
+                .map_err(|e| error(py, e))?,
+        )
+    }
+    #[staticmethod]
+    #[pyo3(signature=(source,destination,check=true))]
+    fn snapshot(
+        py: Python<'_>,
+        source: PathBuf,
+        destination: PathBuf,
+        check: bool,
+    ) -> PyResult<()> {
+        py.detach(|| pet_db::maintenance::snapshot(&source, &destination, check))
+            .map_err(|e| error(py, e))
+    }
+    fn restore(&self, py: Python<'_>, source: PathBuf) -> PyResult<()> {
+        py.detach(|| self.db.restore(&source))
+            .map_err(|e| error(py, e))
+    }
     #[new]
     fn new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
         py.detach(|| Database::open(&path))

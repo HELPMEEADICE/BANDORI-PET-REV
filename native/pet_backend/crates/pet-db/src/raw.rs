@@ -14,7 +14,6 @@ impl Database {
     pub fn raw_execute(&self, sql: &str, parameters: &[SqlValue]) -> Result<RawOutput> {
         self.with_connection(|c| {
             let keyword = sql
-                .trim_start()
                 .split_whitespace()
                 .next()
                 .unwrap_or("")
@@ -27,9 +26,8 @@ impl Database {
             let mut stmt = c.prepare(sql)?;
             let columns = stmt.column_names().map(String::from).collect::<Vec<_>>();
             let mut rows = vec![];
-            let rowcount;
-            if columns.is_empty() {
-                rowcount = stmt.execute(params_from_iter(parameters))? as i64;
+            let rowcount = if columns.is_empty() {
+                stmt.execute(params_from_iter(parameters))? as i64
             } else {
                 let mut cursor = stmt.query(params_from_iter(parameters))?;
                 while let Some(row) = cursor.next()? {
@@ -39,8 +37,8 @@ impl Database {
                             .collect::<rusqlite::Result<Vec<SqlValue>>>()?,
                     );
                 }
-                rowcount = -1;
-            }
+                -1
+            };
             Ok(RawOutput {
                 rows,
                 columns,

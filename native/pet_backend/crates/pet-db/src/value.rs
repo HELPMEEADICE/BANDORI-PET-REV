@@ -30,7 +30,16 @@ pub fn int(a: &Value, key: &str) -> i64 {
     integer(&a[key]).unwrap_or(0)
 }
 pub fn clamp(v: &Value, low: i64, high: i64, default: i64) -> i64 {
-    integer(v).unwrap_or(default).clamp(low, high)
+    let n = match v {
+        Value::Bool(b) => Some(f64::from(u8::from(*b))),
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    };
+    n.filter(|n| n.is_finite())
+        .map(|n| n.round_ties_even().clamp(low as f64, high as f64) as i64)
+        .unwrap_or(default)
+        .clamp(low, high)
 }
 pub fn truth(v: &Value) -> bool {
     match v {
@@ -108,19 +117,32 @@ pub fn cell(v: rusqlite::types::ValueRef<'_>) -> Value {
     }
 }
 pub fn query(c: &Connection, query: &str, params: &[Value]) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    visit(c, query, params, |row| {
+        out.push(row);
+        Ok(())
+    })?;
+    Ok(out)
+}
+/// Stream analytical scans without materializing the database in memory.
+pub fn visit(
+    c: &Connection,
+    query: &str,
+    params: &[Value],
+    mut visitor: impl FnMut(Value) -> Result<()>,
+) -> Result<()> {
     let values = params.iter().map(sql).collect::<Result<Vec<_>>>()?;
     let mut stmt = c.prepare_cached(query)?;
     let names: Vec<String> = stmt.column_names().map(String::from).collect();
     let mut cursor = stmt.query(params_from_iter(values))?;
-    let mut out = Vec::new();
     while let Some(row) = cursor.next()? {
         let mut value = Map::new();
         for (i, name) in names.iter().enumerate() {
             value.insert(name.clone(), cell(row.get_ref(i)?));
         }
-        out.push(Value::Object(value));
+        visitor(Value::Object(value))?;
     }
-    Ok(out)
+    Ok(())
 }
 pub fn one(c: &Connection, q: &str, p: &[Value]) -> Result<Value> {
     Ok(query(c, q, p)?.into_iter().next().unwrap_or(Value::Null))

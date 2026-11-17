@@ -1,11 +1,14 @@
 //! SQLite persistence engine. One connection per manager; no worker, timer or cache
 //! with an unbounded lifetime. Lock order: release GIL -> connection mutex -> SQLite.
+mod albums;
 mod chat;
 mod error;
 mod external;
+pub mod maintenance;
 mod memory;
 mod schema;
 mod search;
+mod statistics;
 pub mod value;
 
 pub use error::{Error, Result};
@@ -72,7 +75,7 @@ impl Database {
         if !c.is_autocommit() {
             // Compatibility calls may have opened a DB-API transaction.
             let result = f(c);
-            if write {
+            if write || result.is_err() {
                 c.execute_batch(if result.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
             }
             return result;
@@ -122,6 +125,23 @@ fn is_write(op: &str) -> bool {
 }
 fn dispatch(c: &Connection, op: &str, a: &Value) -> Result<Value> {
     match op {
+        "chat_database_summary" => maintenance::summary(c),
+        "sanitize_attachments" => maintenance::sanitize(c, a),
+        "start_usage_session"
+        | "end_usage_session"
+        | "heartbeat_usage_session"
+        | "get_usage_today"
+        | "get_usage_week"
+        | "get_usage_all_time"
+        | "get_usage_daily"
+        | "get_chat_summary"
+        | "get_mood_events_for_chart"
+        | "get_daily_message_counts"
+        | "get_messages_per_character_range"
+        | "get_hourly_heatmap" => statistics::call(c, op, a),
+        "get_character_recent_messages"
+        | "get_character_conversation_chain"
+        | "get_character_album_days" => albums::call(c, op, a),
         "get_chat_history_filter_options" => search::filters(c),
         "search_chat_history" => search::search(c, a),
         "get_relationship_state"

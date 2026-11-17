@@ -5,7 +5,7 @@ one native domain call; this cursor exists for legacy callers of ``db._conn``.
 """
 
 
-def open_native(path):
+def native_class():
     try:
         from bandori_core._pet_db import NativeDatabase
     except ImportError as exc:
@@ -14,7 +14,11 @@ def open_native(path):
             "Run `python tools/build_db.py` with this Python interpreter before "
             "launching, or reinstall the matching application release."
         ) from exc
-    return NativeDatabase(str(path))
+    return NativeDatabase
+
+
+def open_native(path):
+    return native_class()(str(path))
 
 
 class NativeCursor:

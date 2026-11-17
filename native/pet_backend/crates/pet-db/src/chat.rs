@@ -174,29 +174,33 @@ fn conversations(c: &Connection, a: &Value, last: bool) -> Result<Value> {
 pub fn token_usage<'a>(rows: impl Iterator<Item = &'a Value>) -> Value {
     let mut totals = json!({"input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated":false,"request_count":0,"untracked_count":0});
     for row in rows {
-        let parsed = parse_json(&text(&row["tool_trace_json"]));
-        let usage = &parsed["llm_usage"];
-        if !usage.is_object() {
-            totals["untracked_count"] = json!(int(&totals, "untracked_count") + 1);
-            continue;
-        }
-        let input = int(usage, "input_tokens").max(0);
-        let output = int(usage, "output_tokens").max(0);
-        let total = integer(&usage["total_tokens"])
-            .filter(|n| *n != 0)
-            .unwrap_or(input.saturating_add(output))
-            .max(0);
-        for (key, n) in [
-            ("input_tokens", input),
-            ("output_tokens", output),
-            ("total_tokens", total),
-            ("request_count", 1),
-        ] {
-            totals[key] = json!(int(&totals, key).saturating_add(n));
-        }
-        totals["estimated"] = json!(truth(&totals["estimated"]) || truth(&usage["estimated"]));
+        accumulate_tokens(&mut totals, row);
     }
     totals
+}
+
+fn accumulate_tokens(totals: &mut Value, row: &Value) {
+    let parsed = parse_json(&text(&row["tool_trace_json"]));
+    let usage = &parsed["llm_usage"];
+    if !usage.is_object() {
+        totals["untracked_count"] = json!(int(totals, "untracked_count") + 1);
+        return;
+    }
+    let input = int(usage, "input_tokens").max(0);
+    let output = int(usage, "output_tokens").max(0);
+    let total = integer(&usage["total_tokens"])
+        .filter(|n| *n != 0)
+        .unwrap_or(input.saturating_add(output))
+        .max(0);
+    for (key, n) in [
+        ("input_tokens", input),
+        ("output_tokens", output),
+        ("total_tokens", total),
+        ("request_count", 1),
+    ] {
+        totals[key] = json!(int(totals, key).saturating_add(n));
+    }
+    totals["estimated"] = json!(truth(&totals["estimated"]) || truth(&usage["estimated"]));
 }
 
 fn metadata(c: &Connection, op: &str, a: &Value) -> Result<Value> {
@@ -326,8 +330,12 @@ pub fn call(c: &Connection, op: &str, a: &Value) -> Result<Value> {
             let (table,mut clause,mut p)=if grouped { ("group_messages","group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)".into(),vec![a["group_key"].clone(),json!(conversation(a)),json!(conversation(a))]) } else { ("messages","conversation_id=?".into(),vec![a["conversation_id"].clone()]) };
             if grouped { scope(a,"user_key",&mut clause,&mut p); }
             let column=if usage { clause.push_str(" AND role='assistant'"); "tool_trace_json" } else { clause.push_str(" AND attachments_json!=''"); "attachments_json" };
-            let rows=query(c,&format!("SELECT {column} FROM {table} WHERE {clause}"),&p)?;
-            if usage { Ok(token_usage(rows.iter())) } else { Ok(json!(rows.iter().map(|r| text(&r[column])).collect::<Vec<_>>())) }
+            let q=format!("SELECT {column} FROM {table} WHERE {clause}");
+            if usage {
+                let mut totals=token_usage([].iter());
+                visit(c,&q,&p,|row|{accumulate_tokens(&mut totals,&row);Ok(())})?;
+                Ok(totals)
+            } else { Ok(json!(query(c,&q,&p)?.into_iter().map(|r| text(&r[column])).collect::<Vec<_>>())) }
         }
         "assign_legacy_chat_history_user" => {
             let p=[json!(user(a))]; let n=exec(c,"UPDATE conversations SET user_key=? WHERE user_key='' OR user_key IS NULL",&p)?;

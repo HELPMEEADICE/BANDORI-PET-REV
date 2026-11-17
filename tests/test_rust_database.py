@@ -1,9 +1,18 @@
 """Storage contract: isolated files only; legacy is a test oracle, never a fallback."""
 import sqlite3
+import inspect
+import multiprocessing
+import os
+import shutil
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 
 import pytest
 
 from bandori_core.database_manager import DatabaseManager
+from bandori_core import database_manager as storage
 from tests.baselines.legacy_database import DatabaseManager as LegacyDatabase
 
 
@@ -39,3 +48,252 @@ def test_storage_contract(factory, tmp_path):
         assert db.get_messages(cid) == []
     finally:
         db.close()
+
+
+def test_public_signatures_are_compatible():
+    for name, member in inspect.getmembers(LegacyDatabase, inspect.isfunction):
+        if not name.startswith("_"):
+            assert inspect.signature(getattr(DatabaseManager, name)) == inspect.signature(member), name
+
+
+def _seed(path):
+    with closing(LegacyDatabase(str(path))) as db:
+        for user in ("甲", "乙", "__default__"):
+            cid = db.create_conversation("灯", "标题", user)
+            for role, content in (("user", "100%_\\ 中文"), ("assistant", "回复🐈"), ("system", "背景")):
+                db.add_message(cid, role, content)
+                db.add_group_message("__group__:灯|爱音", "会话", role, content, user_key=user)
+            db.add_group_message("__group__:灯|爱音", "会话", "assistant", "【灯】\n独白", user_key=user)
+            db.set_group_conversation_temporary_background("__group__:灯|爱音", "仅背景", "风景", user)
+            db.set_conversation_temporary_background(cid, "背景")
+            db.add_character_memory("灯", user, "favorite", "收藏语句：记得🌟", 99)
+            db.add_character_memory("灯", user, "profile", "日本語", 50)
+            db.upsert_relationship_state("灯", user, affection=65, mood="happy")
+            db.apply_relationship_delta("灯", user, affection_delta=-2, trust_delta=2)
+        db.set_group_display_name("__group__:灯|爱音", "群聊")
+        for i in range(55):
+            db.add_external_chat_message({"platform": "qq", "thread_id": "群", "chat_type": "group",
+                                          "message_id": str(i), "text": "你好", "timestamp": "2026-01-01 00:00:00"})
+        sid = db.start_usage_session()
+        db.end_usage_session(sid)
+        for table in ("messages", "group_messages", "character_memories", "mood_events", "conversations"):
+            db._conn.execute(f"UPDATE {table} SET created_at='2026-01-01 12:00:00'")
+        db._conn.execute("UPDATE relationship_states SET updated_at='2026-01-01 12:00:00'")
+        db._conn.commit()
+
+
+@pytest.fixture
+def pair(tmp_path):
+    seed = tmp_path / "seed.db"
+    _seed(seed)
+    paths = [tmp_path / "old.db", tmp_path / "rust.db"]
+    for path in paths:
+        shutil.copy2(seed, path)
+    with closing(LegacyDatabase(str(paths[0]))) as old, closing(DatabaseManager(str(paths[1]))) as new:
+        yield old, new
+
+
+@pytest.mark.parametrize("method,args,kwargs", [
+    ("get_conversations", (), {}), ("get_last_conversation", ("灯", "甲"), {}),
+    ("get_messages", (1,), {}), ("get_messages", (1,), {"limit": 2, "before_id": 3}),
+    ("get_conversation_attachment_payloads", (1,), {}),
+    ("get_conversation_token_usage", (1,), {}), ("get_conversation_token_usage", (None,), {}),
+    ("get_chat_history_filter_options", (), {}),
+    ("search_chat_history", (), {"keyword": "%_\\", "source": "group", "user_key": "甲", "skip_count": True, "limit": 1}),
+    ("search_chat_history", (), {"character": "灯", "date_from": "2026-01-01", "date_to": "2026-01-02", "offset": 1}),
+    ("get_group_messages", ("__group__:灯|爱音", "会话"), {"user_key": "甲"}),
+    ("get_group_conversations", ("__group__:灯|爱音", "甲"), {}),
+    ("get_group_chats", (), {}), ("get_group_display_name", ("__group__:灯|爱音",), {}),
+    ("get_group_conversation_token_usage", ("__group__:灯|爱音", "会话", "甲"), {}),
+    ("get_group_conversation_attachment_payloads", ("__group__:灯|爱音", "会话", "甲"), {}),
+    ("get_group_conversation_temporary_background", ("__group__:灯|爱音", "仅背景", "甲"), {}),
+    ("get_relationship_state", ("灯", "甲"), {}),
+    ("get_character_memories", ("灯", "甲"), {}),
+    ("get_character_memories_by_kind", ("灯", "甲", "profile"), {}),
+    ("get_external_chat_unread_summary", (), {}),
+    ("external_chat_context_text", (), {"platform": "qq", "thread_id": "群", "chat_type": "group"}),
+    ("get_chat_summary", (), {}), ("get_usage_today", (), {}), ("get_usage_week", (), {}),
+    ("get_usage_all_time", (), {}), ("get_usage_daily", (), {}),
+    ("get_mood_events_for_chart", ("灯", 0, "甲"), {}),
+    ("get_daily_message_counts", (3650, "甲"), {}),
+    ("get_messages_per_character_range", (0, "甲"), {}),
+    ("get_hourly_heatmap", (3650, "甲"), {}),
+    ("get_character_recent_messages", ("灯", "甲"), {"character_aliases": {"灯"}}),
+    ("get_character_conversation_chain", ("灯", "甲"), {}),
+    ("get_character_album_days", ("灯", "甲"), {}),
+])
+def test_read_parity(pair, method, args, kwargs):
+    old, new = pair
+    assert getattr(new, method)(*args, **kwargs) == getattr(old, method)(*args, **kwargs)
+
+
+@pytest.mark.parametrize("method,args,kwargs", [
+    ("update_message_content", (1, 1, "改🐈"), {}),
+    ("delete_messages_from", (1, 2), {"include_selected": False}),
+    ("delete_message", (1, 2), {}), ("delete_conversation", (1,), {}),
+    ("delete_empty_conversations", (), {}),
+    ("delete_group_message", ("__group__:灯|爱音", "会话", 1, "甲"), {}),
+    ("delete_group_messages_from", ("__group__:灯|爱音", "会话", 2), {"user_key": "甲"}),
+    ("delete_group_conversation", ("__group__:灯|爱音", "会话", "甲"), {}),
+    ("delete_character_memory", (1, "灯", "甲"), {}),
+    ("delete_character_memories", ([1, "2", -1, "bad"], "灯", "甲"), {}),
+    ("delete_character_memories_like", ("灯", "甲", "日本"), {}),
+    ("mark_external_chat_read", ("qq", "群"), {}),
+    ("delete_external_chat", ("group", "qq"), {}),
+    ("prune_external_group_chat_limit", (), {}),
+    ("purge_external_chat_older_than", (1, "group", "qq"), {}),
+])
+def test_mutation_parity(pair, method, args, kwargs):
+    old, new = pair
+    assert getattr(new, method)(*args, **kwargs) == getattr(old, method)(*args, **kwargs)
+    for table in ("conversations", "messages", "group_messages", "character_memories", "external_chat_messages"):
+        assert new._conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall() == old._conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+
+
+def _write_process(path, cid, count):
+    with closing(DatabaseManager(path)) as db:
+        for i in range(count):
+            db.add_message(cid, "user", f"{os.getpid()}:{i}🐈")
+            if i < 10:
+                db.apply_relationship_delta("灯", "甲", affection_delta=1)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_multithread_writers_and_atomic_state(tmp_path, shared):
+    path = str(tmp_path / "threads.db")
+    with closing(DatabaseManager(path)) as db:
+        cid = db.create_conversation("灯")
+        def write(_):
+            connection = db if shared else DatabaseManager(path)
+            try:
+                for i in range(10):
+                    connection.add_message(cid, "user", str(i))
+                    connection.apply_relationship_delta("灯", "甲", affection_delta=1)
+            finally:
+                if not shared:
+                    connection.close()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(write, range(4)))
+        assert len(db.get_messages(cid)) == 40
+        assert db.get_relationship_state("灯", "甲")["affection"] == 90
+        assert db.integrity_check() == "ok"
+
+
+def test_multiprocess_writers(tmp_path):
+    path = str(tmp_path / "process.db")
+    with closing(DatabaseManager(path)) as db:
+        cid = db.create_conversation("灯")
+        ctx = multiprocessing.get_context("spawn")
+        workers = [ctx.Process(target=_write_process, args=(path, cid, 30)) for _ in range(4)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(30)
+            assert worker.exitcode == 0
+        assert len(db.get_messages(cid)) == 120
+        assert db.get_relationship_state("灯", "甲")["affection"] == 90
+
+
+def _crash_process(path, cid, commit):
+    db = DatabaseManager(path)
+    db._conn.execute("INSERT INTO messages(conversation_id,role,content) VALUES (?,'user','crash🐈')", (cid,))
+    if commit:
+        db._conn.commit()
+    os._exit(29)
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_abrupt_exit_and_wal_recovery(tmp_path, commit):
+    path = str(tmp_path / "crash.db")
+    with closing(DatabaseManager(path)) as db:
+        cid = db.create_conversation("灯")
+    worker = multiprocessing.get_context("spawn").Process(target=_crash_process, args=(path, cid, commit))
+    worker.start()
+    worker.join(20)
+    assert worker.exitcode == 29
+    with closing(DatabaseManager(path)) as reopened:
+        assert len(reopened.get_messages(cid)) == int(commit)
+        assert reopened.integrity_check() == "ok"
+
+
+def test_lock_wait_releases_gil_and_timeout_preserves_data(tmp_path):
+    path = str(tmp_path / "busy.db")
+    with closing(DatabaseManager(path)) as a, closing(DatabaseManager(path)) as b:
+        a._conn.execute("BEGIN IMMEDIATE")
+        b._conn.execute("PRAGMA busy_timeout=100")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            b.create_conversation("failed")
+        b._conn.execute("PRAGMA busy_timeout=2000")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(b.create_conversation, "success")
+            time.sleep(0.05)  # Main thread must regain the GIL to release the writer.
+            assert not future.done()
+            a._conn.rollback()
+            assert future.result(timeout=3) == 1
+        assert b._conn.execute("SELECT character FROM conversations").fetchall() == [("success",)]
+
+
+def test_batch_failure_and_large_history(tmp_path):
+    with closing(DatabaseManager(str(tmp_path / "large.db"))) as db:
+        cid = db.create_conversation("灯")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.add_messages(cid, [{"role": "user", "content": "a"}, {"role": "bad", "content": "b"}])
+        assert db.get_messages(cid) == []
+        ids = db.add_messages(cid, [{"role": "user", "content": f"{i} 中文・日本語🐈"} for i in range(20000)])
+        assert db.get_messages(cid, limit=30)[0]["id"] == ids[-30]
+        assert db.search_chat_history(keyword="19999 中文")["total"] == 1
+        assert len(db.get_messages(cid, limit=1000, before_id=ids[-30])) == 1000
+
+
+def test_live_import_export_and_relationship_roundtrip(tmp_path):
+    source, target, backup = (tmp_path / name for name in ("source.db", "target.db", "backup.db"))
+    with closing(DatabaseManager(str(source))) as source_db, closing(DatabaseManager(str(target))) as live:
+        cid = source_db.create_conversation("新数据🐈")
+        source_db.add_message(cid, "user", "WAL 中的数据")
+        source_db.add_character_memory("灯", "甲", "profile", "日本語")
+        source_db.upsert_relationship_state("灯", "甲", affection=23)
+        live.create_conversation("旧数据")
+        assert storage.export_chat_database(str(backup), str(source))["messages"] == 1
+        revision = live.change_revision()
+        storage.import_chat_database(str(backup), str(target))
+        assert live.change_revision()[1] > revision[1]
+        assert live.get_messages(cid)[0]["content"] == "WAL 中的数据"
+        data = storage.export_relationship_data(str(source))
+        assert storage.import_relationship_data(data, str(target)) == {"relationship_states": 1, "character_memories": 1}
+        assert live.get_relationship_state("灯", "甲")["affection"] == 23
+        # Original Python code can read native output without any format conversion.
+        with closing(LegacyDatabase(str(backup))) as old:
+            assert old.get_messages(cid) == source_db.get_messages(cid)
+
+
+def test_corrupt_import_and_attachment_cleanup_are_non_destructive(tmp_path):
+    target, corrupt = tmp_path / "target.db", tmp_path / "bad.db"
+    corrupt.write_bytes(b"not a sqlite database\x00" * 20)
+    with closing(DatabaseManager(str(target))) as db:
+        cid = db.create_conversation("保留")
+        mid = db.add_message(cid, "user", "保留消息")
+        with pytest.raises(sqlite3.DatabaseError):
+            storage.import_chat_database(str(corrupt), str(target))
+        db._conn.execute("UPDATE messages SET attachments_json=? WHERE id=?", ("{corrupt", mid))
+        db._conn.commit()
+        with pytest.raises(ValueError, match="corrupt attachments_json"):
+            storage.sanitize_chat_attachment_references(str(target))
+        assert db._conn.execute("SELECT attachments_json FROM messages").fetchone() == ("{corrupt",)
+        assert db.get_messages(cid)[0]["content"] == "保留消息"
+    assert corrupt.read_bytes().startswith(b"not a sqlite")
+
+
+def test_interrupt_does_not_wait_for_connection_mutex(tmp_path):
+    with closing(DatabaseManager(str(tmp_path / "interrupt.db"))) as db:
+        started = threading.Event()
+        def expensive():
+            started.set()
+            return db._conn.execute("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n").fetchone()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(expensive)
+            started.wait(2)
+            time.sleep(0.03)
+            db._conn.interrupt()
+            with pytest.raises(sqlite3.OperationalError, match="interrupt"):
+                future.result(timeout=3)
+        assert db.integrity_check() == "ok"
