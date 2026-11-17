@@ -178,14 +178,14 @@ high-water RSS. The three-round local release results are approximately:
 
 | Operation | Rust / Python throughput |
 |---|---:|
-| Single-message insertion | 1.77× |
-| Latest 200-message query | 2.83× |
+| Single-message insertion | 1.74× |
+| Latest 200-message query | 2.81× |
 | Literal substring search | 0.96× |
-| 50-memory query | 1.31× |
-| 200-message transaction | 1.16× |
-| Four concurrent readers/writers | 1.76× |
+| 50-memory query | 1.35× |
+| 200-message transaction | 1.04× |
+| Four concurrent readers/writers | 1.71× |
 
-Search is about 4.3% slower and remains a known performance limitation. The legacy
+Search is about 4.5% slower and remains a known performance limitation. The legacy
 batch baseline uses direct `sqlite3.executemany` because no public bulk API existed.
 The Python and Rust builds use SQLite 3.50.4 and 3.54.1 respectively; this comparison
 measures the complete implementation, not language in isolation. No cross-platform
@@ -216,8 +216,8 @@ Final observed local results:
 
 | Check | Observed result |
 |---|---|
-| Full Python suite | 919 passed, 2 skipped, 200 subtests passed; exit 0 |
-| Native database regression/binding cases | 71 passed within the full suite |
+| Full Python suite | 928 passed, 2 skipped, 200 subtests passed; exit 0 |
+| Native database regression/binding cases | 80 passed within the full suite |
 | Full Cargo workspace, all targets | 495 passed, 0 failed, 5 ignored; 54 test binaries |
 | rustfmt, all workspace members | Passed |
 | Clippy, workspace/all-targets/locked, warnings denied | Passed |
@@ -247,9 +247,12 @@ Staged Git history on `codex/rust-database-backend`:
 | `e721504` | Analytics, albums, safe live restore and thin Python adapter |
 | `4d186e2` | Typed history/bulk optimization, parity, concurrency and benchmark samples |
 | `91418ad` | Cross-platform build/release integration and real frozen smoke tests |
+| `48ca7fc` | Architecture, verification record, recovery regression and generated benchmark report |
+| `d6c4948` | Legacy ID/falsy-value coercion and rollback on argument errors |
 
-The final documentation commit adds this verification record, the generated
-benchmark report and an explicit recovery-from-backup regression case.
+The final 45-sample benchmark rerun uses the implementation committed as
+`d6c4948`. Its results supersede the earlier screening and pre-coercion samples.
+Verification updates record that rerun and the additional parameter-error cases.
 
 The repository's frozen oracle is test/benchmark-only. Do not import it from
 application code. Full FTS indexing, arbitrary DB-API callbacks and corruption
