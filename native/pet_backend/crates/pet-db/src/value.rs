@@ -55,6 +55,9 @@ pub fn user(a: &Value) -> String {
     user_value(&a["user_key"])
 }
 pub fn user_value(v: &Value) -> String {
+    if !truth(v) {
+        return "__default__".into();
+    }
     let s = text(v).trim().to_owned();
     if s.is_empty() {
         "__default__".into()

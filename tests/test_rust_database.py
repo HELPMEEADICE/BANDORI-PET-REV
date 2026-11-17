@@ -56,6 +56,40 @@ def test_public_signatures_are_compatible():
             assert inspect.signature(getattr(DatabaseManager, name)) == inspect.signature(member), name
 
 
+@pytest.mark.parametrize("method,args", [
+    ("update_message_content", (1, "bad-id", "x")),
+    ("delete_messages_from", (1, "bad-id")),
+    ("delete_message", ("bad-id", 1)),
+    ("update_group_message_content", ("group", "thread", "bad-id", "x")),
+    ("delete_group_messages_from", ("group", "thread", "bad-id")),
+    ("delete_group_message", ("group", "thread", "bad-id")),
+    ("get_conversation_token_usage", ("bad-id",)),
+    ("set_conversation_temporary_background", ("bad-id", "x")),
+])
+def test_argument_errors_preserve_class_and_rollback(tmp_path, method, args):
+    for i, factory in enumerate((LegacyDatabase, DatabaseManager)):
+        with closing(factory(str(tmp_path / f"{i}.db"))) as db:
+            db._conn.execute("INSERT INTO conversations(character) VALUES ('uncommitted')")
+            with pytest.raises(ValueError):
+                getattr(db, method)(*args)
+            assert not db._conn.in_transaction
+            assert db._conn.execute("SELECT COUNT(*) FROM conversations").fetchone() == (0,)
+
+
+def test_legacy_falsy_and_numeric_id_coercions(tmp_path):
+    outputs = []
+    for i, factory in enumerate((LegacyDatabase, DatabaseManager)):
+        with closing(factory(str(tmp_path / f"{i}.db"))) as db:
+            cid = db.create_conversation("灯", user_key=False)
+            db.set_conversation_temporary_background(cid, "background")
+            db.add_group_message("group", 0, "user", "default conversation")
+            outputs.append((db.get_conversation_temporary_background(float(cid)+0.8),
+                            db.get_group_messages("group", "default")[0]["content"],
+                            db.add_character_memory("灯", "甲", "note", False),
+                            db.get_conversations(user_key="__default__")[0]["user_key"]))
+    assert outputs[0] == outputs[1]
+
+
 def test_native_binding_and_clear_missing_extension(monkeypatch, tmp_path):
     import sys
     from bandori_core import _pet_db

@@ -191,6 +191,11 @@ impl NativeDatabase {
     }
     fn call(&self, py: Python<'_>, op: &str, args: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let args = from_python(args)?;
+        if !args.is_object() {
+            return Err(PyValueError::new_err(
+                "database arguments must be an object",
+            ));
+        }
         if matches!(op, "get_messages" | "get_group_messages") {
             let messages = py
                 .detach(|| self.db.history(&args, op == "get_group_messages"))

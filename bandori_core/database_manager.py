@@ -174,7 +174,37 @@ class DatabaseManager:
         self._closed = True
 
     def _invoke(self, operation, args):
+        try:
+            return self._invoke_native(operation, args)
+        except Exception:
+            # The old method guard rolled back even on argument-conversion
+            # errors, including a diagnostic transaction opened through _conn.
+            try:
+                self._native.control("rollback")
+            except sqlite3.Error:
+                pass
+            raise
+
+    def _invoke_native(self, operation, args):
         args.pop("self", None)
+        if operation in {"update_message_content", "delete_messages_from", "delete_message"}:
+            args["conversation_id"] = int(args["conversation_id"])
+            args["message_id"] = int(args["message_id"])
+        elif operation in {"update_group_message_content", "delete_group_messages_from", "delete_group_message"}:
+            args["message_id"] = int(args["message_id"])
+        elif operation == "get_conversation_token_usage" and args["conversation_id"]:
+            args["conversation_id"] = int(args["conversation_id"])
+        elif operation in {"get_conversation_temporary_background", "set_conversation_temporary_background", "get_conversation_attachment_payloads"}:
+            try:
+                args["conversation_id"] = int(args["conversation_id"])
+            except (TypeError, ValueError, OverflowError):
+                args["conversation_id"] = None
+            if operation == "set_conversation_temporary_background" and args["conversation_id"] is None:
+                raise ValueError("conversation_id must be an integer")
+        if operation in {"add_character_memory", "update_character_memory", "update_message_content", "update_group_message_content", "set_conversation_temporary_background", "set_group_conversation_temporary_background"}:
+            args["content"] = str(args["content"] or "").strip()
+        if operation == "upsert_relationship_state" and args["summary"] is not None:
+            args["summary"] = str(args["summary"] or "")
         if operation in {"add_message", "add_group_message"}:
             args["attachments_json"] = _json_text(_sanitize_attachments_payload(args.pop("attachments")))
             args["tool_trace_json"] = _json_text(args.pop("tool_trace"))

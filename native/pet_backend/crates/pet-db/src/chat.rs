@@ -43,6 +43,9 @@ pub fn messages(c: &Connection, a: &Value, grouped: bool) -> Result<Value> {
 }
 
 pub fn conversation(a: &Value) -> String {
+    if !truth(&a["conversation_id"]) {
+        return "default".into();
+    }
     let s = string(a, "conversation_id");
     if s.is_empty() {
         "default".into()
@@ -298,7 +301,7 @@ pub fn call(c: &Connection, op: &str, a: &Value) -> Result<Value> {
         "get_first_user_message_content" => Ok(json!(text(&scalar(c,"SELECT content FROM messages WHERE conversation_id=? AND role='user' AND content!='' ORDER BY id ASC LIMIT 1",&[a["conversation_id"].clone()])?).trim())),
         "get_conversation_attachment_payloads" | "get_group_conversation_attachment_payloads" | "get_conversation_token_usage" | "get_group_conversation_token_usage" => {
             let grouped=op.contains("group_"); let usage=op.ends_with("token_usage");
-            if usage && !truth(&a["conversation_id"]) { return Ok(token_usage([].iter())); }
+            if usage && (!truth(&a["conversation_id"]) || (grouped && !truth(&a["group_key"]))) { return Ok(token_usage([].iter())); }
             let (table,mut clause,mut p)=if grouped { ("group_messages","group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)".into(),vec![a["group_key"].clone(),json!(conversation(a)),json!(conversation(a))]) } else { ("messages","conversation_id=?".into(),vec![a["conversation_id"].clone()]) };
             if grouped { scope(a,"user_key",&mut clause,&mut p); }
             let column=if usage { clause.push_str(" AND role='assistant'"); "tool_trace_json" } else { clause.push_str(" AND attachments_json!=''"); "attachments_json" };
