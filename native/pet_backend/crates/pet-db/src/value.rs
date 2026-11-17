@@ -152,6 +152,53 @@ pub fn fields(v: &Value, keys: &[&str]) -> Value {
     }
     Value::Object(out)
 }
+
+/// Python's json.dumps historically allowed non-finite numeric constants. Treat
+/// those constants as absent numeric data, without altering quoted text.
+pub fn parse_json(input: &str) -> Value {
+    if let Ok(v) = serde_json::from_str(input) {
+        return v;
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut inside = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < input.len() {
+        let tail = &input[i..];
+        let Some(ch) = tail.chars().next() else {
+            break;
+        };
+        if inside {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                inside = false;
+            }
+            i += ch.len_utf8();
+            continue;
+        }
+        if ch == '"' {
+            inside = true;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        if let Some(token) = ["-Infinity", "Infinity", "NaN"]
+            .into_iter()
+            .find(|t| tail.starts_with(t))
+        {
+            out.push_str("null");
+            i += token.len();
+        } else {
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    serde_json::from_str(&out).unwrap_or(Value::Null)
+}
 pub fn normalize_strings(v: &mut Value, keys: &[&str]) {
     for key in keys {
         v[*key] = json!(text(&v[*key]));

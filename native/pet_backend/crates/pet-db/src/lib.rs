@@ -1,7 +1,11 @@
 //! SQLite persistence engine. One connection per manager; no worker, timer or cache
 //! with an unbounded lifetime. Lock order: release GIL -> connection mutex -> SQLite.
+mod chat;
 mod error;
+mod external;
+mod memory;
 mod schema;
+mod search;
 pub mod value;
 
 pub use error::{Error, Result};
@@ -82,14 +86,63 @@ impl Database {
         tx.commit()?;
         Ok(result)
     }
-    pub fn call(&self, op: &str, _args: &Value) -> Result<Value> {
+    pub fn call(&self, op: &str, args: &Value) -> Result<Value> {
         self.with_connection(|c| match op {
             "integrity_check" => value::scalar(c, "PRAGMA integrity_check", &[]),
             "change_revision" => Ok(serde_json::json!([
                 c.total_changes(),
                 value::scalar(c, "PRAGMA data_version", &[])?
             ])),
-            _ => Err(Error::Invalid(format!("unknown database operation: {op}"))),
+            _ => Self::transaction(c, is_write(op), |c| dispatch(c, op, args)),
         })
+    }
+}
+
+fn is_write(op: &str) -> bool {
+    [
+        "add_",
+        "set_",
+        "delete_",
+        "update_",
+        "upsert_",
+        "apply_",
+        "assign_",
+        "mark_",
+        "prune_",
+        "purge_",
+        "start_",
+        "end_",
+        "heartbeat_",
+        "import_",
+        "sanitize_",
+    ]
+    .iter()
+    .any(|prefix| op.starts_with(prefix))
+        || op == "create_conversation"
+}
+fn dispatch(c: &Connection, op: &str, a: &Value) -> Result<Value> {
+    match op {
+        "get_chat_history_filter_options" => search::filters(c),
+        "search_chat_history" => search::search(c, a),
+        "get_relationship_state"
+        | "upsert_relationship_state"
+        | "apply_relationship_delta"
+        | "add_character_memory"
+        | "get_character_memories"
+        | "get_character_memories_by_kind"
+        | "update_character_memory"
+        | "delete_character_memory"
+        | "delete_character_memories"
+        | "delete_character_memories_like"
+        | "export_relationship_data"
+        | "import_relationship_data" => memory::call(c, op, a),
+        "add_external_chat_message"
+        | "get_external_chat_unread_summary"
+        | "external_chat_context_text"
+        | "mark_external_chat_read"
+        | "prune_external_group_chat_limit"
+        | "delete_external_chat"
+        | "purge_external_chat_older_than" => external::call(c, op, a),
+        _ => chat::call(c, op, a),
     }
 }

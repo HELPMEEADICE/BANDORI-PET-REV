@@ -736,18 +736,14 @@ class _DatabaseManagerMeta(type):
         return super().__new__(mcls, name, bases, namespace)
 
 
-class DatabaseManager(metaclass=_DatabaseManagerMeta):
+class DatabaseManager:
     def __init__(self, db_path=DB_PATH):
+        from bandori_core.native_database import open_native, NativeConnection
         _migrate_legacy_database(db_path)
-        self._lock = _shared_database_lock(db_path)
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            self._conn = sqlite3.connect(db_path, timeout=2, check_same_thread=False)
-            self._conn.execute("PRAGMA busy_timeout=2000")
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            self._create_tables()
-            self._closed = False
+        self._native = open_native(db_path)
+        self._conn = NativeConnection(self._native)
+        self._lock = threading.RLock()
+        self._closed = False
 
     def __del__(self):
         try:
@@ -956,42 +952,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return f"{where}{conjunction}{column}=?", (*params, normalized)
 
     def assign_legacy_chat_history_user(self, user_key: str) -> int:
-        user_key = self._normalize_user_key(user_key)
-        def operation():
-            conv_cur = self._conn.execute(
-                "UPDATE conversations SET user_key=? WHERE user_key='' OR user_key IS NULL",
-                (user_key,),
-            )
-            group_cur = self._conn.execute(
-                "UPDATE group_messages SET user_key=? WHERE user_key='' OR user_key IS NULL",
-                (user_key,),
-            )
-            self._conn.commit()
-            return int(conv_cur.rowcount or 0) + int(group_cur.rowcount or 0)
-
-        return _run_with_locked_retry(self._conn, operation, lock=self._lock)
+        return self._invoke("assign_legacy_chat_history_user", locals())
 
     def get_relationship_state(self, character: str, user_key: str = "") -> dict:
-        user_key = self._normalize_user_key(user_key)
-        row = self._conn.execute(
-            "SELECT id, character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at "
-            "FROM relationship_states WHERE character=? AND user_key=?",
-            (character, user_key),
-        ).fetchone()
-        if row:
-            return _state_row_dict(row)
-        return {
-            "id": 0,
-            "character": character,
-            "user_key": user_key,
-            "affection": 50,
-            "trust": 50,
-            "familiarity": 0,
-            "mood": "calm",
-            "mood_intensity": 20,
-            "summary": "",
-            "updated_at": "",
-        }
+        return self._invoke("get_relationship_state", locals())
 
     def upsert_relationship_state(
         self,
@@ -1005,75 +969,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         mood_intensity: int | None = None,
         summary: str | None = None,
     ) -> dict:
-        user_key = self._normalize_user_key(user_key)
-        current = self.get_relationship_state(character, user_key)
-        next_state = {
-            "affection": _clamp_int(current["affection"] if affection is None else affection, 0, 100, 50),
-            "trust": _clamp_int(current["trust"] if trust is None else trust, 0, 100, 50),
-            "familiarity": _clamp_int(current["familiarity"] if familiarity is None else familiarity, 0, 100, 0),
-            "mood": (mood if mood is not None else current["mood"]) or "calm",
-            "mood_intensity": _clamp_int(
-                current["mood_intensity"] if mood_intensity is None else mood_intensity,
-                0,
-                100,
-                20,
-            ),
-            "summary": current["summary"] if summary is None else str(summary or ""),
-        }
-        now = _now_text()
-        numeric_changed = (
-            (affection is not None and next_state["affection"] != current["affection"])
-            or (trust is not None and next_state["trust"] != current["trust"])
-            or (familiarity is not None and next_state["familiarity"] != current["familiarity"])
-        )
-        mood_changed = (
-            (mood is not None and next_state["mood"] != current["mood"])
-            or (mood_intensity is not None and next_state["mood_intensity"] != current["mood_intensity"])
-        )
-        self._conn.execute(
-            "INSERT INTO relationship_states "
-            "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(character, user_key) DO UPDATE SET "
-            "affection=excluded.affection, trust=excluded.trust, familiarity=excluded.familiarity, "
-            "mood=excluded.mood, mood_intensity=excluded.mood_intensity, summary=excluded.summary, "
-            "updated_at=excluded.updated_at",
-            (
-                character,
-                user_key,
-                next_state["affection"],
-                next_state["trust"],
-                next_state["familiarity"],
-                next_state["mood"],
-                next_state["mood_intensity"],
-                next_state["summary"],
-                now,
-            ),
-        )
-        if numeric_changed or mood_changed:
-            self._conn.execute(
-                "INSERT INTO mood_events "
-                "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, "
-                "affection, trust, familiarity, mood, mood_intensity, reason, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    character,
-                    user_key,
-                    "manual_set",
-                    next_state["affection"] - current["affection"],
-                    next_state["trust"] - current["trust"],
-                    next_state["familiarity"] - current["familiarity"],
-                    next_state["affection"],
-                    next_state["trust"],
-                    next_state["familiarity"],
-                    next_state["mood"] if mood_changed else "",
-                    next_state["mood_intensity"] if mood_changed else 0,
-                    "manual relationship state update",
-                    now,
-                ),
-            )
-        self._conn.commit()
-        return self.get_relationship_state(character, user_key)
+        return self._invoke("upsert_relationship_state", locals())
 
     def apply_relationship_delta(
         self,
@@ -1088,67 +984,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         event_type: str = "interaction",
         reason: str = "",
     ) -> dict:
-        user_key = self._normalize_user_key(user_key)
-        current = self.get_relationship_state(character, user_key)
-        if mood_intensity is None:
-            if mood:
-                mood_intensity = max(25, min(85, current["mood_intensity"] + 8))
-            else:
-                mood_intensity = max(10, current["mood_intensity"] - 3)
-
-        now = _now_text()
-        next_values = {
-            "affection": _clamp_int(current["affection"] + affection_delta, 0, 100, 50),
-            "trust": _clamp_int(current["trust"] + trust_delta, 0, 100, 50),
-            "familiarity": _clamp_int(current["familiarity"] + familiarity_delta, 0, 100, 0),
-            "mood": mood or current["mood"] or "calm",
-            "mood_intensity": _clamp_int(mood_intensity, 0, 100, 20),
-            "summary": current["summary"],
-        }
-        self._conn.execute(
-            "INSERT INTO relationship_states "
-            "(character, user_key, affection, trust, familiarity, mood, mood_intensity, summary, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(character, user_key) DO UPDATE SET "
-            "affection=excluded.affection, trust=excluded.trust, familiarity=excluded.familiarity, "
-            "mood=excluded.mood, mood_intensity=excluded.mood_intensity, summary=excluded.summary, "
-            "updated_at=excluded.updated_at",
-            (
-                character,
-                user_key,
-                next_values["affection"],
-                next_values["trust"],
-                next_values["familiarity"],
-                next_values["mood"],
-                next_values["mood_intensity"],
-                next_values["summary"],
-                now,
-            ),
-        )
-        self._conn.execute(
-            "INSERT INTO mood_events "
-            "(character, user_key, event_type, affection_delta, trust_delta, familiarity_delta, "
-            "affection, trust, familiarity, mood, mood_intensity, reason, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                character,
-                user_key,
-                event_type or "interaction",
-                _clamp_int(affection_delta, -100, 100, 0),
-                _clamp_int(trust_delta, -100, 100, 0),
-                _clamp_int(familiarity_delta, -100, 100, 0),
-                next_values["affection"],
-                next_values["trust"],
-                next_values["familiarity"],
-                mood or "",
-                _clamp_int(mood_intensity, 0, 100, 0),
-                str(reason or "")[:500],
-                now,
-            ),
-        )
-        next_state = self.get_relationship_state(character, user_key)
-        self._conn.commit()
-        return next_state
+        return self._invoke("apply_relationship_delta", locals())
 
     def add_character_memory(
         self,
@@ -1161,52 +997,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         source_message_id: int | None = None,
         source_group_message_id: int | None = None,
     ) -> int:
-        user_key = self._normalize_user_key(user_key)
-        content = str(content or "").strip()
-        if not content:
-            return 0
-        kind = (kind or "note").strip() or "note"
-        importance = _clamp_int(importance, 1, 100, 50)
-        now = _now_text()
-        self._conn.execute(
-            "INSERT INTO character_memories "
-            "(character, user_key, kind, content, importance, source_message_id, source_group_message_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(character, user_key, content) DO UPDATE SET "
-            "kind=excluded.kind, importance=max(character_memories.importance, excluded.importance), "
-            "source_message_id=coalesce(excluded.source_message_id, character_memories.source_message_id), "
-            "source_group_message_id=coalesce(excluded.source_group_message_id, character_memories.source_group_message_id), "
-            "updated_at=excluded.updated_at",
-            (
-                character,
-                user_key,
-                kind,
-                content,
-                importance,
-                source_message_id,
-                source_group_message_id,
-                now,
-                now,
-            ),
-        )
-        self._conn.commit()
-        row = self._conn.execute(
-            "SELECT id FROM character_memories WHERE character=? AND user_key=? AND content=?",
-            (character, user_key, content),
-        ).fetchone()
-        return _db_int(row[0]) if row else 0
+        return self._invoke("add_character_memory", locals())
 
     def get_character_memories(self, character: str, user_key: str = "", limit: int = 8) -> list[dict]:
-        user_key = self._normalize_user_key(user_key)
-        limit = _clamp_int(limit, 1, 100, 8)
-        rows = self._conn.execute(
-            "SELECT id, character, user_key, kind, content, importance, source_message_id, "
-            "source_group_message_id, created_at, updated_at "
-            "FROM character_memories WHERE character=? AND user_key=? "
-            "ORDER BY importance DESC, updated_at DESC, id DESC LIMIT ?",
-            (character, user_key, limit),
-        ).fetchall()
-        return [_memory_row_dict(row) for row in rows]
+        return self._invoke("get_character_memories", locals())
 
     def get_character_memories_by_kind(
         self,
@@ -1215,19 +1009,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         kind: str = "",
         limit: int = 50,
     ) -> list[dict]:
-        user_key = self._normalize_user_key(user_key)
-        kind = str(kind or "").strip()
-        limit = _clamp_int(limit, 1, 200, 50)
-        if not kind:
-            return self.get_character_memories(character, user_key, limit)
-        rows = self._conn.execute(
-            "SELECT id, character, user_key, kind, content, importance, source_message_id, "
-            "source_group_message_id, created_at, updated_at "
-            "FROM character_memories WHERE character=? AND user_key=? AND kind=? "
-            "ORDER BY updated_at DESC, id DESC LIMIT ?",
-            (character, user_key, kind, limit),
-        ).fetchall()
-        return [_memory_row_dict(row) for row in rows]
+        return self._invoke("get_character_memories_by_kind", locals())
 
     def update_character_memory(
         self,
@@ -1238,187 +1020,40 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         content: str,
         importance: int = 50,
     ) -> bool:
-        user_key = self._normalize_user_key(user_key)
-        content = str(content or "").strip()
-        if not memory_id or not content:
-            return False
-        kind = (kind or "note").strip() or "note"
-        importance = _clamp_int(importance, 1, 100, 50)
-        cur = self._conn.execute(
-            "UPDATE character_memories "
-            "SET kind=?, content=?, importance=?, updated_at=? "
-            "WHERE id=? AND character=? AND user_key=?",
-            (kind, content, importance, _now_text(), memory_id, character, user_key),
-        )
-        self._conn.commit()
-        return bool(cur.rowcount)
+        return self._invoke("update_character_memory", locals())
 
     def delete_character_memory(self, memory_id: int, character: str = "", user_key: str = "") -> bool:
-        if not memory_id:
-            return False
-        character_filter = str(character or "")
-        user_key_filter = self._normalize_user_key(user_key) if user_key else ""
-        cur = self._conn.execute(
-            "DELETE FROM character_memories "
-            "WHERE id=? AND (?='' OR character=?) AND (?='' OR user_key=?)",
-            (memory_id, character_filter, character_filter, user_key_filter, user_key_filter),
-        )
-        self._conn.commit()
-        return bool(cur.rowcount)
+        return self._invoke("delete_character_memory", locals())
 
     def delete_character_memories(self, memory_ids, character: str = "", user_key: str = "") -> int:
-        ids = set()
-        for memory_id in memory_ids:
-            try:
-                normalized_id = int(memory_id or 0)
-            except (TypeError, ValueError):
-                continue
-            if normalized_id > 0:
-                ids.add(normalized_id)
-        ids = sorted(ids)
-        if not ids:
-            return 0
-        character_filter = str(character or "")
-        user_key_filter = self._normalize_user_key(user_key) if user_key else ""
-        placeholders = ",".join("?" for _ in ids)
-        cur = self._conn.execute(
-            "DELETE FROM character_memories "
-            f"WHERE id IN ({placeholders}) AND (?='' OR character=?) AND (?='' OR user_key=?)",
-            (*ids, character_filter, character_filter, user_key_filter, user_key_filter),
-        )
-        self._conn.commit()
-        return int(cur.rowcount or 0)
+        return self._invoke("delete_character_memories", locals())
 
     def delete_character_memories_like(self, character: str, user_key: str, query: str) -> int:
-        user_key = self._normalize_user_key(user_key)
-        query = str(query or "").strip()
-        if not query:
-            return 0
-        cur = self._conn.execute(
-            "DELETE FROM character_memories WHERE character=? AND user_key=? AND content LIKE ? ESCAPE '\\'",
-            (character, user_key, f"%{_escape_like(query)}%"),
-        )
-        self._conn.commit()
-        return int(cur.rowcount or 0)
+        return self._invoke("delete_character_memories_like", locals())
 
     def create_conversation(self, character: str, title: str = "", user_key: str = "") -> int:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user_key = self._normalize_user_key(user_key)
-        cur = self._conn.execute(
-            "INSERT INTO conversations (character, user_key, title, created_at) VALUES (?, ?, ?, ?)",
-            (character, user_key, title, now)
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        return self._invoke("create_conversation", locals())
 
     def change_revision(self) -> tuple[int, int]:
-        """Cheap revision for local writes and commits from other connections."""
-        return (
-            self._conn.total_changes,
-            self._conn.execute("PRAGMA data_version").fetchone()[0],
-        )
+        return self._invoke("change_revision", locals())
 
     def get_conversations(self, character: str = "", user_key: str | None = None) -> list[dict]:
-        if character:
-            where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
-        else:
-            where, params = self._user_filter_clause(user_key, "", (), "c.user_key")
-        active_where = f"{where} {'AND' if where else 'WHERE'} (latest.id IS NOT NULL OR c.temporary_background != '')"
-        rows = self._conn.execute(
-            "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
-            "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
-            "FROM conversations c "
-            "LEFT JOIN messages latest ON latest.id=("
-            "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
-            ") "
-            f"{active_where} "
-            "ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC",
-            params,
-        ).fetchall()
-        result = []
-        for r in rows:
-            conv_id = _db_int(r[0])
-            if conv_id is None:
-                continue
-            result.append({
-                "id": conv_id,
-                "character": _db_text(r[1]),
-                "user_key": _db_text(r[2]),
-                "title": _db_text(r[3]),
-                "created_at": _db_text(r[4]),
-                "last_message_at": _db_text(r[5]) if len(r) > 5 else _db_text(r[4]),
-                "last_message_content": _db_text(r[7]) if len(r) > 7 else "",
-            })
-        return result
+        return self._invoke("get_conversations", locals())
 
     def get_last_conversation(self, character: str, user_key: str | None = None) -> dict | None:
-        where, params = self._user_filter_clause(user_key, "WHERE c.character=?", (character,), "c.user_key")
-        active_where = f"{where} AND (latest.id IS NOT NULL OR c.temporary_background != '')"
-        row = self._conn.execute(
-            "SELECT c.id, c.character, c.user_key, c.title, c.created_at, "
-            "latest.created_at AS last_message_at, latest.id AS last_message_id, latest.content AS last_message_content "
-            "FROM conversations c "
-            "LEFT JOIN messages latest ON latest.id=("
-            "SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id"
-            ") "
-            f"{active_where} "
-            "ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC LIMIT 1",
-            params,
-        ).fetchone()
-        if row:
-            conv_id = _db_int(row[0])
-            if conv_id is None:
-                return None
-            return {
-                "id": conv_id,
-                "character": _db_text(row[1]),
-                "user_key": _db_text(row[2]),
-                "title": _db_text(row[3]),
-                "created_at": _db_text(row[4]),
-                "last_message_at": _db_text(row[5]) if len(row) > 5 else _db_text(row[4]),
-                "last_message_content": _db_text(row[7]) if len(row) > 7 else "",
-            }
-        return None
+        return self._invoke("get_last_conversation", locals())
 
     def get_conversation_temporary_background(self, conversation_id: int | None) -> str:
-        conversation_id = _db_int(conversation_id)
-        if conversation_id is None:
-            return ""
-        row = self._conn.execute(
-            "SELECT temporary_background FROM conversations WHERE id=?",
-            (conversation_id,),
-        ).fetchone()
-        return _db_text(row[0]).strip() if row else ""
+        return self._invoke("get_conversation_temporary_background", locals())
 
     def set_conversation_temporary_background(self, conversation_id: int, content: str) -> None:
-        conversation_id = _db_int(conversation_id)
-        if conversation_id is None:
-            raise ValueError("conversation_id must be an integer")
-        self._conn.execute(
-            "UPDATE conversations SET temporary_background=? WHERE id=?",
-            (str(content or "").strip(), conversation_id),
-        )
-        self._conn.commit()
+        return self._invoke("set_conversation_temporary_background", locals())
 
     def add_message(self, conversation_id: int, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None) -> int:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        attachments_json = _json_text(_sanitize_attachments_payload(attachments))
-        tool_trace_json = _json_text(tool_trace)
-        cur = self._conn.execute(
-            "INSERT INTO messages (conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, now)
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        return self._invoke("add_message", locals())
 
     def update_message_content(self, conversation_id: int, message_id: int, content: str) -> bool:
-        cur = self._conn.execute(
-            "UPDATE messages SET content=? WHERE conversation_id=? AND id=?",
-            (str(content or "").strip(), int(conversation_id), int(message_id)),
-        )
-        self._conn.commit()
-        return bool(cur.rowcount)
+        return self._invoke("update_message_content", locals())
 
     def delete_messages_from(
         self,
@@ -1427,32 +1062,10 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         *,
         include_selected: bool = True,
     ) -> list[dict]:
-        operator = ">=" if include_selected else ">"
-        params = (int(conversation_id), int(message_id))
-        rows = self._conn.execute(
-            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
-            f"FROM messages WHERE conversation_id=? AND id{operator}? ORDER BY id ASC",
-            params,
-        ).fetchall()
-        deleted = [message for row in rows if (message := _message_row_dict(row)) is not None]
-        self._conn.execute(
-            f"DELETE FROM messages WHERE conversation_id=? AND id{operator}?",
-            params,
-        )
-        self._conn.commit()
-        return deleted
+        return self._invoke("delete_messages_from", locals())
 
     def delete_message(self, conversation_id: int, message_id: int) -> list[dict]:
-        params = (int(conversation_id), int(message_id))
-        rows = self._conn.execute(
-            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
-            "FROM messages WHERE conversation_id=? AND id=?",
-            params,
-        ).fetchall()
-        deleted = [message for row in rows if (message := _message_row_dict(row)) is not None]
-        self._conn.execute("DELETE FROM messages WHERE conversation_id=? AND id=?", params)
-        self._conn.commit()
-        return deleted
+        return self._invoke("delete_message", locals())
 
     @staticmethod
     def _token_usage_from_rows(rows) -> dict:
@@ -1487,14 +1100,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return totals
 
     def get_conversation_token_usage(self, conversation_id: int | None) -> dict:
-        if not conversation_id:
-            return self._token_usage_from_rows([])
-        rows = self._conn.execute(
-            "SELECT tool_trace_json FROM messages "
-            "WHERE conversation_id=? AND role='assistant'",
-            (int(conversation_id),),
-        )
-        return self._token_usage_from_rows(rows)
+        return self._invoke("get_conversation_token_usage", locals())
 
     def get_group_conversation_token_usage(
         self,
@@ -1502,19 +1108,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         conversation_id: str,
         user_key: str | None = None,
     ) -> dict:
-        if not group_key or not conversation_id:
-            return self._token_usage_from_rows([])
-        where, params = self._user_filter_clause(
-            user_key,
-            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
-            "AND role='assistant'",
-            (group_key, conversation_id, conversation_id),
-        )
-        rows = self._conn.execute(
-            f"SELECT tool_trace_json FROM group_messages {where}",
-            params,
-        )
-        return self._token_usage_from_rows(rows)
+        return self._invoke("get_group_conversation_token_usage", locals())
 
     def get_messages(
         self,
@@ -1522,72 +1116,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         limit: int | None = None,
         before_id: int | None = None,
     ) -> list[dict]:
-        where = "WHERE conversation_id=?"
-        params: tuple = (conversation_id,)
-        before_id = _db_int(before_id)
-        if before_id is not None and before_id > 0:
-            where += " AND id<?"
-            params = (*params, before_id)
-        order = "ASC"
-        limit_sql = ""
-        if limit is not None:
-            limit = _clamp_int(limit, 1, 1000, 1000)
-            params = (*params, limit)
-            order = "DESC"
-            limit_sql = " LIMIT ?"
-        rows = self._conn.execute(
-            "SELECT id, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM messages "
-            f"{where} ORDER BY id {order}{limit_sql}",
-            params,
-        )
-        result = []
-        for r in rows:
-            message = _message_row_dict(r)
-            if message is not None:
-                result.append(message)
-        if limit is not None:
-            result.reverse()
-        return result
+        return self._invoke("get_messages", locals())
 
     def get_conversation_attachment_payloads(self, conversation_id: int) -> list[str]:
-        """Read only attachment metadata, without materializing message bodies."""
-        conversation_id = _db_int(conversation_id)
-        if conversation_id is None:
-            return []
-        cursor = self._conn.execute(
-            "SELECT attachments_json FROM messages "
-            "WHERE conversation_id=? AND attachments_json!=''",
-            (conversation_id,),
-        )
-        return [_db_text(row[0]) for row in cursor if row and row[0]]
+        return self._invoke("get_conversation_attachment_payloads", locals())
 
     def get_chat_history_filter_options(self) -> dict:
-        characters = {
-            _db_text(row[0]).strip()
-            for row in self._conn.execute(
-                "SELECT DISTINCT character FROM conversations WHERE character != ''"
-            ).fetchall()
-            if _db_text(row[0]).strip() and _db_text(row[0]).strip() != "__group__"
-        }
-        group_keys = self._conn.execute(
-            "SELECT DISTINCT group_key FROM group_messages WHERE group_key != ''"
-        ).fetchall()
-        for row in group_keys:
-            characters.update(self._group_key_characters(_db_text(row[0])))
-
-        user_rows = self._conn.execute(
-            "SELECT user_key FROM conversations WHERE user_key != '' "
-            "UNION SELECT user_key FROM group_messages WHERE user_key != ''"
-        ).fetchall()
-        user_keys = sorted({
-            _db_text(row[0]).strip()
-            for row in user_rows
-            if _db_text(row[0]).strip()
-        }, key=str.casefold)
-        return {
-            "characters": sorted(characters, key=str.casefold),
-            "user_keys": user_keys,
-        }
+        return self._invoke("get_chat_history_filter_options", locals())
 
     def search_chat_history(
         self,
@@ -1603,137 +1138,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         offset: int = 0,
         skip_count: bool = False,
     ) -> dict:
-        keyword = str(keyword or "").strip()[:500]
-        date_from = str(date_from or "").strip()[:10]
-        date_to = str(date_to or "").strip()[:10]
-        character = str(character or "").strip()
-        user_key = str(user_key or "").strip()
-        role = str(role or "").strip()
-        source = str(source or "").strip()
-        limit = _clamp_int(limit, 1, 1000, 300)
-        offset = _clamp_int(offset, 0, 1_000_000, 0)
-
-        history_sql = """
-            SELECT
-                'private' AS source,
-                m.id AS source_id,
-                CAST(c.id AS TEXT) AS conversation_id,
-                c.character AS character,
-                '' AS group_key,
-                c.title AS chat_title,
-                c.user_key AS user_key,
-                m.role AS role,
-                m.content AS content,
-                m.created_at AS created_at,
-                '|' || c.character || '|' AS member_keys
-            FROM messages m
-            JOIN conversations c ON c.id=m.conversation_id
-            UNION ALL
-            SELECT
-                'group' AS source,
-                gm.id AS source_id,
-                CAST(gm.conversation_id AS TEXT) AS conversation_id,
-                '' AS character,
-                gm.group_key AS group_key,
-                COALESCE(meta.display_name, '') AS chat_title,
-                gm.user_key AS user_key,
-                gm.role AS role,
-                gm.content AS content,
-                gm.created_at AS created_at,
-                CASE
-                    WHEN gm.group_key LIKE '__group__:%'
-                    THEN '|' || substr(gm.group_key, 11) || '|'
-                    ELSE '|' || gm.group_key || '|'
-                END AS member_keys
-            FROM group_messages gm
-            LEFT JOIN group_chat_meta meta ON meta.group_key=gm.group_key
-        """
-
-        where = []
-        params: list = []
-        if keyword:
-            where.append("content LIKE ? ESCAPE '\\' COLLATE NOCASE")
-            params.append(f"%{_escape_like(keyword)}%")
-        if date_from:
-            where.append("created_at >= ?")
-            params.append(f"{date_from} 00:00:00")
-        if date_to:
-            where.append("created_at <= ?")
-            params.append(f"{date_to} 23:59:59")
-        if character:
-            where.append("instr(member_keys, ?) > 0")
-            params.append(f"|{character}|")
-        if user_key:
-            where.append("user_key = ?")
-            params.append(user_key)
-        if role in _VALID_MESSAGE_ROLES:
-            where.append("role = ?")
-            params.append(role)
-        if source in {"private", "group"}:
-            where.append("source = ?")
-            params.append(source)
-
-        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
-        if skip_count:
-            total = -1
-        else:
-            total = self._conn.execute(
-                f"SELECT COUNT(*) FROM ({history_sql}) history{where_sql}",
-                tuple(params),
-            ).fetchone()[0]
-        probe = limit + 1 if skip_count else limit
-        rows = self._conn.execute(
-            "SELECT source, source_id, conversation_id, character, group_key, "
-            "chat_title, user_key, role, content, created_at "
-            f"FROM ({history_sql}) history{where_sql} "
-            "ORDER BY created_at DESC, source_id DESC LIMIT ? OFFSET ?",
-            (*params, probe, offset),
-        ).fetchall()
-        has_more = skip_count and len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-        records = []
-        for row in rows:
-            records.append({
-                "source": _db_text(row[0]),
-                "id": _db_int(row[1]) or 0,
-                "conversation_id": _db_text(row[2]),
-                "character": _db_text(row[3]),
-                "group_key": _db_text(row[4]),
-                "chat_title": _db_text(row[5]),
-                "user_key": _db_text(row[6]),
-                "role": _db_text(row[7]),
-                "content": _db_text(row[8]),
-                "created_at": _db_text(row[9]),
-            })
-        return {
-            "total": int(total or 0),
-            "has_more": has_more,
-            "records": records,
-            "limit": limit,
-            "offset": offset,
-        }
+        return self._invoke("search_chat_history", locals())
 
     def get_first_user_message_content(self, conversation_id: int) -> str:
-        row = self._conn.execute(
-            "SELECT content FROM messages WHERE conversation_id=? AND role='user' AND content != '' "
-            "ORDER BY id ASC LIMIT 1",
-            (conversation_id,),
-        ).fetchone()
-        return _db_text(row[0]).strip() if row else ""
+        return self._invoke("get_first_user_message_content", locals())
 
     def add_group_message(self, group_key: str, conversation_id: str, role: str, content: str, reasoning_content: str = "", attachments=None, tool_trace=None, user_key: str = "") -> int:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user_key = self._normalize_user_key(user_key)
-        attachments_json = _json_text(_sanitize_attachments_payload(attachments))
-        tool_trace_json = _json_text(tool_trace)
-        cur = self._conn.execute(
-            "INSERT INTO group_messages (group_key, conversation_id, user_key, role, content, reasoning_content, attachments_json, tool_trace_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (group_key, conversation_id or "default", user_key, role, content, reasoning_content, attachments_json, tool_trace_json, now)
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        return self._invoke("add_group_message", locals())
 
     def update_group_message_content(
         self,
@@ -1743,17 +1154,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         content: str,
         user_key: str | None = None,
     ) -> bool:
-        where, params = self._user_filter_clause(
-            user_key,
-            "group_key=? AND conversation_id=? AND id=?",
-            (group_key, conversation_id or "default", int(message_id)),
-        )
-        cur = self._conn.execute(
-            f"UPDATE group_messages SET content=? WHERE {where}",
-            (str(content or "").strip(), *params),
-        )
-        self._conn.commit()
-        return bool(cur.rowcount)
+        return self._invoke("update_group_message_content", locals())
 
     def delete_group_messages_from(
         self,
@@ -1764,21 +1165,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         include_selected: bool = True,
         user_key: str | None = None,
     ) -> list[dict]:
-        operator = ">=" if include_selected else ">"
-        where, params = self._user_filter_clause(
-            user_key,
-            f"group_key=? AND conversation_id=? AND id{operator}?",
-            (group_key, conversation_id or "default", int(message_id)),
-        )
-        rows = self._conn.execute(
-            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
-            f"FROM group_messages WHERE {where} ORDER BY id ASC",
-            params,
-        ).fetchall()
-        deleted = [message for row in rows if (message := _message_row_dict(row, grouped=True)) is not None]
-        self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
-        self._conn.commit()
-        return deleted
+        return self._invoke("delete_group_messages_from", locals())
 
     def delete_group_message(
         self,
@@ -1787,20 +1174,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         message_id: int,
         user_key: str | None = None,
     ) -> list[dict]:
-        where, params = self._user_filter_clause(
-            user_key,
-            "group_key=? AND conversation_id=? AND id=?",
-            (group_key, conversation_id or "default", int(message_id)),
-        )
-        rows = self._conn.execute(
-            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at "
-            f"FROM group_messages WHERE {where}",
-            params,
-        ).fetchall()
-        deleted = [message for row in rows if (message := _message_row_dict(row, grouped=True)) is not None]
-        self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
-        self._conn.commit()
-        return deleted
+        return self._invoke("delete_group_message", locals())
 
     def get_group_messages(
         self,
@@ -1810,36 +1184,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         user_key: str | None = None,
         before_id: int | None = None,
     ) -> list[dict]:
-        conversation_id = conversation_id or "default"
-        where, params = self._user_filter_clause(
-            user_key,
-            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)",
-            (group_key, conversation_id, conversation_id),
-        )
-        before_id = _db_int(before_id)
-        if before_id is not None and before_id > 0:
-            where += " AND id<?"
-            params = (*params, before_id)
-        order = "ASC"
-        limit_sql = ""
-        if limit is not None:
-            limit = _clamp_int(limit, 1, 1000, 1000)
-            params = (*params, limit)
-            order = "DESC"
-            limit_sql = " LIMIT ?"
-        rows = self._conn.execute(
-            "SELECT id, group_key, conversation_id, role, content, reasoning_content, attachments_json, tool_trace_json, created_at FROM group_messages "
-            f"{where} ORDER BY id {order}{limit_sql}",
-            params,
-        )
-        result = []
-        for r in rows:
-            message = _message_row_dict(r, grouped=True)
-            if message is not None:
-                result.append(message)
-        if limit is not None:
-            result.reverse()
-        return result
+        return self._invoke("get_group_messages", locals())
 
     def get_group_conversation_attachment_payloads(
         self,
@@ -1847,97 +1192,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         conversation_id: str,
         user_key: str | None = None,
     ) -> list[str]:
-        """Read only group attachment metadata for cleanup/export paths."""
-        conversation_id = conversation_id or "default"
-        where, params = self._user_filter_clause(
-            user_key,
-            "WHERE group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?) "
-            "AND attachments_json!=''",
-            (group_key, conversation_id, conversation_id),
-        )
-        cursor = self._conn.execute(
-            f"SELECT attachments_json FROM group_messages {where}",
-            params,
-        )
-        return [_db_text(row[0]) for row in cursor if row and row[0]]
+        return self._invoke("get_group_conversation_attachment_payloads", locals())
 
     def delete_group_conversation(self, group_key: str, conversation_id: str, user_key: str | None = None):
-        conversation_id = conversation_id or "default"
-        base_where = "group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)"
-        base_params = (group_key, conversation_id, conversation_id)
-        where, params = self._user_filter_clause(user_key, base_where, base_params)
-
-        def operation():
-            self._conn.execute(f"DELETE FROM group_messages WHERE {where}", params)
-            background_where, background_params = self._user_filter_clause(
-                user_key,
-                "group_key=? AND conversation_id=?",
-                (group_key, conversation_id),
-            )
-            self._conn.execute(
-                f"DELETE FROM group_conversation_backgrounds WHERE {background_where}",
-                background_params,
-            )
-            self._conn.commit()
-
-        _run_with_locked_retry(self._conn, operation, lock=self._lock)
+        return self._invoke("delete_group_conversation", locals())
 
     def get_group_conversations(self, group_key: str, user_key: str | None = None) -> list[dict]:
-        where, params = self._user_filter_clause(user_key, "WHERE group_key=?", (group_key,))
-        rows = self._conn.execute(
-            "SELECT g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at "
-            "FROM group_messages g "
-            "JOIN ("
-            "SELECT conversation_id, MAX(id) AS latest_id FROM group_messages "
-            f"{where} AND role IN ('user', 'assistant', 'system') "
-            "GROUP BY conversation_id"
-            ") latest ON g.id=latest.latest_id "
-            "ORDER BY latest.latest_id DESC",
-            params,
-        ).fetchall()
-        result = []
-        for conversation_id, row_user_key, msg_id, role, content, created_at in rows:
-            conversation_id = _db_text(conversation_id, "default") or "default"
-            if _db_text(role).strip() not in _VALID_MESSAGE_ROLES:
-                continue
-            msg_id = _db_int(msg_id)
-            if msg_id is None:
-                continue
-            result.append({
-                "group_key": group_key,
-                "conversation_id": conversation_id,
-                "user_key": _db_text(row_user_key),
-                "message_id": msg_id,
-                "role": _db_text(role).strip(),
-                "content": _db_text(content),
-                "created_at": _db_text(created_at),
-            })
-        background_where, background_params = self._user_filter_clause(
-            user_key,
-            "WHERE group_key=? AND temporary_background != ''",
-            (group_key,),
-        )
-        background_rows = self._conn.execute(
-            "SELECT conversation_id, user_key, updated_at "
-            f"FROM group_conversation_backgrounds {background_where}",
-            background_params,
-        ).fetchall()
-        known_ids = {item["conversation_id"] for item in result}
-        for conversation_id, row_user_key, updated_at in background_rows:
-            conversation_id = _db_text(conversation_id, "default") or "default"
-            if conversation_id in known_ids:
-                continue
-            result.append({
-                "group_key": group_key,
-                "conversation_id": conversation_id,
-                "user_key": _db_text(row_user_key),
-                "message_id": 0,
-                "role": "system",
-                "content": "",
-                "created_at": _db_text(updated_at),
-            })
-        result.sort(key=lambda item: (item.get("created_at", ""), item.get("message_id", 0)), reverse=True)
-        return result
+        return self._invoke("get_group_conversations", locals())
 
     def get_group_conversation_temporary_background(
         self,
@@ -1945,17 +1206,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         conversation_id: str,
         user_key: str | None = None,
     ) -> str:
-        conversation_id = str(conversation_id or "default")
-        where, params = self._user_filter_clause(
-            user_key,
-            "WHERE group_key=? AND conversation_id=?",
-            (group_key, conversation_id),
-        )
-        row = self._conn.execute(
-            f"SELECT temporary_background FROM group_conversation_backgrounds {where} LIMIT 1",
-            params,
-        ).fetchone()
-        return _db_text(row[0]).strip() if row else ""
+        return self._invoke("get_group_conversation_temporary_background", locals())
 
     def set_group_conversation_temporary_background(
         self,
@@ -1964,226 +1215,25 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         content: str,
         user_key: str = "",
     ) -> None:
-        conversation_id = str(conversation_id or "default")
-        user_key = self._normalize_user_key(user_key)
-        content = str(content or "").strip()
-        if not content:
-            self._conn.execute(
-                "DELETE FROM group_conversation_backgrounds "
-                "WHERE group_key=? AND conversation_id=? AND user_key=?",
-                (group_key, conversation_id, user_key),
-            )
-        else:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._conn.execute(
-                "INSERT INTO group_conversation_backgrounds "
-                "(group_key, conversation_id, user_key, temporary_background, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(group_key, conversation_id, user_key) DO UPDATE SET "
-                "temporary_background=excluded.temporary_background, updated_at=excluded.updated_at",
-                (group_key, conversation_id, user_key, content, now),
-            )
-        self._conn.commit()
+        return self._invoke("set_group_conversation_temporary_background", locals())
 
     def get_group_chats(self, user_key: str | None = None) -> list[dict]:
-        where, params = self._user_filter_clause(user_key, "", ())
-        rows = self._conn.execute(
-            "SELECT g.group_key, g.conversation_id, g.user_key, g.id, g.role, g.content, g.created_at "
-            "FROM group_messages g "
-            "JOIN ("
-            "SELECT group_key, MAX(id) AS latest_id FROM group_messages "
-            f"{where} "
-            f"{'AND' if where else 'WHERE'} role IN ('user', 'assistant', 'system') "
-            "GROUP BY group_key"
-            ") latest ON g.id=latest.latest_id "
-            "ORDER BY latest.latest_id DESC",
-            params,
-        ).fetchall()
-        result = []
-        for group_key, conversation_id, row_user_key, msg_id, role, content, created_at in rows:
-            group_key = _db_text(group_key)
-            conversation_id = _db_text(conversation_id, "default") or "default"
-            if _db_text(role).strip() not in _VALID_MESSAGE_ROLES:
-                continue
-            msg_id = _db_int(msg_id)
-            if msg_id is None:
-                continue
-            result.append({
-                "group_key": group_key,
-                "conversation_id": conversation_id,
-                "user_key": _db_text(row_user_key),
-                "message_id": msg_id,
-                "role": _db_text(role).strip(),
-                "content": _db_text(content),
-                "created_at": _db_text(created_at),
-            })
-        return result
+        return self._invoke("get_group_chats", locals())
 
     def get_group_display_name(self, group_key: str) -> str:
-        row = self._conn.execute(
-            "SELECT display_name FROM group_chat_meta WHERE group_key=?",
-            (group_key,)
-        ).fetchone()
-        return _db_text(row[0]) if row else ""
+        return self._invoke("get_group_display_name", locals())
 
     def set_group_display_name(self, group_key: str, display_name: str):
-        name = display_name.strip()
-        if not name:
-            self._conn.execute("DELETE FROM group_chat_meta WHERE group_key=?", (group_key,))
-            self._conn.commit()
-            return
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self._conn.execute(
-            "INSERT INTO group_chat_meta (group_key, display_name, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(group_key) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at",
-            (group_key, name, now)
-        )
-        self._conn.commit()
+        return self._invoke("set_group_display_name", locals())
 
     def delete_conversation(self, conv_id: int):
-        def operation():
-            self._conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
-            self._conn.commit()
-
-        _run_with_locked_retry(self._conn, operation, lock=self._lock)
+        return self._invoke("delete_conversation", locals())
 
     def delete_empty_conversations(self, character: str = "", user_key: str | None = None):
-        def operation():
-            base = "character=?" if character else ""
-            base_params: tuple = (character,) if character else ()
-            where, params = self._user_filter_clause(user_key, base, base_params)
-            prefix = f"WHERE {where} AND " if where else "WHERE "
-            self._conn.execute(
-                f"DELETE FROM conversations {prefix}NOT EXISTS ("
-                "SELECT 1 FROM messages WHERE messages.conversation_id=conversations.id"
-                ") AND temporary_background=''",
-                params,
-            )
-            self._conn.commit()
-
-        _run_with_locked_retry(self._conn, operation, lock=self._lock)
+        return self._invoke("delete_empty_conversations", locals())
 
     def add_external_chat_message(self, event: dict) -> dict:
-        if not isinstance(event, dict):
-            raise ValueError("chat event must be an object")
-        platform = _clean_external_text(event.get("platform") or event.get("source") or "external", "external") or "external"
-        thread_id = _clean_external_text(
-            event.get("thread_id")
-            or event.get("conversation_id")
-            or event.get("chat_id")
-            or event.get("room_id")
-            or "default",
-            "default",
-        ) or "default"
-        thread_name = _clean_external_text(
-            event.get("thread_name")
-            or event.get("conversation_name")
-            or event.get("chat_name")
-            or event.get("room_name")
-            or thread_id
-        )
-        external_message_id = _clean_external_text(
-            event.get("message_id")
-            or event.get("external_message_id")
-            or event.get("id")
-            or ""
-        )
-        sender_id = _clean_external_text(event.get("sender_id") or event.get("author_id") or "")
-        sender_name = _clean_external_text(
-            event.get("sender_name")
-            or event.get("author_name")
-            or event.get("sender")
-            or event.get("from")
-            or sender_id
-            or "unknown"
-        )
-        content = _clean_external_content(
-            event.get("text")
-            or event.get("content")
-            or event.get("message")
-            or event.get("body")
-            or ""
-        )
-        if not content:
-            raise ValueError("chat event text/content is required")
-
-        direction = _clean_external_text(event.get("direction") or "inbound", "inbound").lower()
-        if direction not in {"inbound", "outbound", "draft"}:
-            direction = "inbound"
-        chat_type = _clean_external_text(event.get("chat_type") or "").lower()
-        if chat_type not in {"group", "private"}:
-            chat_type = ""
-        unread = 1 if bool(event.get("unread", direction == "inbound")) and direction == "inbound" else 0
-        created_at = _clean_external_text(event.get("timestamp") or event.get("created_at") or _now_text(), _now_text())
-
-        if external_message_id:
-            duplicate = self._conn.execute(
-                "SELECT id FROM external_chat_messages "
-                "WHERE platform=? AND thread_id=? AND external_message_id=? LIMIT 1",
-                (platform, thread_id, external_message_id),
-            ).fetchone()
-            if duplicate:
-                return {
-                    "duplicate": True,
-                    "message_id": _db_int(duplicate[0]) or 0,
-                    "thread": self._external_thread_summary(platform, thread_id),
-                    "unread": self.get_external_chat_unread_summary(),
-                }
-
-        cur = self._conn.execute(
-            "INSERT INTO external_chat_messages "
-            "(platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, chat_type, raw_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                platform,
-                thread_id,
-                external_message_id,
-                sender_id,
-                sender_name,
-                direction,
-                content,
-                unread,
-                chat_type,
-                _json_text(event),
-                created_at,
-            ),
-        )
-        message_id = int(cur.lastrowid or 0)
-        now = _now_text()
-        self._conn.execute(
-            "INSERT INTO external_chat_threads "
-            "(platform, thread_id, thread_name, chat_type, unread_count, last_message_id, last_message_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(platform, thread_id) DO UPDATE SET "
-            "thread_name=CASE WHEN excluded.thread_name != '' THEN excluded.thread_name ELSE external_chat_threads.thread_name END, "
-            "chat_type=CASE WHEN excluded.chat_type != '' THEN excluded.chat_type ELSE external_chat_threads.chat_type END, "
-            "unread_count=external_chat_threads.unread_count + ?, "
-            "last_message_id=excluded.last_message_id, "
-            "last_message_at=excluded.last_message_at, "
-            "updated_at=excluded.updated_at",
-            (
-                platform,
-                thread_id,
-                thread_name,
-                chat_type,
-                unread,
-                message_id,
-                created_at,
-                now,
-                unread,
-            ),
-        )
-        pruned_messages = 0
-        if chat_type == "group":
-            pruned_messages = self._prune_external_group_thread_messages(platform, thread_id)
-        self._conn.commit()
-        return {
-            "duplicate": False,
-            "message_id": message_id,
-            "pruned_messages": pruned_messages,
-            "thread": self._external_thread_summary(platform, thread_id),
-            "unread": self.get_external_chat_unread_summary(),
-        }
+        return self._invoke("add_external_chat_message", locals())
 
     def _external_thread_summary(self, platform: str, thread_id: str) -> dict:
         row = self._conn.execute(
@@ -2208,125 +1258,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         }
 
     def get_external_chat_unread_summary(self, limit_threads: int = 5, limit_messages: int = 3) -> dict:
-        limit_threads = _clamp_int(limit_threads, 1, 20, 5)
-        limit_messages = _clamp_int(limit_messages, 1, 10, 3)
-        total_row = self._conn.execute(
-            "SELECT COALESCE(SUM(unread_count), 0) FROM external_chat_threads"
-        ).fetchone()
-        total_unread = _db_int(total_row[0] if total_row else 0) or 0
-        rows = self._conn.execute(
-            "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
-            "FROM external_chat_threads WHERE unread_count > 0 "
-            "ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
-            (limit_threads,),
-        ).fetchall()
-        threads = []
-        for row in rows:
-            platform = _db_text(row[0], "external") or "external"
-            thread_id = _db_text(row[1], "default") or "default"
-            msg_rows = self._conn.execute(
-                "SELECT id, platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at "
-                "FROM external_chat_messages WHERE platform=? AND thread_id=? AND unread=1 "
-                "ORDER BY id DESC LIMIT ?",
-                (platform, thread_id, limit_messages),
-            ).fetchall()
-            messages = [_external_message_row_dict(item) for item in reversed(msg_rows)]
-            threads.append({
-                "platform": platform,
-                "thread_id": thread_id,
-                "thread_name": _db_text(row[2]) or thread_id,
-                "unread_count": _db_int(row[3]) or 0,
-                "last_message_at": _db_text(row[4]),
-                "messages": messages,
-            })
-        return {"total_unread": total_unread, "threads": threads}
+        return self._invoke("get_external_chat_unread_summary", locals())
 
     def external_chat_context_text(
         self, limit_threads: int = 4, limit_messages: int = 6, *,
         platform: str | None = None, thread_id: str | None = None,
         chat_type: str | None = None,
     ) -> str:
-        limit_threads = _clamp_int(limit_threads, 1, 12, 4)
-        limit_messages = _clamp_int(limit_messages, 1, 20, 6)
-        scoped = any(value is not None for value in (platform, thread_id, chat_type))
-        if scoped:
-            platform = _clean_external_text(platform)
-            thread_id = _clean_external_text(thread_id)
-            chat_type = _clean_external_text(chat_type).lower()
-            # An incomplete remote conversation identity must never fall back
-            # to the desktop's aggregate context.
-            if not platform or not thread_id or chat_type not in {"group", "private"}:
-                return ""
-        thread_filter = "WHERE platform=? AND thread_id=? AND chat_type=? " if scoped else ""
-        thread_params = (platform, thread_id, chat_type) if scoped else ()
-        message_filter = "AND chat_type=? " if scoped else ""
-        rows = self._conn.execute(
-            "SELECT platform, thread_id, thread_name, unread_count, last_message_at "
-            f"FROM external_chat_threads {thread_filter}"
-            "ORDER BY last_message_at DESC, updated_at DESC LIMIT ?",
-            (*thread_params, limit_threads),
-        ).fetchall()
-        if not rows:
-            return ""
-        lines = [
-            "【外部聊天软件上下文】",
-            "以下是 BandoriPet 最近从外部聊天软件收到的消息。可以用于理解用户当前可能在处理的对话；除非用户要求代写或总结，不要主动暴露隐私细节。",
-        ]
-        for row in rows:
-            platform = _db_text(row[0], "external") or "external"
-            thread_id = _db_text(row[1], "default") or "default"
-            thread_name = _db_text(row[2]) or thread_id
-            unread_count = _db_int(row[3]) or 0
-            lines.append(f"[{platform} / {thread_name} / 未读 {unread_count}]")
-            msg_rows = self._conn.execute(
-                "SELECT id, platform, thread_id, external_message_id, sender_id, sender_name, direction, content, unread, raw_json, created_at "
-                "FROM external_chat_messages WHERE platform=? AND thread_id=? "
-                f"{message_filter}ORDER BY id DESC LIMIT ?",
-                (platform, thread_id, chat_type, limit_messages) if scoped
-                else (platform, thread_id, limit_messages),
-            ).fetchall()
-            for message in [_external_message_row_dict(item) for item in reversed(msg_rows)]:
-                sender = message["sender_name"] or message["sender_id"] or "unknown"
-                content = message["content"].replace("\r", " ").replace("\n", " ").strip()
-                if len(content) > 500:
-                    content = content[:500] + "..."
-                marker = "未读" if message["unread"] else "已读"
-                lines.append(f"- {message['created_at']} {sender}（{marker}）：{content}")
-        return "\n".join(lines)
+        return self._invoke("external_chat_context_text", locals())
 
     def mark_external_chat_read(self, platform: str = "", thread_id: str = "") -> dict:
-        platform = _clean_external_text(platform)
-        thread_id = _clean_external_text(thread_id)
-        cur = self._conn.execute(
-            "UPDATE external_chat_messages SET unread=0 "
-            "WHERE unread=1 AND (?='' OR platform=?) AND (?='' OR thread_id=?)",
-            (platform, platform, thread_id, thread_id),
-        )
-        if platform and thread_id:
-            self._conn.execute(
-                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE platform=? AND thread_id=?",
-                (_now_text(), platform, thread_id),
-            )
-        elif platform:
-            self._conn.execute(
-                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE platform=?",
-                (_now_text(), platform),
-            )
-        elif thread_id:
-            self._conn.execute(
-                "UPDATE external_chat_threads SET unread_count=0, updated_at=? WHERE thread_id=?",
-                (_now_text(), thread_id),
-            )
-        else:
-            self._conn.execute(
-                "UPDATE external_chat_threads SET unread_count=0, updated_at=?",
-                (_now_text(),),
-            )
-        self._conn.commit()
-        return {
-            "marked_read": int(cur.rowcount or 0),
-            "unread": self.get_external_chat_unread_summary(),
-        }
+        return self._invoke("mark_external_chat_read", locals())
 
     def _resync_external_chat_threads(self):
         """Drop empty threads and recompute unread/last-message after a deletion."""
@@ -2370,80 +1312,13 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         return deleted_messages
 
     def prune_external_group_chat_limit(self) -> dict:
-        """Keep only the newest stored messages for each external group chat."""
-        def operation():
-            rows = self._conn.execute(
-                "SELECT platform, thread_id FROM external_chat_threads WHERE chat_type='group' "
-                "UNION "
-                "SELECT platform, thread_id FROM external_chat_messages WHERE chat_type='group'"
-            ).fetchall()
-            deleted_messages = 0
-            for row in rows:
-                platform = _db_text(row[0], "external") or "external"
-                thread_id = _db_text(row[1], "default") or "default"
-                deleted_messages += self._prune_external_group_thread_messages(platform, thread_id)
-            self._conn.commit()
-            return {"deleted_messages": deleted_messages}
-
-        return _run_with_locked_retry(self._conn, operation)
+        return self._invoke("prune_external_group_chat_limit", locals())
 
     def delete_external_chat(self, chat_type: str = "", platform: str = "") -> dict:
-        """Delete all external chat records, optionally scoped by chat_type/platform.
-
-        ``chat_type`` is "group" / "private" (empty = any). Used by the manual
-        "delete records" buttons in the NapCat settings.
-        """
-        chat_type = _clean_external_text(chat_type)
-        platform = _clean_external_text(platform)
-
-        def operation():
-            cur = self._conn.execute(
-                "DELETE FROM external_chat_messages "
-                "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
-                (chat_type, chat_type, platform, platform),
-            )
-            deleted_messages = int(cur.rowcount or 0)
-            tcur = self._conn.execute(
-                "DELETE FROM external_chat_threads "
-                "WHERE (?='' OR chat_type=?) AND (?='' OR platform=?)",
-                (chat_type, chat_type, platform, platform),
-            )
-            deleted_threads = int(tcur.rowcount or 0)
-            if deleted_messages:
-                self._resync_external_chat_threads()
-            self._conn.commit()
-            return {
-                "deleted_messages": deleted_messages,
-                "deleted_threads": deleted_threads,
-                "unread": self.get_external_chat_unread_summary(),
-            }
-
-        return _run_with_locked_retry(self._conn, operation)
+        return self._invoke("delete_external_chat", locals())
 
     def purge_external_chat_older_than(self, days, chat_type: str = "", platform: str = "") -> dict:
-        """Delete external chat records older than ``days`` (retention auto-clean).
-
-        Records created strictly before ``now - days`` are removed; threads left
-        empty are dropped and the rest have their unread/last-message recomputed.
-        """
-        days = _clamp_int(days, 1, 3650, 7)
-        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-        chat_type = _clean_external_text(chat_type)
-        platform = _clean_external_text(platform)
-
-        def operation():
-            cur = self._conn.execute(
-                "DELETE FROM external_chat_messages "
-                "WHERE created_at < ? AND (?='' OR chat_type=?) AND (?='' OR platform=?)",
-                (cutoff, chat_type, chat_type, platform, platform),
-            )
-            deleted_messages = int(cur.rowcount or 0)
-            if deleted_messages:
-                self._resync_external_chat_threads()
-            self._conn.commit()
-            return {"deleted_messages": deleted_messages}
-
-        return _run_with_locked_retry(self._conn, operation)
+        return self._invoke("purge_external_chat_older_than", locals())
 
     # ── Usage session tracking ──────────────────────────────────────────
 
@@ -3040,3 +1915,19 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 return
             self._closed = True
             self._conn.close()
+
+    def _invoke(self, operation, arguments):
+        args = dict(arguments)
+        args.pop("self", None)
+        if operation in {"add_message", "add_group_message"}:
+            args["attachments_json"] = _json_text(_sanitize_attachments_payload(args.pop("attachments")))
+            args["tool_trace_json"] = _json_text(args.pop("tool_trace"))
+        elif operation == "add_external_chat_message":
+            args["raw_json"] = _json_text(args["event"])
+        result = self._native.call(operation, args)
+        if operation == "change_revision":
+            return tuple(result)
+        if operation == "get_chat_history_filter_options":
+            for key in ("characters", "user_keys"):
+                result[key].sort(key=str.casefold)
+        return result
