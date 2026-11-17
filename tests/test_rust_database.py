@@ -100,7 +100,9 @@ def test_native_binding_and_clear_missing_extension(monkeypatch, tmp_path):
         with pytest.raises(sqlite3.IntegrityError) as error:
             db.add_message(999, "user", "foreign key")
         assert error.value.sqlite_errorname == "SQLITE_CONSTRAINT_FOREIGNKEY"
-        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY
+        # SQLite's extended result code is 19 | (3 << 8); Python 3.10 does
+        # not expose SQLITE_CONSTRAINT_FOREIGNKEY in the sqlite3 module.
+        assert error.value.sqlite_errorcode == 787
         with pytest.raises(sqlite3.ProgrammingError):
             db._conn.execute("SELECT ?", ())
     monkeypatch.setitem(sys.modules, "bandori_core._pet_db", None)
