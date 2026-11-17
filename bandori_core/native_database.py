@@ -18,7 +18,8 @@ def native_class():
 
 
 def open_native(path):
-    return native_class()(str(path))
+    import os
+    return native_class()(os.fsdecode(os.fspath(path)))
 
 
 class NativeCursor:

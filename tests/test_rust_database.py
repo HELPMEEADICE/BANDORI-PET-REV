@@ -56,6 +56,55 @@ def test_public_signatures_are_compatible():
             assert inspect.signature(getattr(DatabaseManager, name)) == inspect.signature(member), name
 
 
+def test_native_binding_and_clear_missing_extension(monkeypatch, tmp_path):
+    import sys
+    from bandori_core import _pet_db
+    from bandori_core.native_database import open_native
+    assert _pet_db.BACKEND == "rust-pet-db"
+    with closing(DatabaseManager(str(tmp_path / "binding.db"))) as db:
+        assert type(db._native).__module__ == "bandori_core._pet_db"
+        with pytest.raises(sqlite3.IntegrityError) as error:
+            db.add_message(999, "user", "foreign key")
+        assert error.value.sqlite_errorname == "SQLITE_CONSTRAINT_FOREIGNKEY"
+        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY
+        with pytest.raises(sqlite3.ProgrammingError):
+            db._conn.execute("SELECT ?", ())
+    monkeypatch.setitem(sys.modules, "bandori_core._pet_db", None)
+    with pytest.raises(RuntimeError, match="python tools/build_db.py"):
+        open_native(tmp_path / "missing.db")
+    assert not (tmp_path / "missing.db").exists()
+
+
+@pytest.mark.parametrize("value", [0, 2.5, 3.5, "67.8", "bad", float("inf")])
+def test_numeric_state_compatibility(tmp_path, value):
+    results = []
+    for i, factory in enumerate((LegacyDatabase, DatabaseManager)):
+        with closing(factory(str(tmp_path / f"{i}.db"))) as db:
+            db.upsert_relationship_state("灯", "甲", affection=13)
+            results.append(db.upsert_relationship_state("灯", "甲", affection=value)["affection"])
+    assert results[0] == results[1]
+
+
+def test_upgrade_old_schema_preserves_rows_and_unknown_columns(tmp_path):
+    path = tmp_path / "old-schema.db"
+    with closing(sqlite3.connect(path)) as c:
+        c.executescript("""
+            CREATE TABLE conversations(id INTEGER PRIMARY KEY AUTOINCREMENT,character TEXT NOT NULL,title TEXT DEFAULT '',created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),custom TEXT);
+            CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id INTEGER NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+            CREATE TABLE group_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,group_key TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+            INSERT INTO conversations(character,title,custom) VALUES('灯','旧标题','插件数据');
+            INSERT INTO messages(conversation_id,role,content) VALUES(1,'user','旧消息🐈');
+            INSERT INTO group_messages(group_key,role,content) VALUES('group','user','旧群聊');
+        """)
+    with closing(DatabaseManager(str(path))) as db:
+        assert db.get_messages(1)[0]["content"] == "旧消息🐈"
+        assert db.get_group_messages("group", "default")[0]["content"] == "旧群聊"
+        assert db._conn.execute("SELECT custom FROM conversations").fetchone() == ("插件数据",)
+        assert db.assign_legacy_chat_history_user("甲") == 2
+    with closing(LegacyDatabase(str(path))) as db:
+        assert db.get_messages(1)[0]["content"] == "旧消息🐈"
+
+
 def _seed(path):
     with closing(LegacyDatabase(str(path))) as db:
         for user in ("甲", "乙", "__default__"):

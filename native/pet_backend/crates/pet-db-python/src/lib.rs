@@ -88,7 +88,33 @@ fn to_python(py: Python<'_>, v: Value) -> PyResult<Py<PyAny>> {
     })
 }
 fn error(py: Python<'_>, e: Error) -> PyErr {
+    let details = if let Error::Sql(pet_db::SqlError::SqliteFailure(code, _)) = &e {
+        Some((
+            code.extended_code,
+            match code.extended_code {
+                5 => "SQLITE_BUSY",
+                6 => "SQLITE_LOCKED",
+                9 => "SQLITE_INTERRUPT",
+                11 => "SQLITE_CORRUPT",
+                19 => "SQLITE_CONSTRAINT",
+                26 => "SQLITE_NOTADB",
+                275 => "SQLITE_CONSTRAINT_CHECK",
+                787 => "SQLITE_CONSTRAINT_FOREIGNKEY",
+                1299 => "SQLITE_CONSTRAINT_NOTNULL",
+                1555 => "SQLITE_CONSTRAINT_PRIMARYKEY",
+                2067 => "SQLITE_CONSTRAINT_UNIQUE",
+                _ => "SQLITE_ERROR",
+            },
+        ))
+    } else {
+        None
+    };
     let name = match &e {
+        Error::Sql(
+            pet_db::SqlError::InvalidParameterCount(..)
+            | pet_db::SqlError::InvalidParameterName(..)
+            | pet_db::SqlError::MultipleStatement,
+        ) => "ProgrammingError",
         Error::Sql(e) => match e.sqlite_error_code() {
             Some(pet_db::SqlErrorCode::ConstraintViolation) => "IntegrityError",
             Some(pet_db::SqlErrorCode::DatabaseCorrupt | pet_db::SqlErrorCode::NotADatabase) => {
@@ -106,7 +132,13 @@ fn error(py: Python<'_>, e: Error) -> PyErr {
         .and_then(|m| m.getattr(name))
         .and_then(|cls| cls.call1((e.to_string(),)))
     {
-        Ok(value) => PyErr::from_value(value),
+        Ok(value) => {
+            if let Some((code, name)) = details {
+                let _ = value.setattr("sqlite_errorcode", code);
+                let _ = value.setattr("sqlite_errorname", name);
+            }
+            PyErr::from_value(value)
+        }
         Err(e) => e,
     }
 }
@@ -118,6 +150,11 @@ struct NativeDatabase {
 
 #[pymethods]
 impl NativeDatabase {
+    /// Benchmark-only conversion probe: no database or lock is involved.
+    #[staticmethod]
+    fn _conversion_probe(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        to_python(py, from_python(value)?)
+    }
     #[staticmethod]
     fn migrate_legacy(py: Python<'_>, source: PathBuf, target: PathBuf) -> PyResult<()> {
         py.detach(|| pet_db::maintenance::migrate_legacy(&source, &target))
@@ -154,6 +191,44 @@ impl NativeDatabase {
     }
     fn call(&self, py: Python<'_>, op: &str, args: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let args = from_python(args)?;
+        if matches!(op, "get_messages" | "get_group_messages") {
+            let messages = py
+                .detach(|| self.db.history(&args, op == "get_group_messages"))
+                .map_err(|e| error(py, e))?;
+            let out = PyList::empty(py);
+            for message in messages {
+                let d = PyDict::new(py);
+                d.set_item(pyo3::intern!(py, "id"), message.id)?;
+                match message.conversation_id {
+                    pet_db::history::ConversationId::Private(i) => {
+                        d.set_item(pyo3::intern!(py, "conversation_id"), i)?
+                    }
+                    pet_db::history::ConversationId::Group(s) => {
+                        d.set_item(pyo3::intern!(py, "conversation_id"), s)?
+                    }
+                };
+                if let Some(group) = message.group_key {
+                    d.set_item(pyo3::intern!(py, "group_key"), group)?;
+                }
+                d.set_item(pyo3::intern!(py, "role"), message.role)?;
+                d.set_item(pyo3::intern!(py, "content"), message.content)?;
+                d.set_item(
+                    pyo3::intern!(py, "reasoning_content"),
+                    message.reasoning_content,
+                )?;
+                d.set_item(
+                    pyo3::intern!(py, "attachments_json"),
+                    message.attachments_json,
+                )?;
+                d.set_item(
+                    pyo3::intern!(py, "tool_trace_json"),
+                    message.tool_trace_json,
+                )?;
+                d.set_item(pyo3::intern!(py, "created_at"), message.created_at)?;
+                out.append(d)?;
+            }
+            return Ok(out.into_any().unbind());
+        }
         let value = py
             .detach(|| self.db.call(op, &args))
             .map_err(|e| error(py, e))?;
@@ -224,6 +299,7 @@ impl NativeDatabase {
 #[pymodule]
 fn _pet_db(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BACKEND", "rust-pet-db")?;
+    m.add("SQLITE_VERSION", pet_db::sqlite_version())?;
     m.add_class::<NativeDatabase>()?;
     Ok(())
 }

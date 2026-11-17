@@ -72,12 +72,10 @@ pub fn change_state(c: &Connection, a: &Value, delta: bool) -> Result<Value> {
     for (key, default) in [("affection", 50), ("trust", 50), ("familiarity", 0)] {
         let n = if delta {
             int(&current, key).saturating_add(int(a, &format!("{key}_delta")))
+        } else if a[key].is_null() {
+            int(&current, key)
         } else {
-            if a[key].is_null() {
-                int(&current, key)
-            } else {
-                clamp(&a[key], 0, 100, default)
-            }
+            clamp(&a[key], 0, 100, default)
         };
         next[key] = json!(clamp(&json!(n), 0, 100, default));
     }

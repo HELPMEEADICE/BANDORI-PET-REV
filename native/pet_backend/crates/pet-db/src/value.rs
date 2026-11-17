@@ -226,3 +226,27 @@ pub fn normalize_strings(v: &mut Value, keys: &[&str]) {
         v[*key] = json!(text(&v[*key]));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn python_numeric_rounding_and_invalid_values() {
+        assert_eq!(clamp(&json!(2.5), 0, 100, 50), 2);
+        assert_eq!(clamp(&json!(3.5), 0, 100, 50), 4);
+        assert_eq!(clamp(&json!("1.8"), 0, 100, 50), 2);
+        assert_eq!(clamp(&json!("inf"), 0, 100, 50), 50);
+        assert_eq!(clamp(&json!("bad"), 0, 100, 50), 50);
+        assert_eq!(clamp(&json!(-10), 0, 100, 50), 0);
+    }
+    #[test]
+    fn nonfinite_legacy_json_retains_other_fields_and_quoted_text() {
+        let value = parse_json(
+            r#"{"n":Infinity,"quoted":"Infinity🐈","other":25,"nested":[-Infinity,NaN]}"#,
+        );
+        assert_eq!(value["other"], 25);
+        assert_eq!(value["quoted"], "Infinity🐈");
+        assert!(value["n"].is_null());
+        assert!(parse_json("{corrupt").is_null());
+    }
+}

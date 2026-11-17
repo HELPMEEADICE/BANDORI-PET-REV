@@ -15,7 +15,6 @@ from pathlib import Path
 import sqlite3
 
 from bandori_core.process_utils import app_base_dir, app_data_dir
-from bandori_core.config_manager import DEFAULT_USER_PROFILE_KEY
 from bandori_core.native_database import NativeConnection, native_class, open_native
 
 BASE_DIR = app_data_dir()
@@ -28,27 +27,6 @@ def _migrate_legacy_database(db_path):
     legacy = LEGACY_BASE_DIR / "data.db"
     if target == Path(DB_PATH) and LEGACY_BASE_DIR != BASE_DIR and legacy.is_file():
         native_class().migrate_legacy(str(legacy), str(target))
-
-
-def _remove_database_lock_on_close() -> bool:
-    # POSIX flock locks an inode. Unlinking the path while another process is
-    # waiting can let a third process create and lock a different inode.
-    return os.name == "nt"
-
-
-def _db_text(value, default: str = "") -> str:
-    if value is None:
-        return default
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
-
-
-def _db_int(value) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
 
 
 def _json_text(value) -> str:
@@ -204,6 +182,8 @@ class DatabaseManager:
             args["raw_json"] = _json_text(args["event"])
         elif "character_aliases" in args:
             args["character_aliases"] = list(args["character_aliases"] or [])
+        elif operation == "delete_character_memories":
+            args["memory_ids"] = list(args["memory_ids"])
         elif operation == "get_messages_per_character_range":
             args["asset_dir"] = str(LEGACY_BASE_DIR)
         result = self._native.call(operation, args)

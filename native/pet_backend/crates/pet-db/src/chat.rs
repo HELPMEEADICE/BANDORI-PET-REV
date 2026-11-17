@@ -36,46 +36,10 @@ pub fn message(mut row: Value, grouped: bool) -> Option<Value> {
 }
 
 pub fn messages(c: &Connection, a: &Value, grouped: bool) -> Result<Value> {
-    let (table, columns, mut clause, mut p) = if grouped {
-        let conv = conversation(a);
-        (
-            "group_messages",
-            GROUP,
-            "group_key=? AND (conversation_id=? OR CAST(conversation_id AS TEXT)=?)".into(),
-            vec![a["group_key"].clone(), json!(conv), json!(conv)],
-        )
-    } else {
-        (
-            "messages",
-            MESSAGE,
-            "conversation_id=?".into(),
-            vec![a["conversation_id"].clone()],
-        )
-    };
-    if grouped {
-        scope(a, "user_key", &mut clause, &mut p);
-    }
-    if int(a, "before_id") > 0 {
-        clause.push_str(" AND id<?");
-        p.push(json!(int(a, "before_id")));
-    }
-    let limited = !a["limit"].is_null();
-    let order = if limited { "DESC LIMIT ?" } else { "ASC" };
-    if limited {
-        p.push(json!(clamp(&a["limit"], 1, 1000, 1000)));
-    }
-    let mut rows: Vec<_> = query(
-        c,
-        &format!("SELECT {columns} FROM {table} WHERE {clause} ORDER BY id {order}"),
-        &p,
-    )?
-    .into_iter()
-    .filter_map(|r| message(r, grouped))
-    .collect();
-    if limited {
-        rows.reverse();
-    }
-    Ok(json!(rows))
+    Ok(json!(crate::history::query(c, a, grouped)?
+        .into_iter()
+        .map(crate::history::Message::into_json)
+        .collect::<Vec<_>>()))
 }
 
 pub fn conversation(a: &Value) -> String {
@@ -318,7 +282,15 @@ pub fn call(c: &Connection, op: &str, a: &Value) -> Result<Value> {
         }
         "add_messages" => {
             let items=a["messages"].as_array().ok_or_else(|| Error::Invalid("messages must be a list".into()))?;
-            items.iter().map(|item| { let mut args=item.clone(); args["conversation_id"]=a["conversation_id"].clone(); call(c,"add_message",&args) }).collect::<Result<Vec<_>>>().map(|v| json!(v))
+            let conversation=sql(&a["conversation_id"])?;
+            let created=sql(&now(c)?)?;
+            let mut statement=c.prepare_cached("INSERT INTO messages(conversation_id,role,content,reasoning_content,attachments_json,tool_trace_json,created_at) VALUES(?,?,?,?,?,?,?)")?;
+            let mut ids=Vec::with_capacity(items.len());
+            for item in items{
+                statement.execute(rusqlite::params![conversation,sql(&item["role"])?,sql(&item["content"])?,sql(&item["reasoning_content"])?,sql(&item["attachments_json"])?,sql(&item["tool_trace_json"])?,created])?;
+                ids.push(c.last_insert_rowid());
+            }
+            Ok(json!(ids))
         }
         "get_messages" | "get_group_messages" => messages(c,a,op=="get_group_messages"),
         "update_message_content" | "delete_messages_from" | "delete_message" => mutate_messages(c,op,a,false),

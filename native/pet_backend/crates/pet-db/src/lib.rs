@@ -4,6 +4,7 @@ mod albums;
 mod chat;
 mod error;
 mod external;
+pub mod history;
 pub mod maintenance;
 mod memory;
 mod schema;
@@ -13,6 +14,8 @@ pub mod value;
 
 pub use error::{Error, Result};
 pub use rusqlite::types::Value as SqlValue;
+pub use rusqlite::version as sqlite_version;
+pub use rusqlite::Error as SqlError;
 pub use rusqlite::ErrorCode as SqlErrorCode;
 mod raw;
 pub use raw::RawOutput;
@@ -75,8 +78,17 @@ impl Database {
         if !c.is_autocommit() {
             // Compatibility calls may have opened a DB-API transaction.
             let result = f(c);
-            if write || result.is_err() {
-                c.execute_batch(if result.is_ok() { "COMMIT" } else { "ROLLBACK" })?;
+            if !c.is_autocommit() && (write || result.is_err()) {
+                if let Err(error) =
+                    c.execute_batch(if result.is_ok() { "COMMIT" } else { "ROLLBACK" })
+                {
+                    if !c.is_autocommit() {
+                        let _ = c.execute_batch("ROLLBACK");
+                    }
+                    if result.is_ok() {
+                        return Err(error.into());
+                    }
+                }
             }
             return result;
         }
@@ -90,6 +102,11 @@ impl Database {
         Ok(result)
     }
     pub fn call(&self, op: &str, args: &Value) -> Result<Value> {
+        if !args.is_object() {
+            return Err(Error::Invalid(
+                "database arguments must be an object".into(),
+            ));
+        }
         self.with_connection(|c| match op {
             "integrity_check" => value::scalar(c, "PRAGMA integrity_check", &[]),
             "change_revision" => Ok(serde_json::json!([

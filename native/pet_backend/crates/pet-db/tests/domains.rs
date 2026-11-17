@@ -1,5 +1,5 @@
 use pet_db::{Database, Result};
-use serde_json::{json, Value};
+use serde_json::json;
 
 #[test]
 fn chat_memory_and_external_domains() -> Result<()> {
@@ -35,7 +35,7 @@ fn chat_memory_and_external_domains() -> Result<()> {
         true
     );
     assert_eq!(
-        d.call("mark_external_chat_read", &Value::Null)?["marked_read"],
+        d.call("mark_external_chat_read", &json!({}))?["marked_read"],
         1
     );
     Ok(())
