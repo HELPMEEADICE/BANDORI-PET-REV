@@ -332,6 +332,28 @@ def test_corrupt_import_and_attachment_cleanup_are_non_destructive(tmp_path):
     assert corrupt.read_bytes().startswith(b"not a sqlite")
 
 
+def test_corruption_recovery_uses_verified_backup_without_erasing_evidence(tmp_path):
+    source, backup, damaged, recovered = (tmp_path / name for name in
+                                          ("source.db", "backup.db", "damaged.db", "recovered.db"))
+    with closing(DatabaseManager(str(source))) as db:
+        cid = db.create_conversation("灯")
+        db.add_message(cid, "user", "备份必须保留🐈")
+        db.add_character_memory("灯", "甲", "note", "记忆")
+        db.upsert_relationship_state("灯", "甲", affection=42)
+    storage.export_chat_database(str(backup), str(source))
+    damaged.write_bytes(b"damaged SQLite header" * 256)
+    evidence = damaged.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError):
+        DatabaseManager(str(damaged))
+    storage.import_chat_database(str(backup), str(recovered))
+    with closing(DatabaseManager(str(recovered))) as db:
+        assert db.get_messages(cid)[0]["content"] == "备份必须保留🐈"
+        assert db.get_character_memories("灯", "甲")[0]["content"] == "记忆"
+        assert db.get_relationship_state("灯", "甲")["affection"] == 42
+        assert db.integrity_check() == "ok"
+    assert damaged.read_bytes() == evidence
+
+
 def test_interrupt_does_not_wait_for_connection_mutex(tmp_path):
     with closing(DatabaseManager(str(tmp_path / "interrupt.db"))) as db:
         started = threading.Event()

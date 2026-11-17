@@ -135,7 +135,11 @@ def main():
     parser.add_argument("--rows", type=int, default=10000)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--output", type=Path, default=ROOT / "docs/benchmarks/database.json")
+    parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args()
+    if args.report_only:
+        write_report(args.output)
+        return
     if args.worker:
         print(json.dumps(worker(args.worker, args.workload, args.rows)))
         return
@@ -171,6 +175,44 @@ def main():
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_report(args.output)
+
+
+def write_report(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    samples = data["results"]
+    def median(workload, backend, metric):
+        return statistics.median(r[metric] for r in samples if r["workload"] == workload and r["backend"] == backend)
+    environment = data["environment"]
+    rounds = len({r["round"] for r in samples})
+    rows = samples[0]["seed_rows"]
+    lines = ["# Database benchmark results", "",
+             f"{environment['platform']} ({environment['machine']}), CPython {environment['python'].split()[0]}, {environment['rust']}, release profile. {rounds} alternating rounds; {rows:,} seeded messages and 1,000 memories. Python SQLite {environment['sqlite_python']}; bundled Rust SQLite {environment['sqlite_rust']}. Results include file locking, SQLite and boundary conversion, so differences cannot be attributed solely to language.", "",
+             "| Workload | Python throughput/s | Rust throughput/s | Rust / Python |",
+             "|---|---:|---:|---:|"]
+    for workload in ("insert", "history_200", "substring_search", "memory_50", "batch_200", "concurrent_4"):
+        old = median(workload, "legacy", "throughput_per_second")
+        new = median(workload, "rust", "throughput_per_second")
+        lines.append(f"| {workload} | {old:.1f} | {new:.1f} | {new/old:.2f}x |")
+    lines += ["", "Throughput counts messages for batch writes and individual API calls for concurrency. Latency below is per repeat (200 inserts for a batch; 400 API calls for concurrency). The legacy batch uses direct sqlite3 executemany because the old public API had no bulk method.", "",
+              "| Workload | Backend | p50 ms | p95 ms | CPU seconds | Baseline RSS MiB | Sampled peak RSS MiB |",
+              "|---|---|---:|---:|---:|---:|---:|"]
+    for workload in dict.fromkeys(r["workload"] for r in samples):
+        for backend in ("legacy", "rust"):
+            if not any(r["workload"] == workload and r["backend"] == backend for r in samples):
+                continue
+            values = [median(workload, backend, metric) for metric in (
+                "latency_p50_ms", "latency_p95_ms", "cpu_seconds", "rss_baseline_bytes", "rss_peak_sampled_bytes")]
+            lines.append(f"| {workload} | {backend} | {values[0]:.3f} | {values[1]:.3f} | {values[2]:.4f} | {values[3]/1048576:.2f} | {values[4]/1048576:.2f} |")
+    search_ratio = median("substring_search", "rust", "throughput_per_second") / median("substring_search", "legacy", "throughput_per_second")
+    search_change = f"increased {100*(search_ratio-1):.1f}%" if search_ratio >= 1 else f"regressed {100*(1-search_ratio):.1f}%"
+    lines += ["", f"- Substring search retains legacy LIKE semantics; it is not an FTS index. Median throughput {search_change}.",
+              "- The conversion probe measures a 200-message Python-to-Rust-to-Python round trip without SQL. History queries use a specialized typed output path; the probe is not an exact output-only cost attribution.",
+              "- RSS is sampled every 1 ms and can miss shorter peaks. Windows process high-water values, including fixture setup, are also recorded in the raw data.",
+              "- Idle CPU includes the sampler and Windows timer granularity; a recorded zero is not proof of zero instructions. There are no engine worker threads or timers.",
+              "- These are local microbenchmarks, not a cross-platform production workload guarantee.", "",
+              "[Raw samples and environment](database.json). Reproduce with `python tools/build_db.py` and `python tools/benchmarks/database_benchmark.py`.", ""]
+    path.with_suffix(".md").write_text("\n".join(lines), encoding="utf-8")
 
 
 if __name__ == "__main__":
