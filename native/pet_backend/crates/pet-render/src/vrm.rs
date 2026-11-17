@@ -22,6 +22,7 @@ struct Material {
 }
 pub(crate) struct VrmGpu {
     draws: Vec<Draw>,
+    draw_order: Vec<usize>,
     materials: Vec<Material>,
     camera: wgpu::Buffer,
     camera_group: wgpu::BindGroup,
@@ -105,7 +106,7 @@ impl VrmGpu {
             address_mode_v: wgpu::AddressMode::Repeat,
             ..Default::default()
         });
-        let materials = model
+        let materials: Vec<_> = model
             .materials
             .iter()
             .map(|m| {
@@ -184,7 +185,7 @@ impl VrmGpu {
                 })
             }).collect()
         };
-        let draws = model
+        let draws: Vec<_> = model
             .primitives
             .iter()
             .map(|p| Draw {
@@ -203,8 +204,13 @@ impl VrmGpu {
                 depth: average_depth(p),
             })
             .collect();
+        let mut draw_order: Vec<_> = (0..draws.len()).collect();
+        sort_draw_order(&mut draw_order, |i| {
+            (materials[draws[i].material].queue, draws[i].depth)
+        });
         Self {
             draws,
+            draw_order,
             materials,
             camera,
             camera_group,
@@ -221,6 +227,10 @@ impl VrmGpu {
                 .write_buffer(&draw.vertex, 0, bytemuck::cast_slice(&p.vertices));
             draw.depth = average_depth(p);
         }
+        sort_draw_order(&mut self.draw_order, |i| {
+            let draw = &self.draws[i];
+            (self.materials[draw.material].queue, draw.depth)
+        });
     }
     pub fn set_matrix(&self, gpu: &Gpu, matrix: Matrix44) {
         gpu.queue
@@ -290,16 +300,7 @@ impl VrmGpu {
             &self.pipelines
         };
         pass.set_bind_group(0, &self.camera_group, &[]);
-        let mut order: Vec<_> = (0..self.draws.len()).collect();
-        order.sort_by(|&a, &b| {
-            let a = &self.draws[a];
-            let b = &self.draws[b];
-            self.materials[a.material]
-                .queue
-                .cmp(&self.materials[b.material].queue)
-                .then_with(|| b.depth.total_cmp(&a.depth))
-        });
-        for i in order {
+        for &i in &self.draw_order {
             let draw = &self.draws[i];
             let material = &self.materials[draw.material];
             pass.set_bind_group(1, &material.group, &[]);
@@ -318,6 +319,43 @@ impl VrmGpu {
             };
             pass.set_pipeline(&pipelines[kind * 3 + material.cull as usize]);
             pass.draw_indexed(0..draw.count, 0, 0..1);
+        }
+    }
+}
+
+fn sort_draw_order(order: &mut [usize], key: impl Fn(usize) -> (i32, f32)) {
+    // The index tie-breaker preserves the old stable sort's original mesh order,
+    // even when the previous frame left the reusable buffer in another order.
+    // Unstable sort uses no temporary heap allocation.
+    order.sort_unstable_by(|&a, &b| {
+        let (queue_a, depth_a) = key(a);
+        let (queue_b, depth_b) = key(b);
+        queue_a
+            .cmp(&queue_b)
+            .then_with(|| depth_b.total_cmp(&depth_a))
+            .then_with(|| a.cmp(&b))
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_draw_order;
+
+    #[test]
+    fn reused_draw_order_matches_stable_sort_after_depth_changes() {
+        let mut order: Vec<_> = (0..100).rev().collect();
+        let allocation = order.as_ptr();
+        for frame in 0..10 {
+            let key = |i: usize| ((i % 3) as i32, ((i + frame) % 7) as f32);
+            let mut expected: Vec<_> = (0..100).collect();
+            expected.sort_by(|&a, &b| {
+                let (qa, da) = key(a);
+                let (qb, db) = key(b);
+                qa.cmp(&qb).then_with(|| db.total_cmp(&da))
+            });
+            sort_draw_order(&mut order, key);
+            assert_eq!(order, expected);
+            assert_eq!(order.as_ptr(), allocation);
         }
     }
 }

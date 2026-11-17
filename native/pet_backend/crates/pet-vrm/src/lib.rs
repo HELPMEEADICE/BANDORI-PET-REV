@@ -19,6 +19,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
+    sync::Arc,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -90,7 +91,7 @@ pub struct Primitive {
     node: usize,
     skin: Option<usize>,
     bind: Vec<BindVertex>,
-    morphs: Vec<(Vec<Vec3>, Vec<Vec3>)>,
+    morphs: Vec<(Arc<[Vec3]>, Arc<[Vec3]>)>,
     weights: Vec<f32>,
     mesh: usize,
 }
@@ -282,6 +283,23 @@ fn load_textures(gltf: &gltf::Gltf, blob: &[u8]) -> Result<Vec<DecodedTexture>> 
     Ok(textures)
 }
 
+// Accessor indices identify immutable streams within this document, including
+// sparse accessors. Decode shared targets only once, even across mesh instances.
+fn morph_attribute(
+    cache: &mut HashMap<usize, Arc<[Vec3]>>,
+    accessor: Option<gltf::Accessor<'_>>,
+    values: Option<impl Iterator<Item = [f32; 3]>>,
+) -> Arc<[Vec3]> {
+    let Some(accessor) = accessor else {
+        return Arc::default();
+    };
+    Arc::clone(
+        cache
+            .entry(accessor.index())
+            .or_insert_with(|| values.into_iter().flatten().map(Vec3::from).collect()),
+    )
+}
+
 impl VrmModel {
     pub fn load(path: &Path) -> Result<Self> {
         let (gltf, json) = document(&std::fs::read(path)?)?;
@@ -358,6 +376,7 @@ impl VrmModel {
             })
             .collect::<Vec<_>>();
         let mut primitives = Vec::new();
+        let mut morph_cache = HashMap::new();
         for node in gltf.nodes() {
             if let Some(mesh) = node.mesh() {
                 for p in mesh.primitives() {
@@ -418,12 +437,13 @@ impl VrmModel {
                             weights: weights[i],
                         })
                         .collect();
-                    let morphs: Vec<_> = reader
-                        .read_morph_targets()
-                        .map(|(p, n, _)| {
+                    let morphs: Vec<_> = p
+                        .morph_targets()
+                        .zip(reader.read_morph_targets())
+                        .map(|(target, (positions, normals, _))| {
                             (
-                                p.map(|it| it.map(Vec3::from).collect()).unwrap_or_default(),
-                                n.map(|it| it.map(Vec3::from).collect()).unwrap_or_default(),
+                                morph_attribute(&mut morph_cache, target.positions(), positions),
+                                morph_attribute(&mut morph_cache, target.normals(), normals),
                             )
                         })
                         .collect();
@@ -449,6 +469,7 @@ impl VrmModel {
         if primitives.is_empty() {
             return Err(invalid("no renderable meshes"));
         }
+        drop(morph_cache);
         let mut expressions = Vec::new();
         if legacy {
             for e in vrm["blendShapeMaster"]["blendShapeGroups"]

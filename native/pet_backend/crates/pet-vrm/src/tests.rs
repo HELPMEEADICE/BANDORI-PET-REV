@@ -12,6 +12,56 @@ fn fixture(legacy: bool) -> VrmModel {
 }
 
 #[test]
+fn morph_accessors_share_storage_without_aliasing_other_streams_or_documents() {
+    let manifest = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": 48}],
+        "bufferViews": [{"buffer": 0, "byteLength": 24},
+                        {"buffer": 0, "byteOffset": 24, "byteLength": 24}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 2, "type": "VEC3"},
+            {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"}
+        ]
+    });
+    let document = gltf::Gltf::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let accessors: Vec<_> = document.accessors().collect();
+    let mut cache = HashMap::new();
+    let values = [[0., 1., 2.], [3., 4., 5.]];
+    let first = morph_attribute(
+        &mut cache,
+        Some(accessors[0].clone()),
+        Some(values.into_iter()),
+    );
+    // A cache hit must not decode or traverse the stream again.
+    let shared = morph_attribute(
+        &mut cache,
+        Some(accessors[0].clone()),
+        Some(std::iter::from_fn(|| -> Option<[f32; 3]> {
+            panic!("decoded twice")
+        })),
+    );
+    let other = morph_attribute(
+        &mut cache,
+        Some(accessors[1].clone()),
+        Some(values.into_iter()),
+    );
+    assert!(Arc::ptr_eq(&first, &shared));
+    assert!(!Arc::ptr_eq(&first, &other));
+    assert_eq!(&*first, &[Vec3::new(0., 1., 2.), Vec3::new(3., 4., 5.)]);
+    let missing = morph_attribute(&mut cache, None, Some(values.into_iter()));
+    assert!(missing.is_empty());
+    assert_eq!(cache.len(), 2);
+    drop(cache);
+    assert_eq!(Arc::strong_count(&first), 2);
+    let separate = morph_attribute(
+        &mut HashMap::new(),
+        Some(accessors[0].clone()),
+        Some(values.into_iter()),
+    );
+    assert!(!Arc::ptr_eq(&first, &separate));
+}
+
+#[test]
 fn pointer_tracking_corrects_inverted_screen_direction_during_motion_fades() {
     for legacy in [true, false] {
         for (x, y) in [(1., 0.), (-1., 0.), (0., 1.), (0., -1.)] {
@@ -266,11 +316,11 @@ fn sparse_morph_skinning_matches_the_scalar_reference() {
                     (0..primitive.bind.len())
                         .map(|i| Vec3::new(i as f32 * 0.01, m as f32 * 0.02, 0.))
                         .collect(),
-                    if m % 2 == 0 {
+                    Arc::from(if m % 2 == 0 {
                         vec![]
                     } else {
                         vec![Vec3::X * 0.1; primitive.bind.len()]
-                    },
+                    }),
                 )
             })
             .collect();
