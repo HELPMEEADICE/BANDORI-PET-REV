@@ -337,28 +337,6 @@ fn sort_draw_order(order: &mut [usize], key: impl Fn(usize) -> (i32, f32)) {
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::sort_draw_order;
-
-    #[test]
-    fn reused_draw_order_matches_stable_sort_after_depth_changes() {
-        let mut order: Vec<_> = (0..100).rev().collect();
-        let allocation = order.as_ptr();
-        for frame in 0..10 {
-            let key = |i: usize| ((i % 3) as i32, ((i + frame) % 7) as f32);
-            let mut expected: Vec<_> = (0..100).collect();
-            expected.sort_by(|&a, &b| {
-                let (qa, da) = key(a);
-                let (qb, db) = key(b);
-                qa.cmp(&qb).then_with(|| db.total_cmp(&da))
-            });
-            sort_draw_order(&mut order, key);
-            assert_eq!(order, expected);
-            assert_eq!(order.as_ptr(), allocation);
-        }
-    }
-}
 fn average_depth(p: &pet_vrm::Primitive) -> f32 {
     p.vertices.iter().map(|v| v.position[2]).sum::<f32>() / p.vertices.len().max(1) as f32
 }
@@ -388,4 +366,27 @@ fn upload_texture(gpu: &Gpu, width: u32, height: u32, rgba: &[u8]) -> wgpu::Text
         texture.size(),
     );
     texture.create_view(&Default::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_draw_order;
+
+    #[test]
+    fn reused_draw_order_matches_stable_sort_after_depth_changes() {
+        let mut order: Vec<_> = (0..100).rev().collect();
+        let allocation = order.as_ptr();
+        for frame in 0..10 {
+            let key = |i: usize| ((i % 3) as i32, ((i + frame) % 7) as f32);
+            let mut expected: Vec<_> = (0..100).collect();
+            expected.sort_by(|&a, &b| {
+                let (qa, da) = key(a);
+                let (qb, db) = key(b);
+                qa.cmp(&qb).then_with(|| db.total_cmp(&da))
+            });
+            sort_draw_order(&mut order, key);
+            assert_eq!(order, expected);
+            assert_eq!(order.as_ptr(), allocation);
+        }
+    }
 }
