@@ -78,6 +78,9 @@ struct Skin {
     palette: Vec<Mat4>,
 }
 
+/// Shared position and normal deltas for one morph target, in that order.
+type MorphDeltas = (Arc<[Vec3]>, Arc<[Vec3]>);
+
 /// Static u32-to-u16 remapping for one chunk of the CPU hit-test facade.
 struct HitProjection {
     primitive: usize,
@@ -91,7 +94,7 @@ pub struct Primitive {
     node: usize,
     skin: Option<usize>,
     bind: Vec<BindVertex>,
-    morphs: Vec<(Arc<[Vec3]>, Arc<[Vec3]>)>,
+    morphs: Vec<MorphDeltas>,
     weights: Vec<f32>,
     mesh: usize,
 }
