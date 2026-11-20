@@ -46,7 +46,8 @@ jobs:
           - { os: macos-latest, python-arch: arm64 }
           - { os: macos-26-intel, python-arch: x64 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Cold Rust builds on Intel macOS can exhaust the shared timeout before IPC tests run.
+    timeout-minutes: ${{ matrix.os == 'macos-26-intel' && 50 || 30 }}
     env:
       PYTHONUTF8: "1"
     steps:
