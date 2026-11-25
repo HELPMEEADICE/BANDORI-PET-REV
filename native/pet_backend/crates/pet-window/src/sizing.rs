@@ -575,4 +575,3 @@ mod tests {
         assert!((matrix.transform_x(x) - 0.25).abs() < 1e-6);
     }
 }
-
