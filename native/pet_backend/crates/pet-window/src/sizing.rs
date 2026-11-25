@@ -412,11 +412,10 @@ mod tests {
             min_y: 0.0,
             ..content
         };
-        for format in [ModelFormat::Vrm] {
-            let layout = ModelLayout::from_upper_body(content, upper_body, format);
-            let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
-            assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
-        }
+        let format = ModelFormat::Vrm;
+        let layout = ModelLayout::from_upper_body(content, upper_body, format);
+        let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
+        assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
     }
 
     #[test]
