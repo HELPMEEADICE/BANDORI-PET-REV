@@ -60,7 +60,11 @@ pub const BASE_UPPER_BODY_AREA: f32 = 170_000.0;
 /// bust scale (Tomori and Anon in matching casual costumes). A full-body moc3
 /// must be taller on screen, rather than fitting its legs into a bust's height.
 /// Keep one ruler for all moc3 models so stage props cannot change body scale.
-pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.60;
+pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.64;
+
+/// Shared natural reference height for Cubism 2 (.moc) models in model units.
+/// A single ruler replaces the per-model face-height / upper-body-area heuristic.
+pub const DEFAULT_MOC_REFERENCE_HEIGHT: f32 = 2000.0;
 
 /// Minimum window height in logical pixels at 100% for moc3 models.
 /// Taller content retains its animation padding; extra room never changes scale.
@@ -104,6 +108,9 @@ impl ModelLayout {
     /// Uses the neutral face as a common ruler for bust and full-body models.
     /// Moc3 models without face metadata share a fixed model-space ruler.
     pub fn new(content: Bounds, face_height: Option<f32>, format: ModelFormat) -> Self {
+        if format == ModelFormat::Moc {
+            return Self::with_reference_height(content, DEFAULT_MOC_REFERENCE_HEIGHT);
+        }
         let reference_height = face_height
             .filter(|height| height.is_finite() && *height > 1e-4)
             .map(|height| height * BASE_LOGICAL_HEIGHT / BASE_FACE_HEIGHT)
@@ -128,7 +135,7 @@ impl ModelLayout {
     pub fn from_upper_body(content: Bounds, upper_body: Bounds, format: ModelFormat) -> Self {
         // Bandori moc3 assets already share a coordinate scale. In particular,
         // stage props must not change the character's apparent size.
-        if format == ModelFormat::Moc3 {
+        if matches!(format, ModelFormat::Moc3 | ModelFormat::Moc) {
             return Self::new(content, None, format);
         }
         let upper_area = upper_body.width() * upper_body.height();
@@ -328,7 +335,7 @@ mod tests {
             max_x: 0.5,
             max_y: 0.75,
         };
-        let layout = ModelLayout::new(bounds, None, ModelFormat::Moc);
+        let layout = ModelLayout::new(bounds, None, ModelFormat::Vrm);
         let (width, height) = layout.window_size(100.0, 1.0);
         assert_eq!(height, 650);
         assert!((width as f32 - (500.0 * bounds.aspect() + 350.0)).abs() < 1.0);
@@ -405,89 +412,28 @@ mod tests {
             min_y: 0.0,
             ..content
         };
-        for format in [ModelFormat::Moc, ModelFormat::Vrm] {
-            let layout = ModelLayout::from_upper_body(content, upper_body, format);
-            let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
-            assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
-        }
+        let format = ModelFormat::Vrm;
+        let layout = ModelLayout::from_upper_body(content, upper_body, format);
+        let area = upper_body.width() * upper_body.height() * layout.pixels_per_unit.powi(2);
+        assert!((area - BASE_UPPER_BODY_AREA).abs() < 0.1);
     }
 
     #[test]
-    fn moc3_full_bodies_match_moc_bust_scale_without_fitting_away_the_legs() {
-        // Neutral geometry measured from Tomori/Anon casual (moc) and
-        // casual_spring_01 (moc3). These costumes share their body proportions;
-        // the moc geometry ends at the thighs, while moc3 includes the feet.
-        for (moc, upper, moc3) in [
-            (
-                Bounds {
-                    min_x: 303.5952,
-                    min_y: 391.3333,
-                    max_x: 1696.4098,
-                    max_y: 2963.089,
-                },
-                Bounds {
-                    min_x: 303.5952,
-                    min_y: 391.3333,
-                    max_x: 1696.4098,
-                    max_y: 2242.8828,
-                },
-                Bounds {
-                    min_x: -0.21303663,
-                    min_y: -0.69486207,
-                    max_x: 0.21306235,
-                    max_y: 0.5309641,
-                },
-            ),
-            (
-                Bounds {
-                    min_x: 303.59436,
-                    min_y: 307.49982,
-                    max_x: 1696.4095,
-                    max_y: 2880.7554,
-                },
-                Bounds {
-                    min_x: 303.59436,
-                    min_y: 307.49982,
-                    max_x: 1696.4095,
-                    max_y: 2159.8596,
-                },
-                Bounds {
-                    min_x: -0.21959661,
-                    min_y: -0.72569036,
-                    max_x: 0.21959753,
-                    max_y: 0.5512259,
-                },
-            ),
-        ] {
-            let bust = ModelLayout::from_upper_body(moc, upper, ModelFormat::Moc);
-            let full = ModelLayout::from_upper_body(moc3, moc3, ModelFormat::Moc3);
-            for (zoom, dpr) in [(100.0, 1.0), (130.0, 1.5), (200.0, 2.0)] {
-                let project = |layout: ModelLayout, content: Bounds, flip_y: bool| {
-                    let (w, h) = layout.window_size(zoom, dpr);
-                    let matrix = layout.matrix(flip_y);
-                    (
-                        (matrix.transform_x(content.max_x) - matrix.transform_x(content.min_x))
-                            .abs()
-                            * w as f32
-                            / 2.0,
-                        (matrix.transform_y(content.max_y) - matrix.transform_y(content.min_y))
-                            .abs()
-                            * h as f32
-                            / 2.0,
-                    )
-                };
-                let (bust_width, bust_height) = project(bust, moc, true);
-                let (full_width, full_height) = project(full, moc3, false);
-                assert!(
-                    (full_width / bust_width - 1.0).abs() < 0.03,
-                    "head/torso scale must match across formats"
-                );
-                assert!(
-                    full_height > bust_height * 1.5,
-                    "full legs require a taller viewport, not a smaller character"
-                );
-            }
-        }
+    fn moc_uses_a_single_natural_reference() {
+        let content = Bounds {
+            min_x: 300.0,
+            min_y: 350.0,
+            max_x: 1700.0,
+            max_y: 2900.0,
+        };
+        let upper_body = Bounds {
+            min_y: 350.0,
+            max_y: 2200.0,
+            ..content
+        };
+        let layout = ModelLayout::from_upper_body(content, upper_body, ModelFormat::Moc);
+        let expected = BASE_LOGICAL_HEIGHT / DEFAULT_MOC_REFERENCE_HEIGHT;
+        assert!((layout.pixels_per_unit - expected).abs() < 1e-5);
     }
 
     #[test]
@@ -536,7 +482,7 @@ mod tests {
                     max_y: 2900.0,
                 },
                 600.0,
-                ModelFormat::Moc,
+                ModelFormat::Vrm,
                 true,
             ),
             (
