@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Error en la vista previa",
   "SettingsWindow.preview_failed_content": "Live2D La vista previa del disfraz no se pudo inicializar: {error}",
   "SettingsWindow.live2d_scale": "Modelo Escala (%)",
+  "SettingsWindow.moc_legacy_framing": "Encuadre original de MOC",
+  "SettingsWindow.moc_legacy_framing_hint": "Solo afecta a los modelos MOC. Usa el lienzo fijo original y conserva las proporciones y el recorte a la altura de los muslos. Desactívalo para mostrar toda el área dibujada.",
   "SettingsWindow.moc3_leg_crop": "Recortar las piernas de MOC3",
   "SettingsWindow.moc3_leg_crop_hint": "Solo se aplica a los modelos MOC3. Recorta la parte inferior del lienzo y reduce la altura de la ventana de la mascota; 500 px equivalen a la altura base de MOC.",
   "SettingsWindow.moc3_visible_height": "Altura visible de MOC3 (píxeles base)",

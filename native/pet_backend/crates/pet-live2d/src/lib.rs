@@ -352,6 +352,14 @@ impl ModelHandle {
         }
     }
 
+    /// Authored Cubism 2 canvas placement for the original desktop framing.
+    pub fn moc_canvas_matrix(&self) -> Option<neocari::core::Matrix44> {
+        match self {
+            Self::Moc2(adapter) => Some(adapter.canvas_matrix()),
+            _ => None,
+        }
+    }
+
     /// `true` when the model's y axis points down (Cubism 2 `.moc`).
     ///
     /// Cubism 2 coordinates are canvas pixels measured from the top-left corner

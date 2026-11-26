@@ -66,7 +66,9 @@ pub fn apply_level_for(key: &str) -> ApplyLevel {
 
         "character" | "costume" | "live2d_quality" | "models" => ApplyLevel::ReloadModel,
 
-        "live2d_scale" | "obs_window_capture_compatible" => ApplyLevel::RebuildWindow,
+        "live2d_scale" | "moc_legacy_framing_enabled" | "obs_window_capture_compatible" => {
+            ApplyLevel::RebuildWindow
+        }
 
         "gpu_acceleration" | "vsync" | "schema_version" => ApplyLevel::RestartApp,
 

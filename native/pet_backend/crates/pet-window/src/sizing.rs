@@ -66,6 +66,10 @@ pub const DEFAULT_MOC3_REFERENCE_HEIGHT: f32 = 0.64;
 /// A single ruler replaces the per-model face-height / upper-body-area heuristic.
 pub const DEFAULT_MOC_REFERENCE_HEIGHT: f32 = 2000.0;
 
+/// Original Cubism 2 desktop canvas at 100% zoom, in logical pixels.
+pub const MOC_WINDOW_WIDTH: f32 = 400.0;
+pub const MOC_WINDOW_HEIGHT: f32 = 500.0;
+
 /// Minimum window height in logical pixels at 100% for moc3 models.
 /// Taller content retains its animation padding; extra room never changes scale.
 pub const MOC3_WINDOW_HEIGHT: f32 = 903.0;
@@ -93,6 +97,45 @@ pub struct ModelLayout {
 }
 
 impl ModelLayout {
+    /// Reproduces the V2 portrait projection on the original fixed canvas.
+    /// The model matrix includes the authored canvas translation. Drawable and
+    /// face bounds never enter this calculation, so props cannot resize a pet.
+    pub fn moc_canvas(canvas_width: f32, model_matrix: Matrix44) -> Option<Self> {
+        if !canvas_width.is_finite()
+            || canvas_width <= 0.0
+            || !model_matrix.scale_x().is_finite()
+            || model_matrix.scale_x() <= 0.0
+            || !model_matrix.scale_y().is_finite()
+            || model_matrix.scale_y() >= 0.0
+        {
+            return None;
+        }
+        let mut projection = Matrix44::identity();
+        projection.scale(1.0, MOC_WINDOW_WIDTH / MOC_WINDOW_HEIGHT);
+        let matrix = Matrix44::multiply_matrices(&projection, &model_matrix);
+        let viewport = Bounds {
+            min_x: matrix.invert_transform_x(-1.0),
+            max_x: matrix.invert_transform_x(1.0),
+            min_y: matrix.invert_transform_y(1.0),
+            max_y: matrix.invert_transform_y(-1.0),
+        };
+        if [
+            viewport.min_x,
+            viewport.max_x,
+            viewport.min_y,
+            viewport.max_y,
+        ]
+        .iter()
+        .any(|value| !value.is_finite())
+        {
+            return None;
+        }
+        Some(Self {
+            viewport,
+            pixels_per_unit: MOC_WINDOW_WIDTH / canvas_width,
+        })
+    }
+
     pub fn pixel(content: Bounds) -> Self {
         Self {
             viewport: content,
@@ -317,6 +360,77 @@ mod tests {
             vec![0, 1, 2, 0, 2, 3],
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn moc_canvas_keeps_v2_projection_and_applies_zoom_and_dpi_once() {
+        let model_matrix = neocari::moc2::Moc2ModelMatrix::from_layout(
+            neocari::moc2::Moc2Canvas::new(2000, 2500),
+            None,
+        )
+        .matrix();
+        let layout = ModelLayout::moc_canvas(2000.0, model_matrix).unwrap();
+        let matrix = layout.matrix(true);
+        for (zoom, dpr) in [(100.0, 1.0), (108.0, 1.0), (130.0, 1.5), (200.0, 2.0)] {
+            let (width, height) = layout.window_size(zoom, dpr);
+            let factor = zoom / 100.0 * dpr as f32;
+            assert_eq!(width, (400.0 * factor).round() as u32);
+            assert_eq!(height, (500.0 * factor).round() as u32);
+            for (x, y) in [(0.0, 0.0), (1000.0, 1250.0), (1696.4, 2242.9)] {
+                // The V2 portrait MVP is modelMatrix followed by (1, w/h).
+                let expected_x = model_matrix.transform_x(x);
+                let expected_y = model_matrix.transform_y(y) * 0.8;
+                assert!((matrix.transform_x(x) - expected_x).abs() < 1e-5);
+                assert!((matrix.transform_y(y) - expected_y).abs() < 1e-5);
+                assert!((matrix.invert_transform_x(expected_x) - x).abs() < 0.001);
+                assert!((matrix.invert_transform_y(expected_y) - y).abs() < 0.001);
+                let pixel_x = (matrix.transform_x(x) + 1.0) * width as f32 / 2.0;
+                let pixel_y = (1.0 - matrix.transform_y(y)) * height as f32 / 2.0;
+                assert!((pixel_x - x * 0.2 * factor).abs() < 0.5);
+                assert!((pixel_y - y * 0.2 * factor).abs() < 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn moc_canvas_preserves_authored_proportions_across_export_resolutions() {
+        for width in [1000, 2000, 4000] {
+            let matrix = neocari::moc2::Moc2ModelMatrix::from_layout(
+                neocari::moc2::Moc2Canvas::new(width, width * 5 / 4),
+                None,
+            )
+            .matrix();
+            let layout = ModelLayout::moc_canvas(width as f32, matrix).unwrap();
+            assert_eq!(layout.window_size(100.0, 1.0), (400, 500));
+            let matrix = layout.matrix(true);
+            for fraction in [0.2, 0.4] {
+                let face = width as f32 * fraction;
+                let face_pixels =
+                    (matrix.transform_y(face) - matrix.transform_y(0.0)).abs() * 500.0 / 2.0;
+                assert!((face_pixels - fraction * 400.0).abs() < 0.01);
+            }
+            // Tall off-canvas hair/props are cropped, never fitted back in.
+            assert!(matrix.transform_y(width as f32 * 2.0) < -1.0);
+        }
+    }
+
+    #[test]
+    fn moc_canvas_retains_layout_translation_and_rejects_invalid_metadata() {
+        let mut matrix = neocari::moc2::Moc2ModelMatrix::from_layout(
+            neocari::moc2::Moc2Canvas::new(2000, 2500),
+            None,
+        )
+        .matrix();
+        matrix.translate(-0.75, 1.5);
+        let layout = ModelLayout::moc_canvas(2000.0, matrix).unwrap();
+        let actual = layout.matrix(true);
+        assert!((actual.transform_x(500.0) - matrix.transform_x(500.0)).abs() < 1e-5);
+        assert!((actual.transform_y(900.0) - matrix.transform_y(900.0) * 0.8).abs() < 1e-5);
+        for width in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(ModelLayout::moc_canvas(width, matrix).is_none());
+        }
+        matrix.translate(f32::NAN, 0.0);
+        assert!(ModelLayout::moc_canvas(2000.0, matrix).is_none());
     }
 
     #[test]

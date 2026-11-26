@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "預覽載入失敗",
   "SettingsWindow.preview_failed_content": "Live2D 服裝預覽初始化失敗：{error}",
   "SettingsWindow.live2d_scale": "模型縮放（%）",
+  "SettingsWindow.moc_legacy_framing": "舊版 MOC 模型取景",
+  "SettingsWindow.moc_legacy_framing_hint": "僅影響 MOC 模型。開啟後使用舊版固定畫布，保留角色原有體型和大腿處的裁切；關閉後顯示完整繪製範圍。",
   "SettingsWindow.moc3_leg_crop": "裁剪 MOC3 腿部",
   "SettingsWindow.moc3_leg_crop_hint": "僅對 MOC3 模型生效。開啟後裁剪畫布底部並縮短桌寵視窗；500 px 與 MOC 基準高度一致。",
   "SettingsWindow.moc3_visible_height": "MOC3 可見高度（基準像素）",

@@ -394,6 +394,8 @@ pub struct Config {
     pub live2d_quality: Live2dQuality,
     /// Model zoom in percent, independent of DPI; legacy `0` defaults to 100%.
     pub live2d_scale: u32,
+    /// Use the original fixed canvas and authored proportions for Cubism 2.
+    pub moc_legacy_framing_enabled: bool,
     /// Alpha threshold (0–255) for CPU hit testing.
     pub live2d_hit_alpha_threshold: u8,
 
@@ -458,6 +460,7 @@ impl Default for Config {
             opacity: bounds::OPACITY_MAX,
             live2d_quality: Live2dQuality::Balanced,
             live2d_scale: bounds::SCALE_DEFAULT,
+            moc_legacy_framing_enabled: false,
             live2d_hit_alpha_threshold: 8,
 
             game_topmost: false,

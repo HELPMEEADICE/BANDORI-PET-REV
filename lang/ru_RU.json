@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Ошибка предварительного просмотра",
   "SettingsWindow.preview_failed_content": "Предварительный просмотр костюма Live2D не удалось инициализировать: {error}",
   "SettingsWindow.live2d_scale": "Масштаб модели (%)",
+  "SettingsWindow.moc_legacy_framing": "Исходное кадрирование MOC",
+  "SettingsWindow.moc_legacy_framing_hint": "Только для моделей MOC. Использует исходный фиксированный холст, сохраняя пропорции персонажа и обрезку на уровне бёдер. Отключите, чтобы показать всю область отрисовки.",
   "SettingsWindow.moc3_leg_crop": "Обрезать ноги MOC3",
   "SettingsWindow.moc3_leg_crop_hint": "Применяется только к моделям MOC3. Обрезает нижнюю часть холста и уменьшает высоту окна питомца; 500 px соответствуют базовой высоте MOC.",
   "SettingsWindow.moc3_visible_height": "Видимая высота MOC3 (базовые пиксели)",

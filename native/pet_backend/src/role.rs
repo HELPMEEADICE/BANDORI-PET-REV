@@ -1278,6 +1278,14 @@ fn layout_for_model(
     if entry.pet_mode == pet_config::PetMode::Pixel {
         return ModelLayout::pixel(bounds);
     }
+    if config.moc_legacy_framing_enabled {
+        if let Some(layout) = model
+            .moc_canvas_matrix()
+            .and_then(|matrix| ModelLayout::moc_canvas(model.info().canvas_width, matrix))
+        {
+            return layout;
+        }
+    }
     let upper_body =
         upper_body_bounds(model.meshes(), model.face_height(), model.flips_y()).unwrap_or(bounds);
     let layout = ModelLayout::from_upper_body(bounds, upper_body, model.format());

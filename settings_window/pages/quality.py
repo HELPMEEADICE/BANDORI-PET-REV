@@ -138,6 +138,20 @@ class QualityPageMixin:
         scale_row.addWidget(self._live2d_scale_input)
         layout.addLayout(scale_row)
 
+        moc_framing_row = QHBoxLayout()
+        moc_framing_row.setContentsMargins(0, 0, 0, 0)
+        moc_framing_row.setSpacing(10)
+        moc_framing_row.addWidget(BodyLabel(_tr("SettingsWindow.moc_legacy_framing"), page))
+        moc_framing_row.addStretch()
+        self._moc_legacy_framing_switch = SwitchButton(page)
+        self._moc_legacy_framing_switch.setChecked(self._moc_legacy_framing_enabled)
+        self._moc_legacy_framing_switch.checkedChanged.connect(self._on_moc_legacy_framing_changed)
+        moc_framing_row.addWidget(self._moc_legacy_framing_switch)
+        layout.addLayout(moc_framing_row)
+        moc_framing_hint = BodyLabel(_tr("SettingsWindow.moc_legacy_framing_hint"), page)
+        moc_framing_hint.setWordWrap(True)
+        layout.addWidget(moc_framing_hint)
+
         moc3_crop_label = BodyLabel(_tr("SettingsWindow.moc3_leg_crop"), page)
         self._moc3_leg_crop_switch = SwitchButton(page)
         self._moc3_leg_crop_switch.setChecked(self._moc3_leg_crop_enabled)
@@ -267,6 +281,9 @@ class QualityPageMixin:
 
     def _on_gpu_acceleration_changed(self, checked: bool):
         self._gpu_acceleration = bool(checked)
+
+    def _on_moc_legacy_framing_changed(self, checked: bool):
+        self._moc_legacy_framing_enabled = bool(checked)
 
     def _on_moc3_leg_crop_changed(self, checked: bool):
         self._moc3_leg_crop_enabled = bool(checked)

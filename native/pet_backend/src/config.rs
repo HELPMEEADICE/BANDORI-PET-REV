@@ -102,6 +102,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn moc_framing_migrates_old_configs_and_remains_independent_of_zoom() {
+        for (raw, expected, zoom) in [
+            (json!({}), false, 100),
+            (json!({"live2d_scale": 108}), false, 108),
+            (
+                json!({"moc_legacy_framing_enabled": true, "live2d_scale": 108}),
+                true,
+                108,
+            ),
+            (
+                json!({"moc_legacy_framing_enabled": false, "live2d_scale": 150}),
+                false,
+                150,
+            ),
+            (
+                json!({"moc_legacy_framing_enabled": "bad", "live2d_scale": 108}),
+                false,
+                108,
+            ),
+        ] {
+            let (config, _) = translate(&raw, "taki", "casual", "model.json");
+            assert_eq!(config.moc_legacy_framing_enabled, expected);
+            assert_eq!(config.effective_scale_percent(), zoom as f32);
+        }
+    }
+
+    #[test]
     fn show_fps_config_is_loaded_and_updated_independently() {
         let (default, _) = translate(&json!({}), "test", "default", "test.moc3");
         assert!(!default.show_fps);

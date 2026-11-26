@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Vorschau fehlgeschlagen",
   "SettingsWindow.preview_failed_content": "Live2D-Kostümvorschau konnte nicht initialisiert werden: {error}",
   "SettingsWindow.live2d_scale": "Modellmaßstab (%)",
+  "SettingsWindow.moc_legacy_framing": "Ursprünglicher MOC-Bildausschnitt",
+  "SettingsWindow.moc_legacy_framing_hint": "Gilt nur für MOC-Modelle. Verwendet die ursprüngliche feste Zeichenfläche und bewahrt die Proportionen sowie den Beschnitt an den Oberschenkeln. Deaktivieren, um den gesamten Zeichenbereich anzuzeigen.",
   "SettingsWindow.moc3_leg_crop": "MOC3-Beine beschneiden",
   "SettingsWindow.moc3_leg_crop_hint": "Gilt nur für MOC3-Modelle. Beschneidet den unteren Rand der Zeichenfläche und verkürzt das Haustierfenster; 500 px entsprechen der MOC-Basishöhe.",
   "SettingsWindow.moc3_visible_height": "Sichtbare MOC3-Höhe (Basispixel)",

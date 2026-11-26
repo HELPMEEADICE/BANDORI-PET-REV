@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Échec de l'aperçu",
   "SettingsWindow.preview_failed_content": "L'aperçu du costume Live2D n'a pas pu s'initialiser : {error}",
   "SettingsWindow.live2d_scale": "Échelle du modèle (%)",
+  "SettingsWindow.moc_legacy_framing": "Cadrage MOC d’origine",
+  "SettingsWindow.moc_legacy_framing_hint": "Concerne uniquement les modèles MOC. Utilise le canevas fixe d’origine et conserve les proportions ainsi que le recadrage au niveau des cuisses. Désactivez pour afficher toute la zone dessinée.",
   "SettingsWindow.moc3_leg_crop": "Rogner les jambes MOC3",
   "SettingsWindow.moc3_leg_crop_hint": "S'applique uniquement aux modèles MOC3. Rogne le bas du canevas et réduit la hauteur de la fenêtre du compagnon ; 500 px correspondent à la hauteur de base MOC.",
   "SettingsWindow.moc3_visible_height": "Hauteur visible MOC3 (pixels de base)",

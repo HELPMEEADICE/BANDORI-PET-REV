@@ -291,6 +291,7 @@ DEFAULTS = {
     "live2d_random_actions_enabled": True,
     "live2d_quality": "balanced",
     "live2d_scale": 100,
+    "moc_legacy_framing_enabled": False,
     "moc3_leg_crop_enabled": False,
     "moc3_visible_height": 500,
     "live2d_hit_alpha_threshold": 8,

@@ -543,6 +543,7 @@ class DataManagementPageMixin:
             self._cfg.set("auto_start", self._auto_start_supported and self._auto_start_switch.isChecked())
             self._cfg.set("live2d_quality", self._live2d_quality)
             self._cfg.set("live2d_scale", self._live2d_scale)
+            self._cfg.set("moc_legacy_framing_enabled", self._moc_legacy_framing_enabled)
             self._cfg.set("moc3_leg_crop_enabled", self._moc3_leg_crop_enabled)
             self._cfg.set("moc3_visible_height", self._moc3_visible_height)
             _require_config_saved(self._cfg)
@@ -871,6 +872,9 @@ class DataManagementPageMixin:
         self._live2d_scale = clamp_live2d_scale(
             self._cfg.get("live2d_scale", 100),
         )
+        self._moc_legacy_framing_enabled = bool(
+            self._cfg.get("moc_legacy_framing_enabled", False)
+        )
         self._moc3_leg_crop_enabled = bool(
             self._cfg.get("moc3_leg_crop_enabled", False)
         )
@@ -944,6 +948,10 @@ class DataManagementPageMixin:
             self._live2d_scale_slider.setValue(self._live2d_scale)
             self._live2d_scale_slider.blockSignals(False)
             self._live2d_scale_input.setText(str(self._live2d_scale))
+        if hasattr(self, "_moc_legacy_framing_switch"):
+            self._moc_legacy_framing_switch.blockSignals(True)
+            self._moc_legacy_framing_switch.setChecked(self._moc_legacy_framing_enabled)
+            self._moc_legacy_framing_switch.blockSignals(False)
         if hasattr(self, "_moc3_leg_crop_switch"):
             self._moc3_leg_crop_switch.blockSignals(True)
             self._moc3_leg_crop_switch.setChecked(self._moc3_leg_crop_enabled)

@@ -19,6 +19,11 @@ class Live2DQualityTest(unittest.TestCase):
 
         self.assertEqual(100, DEFAULTS["live2d_scale"])
 
+    def test_moc_legacy_framing_defaults_to_disabled(self):
+        from bandori_core.config_manager import DEFAULTS
+
+        self.assertIs(False, DEFAULTS["moc_legacy_framing_enabled"])
+
     def test_settings_scale_reset_does_not_apply_screen_dpi(self):
         from settings_window.pages.quality import QualityPageMixin
 

@@ -162,6 +162,7 @@ class _ApplyHarness(QWidget):
         self._birthday_tray_notifications_enabled = True
         self._live2d_quality = "balanced"
         self._live2d_scale = 0
+        self._moc_legacy_framing_enabled = False
         self._moc3_leg_crop_enabled = False
         self._moc3_visible_height = 500
         self._configured_models = []
@@ -453,6 +454,18 @@ class SettingsApplySaveSemanticsTest(unittest.TestCase):
 
         self.assertTrue(harness._cfg.get("show_fps"))
         self.assertTrue(harness.settings_payloads[0]["show_fps"])
+
+    def test_moc_framing_and_zoom_are_saved_and_sent_together(self):
+        harness = _ApplyHarness()
+        harness._moc_legacy_framing_enabled = True
+        harness._live2d_scale = 108
+
+        harness._on_apply()
+
+        self.assertTrue(harness._cfg.get("moc_legacy_framing_enabled"))
+        self.assertTrue(harness.settings_payloads[0]["moc_legacy_framing_enabled"])
+        self.assertEqual(108, harness._cfg.get("live2d_scale"))
+        self.assertEqual(108, harness.settings_payloads[0]["live2d_scale"])
 
     def test_show_fps_switch_is_saved_and_sent_to_running_pets(self):
         harness = _ApplyHarness()

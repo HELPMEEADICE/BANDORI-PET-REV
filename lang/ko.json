@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "미리보기 실패",
   "SettingsWindow.preview_failed_content": "Live2D 코스튬 미리보기 초기화 실패: {error}",
   "SettingsWindow.live2d_scale": "모델 크기 (%)",
+  "SettingsWindow.moc_legacy_framing": "기존 MOC 모델 표시 영역",
+  "SettingsWindow.moc_legacy_framing_hint": "MOC 모델에만 적용됩니다. 기존 고정 캔버스를 사용하여 캐릭터의 원래 체형과 허벅지 부분의 자르기를 유지합니다. 끄면 전체 그리기 영역을 표시합니다.",
   "SettingsWindow.moc3_leg_crop": "MOC3 다리 자르기",
   "SettingsWindow.moc3_leg_crop_hint": "MOC3 모델에만 적용됩니다. 캔버스 하단을 잘라 데스크톱 펫 창의 높이를 줄입니다. 500 px는 MOC 기본 높이와 같습니다.",
   "SettingsWindow.moc3_visible_height": "MOC3 표시 높이 (기준 픽셀)",

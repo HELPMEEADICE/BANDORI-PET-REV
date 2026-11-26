@@ -1,5 +1,5 @@
 //! Render neutral pets at their real desktop scale for visual sizing checks.
-//! Usage: cargo run --release --example framing_probe -- OUTPUT_DIR MODEL...
+//! Usage: cargo run --release --example framing_probe -- OUTPUT_DIR [--legacy-moc] MODEL...
 //! MODEL accepts the same archive::member paths as the application.
 use std::error::Error;
 use std::path::PathBuf;
@@ -17,13 +17,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&output)?;
     // Isolate probe extraction from the running application's costume cache.
     let cache = ModelCache::new(output.join("cache"), PathBuf::from("models"));
-    for (index, path) in args.enumerate() {
+    let mut legacy_moc = false;
+    let mut index = 0;
+    for path in args {
+        if path == "--legacy-moc" {
+            legacy_moc = true;
+            continue;
+        }
+        if path == "--drawable-moc" {
+            legacy_moc = false;
+            continue;
+        }
         let resolved = cache.resolve(&path)?;
         let model = ModelHandle::load(&resolved.model_path)?;
         let content = content_size(model.meshes()).ok_or("empty model")?;
         let upper = upper_body_bounds(model.meshes(), model.face_height(), model.flips_y())
             .unwrap_or(content);
-        let layout = ModelLayout::from_upper_body(content, upper, model.format());
+        let layout = model
+            .moc_canvas_matrix()
+            .filter(|_| legacy_moc)
+            .and_then(|matrix| ModelLayout::moc_canvas(model.info().canvas_width, matrix))
+            .unwrap_or_else(|| ModelLayout::from_upper_body(content, upper, model.format()));
         let (width, height) = layout.window_size(100.0, 1.0);
         let pixels_per_unit = height as f32 / layout.viewport.height();
         let rgba = pet_render::render_preview(
@@ -45,8 +59,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "upper_bounds": [upper.min_x, upper.min_y, upper.max_x, upper.max_y],
                 "pixels_per_unit": pixels_per_unit,
                 "face_pixels": model.face_height().map(|face| face * pixels_per_unit),
+                "canvas": [model.info().canvas_width, model.info().canvas_height],
             })
         );
+        index += 1;
     }
     Ok(())
 }

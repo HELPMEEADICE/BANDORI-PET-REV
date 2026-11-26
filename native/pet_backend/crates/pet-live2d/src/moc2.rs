@@ -69,6 +69,15 @@ impl Moc2Adapter {
         self.face_height
     }
 
+    /// V2 portrait framing preserves the authored translation and resets width
+    /// to two clip units, as the original Lua MatrixManager::getMvp did.
+    pub fn canvas_matrix(&self) -> neocari::core::Matrix44 {
+        let mut matrix = self.model.model_matrix();
+        let scale = 2.0 / self.info.canvas_width;
+        matrix.scale(scale, -scale);
+        matrix
+    }
+
     /// Current meshes.
     pub fn meshes(&self) -> &[Moc3DrawableMesh] {
         self.model.meshes()

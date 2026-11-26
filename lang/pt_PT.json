@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Falha na visualização",
   "SettingsWindow.preview_failed_content": "A visualização do fato Live2D falhou a inicialização: {error}",
   "SettingsWindow.live2d_scale": "Escala do Modelo (%)",
+  "SettingsWindow.moc_legacy_framing": "Enquadramento MOC original",
+  "SettingsWindow.moc_legacy_framing_hint": "Aplica-se apenas a modelos MOC. Usa a tela fixa original, preservando as proporções e o corte pelas coxas. Desative para mostrar toda a área desenhada.",
   "SettingsWindow.moc3_leg_crop": "Recortar as pernas MOC3",
   "SettingsWindow.moc3_leg_crop_hint": "Aplica-se apenas aos modelos MOC3. Recorta a parte inferior da tela e reduz a altura da janela da mascote; 500 px correspondem à altura base MOC.",
   "SettingsWindow.moc3_visible_height": "Altura visível MOC3 (píxeis base)",

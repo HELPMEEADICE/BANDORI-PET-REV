@@ -209,6 +209,9 @@ class SettingsWindow(
         self._live2d_scale = clamp_live2d_scale(
             self._cfg.get("live2d_scale", 100) if self._cfg else 100,
         )
+        self._moc_legacy_framing_enabled = bool(
+            self._cfg.get("moc_legacy_framing_enabled", False) if self._cfg else False
+        )
         self._moc3_leg_crop_enabled = bool(
             self._cfg.get("moc3_leg_crop_enabled", False) if self._cfg else False
         )
@@ -3211,6 +3214,7 @@ class SettingsWindow(
             "auto_start": self._auto_start_supported and self._auto_start_switch.isChecked(),
             "live2d_quality": self._live2d_quality,
             "live2d_scale": self._live2d_scale,
+            "moc_legacy_framing_enabled": self._moc_legacy_framing_enabled,
             "moc3_leg_crop_enabled": self._moc3_leg_crop_enabled,
             "moc3_visible_height": self._moc3_visible_height,
             "compact_ai_window_enabled": self._cfg.get("compact_ai_window_enabled", False) if self._cfg else False,
@@ -3286,6 +3290,7 @@ class SettingsWindow(
             self._cfg.set("auto_start", settings["auto_start"])
             self._cfg.set("live2d_quality", settings["live2d_quality"])
             self._cfg.set("live2d_scale", settings["live2d_scale"])
+            self._cfg.set("moc_legacy_framing_enabled", settings["moc_legacy_framing_enabled"])
             self._cfg.set("moc3_leg_crop_enabled", settings["moc3_leg_crop_enabled"])
             self._cfg.set("moc3_visible_height", settings["moc3_visible_height"])
             try:

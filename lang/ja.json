@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "プレビュー読み込み失敗",
   "SettingsWindow.preview_failed_content": "Live2D 衣装プレビューの初期化に失敗しました：{error}",
   "SettingsWindow.live2d_scale": "モデル拡大率（%）",
+  "SettingsWindow.moc_legacy_framing": "旧版の MOC モデル表示範囲",
+  "SettingsWindow.moc_legacy_framing_hint": "MOC モデルのみに適用します。旧版の固定キャンバスを使用し、キャラクター本来の体型と太もも付近のトリミングを保ちます。オフにすると描画範囲全体を表示します。",
   "SettingsWindow.moc3_leg_crop": "MOC3 の脚を切り取る",
   "SettingsWindow.moc3_leg_crop_hint": "MOC3 モデルにのみ適用されます。有効にするとキャンバス下部を切り取り、ペットウィンドウを短くします。500 px は MOC の基準高さです。",
   "SettingsWindow.moc3_visible_height": "MOC3 の表示高さ（基準ピクセル）",

@@ -651,6 +651,8 @@
   "SettingsWindow.preview_failed_title": "Preview Failed",
   "SettingsWindow.preview_failed_content": "Live2D costume preview failed to initialize: {error}",
   "SettingsWindow.live2d_scale": "Model Scale (%)",
+  "SettingsWindow.moc_legacy_framing": "Original MOC Framing",
+  "SettingsWindow.moc_legacy_framing_hint": "Applies only to MOC models. Uses the original fixed canvas, preserving character proportions and the thigh crop. Turn off to show the full drawable area.",
   "SettingsWindow.moc3_leg_crop": "Crop MOC3 Legs",
   "SettingsWindow.moc3_leg_crop_hint": "Applies only to MOC3 models. Crops the bottom of the canvas and shortens the pet window; 500 px matches the MOC baseline height.",
   "SettingsWindow.moc3_visible_height": "MOC3 Visible Height (Base Pixels)",

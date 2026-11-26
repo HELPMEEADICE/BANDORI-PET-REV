@@ -379,6 +379,7 @@ DATA_CONFIG_KEYS = {
         "drag_locked",
         "live2d_quality",
         "live2d_scale",
+        "moc_legacy_framing_enabled",
         "moc3_leg_crop_enabled",
         "moc3_visible_height",
         "fluent_chat_window_enabled",
